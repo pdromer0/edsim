@@ -7,7 +7,12 @@ authors = [
     { name = "pdromer0", email = "115772852+pdromer0@users.noreply.github.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "scipy>=1.18.1",
+    "simpy>=4.1.2",
+]
 
 [project.scripts]
 edsim = "edsim.cli:main"
