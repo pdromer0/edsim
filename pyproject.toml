@@ -36,3 +36,7 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "slow: tests estadísticos largos; el hook de Claude Code los excluye",
+]

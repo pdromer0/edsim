@@ -16,7 +16,7 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" || exit 0
 
-if ! salida=$(uv run pytest -q -x 2>&1); then
+if ! salida=$(uv run pytest -q -x -m "not slow" 2>&1); then
   printf '%s\n' "$salida" | tail -n 50 >&2
   exit 2
 fi
