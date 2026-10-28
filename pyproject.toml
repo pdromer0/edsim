@@ -1,0 +1,17 @@
+[project]
+name = "edsim"
+version = "0.1.0"
+description = "Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica"
+readme = "README.md"
+authors = [
+    { name = "pdromer0", email = "115772852+pdromer0@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+edsim = "edsim.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
