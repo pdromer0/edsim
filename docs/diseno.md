@@ -500,8 +500,10 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 9 | Librerías directamente, sin reimplementar fundamentos | Modo de aprendizaje elegido |
 | 10 | Apache Kafka 4 (KRaft) como broker, con Redpanda Console como interfaz | Aprender el estándar de la industria con licencia abierta; cambiar a Redpanda es trivial |
 | 11 | GitHub Flow con pull requests, CI obligatorio y fusión reservada a Pedro | Red de seguridad para código escrito por IA; control humano de main |
-| 12 | Desarrollo en Windows con WSL2, Docker Desktop y Cursor conectado a WSL (a confirmar en el hito 0) | Entorno local parecido al CI en Linux |
+| 12 | Desarrollo en Windows con WSL2, Docker Desktop y Cursor conectado a WSL, confirmado en el hito 0; WSL y Claude Code en canal estable | Entorno local parecido al CI en Linux |
 | 13 | Centro base de 300 urgencias al día, rango 200–400 | Hospital general de tamaño medio |
+| 14 | Repositorio público en GitHub, con ruleset que protege main | Los rulesets solo están disponibles en repositorios públicos del plan gratuito; datos sintéticos, sin secretos |
+| 15 | Código, nombres y docstrings en inglés; documentación, especificaciones y commits en español; claves de configuración en español | Estándar del código; la documentación sirve al aprendizaje en el idioma de Pedro |
 
 ### Preguntas resueltas
 

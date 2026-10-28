@@ -325,13 +325,13 @@ El hito 0 está cerrado cuando se cumplen todos:
 
 - [x] `wsl -l -v` muestra Ubuntu-24.04 con VERSION 2.
 - [x] `docker run hello-world` funciona desde Ubuntu.
-- [ ] Cursor abre `~/proyectos/edsim` conectado a WSL.
-- [ ] `uv --version`, `gh auth status`, `claude --version` y `claude doctor` responden sin errores.
-- [ ] `uv run edsim --version` imprime la versión del paquete.
-- [ ] `uv run pytest`, `uv run ruff check .` y `uv run ruff format --check .` pasan.
-- [ ] pre-commit bloquea un commit mal formateado.
-- [ ] El CI se ejecuta en cada pull request y ha mostrado al menos un rojo y un verde.
-- [ ] Un push directo a `main` es rechazado por el ruleset.
-- [ ] En Claude Code, `/hooks` lista los hooks del proyecto, el estilo activo es `Explanatory` y `gh pr merge` aparece denegado en `/permissions`.
-- [ ] `docs/` contiene el diseño, esta especificación, los ADRs y la entrada del diario del hito.
+- [x] Cursor abre `~/proyectos/edsim` conectado a WSL.
+- [x] `uv --version`, `gh auth status`, `claude --version` y `claude doctor` responden sin errores.
+- [x] `uv run edsim --version` imprime la versión del paquete.
+- [x] `uv run pytest`, `uv run ruff check .` y `uv run ruff format --check .` pasan.
+- [x] pre-commit bloquea un commit mal formateado.
+- [x] El CI se ejecuta en cada pull request y ha mostrado al menos un rojo y un verde.
+- [x] Un push directo a `main` es rechazado por el ruleset.
+- [x] En Claude Code, `/hooks` lista los hooks del proyecto, el estilo activo es `Explanatory` y `gh pr merge` aparece denegado en `/permissions`.
+- [x] `docs/` contiene el diseño, esta especificación, los ADRs y la entrada del diario del hito.
 - [ ] La etiqueta `v0.0-hito0` existe en GitHub.
