@@ -48,6 +48,31 @@ class MM1Theory:
     l: float  # noqa: E741
 
 
+def validate_mm1_rates(lam: float, mu: float) -> float:
+    """Check that an M/M/1 queue with these rates has a steady state.
+
+    Shared by the closed-form theory and the simulation, so both reject the
+    same parameters with the same messages.
+
+    Args:
+        lam: Arrival rate (customers per unit of time).
+        mu: Service rate (customers per unit of time).
+
+    Returns:
+        The utilisation ``rho = lam / mu``.
+
+    Raises:
+        ValueError: If ``lam`` or ``mu`` is not positive, or if ``rho >= 1``.
+    """
+    if lam <= 0 or mu <= 0:
+        raise ValueError(f"rates must be positive, got lam={lam} and mu={mu}")
+
+    rho = lam / mu
+    if rho >= 1:
+        raise ValueError(f"unstable queue: rho = lam / mu = {rho} must be < 1 for a steady state")
+    return rho
+
+
 def mm1_theory(lam: float, mu: float) -> MM1Theory:
     """Compute the steady-state metrics of an M/M/1 queue.
 
@@ -63,12 +88,7 @@ def mm1_theory(lam: float, mu: float) -> MM1Theory:
         ValueError: If ``lam`` or ``mu`` is not positive, or if
             ``rho = lam / mu >= 1``, in which case no steady state exists.
     """
-    if lam <= 0 or mu <= 0:
-        raise ValueError(f"rates must be positive, got lam={lam} and mu={mu}")
-
-    rho = lam / mu
-    if rho >= 1:
-        raise ValueError(f"unstable queue: rho = lam / mu = {rho} must be < 1 for a steady state")
+    rho = validate_mm1_rates(lam, mu)
 
     return MM1Theory(
         rho=rho,
