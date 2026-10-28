@@ -8,7 +8,5 @@ def main(argv: list[str] | None = None) -> None:
         description="Simulador de urgencias hospitalarias que genera datos "
         "sintéticos para un laboratorio de analítica",
     )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {version('edsim')}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('edsim')}")
     parser.parse_args(argv)
