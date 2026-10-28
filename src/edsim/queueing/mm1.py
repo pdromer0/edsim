@@ -53,7 +53,9 @@ class CustomerRecord:
         return self.departure is not None
 
 
-def simulate_mm1(lam: float, mu: float, horizon: float, seed: int) -> tuple[CustomerRecord, ...]:
+def simulate_mm1(
+    lam: float, mu: float, horizon: float, seed: int | np.random.SeedSequence
+) -> tuple[CustomerRecord, ...]:
     """Simulate one replication of an M/M/1 queue that starts empty.
 
     The service time is drawn when the customer arrives, not when service
@@ -66,8 +68,11 @@ def simulate_mm1(lam: float, mu: float, horizon: float, seed: int) -> tuple[Cust
         mu: Service rate (customers per unit of time).
         horizon: Total simulated time. Events scheduled at or after this time
             do not happen.
-        seed: Seed of the run. Two independent streams, arrivals and service,
-            are derived from it with ``numpy.random.SeedSequence.spawn``.
+        seed: Seed of the run: an integer or a ``numpy.random.SeedSequence``,
+            such as one child of ``SeedSequence(master).spawn(R)`` per
+            replication. An integer is equivalent to ``SeedSequence(seed)``.
+            Two independent streams, arrivals and service, are derived from it
+            with ``SeedSequence.spawn``.
 
     Returns:
         One record per customer who arrived before ``horizon``, in arrival
@@ -82,7 +87,8 @@ def simulate_mm1(lam: float, mu: float, horizon: float, seed: int) -> tuple[Cust
     if horizon <= 0:
         raise ValueError(f"horizon must be positive, got {horizon}")
 
-    arrival_seq, service_seq = np.random.SeedSequence(seed).spawn(2)
+    seed_seq = seed if isinstance(seed, np.random.SeedSequence) else np.random.SeedSequence(seed)
+    arrival_seq, service_seq = seed_seq.spawn(2)
     arrival_rng = np.random.default_rng(arrival_seq)
     service_rng = np.random.default_rng(service_seq)
 

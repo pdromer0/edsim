@@ -18,7 +18,8 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
 
 ```bash
 uv sync                  # entorno y dependencias (uv.lock)
-uv run pytest            # tests
+uv run pytest            # todos los tests (incluidos los slow, como el CI)
+uv run pytest -m "not slow"  # solo los rápidos (lo que ejecuta el hook Stop)
 uv run ruff check .      # lint
 uv run ruff format .     # formato
 uv run edsim             # CLI
