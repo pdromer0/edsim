@@ -1,5 +1,8 @@
+import dataclasses
+import hashlib
 import itertools
 import math
+import statistics
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -7,14 +10,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 import simpy
+from scipy import stats
 
 from edsim.arrivals import thinning
 from edsim.arrivals.profile import ArrivalProfile, load_profile
-from edsim.arrivals.rate import cumulative_rate, rate
+from edsim.arrivals.rate import cumulative_rate, day_scale, day_shape_area, rate
 from edsim.arrivals.thinning import (
     ArrivalRecord,
     DayRecord,
     arrival_source,
+    draw_day_effects,
     iter_arrivals,
     simulate_arrivals,
 )
@@ -30,6 +35,43 @@ EXPECTED_MONDAY = 375.559
 MAX_H = 1.68  # 24 · 7,0 / 100: el reparto de las 11 h frente a la media
 ACCEPTANCE = 1 / MAX_H  # media de λ / cota, igual en todos los días: 0,595
 
+# Efecto diario con el CV del perfil de ejemplo, 0,06: Z ~ Gamma(k = 1/CV², θ = CV²).
+CV = 0.06
+GAMMA_SHAPE = 277.78  # k = 1 / 0,0036
+GAMMA_SCALE = 0.0036  # θ = 0,0036
+# Lunes 5 de enero: varianza de la binomial negativa e + CV²·e² frente a la de Poisson, e.
+VAR_NB_MONDAY = 883.3
+VAR_POISSON_MONDAY = 375.6
+
+# Huella de las llegadas en main (commit e657930, tarea 2.2, antes del efecto diario):
+# perfil de ejemplo, 56 días, semilla 2026. Con CV 0, Z = 1 sin sortear y el generador
+# debe dar exactamente las mismas llegadas, bit a bit. Solo es legítimo regenerarla si
+# se cambia a propósito el orden o el número de los sorteos del flujo de llegadas, y
+# explicándolo en el PR; nunca para que un test pase. Para regenerarla, ejecuta
+# fingerprint(simulate_arrivals(<perfil de ejemplo con cv_diario = 0>, 56, 2026)[0])
+# y copia aquí el número de llegadas y el sha256.
+MAIN_ARRIVALS = 18176
+MAIN_SHA256 = "75646b4f06e378e72028ae91ef31e81554924170e2ad18029c6c9f613766d441"
+
+
+def example_with_cv(directory: Path, cv: float) -> ArrivalProfile:
+    """The example profile with another cv_diario, loaded from TOML.
+
+    dataclasses.replace would normalize the factors again and change their last
+    bit; loading a copy of the file keeps them identical to the example.
+    """
+    text = EXAMPLE.read_text()
+    assert "cv_diario = 0.06\n" in text
+    path = directory / f"llegadas_cv_{cv}.toml"
+    path.write_text(text.replace("cv_diario = 0.06\n", f"cv_diario = {cv}\n"))
+    return load_profile(path)
+
+
+def fingerprint(arrivals) -> tuple[int, str]:
+    """Number of arrivals and sha256 of their times as little-endian float64."""
+    times = np.array([a.time for a in arrivals], dtype="<f8")
+    return len(arrivals), hashlib.sha256(times.tobytes()).hexdigest()
+
 
 @pytest.fixture(scope="module")
 def profile() -> ArrivalProfile:
@@ -37,8 +79,23 @@ def profile() -> ArrivalProfile:
 
 
 @pytest.fixture(scope="module")
+def profile_cv0(tmp_path_factory) -> ArrivalProfile:
+    return example_with_cv(tmp_path_factory.mktemp("perfil"), 0)
+
+
+@pytest.fixture(scope="module")
 def run(profile) -> tuple[tuple[ArrivalRecord, ...], tuple[DayRecord, ...]]:
+    # Con el CV de 0,06 del perfil de ejemplo: el efecto diario está activo.
     return simulate_arrivals(profile, DAYS, SEED)
+
+
+@pytest.fixture(scope="module")
+def run_cv0(profile_cv0) -> tuple[tuple[ArrivalRecord, ...], tuple[DayRecord, ...]]:
+    return simulate_arrivals(profile_cv0, DAYS, SEED)
+
+
+def effects_of(days: tuple[DayRecord, ...]) -> list[float]:
+    return [d.day_effect for d in days]
 
 
 def day_scale_reference(profile: ArrivalProfile, day: int) -> float:
@@ -68,10 +125,88 @@ def test_int_equivale_a_seedsequence(profile, run):
 
 
 def test_semillas_distintas(profile):
-    a, _ = simulate_arrivals(profile, 3, 1)
-    b, _ = simulate_arrivals(profile, 3, 2)
+    a, days_a = simulate_arrivals(profile, 3, 1)
+    b, days_b = simulate_arrivals(profile, 3, 2)
 
     assert times_of(a) != times_of(b)
+    assert effects_of(days_a) != effects_of(days_b)
+
+
+def test_mismo_seedsequence_dos_veces(profile):
+    # El mismo objeto, reutilizado, da los mismos flujos (child_streams no lo modifica).
+    seq = np.random.SeedSequence(SEED)
+
+    first = simulate_arrivals(profile, 3, seq)
+    effects = draw_day_effects(CV, 3, seq)
+    second = simulate_arrivals(profile, 3, seq)
+
+    assert first == second
+    assert effects.tolist() == effects_of(first[1])
+
+
+# --- Efecto diario Z ----------------------------------------------------------
+
+
+def test_cv0_mismas_llegadas_que_main(run_cv0):
+    arrivals, days = run_cv0
+
+    assert fingerprint(arrivals) == (MAIN_ARRIVALS, MAIN_SHA256)
+    assert all(d.day_effect == 1.0 for d in days)
+
+
+def test_cv0_z_es_uno():
+    assert draw_day_effects(0, 10, SEED).tolist() == [1.0] * 10
+
+
+def test_parametros_gamma_a_mano():
+    k, theta = thinning._gamma_parameters(CV)
+
+    assert k == pytest.approx(GAMMA_SHAPE, abs=5e-3)
+    assert theta == pytest.approx(GAMMA_SCALE, rel=1e-12)
+    # Mezclar Poisson(Z·e) sobre la gamma da una binomial negativa: Var = e + CV²·e².
+    nb = stats.nbinom(n=k, p=1 / (1 + theta * EXPECTED_MONDAY))
+    assert nb.mean() == pytest.approx(EXPECTED_MONDAY, rel=1e-12)
+    assert nb.var() == pytest.approx(VAR_NB_MONDAY, abs=0.05)
+    assert stats.poisson(EXPECTED_MONDAY).var() == pytest.approx(VAR_POISSON_MONDAY, abs=0.05)
+
+
+def test_media_y_cv_de_z():
+    n = 20_000
+    z = draw_day_effects(CV, n, SEED)
+    mean = statistics.fmean(z)
+    cv = statistics.stdev(z) / mean
+
+    # Error típico de la media: CV/√n = 0,00042; del CV muestral, ≈ CV/√(2n) = 0,0003.
+    # Las tolerancias son 5 errores típicos.
+    assert z.shape == (n,)
+    assert np.all(z > 0)
+    assert mean == pytest.approx(1, abs=5 * CV / math.sqrt(n))
+    assert cv == pytest.approx(CV, abs=5 * CV / math.sqrt(2 * n))
+
+
+def test_el_run_usa_las_z_del_flujo_propio(run):
+    assert effects_of(run[1]) == draw_day_effects(CV, DAYS, SEED).tolist()
+    assert len(set(effects_of(run[1]))) == DAYS  # Z distinta cada día
+
+
+def test_z_no_depende_del_perfil(profile, run):
+    # Mismo flujo de Z con otra base: las candidatas cambian, las Z no.
+    arrivals, days = simulate_arrivals(dataclasses.replace(profile, daily_base=400), DAYS, SEED)
+
+    assert effects_of(days) == effects_of(run[1])
+    assert times_of(arrivals) != times_of(run[0])
+
+
+@pytest.mark.parametrize("cv", [-0.1, math.nan, math.inf, True])
+def test_draw_day_effects_cv_invalido(cv):
+    with pytest.raises(ValueError, match="daily_cv"):
+        draw_day_effects(cv, 3, SEED)
+
+
+@pytest.mark.parametrize("days", [0, 1.5, True])
+def test_draw_day_effects_dias_invalido(days):
+    with pytest.raises(ValueError, match="days"):
+        draw_day_effects(CV, days, SEED)
 
 
 # --- Llegadas -----------------------------------------------------------------
@@ -98,8 +233,7 @@ def test_un_registro_por_dia(profile, run):
 
     assert [d.day for d in days] == list(range(DAYS))
     assert [d.date for d in days] == [profile.start_date + timedelta(days=k) for k in range(DAYS)]
-    # Sin efecto diario hasta la tarea 2.3.
-    assert all(d.day_effect == 1.0 for d in days)
+    assert all(d.day_effect > 0 for d in days)
 
 
 def test_aceptadas_y_candidatas(run):
@@ -111,31 +245,48 @@ def test_aceptadas_y_candidatas(run):
     assert sum(d.accepted for d in days) == len(arrivals)
 
 
-def test_expected_es_lambda_del_dia(profile, run):
-    for d in run[1]:
-        area = cumulative_rate((d.day + 1) * DAY, profile) - cumulative_rate(d.day * DAY, profile)
+def test_expected_es_z_por_lambda_del_dia(profile, run):
+    days = run[1]
+    effects = effects_of(days)
+
+    for d in days:
+        assert d.expected == pytest.approx(
+            d.day_effect * day_scale(d.day, profile) * day_shape_area(profile), rel=1e-12
+        ), d.day
+        start, end = d.day * DAY, (d.day + 1) * DAY
+        area = cumulative_rate(end, profile, day_effects=effects) - cumulative_rate(
+            start, profile, day_effects=effects
+        )
         assert d.expected == pytest.approx(area, rel=1e-12), d.day
 
 
-def test_cota_es_escala_por_max_h(profile, run):
+def test_cota_es_z_por_escala_por_max_h(profile, run):
     max_h = max(profile.hour_factors)
 
     for d in run[1]:
-        assert d.bound == pytest.approx(day_scale_reference(profile, d.day) * max_h, rel=1e-12)
+        assert d.bound == pytest.approx(
+            d.day_effect * day_scale_reference(profile, d.day) * max_h, rel=1e-12
+        )
 
 
-def test_valores_a_mano_lunes(profile, run):
-    monday = run[1][0]
-
+def test_valores_a_mano_lunes(profile_cv0, profile, run_cv0, run):
+    monday = run_cv0[1][0]
     assert monday.bound == pytest.approx(BOUND_MONDAY, abs=5e-6)
-    assert monday.bound == pytest.approx(rate(11 * 60 + 30, profile), rel=1e-12)
+    assert monday.bound == pytest.approx(rate(11 * 60 + 30, profile_cv0), rel=1e-12)
     assert monday.expected == pytest.approx(EXPECTED_MONDAY, abs=5e-4)
+
+    # Con Z, la cota y lo esperado del lunes se multiplican por su Z.
+    monday = run[1][0]
+    assert monday.day_effect != 1.0
+    assert monday.bound / monday.day_effect == pytest.approx(BOUND_MONDAY, abs=5e-6)
+    assert monday.expected / monday.day_effect == pytest.approx(EXPECTED_MONDAY, abs=5e-4)
 
 
 def test_proporcion_de_aceptacion(profile, run):
     days = run[1]
 
-    # Teórica: Λ del día / (cota · 1440) = media(h) / máx(h), la misma en todos los días.
+    # Teórica: Λ del día / (cota · 1440) = media(h) / máx(h), la misma en todos los días:
+    # Z multiplica Λ y la cota, y se cancela.
     assert max(profile.hour_factors) == pytest.approx(MAX_H, rel=1e-12)
     for d in days:
         assert d.expected / (d.bound * DAY) == pytest.approx(ACCEPTANCE, rel=1e-12)
@@ -147,8 +298,8 @@ def test_proporcion_de_aceptacion(profile, run):
 
 
 def test_volumen_56_dias(profile, run):
-    # Comprobación gruesa: el número de llegadas es una Poisson de media Λ.
-    expected = cumulative_rate(DAYS * DAY, profile)
+    # Comprobación gruesa: dadas las Z, el número de llegadas es una Poisson de media Λ.
+    expected = cumulative_rate(DAYS * DAY, profile, day_effects=effects_of(run[1]))
 
     assert abs(len(run[0]) - expected) < 4 * math.sqrt(expected)
 
@@ -158,9 +309,11 @@ def test_volumen_56_dias(profile, run):
 
 def test_lambda_no_supera_cota_en_rejilla(profile, run):
     grid = np.arange(0, DAY, 0.25)  # incluye los centros de las horas (h:30)
+    effects = effects_of(run[1])
 
     for d in run[1]:
-        assert np.all(rate(d.day * DAY + grid, profile) <= d.bound * (1 + 1e-12)), d.day
+        lam = rate(d.day * DAY + grid, profile, day_effects=effects)
+        assert np.all(lam <= d.bound * (1 + 1e-12)), d.day
 
 
 def test_cota_insuficiente_da_error(profile):
@@ -180,21 +333,23 @@ def test_bound_factor_invalido(profile, factor):
 
 
 def test_perezoso(profile, monkeypatch):
-    # Espías: el generador no debe calcular nada de días posteriores al primero.
+    # Espías: el generador no debe calcular nada de días posteriores al primero,
+    # ni sortear sus Z.
     scaled_days: list = []
-    cumulative_times: list = []
-    day_scale, cumulative = thinning.day_scale, thinning.cumulative_rate
+    drawn: list[float] = []
+    original_day_scale, original_effects = thinning.day_scale, thinning._day_effects
 
     def spy_day_scale(day, prof):
         scaled_days.append(day)
-        return day_scale(day, prof)
+        return original_day_scale(day, prof)
 
-    def spy_cumulative(t, prof):
-        cumulative_times.append(t)
-        return cumulative(t, prof)
+    def spy_effects(cv, rng):
+        for z in original_effects(cv, rng):
+            drawn.append(z)
+            yield z
 
     monkeypatch.setattr(thinning, "day_scale", spy_day_scale)
-    monkeypatch.setattr(thinning, "cumulative_rate", spy_cumulative)
+    monkeypatch.setattr(thinning, "_day_effects", spy_effects)
     closed: list[DayRecord] = []
 
     start = time.perf_counter()
@@ -205,7 +360,7 @@ def test_perezoso(profile, monkeypatch):
     assert elapsed < 2  # holgado para un CI lento: lo importante son los espías
     assert closed == []
     assert scaled_days == [0]
-    assert all(np.all(np.asarray(t) <= DAY) for t in cumulative_times)
+    assert len(drawn) == 1
 
 
 def test_on_day_al_cerrar_cada_dia(profile):

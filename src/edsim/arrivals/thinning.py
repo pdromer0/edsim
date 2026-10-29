@@ -6,7 +6,13 @@ with probability ``lambda(t) / bound``. The kept candidates are exactly a
 Poisson process with rate ``lambda(t)``: no integration and no inversion of
 ``Lambda`` are needed.
 
-The bound is set per day, as ``day_scale(day) * max(h)``. With the linear
+Each day has a random effect Z, gamma with mean 1 and the profile's
+coefficient of variation ``daily_cv``: ``lambda(t) = Z * day_scale(day) *
+shape(minute)``. Given Z, the day is still a Poisson process; over the days,
+the counts are negative binomial, with variance ``e + (CV * e)**2`` for an
+expected ``e``. With ``daily_cv = 0``, Z is 1 and nothing is drawn.
+
+The bound is set per day, as ``Z * day_scale(day) * max(h)``. With the linear
 interpolation of the hourly shape, lambda never exceeds the largest hour
 factor, so the bound is tight and about 60 % of the candidates are kept.
 The bound is checked at every candidate: a bound below lambda would cut the
@@ -15,13 +21,16 @@ peaks without any warning, so it raises instead.
 The generator is lazy: it draws the next candidate only when the next arrival
 is asked for, so it can run live, one arrival at a time, inside SimPy.
 
-Randomness (ADR 0007): ``SeedSequence(seed).spawn(2)`` gives two streams. The
+Randomness (ADR 0007): ``child_streams(seed, 2)`` gives two streams. The
 first one draws the candidates (the gap and then, if the candidate falls
-inside the day, the acceptance uniform). The second one is reserved for the
-daily random effect Z of task 2.3, so that turning the overdispersion on or
-off does not change the sequence of candidates.
+inside the day, the acceptance uniform). The second one draws Z, one value
+at the start of each day. So the Z of each day depends only on the seed and
+``daily_cv``, not on the profile or the candidates, and drawing Z never
+shifts the numbers of the candidates. Turning Z on does change the
+candidates, because the bound, and so the gaps, are multiplied by Z.
 """
 
+import itertools
 import math
 from collections.abc import Callable, Generator, Iterable, Iterator
 from dataclasses import dataclass
@@ -29,9 +38,11 @@ from datetime import date, timedelta
 
 import numpy as np
 import simpy
+from numpy.typing import NDArray
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate, day_scale, shape
+from edsim.arrivals.rate import MINUTES_PER_DAY, day_scale, day_shape_area, shape
+from edsim.seeds import child_streams
 
 _ROUNDING = 1e-12
 """Relative margin for lambda over the bound, which may differ in the last bits."""
@@ -58,10 +69,14 @@ class DayRecord:
     Attributes:
         day: Day index, 0 for the profile's ``start_date``.
         date: Calendar date of the day.
-        day_effect: Daily random effect Z. Always 1 until task 2.3.
-        expected: Expected arrivals of the day: Lambda at its end minus
-            Lambda at its start.
-        bound: Thinning bound of the day, in arrivals per minute.
+        day_effect: Daily random effect Z, gamma with mean 1; 1 when the
+            profile's ``daily_cv`` is 0. The hospital never observes it.
+        expected: Expected arrivals of the day given Z:
+            ``Z * day_scale * day_shape_area``, which is Lambda with the Z of
+            the run at the end of the day minus at its start. Without Z it is
+            ``expected / day_effect``.
+        bound: Thinning bound of the day, ``Z * day_scale * max(h)``, in
+            arrivals per minute.
         candidates: Candidates drawn inside the day. The candidate that falls
             past midnight is discarded and not counted.
         accepted: Candidates kept, which are the arrivals of the day.
@@ -94,6 +109,70 @@ def _check_bound_factor(bound_factor: object) -> float:
     return float(bound_factor)
 
 
+def _check_daily_cv(daily_cv: object) -> float:
+    if (
+        isinstance(daily_cv, bool)
+        or not isinstance(daily_cv, int | float)
+        or not math.isfinite(daily_cv)
+        or daily_cv < 0
+    ):
+        raise ValueError(f"daily_cv must be a finite number >= 0, got {daily_cv!r}")
+    return float(daily_cv)
+
+
+def _gamma_parameters(daily_cv: float) -> tuple[float, float]:
+    """Shape k and scale theta of the gamma with mean 1 and the given CV.
+
+    Mean ``k * theta = 1`` and variance ``k * theta**2 = CV**2`` give
+    ``k = 1 / CV**2`` and ``theta = CV**2``.
+    """
+    variance = daily_cv**2
+    return 1 / variance, variance
+
+
+def _day_effects(daily_cv: float, rng: np.random.Generator) -> Iterator[float]:
+    """Endless Z of each day, drawn one at a time when asked for.
+
+    With ``daily_cv = 0`` it yields 1.0 and draws nothing.
+    """
+    if daily_cv == 0:
+        while True:
+            yield 1.0
+    k, theta = _gamma_parameters(daily_cv)
+    while True:
+        # numpy's gamma takes the scale theta, not the rate 1 / theta.
+        yield float(rng.gamma(k, theta))
+
+
+def draw_day_effects(
+    daily_cv: float, days: int, seed: int | np.random.SeedSequence
+) -> NDArray[np.float64]:
+    """The daily effects Z that a run with this seed uses, without its arrivals.
+
+    They are the ``day_effect`` of the ``DayRecord`` of ``iter_arrivals`` with
+    the same seed and ``daily_cv``, whatever the rest of the profile: Z has
+    its own stream.
+
+    Args:
+        daily_cv: Coefficient of variation of Z, such as the profile's
+            ``daily_cv``; 0 gives Z = 1 every day.
+        days: Number of days, from day 0; a positive integer.
+        seed: Seed of the run, as in ``iter_arrivals``.
+
+    Returns:
+        The Z of each day.
+
+    Raises:
+        ValueError: If ``daily_cv`` is negative or not finite, or ``days`` is
+            not a positive integer.
+    """
+    daily_cv = _check_daily_cv(daily_cv)
+    days = _check_days(days)
+    _, day_effect_seq = child_streams(seed, 2)
+    effects = _day_effects(daily_cv, np.random.default_rng(day_effect_seq))
+    return np.fromiter(itertools.islice(effects, days), dtype=float, count=days)
+
+
 def iter_arrivals(
     profile: ArrivalProfile,
     days: int,
@@ -104,15 +183,13 @@ def iter_arrivals(
 ) -> Iterator[ArrivalRecord]:
     """Generate the arrivals of ``days`` full days, lazily and in order.
 
-    For each day, the generator starts at 00:00 with the bound of the day and
-    draws candidates with exponential gaps of mean ``1 / bound``. A candidate
-    at ``t`` is kept if ``U * bound <= lambda(t)``, with ``U`` uniform. When a
+    For each day, the generator draws its Z, starts at 00:00 with the bound of
+    the day and draws candidates with exponential gaps of mean ``1 / bound``.
+    A candidate at ``t`` is kept if ``U * bound <= lambda(t)``, with ``U``
+    uniform. When a
     candidate falls past midnight it is discarded and the next day starts
     again at its 00:00 with its own bound; the exponential has no memory, so
     restarting is exact.
-
-    The daily random effect is not applied yet: ``day_effect`` is 1 and the
-    profile's ``daily_cv`` is ignored until task 2.3.
 
     Arguments are checked on the call, before the first arrival is asked for.
 
@@ -123,6 +200,8 @@ def iter_arrivals(
         seed: Seed of the run: an integer or a ``numpy.random.SeedSequence``,
             such as one child of ``SeedSequence(master).spawn(R)`` per
             replication. An integer is equivalent to ``SeedSequence(seed)``.
+            The same seed gives the same run, also when the same
+            ``SeedSequence`` object is passed again.
         on_day: Called with the ``DayRecord`` of each day when the day is
             closed: after its last arrival, when the next one is asked for (or
             when the generator is exhausted). A day left unfinished, because
@@ -142,29 +221,33 @@ def iter_arrivals(
     """
     days = _check_days(days)
     bound_factor = _check_bound_factor(bound_factor)
-    seed_seq = seed if isinstance(seed, np.random.SeedSequence) else np.random.SeedSequence(seed)
-    # Second child: daily effect Z, task 2.3.
-    arrivals_seq, _day_effect_seq = seed_seq.spawn(2)
+    arrivals_seq, day_effect_seq = child_streams(seed, 2)
     rng = np.random.default_rng(arrivals_seq)
-    return _thinning(profile, days, rng, on_day, bound_factor)
+    z_rng = np.random.default_rng(day_effect_seq)
+    return _thinning(profile, days, rng, z_rng, on_day, bound_factor)
 
 
 def _thinning(
     profile: ArrivalProfile,
     days: int,
     rng: np.random.Generator,
+    z_rng: np.random.Generator,
     on_day: Callable[[DayRecord], None] | None,
     bound_factor: float,
 ) -> Iterator[ArrivalRecord]:
     max_h = max(profile.hour_factors)
+    area = day_shape_area(profile)
+    effects = _day_effects(profile.daily_cv, z_rng)
     next_id = 0
 
     for day in range(days):
         start = day * MINUTES_PER_DAY
         end = start + MINUTES_PER_DAY
-        # lambda(t) = scale * shape(minute): the scale is computed once per day.
-        scale = day_scale(day, profile)
-        bound = scale * max_h * bound_factor
+        z = next(effects)  # drawn at the start of the day, from its own stream
+        # lambda(t) = (Z * scale) * shape(minute): Z * scale once per day, in the
+        # same order of products as rate(), so both agree bit for bit.
+        zscale = day_scale(day, profile) * z
+        bound = zscale * max_h * bound_factor
         candidates = accepted = 0
 
         t = float(start)
@@ -174,7 +257,7 @@ def _thinning(
             if t >= end:
                 break  # past midnight: discarded, the next day restarts at 00:00
             candidates += 1
-            lam = scale * shape(t - start, profile)
+            lam = zscale * shape(t - start, profile)
             if lam > bound * (1 + _ROUNDING):
                 raise RuntimeError(
                     f"thinning bound too low on day {day}: lambda({t:.4f}) = {lam:.6g} "
@@ -186,13 +269,12 @@ def _thinning(
                 next_id += 1
 
         if on_day is not None:
-            expected = cumulative_rate(end, profile) - cumulative_rate(start, profile)
             on_day(
                 DayRecord(
                     day=day,
                     date=profile.start_date + timedelta(days=day),
-                    day_effect=1.0,
-                    expected=expected,
+                    day_effect=z,
+                    expected=zscale * area,
                     bound=bound,
                     candidates=candidates,
                     accepted=accepted,
