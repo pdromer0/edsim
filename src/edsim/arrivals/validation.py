@@ -38,7 +38,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 from scipy import stats
 
 from edsim.arrivals.profile import ArrivalProfile
@@ -82,6 +82,8 @@ class ValidationResult:
         passed: Whether the test passes; with ``details``, whether all of
             them pass.
         details: Parts of the test, when it has several intervals.
+        confidence: Level of the confidence interval, such as ``0.99875``,
+            for the tests decided by one (``None`` otherwise).
     """
 
     name: str
@@ -93,6 +95,7 @@ class ValidationResult:
     criterion: str
     passed: bool
     details: tuple["ValidationResult", ...] = ()
+    confidence: float | None = None
 
 
 def _p_value_result(name: str, statistic: float, p_value: float) -> ValidationResult:
@@ -118,6 +121,7 @@ def _interval_result(name: str, summary: Summary, target: float) -> ValidationRe
         target=target,
         criterion=f"{target:g} in {100 * summary.confidence:g}% CI",
         passed=summary.ci_low <= target <= summary.ci_high,
+        confidence=summary.confidence,
     )
 
 
@@ -196,7 +200,47 @@ def check_volume(profile: ArrivalProfile, days: Sequence[DayRecord]) -> Validati
         criterion=total.criterion,
         passed=all(d.passed for d in details),
         details=details,
+        confidence=total.confidence,
     )
+
+
+def hour_of_day(times: ArrayLike) -> NDArray[np.int64]:
+    """Hour of the clock, 0 to 23, of times in minutes since the start date.
+
+    The hour is ``floor(minute of the day / 60)``, capped at 23 so that a
+    time that rounds to the end of a day stays in hour 23.
+    """
+    minutes = np.asarray(times, dtype=float) % MINUTES_PER_DAY
+    return np.minimum(minutes // _MINUTES_PER_HOUR, _HOURS - 1).astype(np.int64)
+
+
+def hourly_counts(
+    profile: ArrivalProfile, arrivals: Sequence[ArrivalRecord], days: Sequence[DayRecord]
+) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
+    """Observed and expected arrivals by hour of the clock, as compared in test b.
+
+    The arrivals of all the days are counted by hour of the clock (24
+    counts). The expected count of each hour is the area of lambda in that
+    hour, with the Z of each day, added over the days and scaled to the total
+    observed, so that it compares the shape and not the volume.
+
+    Args:
+        profile: The profile of the hypothesis.
+        arrivals: Arrivals of one run.
+        days: Day records of the same run, from day 0, for their Z.
+
+    Returns:
+        The 24 observed counts and the 24 expected counts, from 0 h to 23 h;
+        both add up to the number of arrivals.
+    """
+    effects = _day_effects(days)
+    observed = np.bincount(hour_of_day(_times(arrivals)), minlength=_HOURS)
+
+    edges = np.arange(effects.size * _HOURS + 1) * _MINUTES_PER_HOUR
+    per_hour = np.diff(cumulative_rate(edges, profile, day_effects=effects))
+    expected = per_hour.reshape(effects.size, _HOURS).sum(axis=0)
+    expected *= observed.sum() / expected.sum()
+    return observed, expected
 
 
 def check_hourly_shape(
@@ -204,11 +248,8 @@ def check_hourly_shape(
 ) -> ValidationResult:
     """Test b: the hourly shape, with a chi-square test by hour of the clock.
 
-    The arrivals of all the days are counted by hour of the clock (24
-    counts). The expected count of each hour is the area of lambda in that
-    hour, with the Z of each day, added over the days and scaled to the total
-    observed: the test checks the shape, and test a the volume. With the
-    total fixed, there are 23 degrees of freedom.
+    A chi-square test of ``hourly_counts``: the test checks the shape, and
+    test a the volume. With the total fixed, there are 23 degrees of freedom.
 
     Args:
         profile: The profile of the hypothesis.
@@ -218,17 +259,7 @@ def check_hourly_shape(
     Returns:
         The result, with the chi-square statistic and its p-value.
     """
-    effects = _day_effects(days)
-    minutes = _times(arrivals) % MINUTES_PER_DAY
-    hours = np.minimum(minutes // _MINUTES_PER_HOUR, _HOURS - 1).astype(np.int64)
-    observed = np.bincount(hours, minlength=_HOURS)
-
-    edges = np.arange(effects.size * _HOURS + 1) * _MINUTES_PER_HOUR
-    per_hour = np.diff(cumulative_rate(edges, profile, day_effects=effects))
-    expected = per_hour.reshape(effects.size, _HOURS).sum(axis=0)
-    expected *= observed.sum() / expected.sum()
-
-    statistic, p_value = stats.chisquare(observed, expected)
+    statistic, p_value = stats.chisquare(*hourly_counts(profile, arrivals, days))
     return _p_value_result("hourly_shape", statistic, p_value)
 
 
@@ -321,6 +352,37 @@ def conditional_pearson_index(profile: ArrivalProfile, days: Sequence[DayRecord]
     return float(np.mean((counts - expected) ** 2 / expected))
 
 
+def daily_residuals(
+    profile: ArrivalProfile, days: Sequence[DayRecord]
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Standardized residuals of the daily counts, given Z and without Z.
+
+    With ``e`` the expected arrivals of a day without Z, from the profile:
+
+    - given Z: ``(c - Z * e) / sqrt(Z * e)``, the Poisson of each day;
+    - without Z: ``(c - e) / sqrt(e + CV**2 * e**2)``, the negative binomial
+      over the gamma, with the profile's ``daily_cv``.
+
+    Under the hypothesis both have mean 0 and variance 1, and with about 300
+    arrivals a day they are close to a standard normal. The raw counts are
+    not compared with one distribution because each day has its own mean.
+    The mean of the squared residuals given Z is
+    ``conditional_pearson_index``.
+
+    Args:
+        profile: The profile of the hypothesis.
+        days: Day records of one run, from day 0, for their counts and Z.
+
+    Returns:
+        The residuals given Z and without Z, one per day.
+    """
+    counts, expected = _counts_and_expected(profile, days)
+    given_z = expected * _day_effects(days)
+    conditional = (counts - given_z) / np.sqrt(given_z)
+    unconditional = (counts - expected) / np.sqrt(expected + profile.daily_cv**2 * expected**2)
+    return conditional, unconditional
+
+
 def check_dispersion(
     profile: ArrivalProfile, replications: Sequence[Sequence[DayRecord]]
 ) -> ValidationResult:
@@ -383,6 +445,7 @@ def check_dispersion(
         criterion=unconditional.criterion,
         passed=all(d.passed for d in details),
         details=details,
+        confidence=unconditional.confidence,
     )
 
 
