@@ -6,7 +6,7 @@ import pytest
 from scipy.integrate import quad
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
-from edsim.arrivals.rate import cumulative_rate, day_scale, rate, shape
+from edsim.arrivals.rate import cumulative_rate, day_scale, day_shape_area, rate, shape
 
 EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
@@ -192,10 +192,96 @@ def test_tasa_es_escala_por_forma(profile):
     assert shape(11 * 60 + 30, profile) == pytest.approx(max(profile.hour_factors), rel=1e-15)
 
 
+def test_tasa_con_z_es_escala_por_z_por_forma(profile):
+    # Con Z, el thinning calcula zscale = day_scale · Z una vez al día y λ = zscale · forma:
+    # debe ser idéntico, bit a bit, a rate con day_effects.
+    effects = np.ones(251)
+    effects[[0, 6, 27, 250]] = [1.07, 0.93, 1.2, 0.5]
+    for day in (0, 6, 27, 250):
+        start = day * DAY
+        t = start + np.arange(0, DAY, 0.37)
+        zscale = day_scale(day, profile) * effects[day]
+        assert np.array_equal(
+            zscale * shape(t - start, profile), rate(t, profile, day_effects=effects)
+        )
+
+
 @pytest.mark.parametrize("day", [-1, 1.5, True, [0, -2]])
 def test_escala_diaria_dia_invalido(profile, day):
     with pytest.raises(ValueError, match="day must"):
         day_scale(day, profile)
+
+
+# --- Efecto diario Z ------------------------------------------------------------
+
+
+def day_area(profile: ArrivalProfile, day: int, **kwargs) -> float:
+    return cumulative_rate((day + 1) * DAY, profile, **kwargs) - cumulative_rate(
+        day * DAY, profile, **kwargs
+    )
+
+
+def test_area_de_la_forma_en_un_dia(profile):
+    # Los factores horarios tienen media 1: el área de la forma en un día es 1440.
+    assert day_shape_area(profile) == pytest.approx(DAY, rel=1e-12)
+    assert type(day_shape_area(profile)) is float
+    for day in (0, 27, 250):
+        assert day_area(profile, day) == pytest.approx(
+            day_scale(day, profile) * day_shape_area(profile), rel=1e-12
+        )
+
+
+@pytest.mark.parametrize("function", [rate, cumulative_rate])
+def test_day_effects_unos_igual_que_sin(profile, function):
+    t = np.linspace(0, 5 * DAY - 1e-6, 1001)
+
+    assert np.array_equal(function(t, profile, day_effects=np.ones(5)), function(t, profile))
+
+
+def test_z2_duplica_lambda_y_el_area_del_dia(profile):
+    effects = [1.0, 2.0, 1.0]
+    t = np.arange(0, 3 * DAY, 7.3)
+
+    ratio = rate(t, profile, day_effects=effects) / rate(t, profile)
+    assert ratio == pytest.approx(np.array(effects)[(t // DAY).astype(int)], rel=1e-15)
+
+    for day, z in enumerate(effects):
+        assert day_area(profile, day, day_effects=effects) == pytest.approx(
+            z * day_area(profile, day), rel=1e-12
+        )
+    # Al final, Λ lleva un día 1 más: el área extra del día con Z = 2.
+    assert cumulative_rate(3 * DAY, profile, day_effects=effects) == pytest.approx(
+        cumulative_rate(3 * DAY, profile) + day_area(profile, 1), rel=1e-12
+    )
+
+
+def test_lambda_al_final_del_horizonte(profile):
+    # Λ(n·1440) solo recorre los días 0 a n−1: basta con sus n valores de Z. λ en ese
+    # instante ya es del día n y necesita uno más.
+    effects = [1.1, 0.9]
+
+    assert cumulative_rate(2 * DAY, profile, day_effects=effects) == pytest.approx(
+        1.1 * day_area(profile, 0) + 0.9 * day_area(profile, 1), rel=1e-12
+    )
+    with pytest.raises(ValueError, match="day_effects"):
+        rate(2 * DAY, profile, day_effects=effects)
+
+
+@pytest.mark.parametrize("function", [rate, cumulative_rate])
+@pytest.mark.parametrize(
+    "effects",
+    [
+        [1.0, 1.0],  # no cubre el día 2
+        [1.0, 0.0, 1.0],
+        [1.0, -1.0, 1.0],
+        [1.0, np.nan, 1.0],
+        [1.0, np.inf, 1.0],
+        [[1.0, 1.0, 1.0]],  # 2-D
+    ],
+)
+def test_day_effects_invalidos(profile, function, effects):
+    with pytest.raises(ValueError, match="day_effects"):
+        function(2 * DAY + 100, profile, day_effects=effects)
 
 
 # --- Vectorización y errores ---------------------------------------------------

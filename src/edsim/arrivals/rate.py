@@ -3,7 +3,7 @@
 Time ``t`` is in minutes since 00:00 of the profile's ``start_date``. The rate
 is in arrivals per minute::
 
-    lambda(t) = day_scale(day) * shape(minute of the day)
+    lambda(t) = Z(day) * day_scale(day) * shape(minute of the day)
     day_scale = daily_base / 1440 * d(weekday) * m(month)
 
 ``shape`` is the hourly profile made continuous: each hour factor is the value
@@ -20,14 +20,15 @@ numerical integration::
                 + day_scale(current day) * area of the shape up to the minute
 
 Splitting lambda into a per-day scale and a shape within the day is what lets
-a per-day random effect (the daily Z of a later task) enter as one more factor
-of ``day_scale``, without changing the rest.
+the daily random effect Z enter as one more factor of the day: both functions
+take an optional ``day_effects``, the Z of each day from day 0, such as the
+``day_effect`` of the ``DayRecord`` of a run. Without it, every Z is 1.
 
 Both functions are vectorized: they take a scalar or an array of any shape,
 because the validation computes Lambda at hundreds of thousands of arrivals.
 """
 
-from functools import cache
+from functools import lru_cache
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -49,6 +50,27 @@ def _check_times(t: ArrayLike) -> NDArray[np.float64]:
             f"t must not be negative (minutes since fecha_inicio), got minimum {times.min()}"
         )
     return times
+
+
+def _check_day_effects(day_effects: ArrayLike, needed: int) -> NDArray[np.float64]:
+    """Return the daily effects as a float array, or raise if they are not valid.
+
+    ``needed`` is the number of days the caller uses, from day 0.
+    """
+    effects = np.asarray(day_effects, dtype=float)
+    if effects.ndim != 1:
+        raise ValueError(
+            f"day_effects must be a 1-D sequence with the Z of each day, "
+            f"got {effects.ndim} dimensions"
+        )
+    if not np.all(np.isfinite(effects)) or np.any(effects <= 0):
+        raise ValueError(f"day_effects must be finite and positive, got {day_effects!r}")
+    if effects.size < needed:
+        raise ValueError(
+            f"day_effects must cover day {needed - 1}: needs at least {needed} values, "
+            f"got {effects.size}"
+        )
+    return effects
 
 
 def _split(times: NDArray[np.float64]) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
@@ -137,13 +159,14 @@ def shape(minutes: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.flo
     return _as_output(_shape(minutes, profile))
 
 
-@cache
+@lru_cache(maxsize=8)
 def _shape_knots(profile: ArrivalProfile) -> tuple[NDArray, NDArray, NDArray]:
     """Knots of the hourly shape within one day and the cumulative area at each.
 
     Cached per profile, which is frozen and hashable: the thinning generator
-    needs the knots at every candidate. The arrays are read-only, because
-    every caller shares them.
+    needs the knots at every candidate. The cache keeps the last few
+    profiles, enough for a validation that compares several of them. The
+    arrays are read-only, because every caller shares them.
 
     The knots are 0, 30, 90, ..., 1410 and 1440 minutes. At 0 and 1440 the
     shape is halfway between the 23 h and 0 h factors, by periodicity. The
@@ -164,6 +187,22 @@ def _shape_knots(profile: ArrivalProfile) -> tuple[NDArray, NDArray, NDArray]:
     return x, y, area
 
 
+def day_shape_area(profile: ArrivalProfile) -> float:
+    """Area of the hourly shape over a full day: 1440, up to rounding.
+
+    The expected arrivals of a day are ``Z * day_scale(day) * day_shape_area``,
+    the same product that ``cumulative_rate`` adds up day by day. The thinning
+    generator uses it to fill ``DayRecord.expected`` without computing Lambda.
+
+    Args:
+        profile: The arrival profile.
+
+    Returns:
+        The exact area of the shape from 0:00 to 24:00, in minutes.
+    """
+    return float(_shape_knots(profile)[2][-1])
+
+
 def _shape_area(minutes: NDArray[np.float64], profile: ArrivalProfile) -> NDArray[np.float64]:
     """Exact area of the hourly shape from 0:00 to each minute of the day."""
     x, y, area = _shape_knots(profile)
@@ -178,26 +217,39 @@ def _as_output(values: NDArray[np.float64]) -> float | NDArray[np.float64]:
     return float(values) if values.ndim == 0 else values
 
 
-def rate(t: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
+def rate(
+    t: ArrayLike, profile: ArrivalProfile, *, day_effects: ArrayLike | None = None
+) -> float | NDArray[np.float64]:
     """Arrival rate lambda(t), in arrivals per minute.
 
     Args:
         t: Minutes since 00:00 of ``profile.start_date``; a scalar or an array.
         profile: The arrival profile.
+        day_effects: Daily random effect Z of each day, from day 0. It must
+            cover the day of every time. Without it, every Z is 1.
 
     Returns:
         The rate at each time: a float for a scalar ``t``, otherwise an array
         with the shape of ``t``.
 
     Raises:
-        ValueError: If any time is negative or not finite.
+        ValueError: If any time is negative or not finite, or ``day_effects``
+            is not a 1-D sequence of finite positive numbers covering the
+            days of ``t``.
     """
     times = _check_times(t)
     days, minutes = _split(times)
-    return _as_output(_day_scale(days, profile) * _shape(minutes, profile))
+    scale = _day_scale(days, profile)
+    if day_effects is not None:
+        needed = int(days.max()) + 1 if days.size else 0
+        # (scale * Z) * shape: the same order of products as the thinning.
+        scale = scale * _check_day_effects(day_effects, needed)[days]
+    return _as_output(scale * _shape(minutes, profile))
 
 
-def cumulative_rate(t: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
+def cumulative_rate(
+    t: ArrayLike, profile: ArrivalProfile, *, day_effects: ArrayLike | None = None
+) -> float | NDArray[np.float64]:
     """Cumulative intensity Lambda(t): expected number of arrivals in ``[0, t]``.
 
     The arrivals between ``a`` and ``b`` follow a Poisson distribution with
@@ -207,23 +259,41 @@ def cumulative_rate(t: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np
     Args:
         t: Minutes since 00:00 of ``profile.start_date``; a scalar or an array.
         profile: The arrival profile.
+        day_effects: Daily random effect Z of each day, from day 0. It must
+            cover every day that ``[0, t]`` goes through: ``Lambda(n * 1440)``,
+            at the end of ``n`` days, needs only their ``n`` values. Without
+            it, every Z is 1.
 
     Returns:
         Lambda at each time: a float for a scalar ``t``, otherwise an array
         with the shape of ``t``.
 
     Raises:
-        ValueError: If any time is negative or not finite.
+        ValueError: If any time is negative or not finite, or ``day_effects``
+            is not a 1-D sequence of finite positive numbers covering the
+            days of ``t``.
     """
     times = _check_times(t)
+    effects = None
+    if day_effects is not None:
+        needed = int(np.ceil(times.max() / MINUTES_PER_DAY)) if times.size else 0
+        effects = _check_day_effects(day_effects, needed)
     if times.size == 0:
         return times
     days, minutes = _split(times)
 
     # Scale of every day up to the last one asked for, and the area of the
     # full days before each day (cumulative sum shifted by one day).
-    scales = _day_scale(np.arange(days.max() + 1), profile)
-    day_area = _shape_knots(profile)[2][-1]  # 1440 up to rounding
+    n_days = int(days.max()) + 1
+    scales = _day_scale(np.arange(n_days), profile)
+    if effects is not None:
+        # A time at the midnight that ends the effects falls on the next day
+        # with minute 0: its Z multiplies an area of 0, so 1 is as good as any.
+        z = np.ones(n_days)
+        covered = min(n_days, effects.size)
+        z[:covered] = effects[:covered]
+        scales = scales * z
+    day_area = day_shape_area(profile)
     before = np.concatenate([[0.0], np.cumsum(scales * day_area)])
 
     return _as_output(before[days] + scales[days] * _shape_area(minutes, profile))
