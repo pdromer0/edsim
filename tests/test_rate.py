@@ -6,7 +6,7 @@ import pytest
 from scipy.integrate import quad
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
-from edsim.arrivals.rate import cumulative_rate, rate
+from edsim.arrivals.rate import cumulative_rate, day_scale, rate
 
 EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
@@ -24,7 +24,7 @@ def profile() -> ArrivalProfile:
     return load_profile(EXAMPLE)
 
 
-def day_scale(profile: ArrivalProfile, day: int) -> float:
+def day_scale_reference(profile: ArrivalProfile, day: int) -> float:
     """B/1440 · d · m of a day, computed with datetime, independently of rate.py."""
     when = profile.start_date + timedelta(days=day)
     return (
@@ -51,7 +51,7 @@ def test_centros_de_hora(profile, when, weekday):
     assert when.weekday() == weekday
     centres = day * DAY + 60 * np.arange(24) + 30
 
-    expected = [day_scale(profile, day) * h for h in profile.hour_factors]
+    expected = [day_scale_reference(profile, day) * h for h in profile.hour_factors]
 
     assert rate(centres, profile) == pytest.approx(expected, rel=1e-12)
 
@@ -73,7 +73,7 @@ def test_medianoche_enlaza_2330_con_0030(profile):
     # Interpolación periódica: a las 0:00 y justo antes de las 24:00, λ está a medio
     # camino entre el centro de las 23 h y el de las 0 h.
     h = profile.hour_factors
-    midnight = day_scale(profile, 0) * (h[23] + h[0]) / 2
+    midnight = day_scale_reference(profile, 0) * (h[23] + h[0]) / 2
 
     assert rate(0, profile) == pytest.approx(midnight, rel=1e-12)
     assert rate(DAY - 1e-9, profile) == pytest.approx(midnight, rel=1e-9)
@@ -164,6 +164,25 @@ def test_lambda_empieza_en_cero_y_crece(profile):
 
     assert cumulative_rate(0, profile) == 0
     assert np.all(np.diff(values) > 0)
+
+
+# --- Escala diaria -------------------------------------------------------------
+
+
+def test_escala_diaria(profile):
+    days = [0, 6, 26, 27, 250, 364]  # lunes, domingo, 31 de enero, 1 de febrero, septiembre, 2027
+
+    assert day_scale(0, profile) == pytest.approx(LAMBDA_1130 / max(profile.hour_factors), abs=1e-5)
+    assert type(day_scale(0, profile)) is float
+    assert day_scale(np.array(days), profile) == pytest.approx(
+        [day_scale_reference(profile, d) for d in days], rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("day", [-1, 1.5, True, [0, -2]])
+def test_escala_diaria_dia_invalido(profile, day):
+    with pytest.raises(ValueError, match="day must"):
+        day_scale(day, profile)
 
 
 # --- Vectorización y errores ---------------------------------------------------

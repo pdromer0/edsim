@@ -73,6 +73,34 @@ def _day_scale(days: NDArray[np.int64], profile: ArrivalProfile) -> NDArray[np.f
     )
 
 
+def day_scale(day: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
+    """Rate scale of a day: ``daily_base / 1440 * d(weekday) * m(month)``.
+
+    It is the factor that multiplies the hourly shape on that day, so
+    ``rate(t) = day_scale(day of t) * shape(minute of t)``. The thinning
+    generator uses it for the bound of each day, ``day_scale * max(h)``.
+
+    Args:
+        day: Day index, 0 for ``profile.start_date``; an integer or an array
+            of integers.
+        profile: The arrival profile.
+
+    Returns:
+        The scale in arrivals per minute: a float for a scalar ``day``,
+        otherwise an array with the shape of ``day``.
+
+    Raises:
+        ValueError: If any day is not an integer or is negative.
+    """
+    days = np.asarray(day)
+    # NumPy's bool is not an integer type, so True does not pass as day 1.
+    if not np.issubdtype(days.dtype, np.integer):
+        raise ValueError(f"day must be an integer day index, got {day!r}")
+    if np.any(days < 0):
+        raise ValueError(f"day must not be negative, got minimum {days.min()}")
+    return _as_output(_day_scale(days.astype(np.int64), profile))
+
+
 def _shape_knots(profile: ArrivalProfile) -> tuple[NDArray, NDArray, NDArray]:
     """Knots of the hourly shape within one day and the cumulative area at each.
 
