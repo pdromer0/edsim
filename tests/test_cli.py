@@ -1,10 +1,15 @@
 import csv
 import dataclasses
 from importlib.metadata import version
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from edsim.arrivals.profile import load_profile
+from edsim.arrivals.report import config_fingerprint, format_validation
+from edsim.arrivals.thinning import simulate_arrivals
+from edsim.arrivals.validation import validate_arrivals
 from edsim.cli import main
 from edsim.queueing.replications import METRIC_NAMES, compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep
@@ -46,7 +51,7 @@ def test_version(capsys):
     assert capsys.readouterr().out.strip() == f"edsim {version('edsim')}"
 
 
-@pytest.mark.parametrize("argv", [[], ["mm1"]])
+@pytest.mark.parametrize("argv", [[], ["mm1"], ["llegadas"]])
 def test_subcomando_obligatorio(argv, capsys):
     with pytest.raises(SystemExit) as exc:
         main(argv)
@@ -208,3 +213,163 @@ def test_plot_sweep_curva_y_puntos():
     np.testing.assert_allclose(
         data_line.get_ydata(), [c.metric("wq").summary.mean for _, c in points]
     )
+
+
+# --- llegadas ------------------------------------------------------------------------
+
+EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
+# Corridas mínimas: aquí se prueba la CLI, no la estadística.
+GENERATE_ARGS = ["--dias", "14", "--semilla", "7"]
+VALIDATE_ARGS = ["--dias", "14", "--replicas", "2", "--ejecuciones-cortas", "2", "--semilla", "7"]
+PLOTS = ("perfil_horario.png", "qq_reescalado.png", "recuentos_diarios.png")
+
+
+def small_validation():
+    return validate_arrivals(load_profile(EXAMPLE), 14, 2, 7, short_runs=2)
+
+
+def test_generar_escribe_los_dos_csv(tmp_path, capsys):
+    out_dir = tmp_path / "a" / "b"  # no existe: la CLI debe crearlo
+
+    code = main(
+        ["llegadas", "generar", "--config", str(EXAMPLE), *GENERATE_ARGS, "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    arrivals, days = simulate_arrivals(load_profile(EXAMPLE), 14, 7)
+    with (out_dir / "llegadas.csv").open(newline="", encoding="utf-8") as f:
+        arrival_rows = list(csv.DictReader(f))
+    with (out_dir / "dias.csv").open(newline="", encoding="utf-8") as f:
+        day_rows = list(csv.DictReader(f))
+    assert [float(r["minuto"]) for r in arrival_rows] == [a.time for a in arrivals]
+    assert [int(r["aceptadas"]) for r in day_rows] == [d.accepted for d in days]
+    for row in (arrival_rows[0], day_rows[-1]):
+        assert row["config"] == str(EXAMPLE)
+        assert row["huella"] == config_fingerprint(EXAMPLE)
+        assert (row["dias"], row["semilla"]) == ("14", "7")
+    assert str(out_dir / "llegadas.csv") in out
+    assert str(out_dir / "dias.csv") in out
+    assert f"{len(arrivals)} llegadas" in out
+
+
+def test_validar_imprime_cabecera_y_tabla_y_guarda_las_graficas(tmp_path, capsys):
+    validation = small_validation()
+
+    code = main(
+        ["llegadas", "validar", "--config", str(EXAMPLE), *VALIDATE_ARGS, "--salida", str(tmp_path)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == (0 if validation.passed else 1)
+    for text in (
+        str(EXAMPLE),
+        f"huella {config_fingerprint(EXAMPLE)}",
+        "CV 0.06",
+        "14 días",
+        "2 réplicas",
+        "2 ejecuciones cortas de 14 días",
+        "semilla 7",
+    ):
+        assert text in out
+    # La tabla impresa es exactamente la de la validación con esos parámetros.
+    assert format_validation(validation.results) in out
+    for name in PLOTS:
+        assert (tmp_path / name).read_bytes().startswith(b"\x89PNG")
+        assert str(tmp_path / name) in out
+
+
+def test_validar_devuelve_1_si_falla_y_guarda_las_graficas(tmp_path, monkeypatch, capsys):
+    validation = small_validation()
+    failed = dataclasses.replace(validation.results[1], passed=False)
+    failing = dataclasses.replace(
+        validation, results=(validation.results[0], failed, *validation.results[2:])
+    )
+    monkeypatch.setattr("edsim.cli.validate_arrivals", lambda *args, **kwargs: failing)
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["llegadas", "validar", "--config", str(EXAMPLE), *VALIDATE_ARGS, "--salida", str(out_dir)]
+    )
+
+    assert code == 1
+    assert "FALLAN b" in capsys.readouterr().out
+    for name in PLOTS:
+        assert (out_dir / name).is_file()
+
+
+def test_validar_devuelve_0_si_pasa(tmp_path, monkeypatch):
+    validation = small_validation()
+    passing = dataclasses.replace(
+        validation, results=tuple(dataclasses.replace(r, passed=True) for r in validation.results)
+    )
+    monkeypatch.setattr("edsim.cli.validate_arrivals", lambda *args, **kwargs: passing)
+
+    code = main(
+        ["llegadas", "validar", "--config", str(EXAMPLE), *VALIDATE_ARGS, "--salida", str(tmp_path)]
+    )
+
+    assert code == 0
+
+
+def write_config(tmp_path, text):
+    path = tmp_path / "perfil.toml"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    ("comando", "config", "extra", "message"),
+    [
+        ("generar", "no_existe.toml", [], "no_existe.toml"),
+        ("validar", "no_existe.toml", [], "no_existe.toml"),
+        ("generar", "toml_invalido", [], "perfil.toml"),
+        ("validar", "toml_invalido", [], "perfil.toml"),
+        ("validar", "clave_desconocida", [], "unknown keys: extra"),
+        ("generar", "ejemplo", ["--dias", "0"], "days"),
+        ("validar", "ejemplo", ["--dias", "13"], "days"),
+        ("validar", "ejemplo", ["--replicas", "1"], "replicas"),
+        ("validar", "ejemplo", ["--ejecuciones-cortas", "1"], "short_runs"),
+        ("validar", "ejemplo", ["--dias", "catorce"], "--dias"),
+    ],
+)
+def test_llegadas_errores_de_uso(comando, config, extra, message, tmp_path, capsys):
+    configs = {
+        "no_existe.toml": str(tmp_path / "no_existe.toml"),
+        "toml_invalido": write_config(tmp_path, "base_diaria = \n"),
+        "clave_desconocida": write_config(tmp_path, EXAMPLE.read_text() + "extra = 1\n"),
+        "ejemplo": str(EXAMPLE),
+    }
+    out_dir = tmp_path / "salida"
+    base = GENERATE_ARGS if comando == "generar" else VALIDATE_ARGS
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "llegadas",
+                comando,
+                "--config",
+                configs[config],
+                *base,
+                *extra,
+                "--salida",
+                str(out_dir),
+            ]
+        )
+
+    err = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert message in err
+    assert "Traceback" not in err
+    assert not out_dir.exists()
+
+
+def test_config_por_defecto_es_config_llegadas(monkeypatch, tmp_path):
+    # Desde la raíz del repositorio, --config se puede omitir.
+    monkeypatch.chdir(Path(__file__).parent.parent)
+    out_dir = tmp_path / "salida"
+
+    assert main(["llegadas", "generar", "--dias", "1", "--salida", str(out_dir)]) == 0
+    with (out_dir / "dias.csv").open(newline="", encoding="utf-8") as f:
+        (row,) = csv.DictReader(f)
+    assert row["config"] == "config/llegadas.toml"
