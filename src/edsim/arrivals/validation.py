@@ -214,6 +214,60 @@ def hour_of_day(times: ArrayLike) -> NDArray[np.int64]:
     return np.minimum(minutes // _MINUTES_PER_HOUR, _HOURS - 1).astype(np.int64)
 
 
+def interval_counts(
+    profile: ArrivalProfile,
+    arrivals: Sequence[ArrivalRecord],
+    days: Sequence[DayRecord],
+    *,
+    width: int = 60,
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
+    """Observed and expected arrivals in consecutive intervals of the whole run.
+
+    The days are cut into intervals of ``width`` minutes, from day 0 to the
+    end of the last day. An arrival counts in the interval of its minute of
+    the day, with the same rule as ``hour_of_day``: a time that rounds to the
+    end of a day stays in its last interval. The expected count of each
+    interval is the area of lambda in it, ``Lambda(end) - Lambda(start)``,
+    with the Z of each day: the mean of a Poisson count, not rescaled.
+
+    Args:
+        profile: The profile of the hypothesis.
+        arrivals: Arrivals of one run.
+        days: Day records of the same run, from day 0, for their Z.
+        width: Minutes per interval; a positive integer that divides 1440.
+
+    Returns:
+        The interval edges in minutes (one more than intervals), and the
+        observed and expected arrivals of each interval.
+
+    Raises:
+        ValueError: If ``width`` does not divide 1440 or an arrival falls
+            outside the days.
+    """
+    # bool is a subclass of int in Python: True must not pass as 1 minute.
+    if (
+        isinstance(width, bool)
+        or not isinstance(width, int)
+        or width < 1
+        or MINUTES_PER_DAY % width
+    ):
+        raise ValueError(f"width must be a positive integer that divides 1440, got {width!r}")
+    effects = _day_effects(days)
+    per_day = MINUTES_PER_DAY // width
+    n = effects.size * per_day
+
+    times = _times(arrivals)
+    day = (times // MINUTES_PER_DAY).astype(np.int64)
+    if day.size and (day.min() < 0 or day.max() >= effects.size):
+        raise ValueError("every arrival must fall on one of the days")
+    slot = np.minimum((times % MINUTES_PER_DAY) // width, per_day - 1).astype(np.int64)
+    observed = np.bincount(day * per_day + slot, minlength=n)
+
+    edges = np.arange(n + 1) * width
+    expected = np.diff(cumulative_rate(edges, profile, day_effects=effects))
+    return edges, observed, expected
+
+
 def hourly_counts(
     profile: ArrivalProfile, arrivals: Sequence[ArrivalRecord], days: Sequence[DayRecord]
 ) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
@@ -233,12 +287,11 @@ def hourly_counts(
         The 24 observed counts and the 24 expected counts, from 0 h to 23 h;
         both add up to the number of arrivals.
     """
-    effects = _day_effects(days)
-    observed = np.bincount(hour_of_day(_times(arrivals)), minlength=_HOURS)
-
-    edges = np.arange(effects.size * _HOURS + 1) * _MINUTES_PER_HOUR
-    per_hour = np.diff(cumulative_rate(edges, profile, day_effects=effects))
-    expected = per_hour.reshape(effects.size, _HOURS).sum(axis=0)
+    _, per_hour, expected_per_hour = interval_counts(
+        profile, arrivals, days, width=_MINUTES_PER_HOUR
+    )
+    observed = per_hour.reshape(-1, _HOURS).sum(axis=0)
+    expected = expected_per_hour.reshape(-1, _HOURS).sum(axis=0)
     expected *= observed.sum() / expected.sum()
     return observed, expected
 
@@ -539,8 +592,13 @@ def validate_arrivals(
     *,
     short_runs: int = 100,
     short_days: int = 14,
+    hypothesis: ArrivalProfile | None = None,
 ) -> ArrivalValidation:
-    """Generate arrivals with ``profile`` and run the five tests against it.
+    """Generate arrivals with ``profile`` and run the five tests against a hypothesis.
+
+    The hypothesis is ``profile`` itself unless ``hypothesis`` is given. A
+    different one measures the power of the tests: arrivals generated with a
+    base of 330 and validated against 300 must fail test a.
 
     ``child_streams(seed, 3)`` gives one child per block: the long run of
     ``days`` days (tests a to c), the ``replicas`` replications of ``days``
@@ -551,13 +609,15 @@ def validate_arrivals(
     keeps the long run and the earlier runs.
 
     Args:
-        profile: The profile used both to generate and to validate.
+        profile: The profile used to generate the arrivals.
         days: Days of the long run and of each replication, at least
             ``MIN_DAYS``.
         replicas: Replications for test d, at least 2.
         seed: Master seed: an integer or a ``numpy.random.SeedSequence``.
         short_runs: Short runs for test e, at least 2.
         short_days: Days of each short run, at least 1.
+        hypothesis: The profile the tests compare with; ``profile`` if
+            ``None``. It only changes the tests, never the records.
 
     Returns:
         The results of the five tests and the records they used.
@@ -580,12 +640,14 @@ def validate_arrivals(
         for child in child_streams(short_seq, short_runs)
     ]
 
+    if hypothesis is None:
+        hypothesis = profile
     results = (
-        check_volume(profile, day_records),
-        check_hourly_shape(profile, arrivals, day_records),
-        check_rescaled_gaps(profile, arrivals, day_records),
-        check_dispersion(profile, replications),
-        check_p_uniformity(profile, runs),
+        check_volume(hypothesis, day_records),
+        check_hourly_shape(hypothesis, arrivals, day_records),
+        check_rescaled_gaps(hypothesis, arrivals, day_records),
+        check_dispersion(hypothesis, replications),
+        check_p_uniformity(hypothesis, runs),
     )
     return ArrivalValidation(
         results=results, arrivals=arrivals, days=day_records, replications=replications

@@ -8,6 +8,7 @@ import pytest
 from scipy import stats
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
+from edsim.arrivals.rate import cumulative_rate
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, simulate_arrivals
 from edsim.arrivals.validation import (
     ALPHA,
@@ -21,6 +22,7 @@ from edsim.arrivals.validation import (
     daily_residuals,
     expected_per_day,
     hourly_counts,
+    interval_counts,
     p_value_uniformity,
     pearson_index,
     rescaled_gaps,
@@ -221,6 +223,64 @@ def test_recuentos_horarios_con_z_y_el_perfil_de_ejemplo(example):
     result = check_hourly_shape(example, arrivals, days)
     statistic, p_value = stats.chisquare(observed, expected)
     assert (result.statistic, result.p_value) == (statistic, p_value)
+
+
+# --- Recuentos por intervalo -------------------------------------------------
+
+
+def test_intervalos_a_mano_perfil_plano():
+    # Base 1440: λ = 1 por minuto, así que se esperan `width` llegadas por intervalo;
+    # con Z = 2 el segundo día, el doble. Tres llegadas en el primer intervalo del día 0
+    # (una justo en su borde superior cuenta en el siguiente) y una en el último del día 1.
+    profile = flat_profile(1440)
+    arrivals = make_arrivals([0.0, 10.0, 29.999, 30.0, DAY + 1439.5])
+    days = make_days(profile, [4, 1], effects=[1.0, 2.0])
+
+    edges, observed, expected = interval_counts(profile, arrivals, days, width=30)
+
+    assert edges.tolist() == (np.arange(97) * 30).tolist()
+    assert observed.tolist() == [3, 1] + [0] * 93 + [1]
+    assert expected == pytest.approx([30.0] * 48 + [60.0] * 48, rel=1e-12)
+
+
+def test_intervalos_suman_llegadas_y_lambda_del_horizonte(example):
+    arrivals, days = simulate_arrivals(example, 3, 11)
+    effects = [d.day_effect for d in days]
+
+    edges, observed, expected = interval_counts(example, arrivals, days)
+
+    assert edges[-1] == 3 * DAY and observed.size == expected.size == 72
+    assert observed.sum() == len(arrivals)
+    assert expected.sum() == pytest.approx(sum(d.expected for d in days), rel=1e-12)
+    # Lo esperado es Λ con la Z de cada día en cada intervalo.
+    assert expected == pytest.approx(
+        np.diff(cumulative_rate(edges, example, day_effects=effects)), rel=1e-12
+    )
+
+
+def test_intervalos_de_una_hora_dan_los_recuentos_horarios(example):
+    # Sumando por hora del reloj y reescalando al total se obtiene hourly_counts.
+    arrivals, days = simulate_arrivals(example, 3, 11)
+
+    _, observed, expected = interval_counts(example, arrivals, days, width=60)
+    hourly_observed, hourly_expected = hourly_counts(example, arrivals, days)
+
+    assert observed.reshape(3, 24).sum(axis=0).tolist() == hourly_observed.tolist()
+    rescaled = expected.reshape(3, 24).sum(axis=0) * len(arrivals) / expected.sum()
+    assert rescaled == pytest.approx(hourly_expected, rel=1e-12)
+
+
+@pytest.mark.parametrize("width", [0, -60, 7, 60.0, True])
+def test_intervalos_anchura_invalida(width):
+    profile = flat_profile(240)
+    with pytest.raises(ValueError, match="width"):
+        interval_counts(profile, make_arrivals([1.0]), make_days(profile, [1]), width=width)
+
+
+def test_intervalos_llegada_fuera_de_los_dias():
+    profile = flat_profile(240)
+    with pytest.raises(ValueError, match="day"):
+        interval_counts(profile, make_arrivals([DAY + 1.0]), make_days(profile, [1]))
 
 
 # --- c. Huecos reescalados ----------------------------------------------------
@@ -462,6 +522,34 @@ def test_validacion_bloques_independientes(example, small):
     assert (more.arrivals, more.days) == (small.arrivals, small.days)
     assert more.replications[:2] == small.replications
     assert more.result("volume") == small.result("volume")
+
+
+def test_validacion_hipotesis_por_defecto_es_el_perfil(example, small):
+    assert validate_arrivals(example, seed=7, hypothesis=example, **SMALL) == small
+
+
+def test_validacion_contra_otra_hipotesis(example, small):
+    # Se genera con base 330 y se valida contra la base 300 del ejemplo: los registros
+    # son los de generar con 330, y cada prueba es la de check_* contra la hipótesis.
+    generator = dataclasses.replace(example, daily_base=330)
+    reference = validate_arrivals(generator, seed=7, **SMALL)
+
+    validation = validate_arrivals(generator, seed=7, hypothesis=example, **SMALL)
+
+    assert (validation.arrivals, validation.days) == (reference.arrivals, reference.days)
+    assert validation.replications == reference.replications
+    assert validation.result("volume") == check_volume(example, validation.days)
+    assert validation.result("hourly_shape") == check_hourly_shape(
+        example, validation.arrivals, validation.days
+    )
+    assert validation.result("rescaled_gaps") == check_rescaled_gaps(
+        example, validation.arrivals, validation.days
+    )
+    assert validation.result("dispersion") == check_dispersion(example, validation.replications)
+    # Contra 300, 330 es un 10 % de más; contra sí misma, ~1.
+    assert validation.result("volume").statistic == pytest.approx(
+        1.1 * reference.result("volume").statistic, rel=1e-9
+    )
 
 
 @pytest.mark.parametrize(
