@@ -20,6 +20,8 @@ uv run pre-commit install    # activa los hooks de pre-commit (una vez)
 
 ```bash
 uv run edsim --version       # CLI
+uv run edsim mm1 comparar    # M/M/1: tabla de teoría frente a simulación
+uv run edsim mm1 barrido     # M/M/1: CSV y gráfica de Wq frente a ρ en resultados/mm1/
 uv run pytest                # tests
 uv run ruff check .          # lint
 uv run ruff format .         # formato
