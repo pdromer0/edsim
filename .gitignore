@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Resultados generados por la CLI: se regeneran, no se versionan
+resultados/
