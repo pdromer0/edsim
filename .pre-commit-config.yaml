@@ -1,4 +1,9 @@
 repos:
+  # Primero: borra resultados e imágenes de los notebooks, para que ruff revise el notebook limpio.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.3
     hooks:

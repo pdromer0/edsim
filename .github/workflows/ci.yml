@@ -18,3 +18,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
+      - name: Notebook (modo rápido)
+        run: uv run pytest --nbmake notebooks/
+        env:
+          EDSIM_NB_RAPIDO: "1"

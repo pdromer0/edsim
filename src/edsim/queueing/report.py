@@ -16,6 +16,7 @@ import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
+from edsim.queueing.mm1 import CustomerRecord
 from edsim.queueing.replications import MM1Comparison
 from edsim.queueing.theory import mm1_theory
 
@@ -132,3 +133,31 @@ def plot_sweep(points: Sequence[SweepPoint]) -> Figure:
     ax.grid(alpha=0.3)
     ax.legend()
     return fig
+
+
+def format_records(records: Sequence[CustomerRecord], limit: int | None = None) -> str:
+    """Format customer records as a table, one row per customer.
+
+    Columns: customer, arrival, assigned service time, service start, end,
+    wait and time in system. An event that has not happened yet is shown as
+    ``—``. With ``limit``, only the first ``limit`` customers are shown.
+    """
+
+    def cell(value: float | None, width: int) -> str:
+        return f"{'—':>{width}}" if value is None else f"{value:>{width}.3f}"
+
+    shown = records if limit is None else records[:limit]
+    rows = [
+        f"{'cliente':>7}{'llegada':>10}{'servicio':>10}{'inicio':>10}"
+        f"{'fin':>10}{'espera':>10}{'estancia':>10}"
+    ]
+    for r in shown:
+        wait = None if r.service_start is None else r.service_start - r.arrival
+        stay = None if r.departure is None else r.departure - r.arrival
+        rows.append(
+            f"{r.customer_id:>7}{cell(r.arrival, 10)}{cell(r.service_time, 10)}"
+            f"{cell(r.service_start, 10)}{cell(r.departure, 10)}{cell(wait, 10)}{cell(stay, 10)}"
+        )
+    if len(shown) < len(records):
+        rows.append(f"… ({len(records) - len(shown)} clientes más)")
+    return "\n".join(rows)

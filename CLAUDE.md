@@ -23,7 +23,10 @@ uv run pytest -m "not slow"  # solo los rápidos (lo que ejecuta el hook Stop)
 uv run ruff check .      # lint
 uv run ruff format .     # formato
 uv run edsim             # CLI
+EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 ```
+
+Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
 ## Convenciones
 
