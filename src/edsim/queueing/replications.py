@@ -7,6 +7,7 @@ with 95 % intervals, about one correct comparison in twenty falls outside by
 chance.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -118,3 +119,77 @@ def compare_mm1(
         )
 
     return MM1Comparison(replications=replications, metrics=tuple(metrics))
+
+
+@dataclass(frozen=True, slots=True)
+class Coverage:
+    """Result of repeating a whole experiment with different master seeds.
+
+    With 95 % intervals, about 95 % of the experiments should contain the
+    theoretical value. Misses should fall on both sides; if they all fall on
+    one side, the simulated metric is biased.
+
+    Attributes:
+        metric: Name of the metric, one of ``METRIC_NAMES``.
+        seeds: Master seed of each experiment.
+        intervals: Comparison of the metric in each experiment, in seed order.
+    """
+
+    metric: str
+    seeds: tuple[int, ...]
+    intervals: tuple[MetricComparison, ...]
+
+    @property
+    def hits(self) -> int:
+        """Number of experiments whose interval contains the theory."""
+        return sum(m.theory_in_ci for m in self.intervals)
+
+    @property
+    def rate(self) -> float:
+        """Fraction of experiments whose interval contains the theory."""
+        return self.hits / len(self.intervals)
+
+    @property
+    def below(self) -> tuple[int, ...]:
+        """Seeds whose whole interval lies below the theory."""
+        return tuple(
+            s
+            for s, m in zip(self.seeds, self.intervals, strict=True)
+            if m.summary.ci_high < m.theory
+        )
+
+    @property
+    def above(self) -> tuple[int, ...]:
+        """Seeds whose whole interval lies above the theory."""
+        return tuple(
+            s
+            for s, m in zip(self.seeds, self.intervals, strict=True)
+            if m.summary.ci_low > m.theory
+        )
+
+
+def coverage_mm1(
+    lam: float,
+    mu: float,
+    duration: float,
+    warmup: float,
+    replicas: int,
+    seeds: Sequence[int],
+    metric: str = "wq",
+    confidence: float = 0.95,
+) -> Coverage:
+    """Run one ``compare_mm1`` experiment per master seed and keep one metric.
+
+    Raises:
+        ValueError: If there are no seeds, the metric is unknown or the
+            experiment parameters are invalid.
+    """
+    if not seeds:
+        raise ValueError("at least one seed is needed")
+    if metric not in METRIC_NAMES:
+        raise ValueError(f"unknown metric {metric!r}, expected one of {METRIC_NAMES}")
+    intervals = tuple(
+        compare_mm1(lam, mu, duration, warmup, replicas, seed, confidence).metric(metric)
+        for seed in seeds
+    )
+    return Coverage(metric=metric, seeds=tuple(seeds), intervals=intervals)

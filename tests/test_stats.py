@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from edsim.stats import Summary, summarize
+from edsim.stats import Summary, summarize, t_critical
 
 # Caso a mano con los valores 1, 2, 3, 4, 5:
 #   media = 3
@@ -32,6 +32,23 @@ def test_caso_a_mano_90():
 
     assert s.ci_low == pytest.approx(1.492557, rel=1e-5)
     assert s.ci_high == pytest.approx(4.507443, rel=1e-5)
+
+
+def test_t_critical_tablas():
+    # Los mismos valores de tablas del caso a mano: n = 5 → 4 grados de libertad.
+    assert t_critical(5, 0.95) == pytest.approx(2.776445, rel=1e-6)
+    assert t_critical(5, 0.90) == pytest.approx(2.131847, rel=1e-6)
+
+
+def test_t_critical_tiende_a_la_normal():
+    # Con muchos valores, la t de Student se acerca al 1,96 de la normal.
+    assert t_critical(10_000, 0.95) == pytest.approx(1.96, abs=1e-3)
+
+
+@pytest.mark.parametrize(("n", "confidence"), [(1, 0.95), (5, 0.0), (5, 1.0)])
+def test_t_critical_invalido(n, confidence):
+    with pytest.raises(ValueError):
+        t_critical(n, confidence)
 
 
 def test_valores_constantes():

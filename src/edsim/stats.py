@@ -31,6 +31,23 @@ class Summary:
     confidence: float
 
 
+def t_critical(n: int, confidence: float = 0.95) -> float:
+    """Student's t quantile used for a confidence interval with ``n`` values.
+
+    It is the ``(1 + confidence) / 2`` quantile with ``n - 1`` degrees of
+    freedom. With few values it is clearly larger than the normal's 1.96; it
+    approaches 1.96 as ``n`` grows.
+
+    Raises:
+        ValueError: If ``n < 2`` or ``confidence`` is not strictly between 0 and 1.
+    """
+    if not 0 < confidence < 1:
+        raise ValueError(f"confidence must be strictly between 0 and 1, got {confidence}")
+    if n < 2:
+        raise ValueError(f"at least 2 values are needed for a confidence interval, got {n}")
+    return float(stats.t.ppf((1 + confidence) / 2, df=n - 1))
+
+
 def summarize(values: Iterable[float], confidence: float = 0.95) -> Summary:
     """Summarize values with a Student's t confidence interval for the mean.
 
@@ -62,8 +79,7 @@ def summarize(values: Iterable[float], confidence: float = 0.95) -> Summary:
     mean = float(x.mean())
     std = float(x.std(ddof=1))
     sem = std / math.sqrt(n)
-    t = float(stats.t.ppf((1 + confidence) / 2, df=n - 1))
-    half_width = t * sem
+    half_width = t_critical(n, confidence) * sem
 
     return Summary(
         n=n,
