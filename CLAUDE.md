@@ -24,9 +24,12 @@ uv run ruff check .      # lint
 uv run ruff format .     # formato
 uv run edsim             # CLI
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
+uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
 ```
 
 Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
+
+`--nbmake-timeout` (300 s por defecto) es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. El límite que importa es el de la celda más larga; el de 600 s deja margen en máquinas lentas.
 
 ## Convenciones
 

@@ -17,8 +17,11 @@ from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.rate import cumulative_rate, day_scale, day_shape_area, rate
 from edsim.arrivals.thinning import (
     ArrivalRecord,
+    CandidateRecord,
     DayRecord,
     arrival_source,
+    daily_count_distribution,
+    day_effect_distribution,
     draw_day_effects,
     iter_arrivals,
     simulate_arrivals,
@@ -196,6 +199,64 @@ def test_z_no_depende_del_perfil(profile, run):
 
     assert effects_of(days) == effects_of(run[1])
     assert times_of(arrivals) != times_of(run[0])
+
+
+def test_distribucion_de_z_a_mano():
+    z = day_effect_distribution(CV)
+
+    assert z.mean() == pytest.approx(1, rel=1e-12)
+    assert z.std() == pytest.approx(CV, rel=1e-12)
+    assert z.kwds == {"a": pytest.approx(GAMMA_SHAPE, abs=5e-3), "scale": GAMMA_SCALE}
+
+
+def test_las_z_sorteadas_siguen_su_distribucion():
+    # Kolmogórov–Smirnov de 20 000 Z del flujo propio frente a la gamma teórica.
+    # Semilla fija: con un sorteo correcto, p < 0,01 solo un 1 % de las veces.
+    z = draw_day_effects(CV, 20_000, SEED)
+
+    assert stats.kstest(z, day_effect_distribution(CV).cdf).pvalue >= 0.01
+
+
+def test_distribucion_de_z_con_cv_0_da_error():
+    # Con CV 0, Z es la constante 1: no hay gamma que devolver.
+    with pytest.raises(ValueError, match="daily_cv"):
+        day_effect_distribution(0)
+
+
+def test_distribucion_del_recuento_diario_a_mano():
+    # Lunes 5 de enero (e = 375,56): binomial negativa con CV 0,06 y Poisson con CV 0.
+    nb = daily_count_distribution(EXPECTED_MONDAY, CV)
+    poisson = daily_count_distribution(EXPECTED_MONDAY, 0)
+
+    assert nb.mean() == pytest.approx(EXPECTED_MONDAY, rel=1e-12)
+    assert nb.var() == pytest.approx(VAR_NB_MONDAY, abs=0.05)
+    assert nb.var() == pytest.approx(EXPECTED_MONDAY + (CV * EXPECTED_MONDAY) ** 2, rel=1e-12)
+    assert poisson.mean() == pytest.approx(EXPECTED_MONDAY, rel=1e-12)
+    assert poisson.var() == pytest.approx(VAR_POISSON_MONDAY, abs=0.05)
+
+
+def test_distribucion_del_recuento_con_varias_medias():
+    # Acepta un array de medias, una por día, como los esperados de un run.
+    expected = np.array([250.0, 300.0, 350.0])
+
+    nb = daily_count_distribution(expected, CV)
+
+    assert nb.mean() == pytest.approx(expected, rel=1e-12)
+    assert nb.var() == pytest.approx(expected + (CV * expected) ** 2, rel=1e-12)
+
+
+@pytest.mark.parametrize("expected", [0, -1.0, math.nan, math.inf])
+def test_distribucion_del_recuento_media_invalida(expected):
+    with pytest.raises(ValueError, match="expected"):
+        daily_count_distribution(expected, CV)
+
+
+@pytest.mark.parametrize("cv", [-0.1, math.nan, True])
+def test_distribuciones_cv_invalido(cv):
+    with pytest.raises(ValueError, match="daily_cv"):
+        day_effect_distribution(cv)
+    with pytest.raises(ValueError, match="daily_cv"):
+        daily_count_distribution(300.0, cv)
 
 
 @pytest.mark.parametrize("cv", [-0.1, math.nan, math.inf, True])
@@ -381,6 +442,89 @@ def test_days_invalido(profile, days):
         iter_arrivals(profile, days, SEED)
     with pytest.raises(ValueError, match="days"):
         simulate_arrivals(profile, days, SEED)
+
+
+# --- Gancho de las candidatas -------------------------------------------------
+
+
+def run_with_candidates(profile, days=DAYS, seed=SEED):
+    """simulate_arrivals with on_candidate, collecting every candidate."""
+    candidates: list[CandidateRecord] = []
+    return simulate_arrivals(profile, days, seed, on_candidate=candidates.append), candidates
+
+
+def test_gancho_no_cambia_las_llegadas(profile, run):
+    # El gancho solo observa: no sortea nada ni cambia la aritmética, así que las
+    # llegadas y los días son idénticos bit a bit.
+    (arrivals, days), _ = run_with_candidates(profile)
+
+    assert (arrivals, days) == run
+    assert fingerprint(arrivals) == fingerprint(run[0])
+
+
+def test_gancho_con_cv0_mantiene_la_huella_de_main(profile_cv0):
+    (arrivals, _), _ = run_with_candidates(profile_cv0)
+
+    assert fingerprint(arrivals) == (MAIN_ARRIVALS, MAIN_SHA256)
+
+
+def test_gancho_una_llamada_por_candidata(profile):
+    (arrivals, days), candidates = run_with_candidates(profile)
+    day_of = [math.floor(c.time / DAY) for c in candidates]
+
+    # Las llamadas de cada día son sus candidatas: la que pasa de medianoche no cuenta.
+    assert np.bincount(day_of, minlength=DAYS).tolist() == [d.candidates for d in days]
+    accepted = [c for c in candidates if c.accepted]
+    assert np.bincount([math.floor(c.time / DAY) for c in accepted], minlength=DAYS).tolist() == [
+        d.accepted for d in days
+    ]
+    # Las aceptadas son exactamente las llegadas, en el mismo orden.
+    assert [c.time for c in accepted] == times_of(arrivals)
+
+
+def test_gancho_tiempos_crecientes_y_dentro_del_dia(profile):
+    _, candidates = run_with_candidates(profile)
+    times = np.array([c.time for c in candidates])
+
+    assert np.all(np.diff(times) > 0)
+    assert times[0] >= 0
+    assert times[-1] < DAYS * DAY
+
+
+def test_gancho_altura_y_aceptacion(profile):
+    (_, days), candidates = run_with_candidates(profile)
+    times = np.array([c.time for c in candidates])
+    heights = np.array([c.height for c in candidates])
+    accepted = np.array([c.accepted for c in candidates])
+    bounds = np.array([d.bound for d in days])[np.floor(times / DAY).astype(int)]
+    lam = rate(times, profile, day_effects=effects_of(days))
+
+    # La altura es U · cota, con U uniforme en [0, 1): cae bajo la cota del día.
+    assert np.all(heights >= 0)
+    assert np.all(heights < bounds)
+    # Se acepta si y solo si la altura no supera λ(t). λ se calcula con rate() y la
+    # misma Z, que coincide bit a bit con la del thinning.
+    assert np.array_equal(accepted, heights <= lam)
+    # U uniforme: la altura relativa media ronda 1/2 (≈ 28 000 candidatas, error típico
+    # 1/√(12n) ≈ 0,0017; la tolerancia son unos 6).
+    assert np.mean(heights / bounds) == pytest.approx(0.5, abs=0.01)
+
+
+def test_gancho_y_on_day_juntos(profile):
+    # Los dos ganchos conviven: cada día se cierra después de sus candidatas.
+    events: list[tuple[int, int]] = []  # (día, 0 candidata | 1 cierre)
+
+    arrivals = iter_arrivals(
+        profile,
+        3,
+        SEED,
+        on_day=lambda d: events.append((d.day, 1)),
+        on_candidate=lambda c: events.append((math.floor(c.time / DAY), 0)),
+    )
+    list(arrivals)
+
+    assert [e for e in events if e[1] == 1] == [(0, 1), (1, 1), (2, 1)]
+    assert events == sorted(events)
 
 
 # --- Proceso SimPy ------------------------------------------------------------

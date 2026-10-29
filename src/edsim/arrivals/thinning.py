@@ -38,7 +38,8 @@ from datetime import date, timedelta
 
 import numpy as np
 import simpy
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
+from scipy import stats
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, day_scale, day_shape_area, shape
@@ -60,6 +61,23 @@ class ArrivalRecord:
 
     arrival_id: int
     time: float
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRecord:
+    """One candidate of the thinning, accepted or not, for teaching and tests.
+
+    Attributes:
+        time: Minutes since 00:00 of the profile's ``start_date``.
+        height: ``U * bound``, with ``U`` the acceptance uniform: a point drawn
+            uniformly under the bound of the day.
+        accepted: Whether the candidate was kept, which happens when
+            ``height <= lambda(time)``: the point falls under the rate curve.
+    """
+
+    time: float
+    height: float
+    accepted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +162,61 @@ def _day_effects(daily_cv: float, rng: np.random.Generator) -> Iterator[float]:
         yield float(rng.gamma(k, theta))
 
 
+def day_effect_distribution(daily_cv: float) -> stats.rv_continuous:
+    """The distribution of the daily effect Z: gamma with mean 1 and CV ``daily_cv``.
+
+    It is the distribution ``draw_day_effects`` and the thinning draw from,
+    as a frozen SciPy distribution, for plots and tests.
+
+    Args:
+        daily_cv: Coefficient of variation of Z; positive.
+
+    Returns:
+        The frozen gamma, with shape ``1 / CV**2`` and scale ``CV**2``.
+
+    Raises:
+        ValueError: If ``daily_cv`` is not a finite positive number. With 0,
+            Z is the constant 1, not a gamma.
+    """
+    daily_cv = _check_daily_cv(daily_cv)
+    if daily_cv == 0:
+        raise ValueError("daily_cv must be positive for a distribution: with 0, Z is always 1")
+    k, theta = _gamma_parameters(daily_cv)
+    return stats.gamma(a=k, scale=theta)
+
+
+def daily_count_distribution(expected: ArrayLike, daily_cv: float) -> stats.rv_discrete:
+    """The distribution of the arrivals of a day with ``expected`` arrivals without Z.
+
+    Given Z, the day is Poisson with mean ``Z * expected``; over the gamma of
+    Z it is negative binomial, with mean ``e`` and variance
+    ``e + (CV * e)**2``. With ``daily_cv = 0`` it is Poisson with mean ``e``.
+    Each day has its own ``e``, so the counts of a whole run are a mixture
+    of these distributions, not one of them.
+
+    Args:
+        expected: Expected arrivals of the day without Z, ``e``; a positive
+            number or an array, one per day.
+        daily_cv: Coefficient of variation of Z; 0 or more.
+
+    Returns:
+        The frozen SciPy distribution: ``nbinom`` with ``n = 1 / CV**2`` and
+        ``p = 1 / (1 + CV**2 * e)``, or ``poisson`` with CV 0.
+
+    Raises:
+        ValueError: If ``expected`` is not finite and positive, or
+            ``daily_cv`` is negative or not finite.
+    """
+    daily_cv = _check_daily_cv(daily_cv)
+    e = np.asarray(expected, dtype=float)
+    if not np.all(np.isfinite(e)) or np.any(e <= 0):
+        raise ValueError(f"expected must be finite and positive, got {expected!r}")
+    if daily_cv == 0:
+        return stats.poisson(e)
+    k, theta = _gamma_parameters(daily_cv)
+    return stats.nbinom(n=k, p=1 / (1 + theta * e))
+
+
 def draw_day_effects(
     daily_cv: float, days: int, seed: int | np.random.SeedSequence
 ) -> NDArray[np.float64]:
@@ -179,6 +252,7 @@ def iter_arrivals(
     seed: int | np.random.SeedSequence,
     *,
     on_day: Callable[[DayRecord], None] | None = None,
+    on_candidate: Callable[[CandidateRecord], None] | None = None,
     bound_factor: float = 1.0,
 ) -> Iterator[ArrivalRecord]:
     """Generate the arrivals of ``days`` full days, lazily and in order.
@@ -206,6 +280,11 @@ def iter_arrivals(
             closed: after its last arrival, when the next one is asked for (or
             when the generator is exhausted). A day left unfinished, because
             the consumer stopped asking, is not reported.
+        on_candidate: Called with a ``CandidateRecord`` for every candidate
+            inside a day, accepted or not, before the arrival is yielded. The
+            candidate that falls past midnight is not reported, so the calls
+            of a day are its ``DayRecord.candidates``. It only observes: the
+            arrivals are the same, bit for bit, with or without it.
         bound_factor: Multiplies the bound of every day. Only for tests and
             teaching: a value below 1 makes the bound too low and the
             generator raises.
@@ -224,7 +303,7 @@ def iter_arrivals(
     arrivals_seq, day_effect_seq = child_streams(seed, 2)
     rng = np.random.default_rng(arrivals_seq)
     z_rng = np.random.default_rng(day_effect_seq)
-    return _thinning(profile, days, rng, z_rng, on_day, bound_factor)
+    return _thinning(profile, days, rng, z_rng, on_day, on_candidate, bound_factor)
 
 
 def _thinning(
@@ -233,6 +312,7 @@ def _thinning(
     rng: np.random.Generator,
     z_rng: np.random.Generator,
     on_day: Callable[[DayRecord], None] | None,
+    on_candidate: Callable[[CandidateRecord], None] | None,
     bound_factor: float,
 ) -> Iterator[ArrivalRecord]:
     max_h = max(profile.hour_factors)
@@ -263,7 +343,11 @@ def _thinning(
                     f"thinning bound too low on day {day}: lambda({t:.4f}) = {lam:.6g} "
                     f"exceeds the bound {bound:.6g}"
                 )
-            if rng.random() * bound <= lam:
+            height = rng.random() * bound
+            keep = height <= lam
+            if on_candidate is not None:
+                on_candidate(CandidateRecord(time=t, height=height, accepted=keep))
+            if keep:
                 accepted += 1
                 yield ArrivalRecord(arrival_id=next_id, time=t)
                 next_id += 1
@@ -283,12 +367,16 @@ def _thinning(
 
 
 def simulate_arrivals(
-    profile: ArrivalProfile, days: int, seed: int | np.random.SeedSequence
+    profile: ArrivalProfile,
+    days: int,
+    seed: int | np.random.SeedSequence,
+    *,
+    on_candidate: Callable[[CandidateRecord], None] | None = None,
 ) -> tuple[tuple[ArrivalRecord, ...], tuple[DayRecord, ...]]:
     """Generate all the arrivals of ``days`` full days, for batch analysis.
 
     Consumes ``iter_arrivals`` entirely; see it for the algorithm and the
-    arguments.
+    arguments, including ``on_candidate``.
 
     Returns:
         The arrivals in order and one ``DayRecord`` per day.
@@ -297,7 +385,9 @@ def simulate_arrivals(
         ValueError: If ``days`` is not a positive integer.
     """
     day_records: list[DayRecord] = []
-    arrivals = tuple(iter_arrivals(profile, days, seed, on_day=day_records.append))
+    arrivals = tuple(
+        iter_arrivals(profile, days, seed, on_day=day_records.append, on_candidate=on_candidate)
+    )
     return arrivals, tuple(day_records)
 
 
