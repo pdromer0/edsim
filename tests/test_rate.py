@@ -8,7 +8,7 @@ from scipy.integrate import quad
 from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.rate import cumulative_rate, rate
 
-CONFIG = Path(__file__).parents[1] / "config" / "llegadas.toml"
+EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
 
 # Valores calculados a mano para el lunes 2026-01-05 (día 0) con el perfil de ejemplo:
@@ -21,7 +21,7 @@ CUMULATIVE_FIRST_HOUR = 10.187  # trapecios de 0:00 a 0:30 y de 0:30 a 1:00
 
 @pytest.fixture(scope="module")
 def profile() -> ArrivalProfile:
-    return load_profile(CONFIG)
+    return load_profile(EXAMPLE)
 
 
 def day_scale(profile: ArrivalProfile, day: int) -> float:

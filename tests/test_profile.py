@@ -7,42 +7,24 @@ import pytest
 
 from edsim.arrivals.profile import DAYS_PER_MONTH, ArrivalProfile, load_profile
 
+EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 CONFIG = Path(__file__).parents[1] / "config" / "llegadas.toml"
 
-# Los valores de config/llegadas.toml, para construir variantes en los tests.
+# Los valores de tests/data/llegadas_ejemplo.toml, para construir variantes en los tests.
+# fmt: off
 DEFAULT = {
     "base_diaria": 300,
     "cv_diario": 0.06,
     "fecha_inicio": date(2026, 1, 5),
     "reparto_horario": [
-        2.7,
-        2.1,
-        1.6,
-        1.3,
-        1.2,
-        1.1,
-        1.3,
-        2.1,
-        3.7,
-        5.4,
-        6.6,
-        7.0,
-        6.7,
-        6.0,
-        5.1,
-        5.4,
-        6.2,
-        6.2,
-        5.7,
-        5.3,
-        5.0,
-        4.7,
-        4.2,
-        3.4,
-    ],  # fmt: skip
+        2.7, 2.1, 1.6, 1.3, 1.2, 1.1, 1.3, 2.1,
+        3.7, 5.4, 6.6, 7.0, 6.7, 6.0, 5.1, 5.4,
+        6.2, 6.2, 5.7, 5.3, 5.0, 4.7, 4.2, 3.4,
+    ],
     "reparto_semanal": [16.27, 14.80, 14.30, 14.20, 13.77, 13.08, 13.58],
     "factor_mensual": [1.10, 1.05, 1.02, 0.99, 1.00, 0.98, 0.99, 0.97, 0.94, 0.97, 0.98, 1.02],
 }
+# fmt: on
 
 LIST_KEYS = ["reparto_horario", "reparto_semanal", "factor_mensual"]
 
@@ -80,7 +62,7 @@ def with_value(key: str, index: int, value) -> dict:
 
 @pytest.fixture(scope="module")
 def profile() -> ArrivalProfile:
-    return load_profile(CONFIG)
+    return load_profile(EXAMPLE)
 
 
 # --- Carga y normalización ---------------------------------------------------
@@ -94,6 +76,25 @@ def test_carga_del_toml_de_ejemplo(profile):
     assert len(profile.hour_factors) == 24
     assert len(profile.weekday_factors) == 7
     assert len(profile.month_factors) == 12
+
+
+def test_config_de_produccion_es_valida():
+    # Los valores a mano usan el perfil de ejemplo, que no se recalibra; este test solo
+    # comprueba que el perfil del centro base, que sí puede cambiar, carga y es válido.
+    p = load_profile(CONFIG)
+
+    assert isinstance(p, ArrivalProfile)
+    assert sum(p.hour_factors) / 24 == pytest.approx(1, rel=1e-12)
+
+
+def test_enteros_aceptados(tmp_path):
+    # En TOML, 7 es un entero y 7.0 un float: los dos son valores válidos.
+    changes = {key: [int(round(v)) or 1 for v in DEFAULT[key]] for key in LIST_KEYS}
+    p = load_profile(write_profile(tmp_path, base_diaria=300, cv_diario=0, **changes))
+
+    assert p.daily_base == 300.0
+    assert all(type(x) is float for x in p.hour_factors + p.weekday_factors + p.month_factors)
+    assert sum(p.hour_factors) / 24 == pytest.approx(1, rel=1e-12)
 
 
 def test_toml_escrito_por_el_test_igual_que_el_de_ejemplo(tmp_path, profile):

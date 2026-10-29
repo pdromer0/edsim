@@ -66,8 +66,13 @@ class ArrivalProfile:
 
     Validation and normalization happen on construction, so a profile can only
     exist valid and normalized, whether it comes from ``load_profile`` or is
-    built directly. Normalizing an already normalized profile leaves it as it
-    is, which makes ``dataclasses.replace`` safe.
+    built directly.
+
+    The three factor fields accept any positive weights, integers or floats,
+    such as percentages that do not add up to exactly 100; the profile stores
+    the normalized factors instead. Normalizing an already normalized profile
+    leaves it as it is (up to rounding in the last bit), which makes
+    ``dataclasses.replace`` safe.
 
     The factors are stored as tuples: a NumPy array inside a frozen dataclass
     could still be modified in place, and arrays do not compare with ``==``.

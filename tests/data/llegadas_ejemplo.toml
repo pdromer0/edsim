@@ -1,0 +1,18 @@
+# Perfil de ejemplo fijo para los tests: copia de config/llegadas.toml en la tarea 2.1.
+# No se recalibra: los valores a mano de tests/test_rate.py dependen de él.
+base_diaria = 300
+cv_diario = 0.06
+fecha_inicio = 2026-01-05
+
+# % de las llegadas del día, de 0 h a 23 h (SAS 2012: picos 10-13 h y 16-17 h, valle 2-8 h)
+reparto_horario = [
+  2.7, 2.1, 1.6, 1.3, 1.2, 1.1, 1.3, 2.1,
+  3.7, 5.4, 6.6, 7.0, 6.7, 6.0, 5.1, 5.4,
+  6.2, 6.2, 5.7, 5.3, 5.0, 4.7, 4.2, 3.4,
+]
+
+# % de las llegadas de la semana, de lunes a domingo (SAS 2012: lunes, sábado y domingo)
+reparto_semanal = [16.27, 14.80, 14.30, 14.20, 13.77, 13.08, 13.58]
+
+# Factor de tasa diaria por mes, de enero a diciembre (SAS 2012: enero y septiembre)
+factor_mensual = [1.10, 1.05, 1.02, 0.99, 1.00, 0.98, 0.99, 0.97, 0.94, 0.97, 0.98, 1.02]
