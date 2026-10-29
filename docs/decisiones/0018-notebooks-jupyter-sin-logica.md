@@ -33,3 +33,7 @@ Motivo: explorar y aprender sin estado oculto ni salidas en git.
 - El hook de tests de Claude Code no ejecuta los notebooks: pytest solo recoge `tests/`, y `nbmake` solo actúa con `--nbmake`.
 - **Modo normal:** tardó 288 s, cerca del límite de 300 s de `nbmake`. Se ejecuta con `uv run pytest --nbmake --nbmake-timeout=600 notebooks/`.
 - **`nbstripout` en los commits:** si el notebook tiene salidas, cancela el primer commit, y hay que repetir `git add` y el commit. Tras cada commit, el notebook queda sin gráficas hasta volver a ejecutarlo.
+
+## Nota de actualización (2026-10-29)
+
+`--nbmake-timeout` es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. Se verificó en la tarea 2.6, en el código de las dos librerías y con una prueba manual. Los 288 s del modo normal son del notebook completo; lo que se acerca al límite es la celda más larga. El comando con `--nbmake-timeout=600` se mantiene como margen para máquinas lentas. La decisión no cambia.

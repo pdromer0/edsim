@@ -405,7 +405,28 @@ Este anexo se amplía al cerrar cada tarea del hito: qué se hizo, los conceptos
 
 **Lecciones aprendidas**
 
-- **Cuidado con los límites de tiempo.** `nbmake` corta por defecto a los 300 s, y el modo normal tardó 288 s, más de lo estimado. El modo normal se ejecuta con `uv run pytest --nbmake --nbmake-timeout=600 notebooks/`.
+- **Cuidado con los límites de tiempo.** `nbmake` limita cada celda a 300 s por defecto (no el notebook entero, como se creyó aquí; se verificó en la tarea 2.6), y el modo normal tardó 288 s en total, con la celda de cobertura como la más larga. El modo normal se ejecuta con `uv run pytest --nbmake --nbmake-timeout=600 notebooks/`.
 - **`nbstripout` cancela el primer commit.** Al quitar las salidas modifica el fichero y el commit no se crea; hay que repetir `git add` y el commit. Tras cada commit, el notebook queda sin gráficas en Cursor hasta volver a ejecutarlo: conviene explorar libremente y hacer el commit al final.
 - **Encadenar con `&&`.** Con los comandos en líneas separadas, el `push` y el `gh pr create` se ejecutaron aunque el commit había fallado, y el PR falló con "No commits between main and…". Con `git add . && git commit … && git push && gh pr create …`, cada paso solo se ejecuta si el anterior ha ido bien.
 - **Un notebook didáctico empuja a mejorar el paquete.** Las visualizaciones exigieron funciones de análisis que antes no existían y que ahora tienen tests y servirán en hitos posteriores.
+
+### Tarea 1.7: cierre del hito 1
+
+**Qué se hizo**
+
+- ADRs 0016 a 0018 en `docs/decisiones/`: métricas derivadas de los registros, tests estadísticos marcados `slow` y notebooks de Jupyter con `nbstripout` y `nbmake`. Las tres decisiones se añadieron también al registro del documento de diseño.
+- `docs/diario/hito-1.md`, construido a partir de este anexo, con la sección de reflexiones de Pedro.
+- Las pestañas del diseño y del hito 1 se exportaron a `docs/diseno.md` y `docs/specs/hito-1.md`.
+- Preparación del hito 2: `CLAUDE.md` ya no dice que Pedro ejecuta git a mano, sino que Claude Code crea la rama, hace los commits, hace push con permiso y abre el PR, y Pedro siempre fusiona. En `.claude/settings.json` se permiten `git switch`, `git add`, `git commit`, `git pull` y `gh pr create`; `git push` sigue preguntando y `gh pr merge` sigue denegado.
+- Etiqueta `v0.1-hito1` en GitHub.
+- Se creó en el proyecto de Claude el documento de traspaso `traspaso-edsim.md` (estado, dónde está cada cosa, forma de trabajar, decisiones y lecciones), para continuar el proyecto en conversaciones nuevas.
+
+**Lecciones aprendidas**
+
+- **Un chat por hito y una sesión de Claude Code por tarea.** Las conversaciones largas acumulan contexto que se resume o se recorta, pierden precisión y consumen más; lo importante vive en el documento de diseño, el repositorio y la memoria del proyecto, así que empezar de cero no pierde nada.
+- **Las barandillas se mueven con la confianza.** Al pasar a que Claude Code ejecute git, se relajan los permisos locales (commits y PR), pero la fusión sigue siendo de Pedro y el ruleset de GitHub sigue impidiendo fusionar sin el CI en verde.
+- **Recuperar sesiones.** `/clear` no borra la conversación anterior: se recupera desde el historial del panel o con `claude --resume`. Las sesiones inactivas se archivan y las transcripciones antiguas se limpian pasado un tiempo; `/export` guarda una conversación en un fichero.
+
+### Balance del hito 1
+
+El simulador M/M/1 reproduce la teoría de colas: con 20 réplicas, los valores teóricos de Wq, W, Lq, L y ρ caen dentro de sus intervalos de confianza al 95 % con errores relativos por debajo del 1,2 %, y el procedimiento acierta en torno al 95 % de las veces en el experimento de cobertura. Queda validada la base de simulación sobre la que se construirá el resto de EDsim.

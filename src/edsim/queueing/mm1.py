@@ -23,6 +23,7 @@ import numpy as np
 import simpy
 
 from edsim.queueing.theory import validate_mm1_rates
+from edsim.seeds import child_streams
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +73,8 @@ def simulate_mm1(
             such as one child of ``SeedSequence(master).spawn(R)`` per
             replication. An integer is equivalent to ``SeedSequence(seed)``.
             Two independent streams, arrivals and service, are derived from it
-            with ``SeedSequence.spawn``.
+            with ``child_streams``, which leaves it unchanged: the same object
+            passed twice gives the same run.
 
     Returns:
         One record per customer who arrived before ``horizon``, in arrival
@@ -87,8 +89,7 @@ def simulate_mm1(
     if horizon <= 0:
         raise ValueError(f"horizon must be positive, got {horizon}")
 
-    seed_seq = seed if isinstance(seed, np.random.SeedSequence) else np.random.SeedSequence(seed)
-    arrival_seq, service_seq = seed_seq.spawn(2)
+    arrival_seq, service_seq = child_streams(seed, 2)
     arrival_rng = np.random.default_rng(arrival_seq)
     service_rng = np.random.default_rng(service_seq)
 

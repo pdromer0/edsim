@@ -575,6 +575,35 @@ def _check_count(name: str, value: object, minimum: int) -> int:
     return value
 
 
+def check_validation_counts(
+    days: int, replicas: int, short_runs: int, short_days: int
+) -> tuple[int, int, int, int]:
+    """Check the sizes of a validation before running anything.
+
+    ``validate_arrivals`` calls it first; the CLI calls it too, so that a
+    usage error stops before printing anything. The limits live only here.
+
+    Args:
+        days: Days of the long run and of each replication, at least
+            ``MIN_DAYS``.
+        replicas: Replications for test d, at least 2.
+        short_runs: Short runs for test e, at least 2.
+        short_days: Days of each short run, at least 1.
+
+    Returns:
+        The four values, unchanged.
+
+    Raises:
+        ValueError: If a value is not an integer or is below its limit.
+    """
+    return (
+        _check_count("days", days, MIN_DAYS),
+        _check_count("replicas", replicas, 2),
+        _check_count("short_runs", short_runs, 2),
+        _check_count("short_days", short_days, 1),
+    )
+
+
 def _days_only(
     profile: ArrivalProfile, days: int, seed: np.random.SeedSequence
 ) -> tuple[DayRecord, ...]:
@@ -625,10 +654,9 @@ def validate_arrivals(
     Raises:
         ValueError: If an argument is not a valid integer.
     """
-    days = _check_count("days", days, MIN_DAYS)
-    replicas = _check_count("replicas", replicas, 2)
-    short_runs = _check_count("short_runs", short_runs, 2)
-    short_days = _check_count("short_days", short_days, 1)
+    days, replicas, short_runs, short_days = check_validation_counts(
+        days, replicas, short_runs, short_days
+    )
 
     long_seq, replicas_seq, short_seq = child_streams(seed, 3)
     arrivals, day_records = simulate_arrivals(profile, days, long_seq)

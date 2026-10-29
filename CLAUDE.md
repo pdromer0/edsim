@@ -3,7 +3,7 @@
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: [docs/specs/hito-2.md](docs/specs/hito-2.md)
+- Hito en curso: [docs/specs/hito-3.md](docs/specs/hito-3.md)
 
 ## Modo de trabajo
 

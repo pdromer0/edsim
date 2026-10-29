@@ -7,7 +7,8 @@ report modules for the tables, the CSV files and the plots.
 
 Exit codes: 0 if all goes well; 1 if ``llegadas validar`` runs and some test
 fails (the plots are written anyway); 2 for usage errors, including a missing
-or invalid configuration, before any file or directory is created.
+or invalid configuration, the limits of ``validar`` or a ``--salida`` that is
+not a directory, before anything is computed or any file is created.
 """
 
 import argparse
@@ -25,7 +26,7 @@ from edsim.arrivals.report import (
     write_days_csv,
 )
 from edsim.arrivals.thinning import simulate_arrivals
-from edsim.arrivals.validation import validate_arrivals
+from edsim.arrivals.validation import check_validation_counts, validate_arrivals
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
 
@@ -91,6 +92,22 @@ def _add_experiment_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _output_dir(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
+    """The ``--salida`` directory, or a usage error (code 2) if it cannot be one.
+
+    It is checked before computing anything, so that a long run is not lost
+    at the end. The directory itself is still created only after the run:
+    the nearest existing path (``--salida`` or a parent) must be a directory.
+    """
+    out_dir = Path(args.salida)
+    for path in (out_dir, *out_dir.parents):
+        if path.exists():
+            if not path.is_dir():
+                parser.error(f"--salida {args.salida}: {path} existe y no es un directorio")
+            break
+    return out_dir
+
+
 def _compare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
         c = compare_mm1(args.lam, args.mu, args.duracion, args.warmup, args.replicas, args.semilla)
@@ -106,6 +123,7 @@ def _compare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def _sweep(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
     points = []
     for rho in args.rhos:
         try:
@@ -117,7 +135,6 @@ def _sweep(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         points.append((rho, c))
 
     # The directory is created only once every simulation has succeeded.
-    out_dir = Path(args.salida)
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / CSV_NAME
     plot_path = out_dir / PLOT_NAME
@@ -149,6 +166,7 @@ def _run_parameters(args: argparse.Namespace) -> dict:
 
 
 def _generate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
     profile = _load_config(args, parser)
     try:
         arrivals, days = simulate_arrivals(profile, args.dias, args.semilla)
@@ -156,7 +174,6 @@ def _generate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error(str(e))
 
     # The directory is created only once the simulation has succeeded.
-    out_dir = Path(args.salida)
     out_dir.mkdir(parents=True, exist_ok=True)
     arrivals_path = out_dir / ARRIVALS_CSV
     days_path = out_dir / DAYS_CSV
@@ -171,7 +188,12 @@ def _generate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def _validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
     profile = _load_config(args, parser)
+    try:
+        check_validation_counts(args.dias, args.replicas, args.ejecuciones_cortas, SHORT_DAYS)
+    except ValueError as e:
+        parser.error(str(e))
     print(
         f"Llegadas · {args.config} (huella {args.huella}) · CV {profile.daily_cv:g}"
         f" · {args.dias} días · {args.replicas} réplicas"
@@ -192,7 +214,6 @@ def _validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print(format_validation(validation.results))
 
     # The plots are written even if a test fails: they help to find out why.
-    out_dir = Path(args.salida)
     out_dir.mkdir(parents=True, exist_ok=True)
     figures = (
         (HOURLY_PLOT, plot_hourly_profile(profile, validation.arrivals, validation.days)),

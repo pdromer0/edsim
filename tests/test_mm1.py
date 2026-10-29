@@ -1,5 +1,7 @@
+import hashlib
 import statistics
 
+import numpy as np
 import pytest
 
 from edsim.queueing.mm1 import CustomerRecord, simulate_mm1
@@ -7,10 +9,41 @@ from edsim.queueing.mm1 import CustomerRecord, simulate_mm1
 # Carga alta (ρ = 0,9) para que se formen colas y los invariantes se pongan a prueba.
 LAM, MU, HORIZON, SEED = 0.9, 1.0, 2000.0, 2026
 
+# Huella de los registros en main (commit a68e311, antes de usar child_streams):
+# simulate_mm1(LAM, MU, HORIZON, SEED). Con una semilla entera, child_streams da los
+# mismos hijos que SeedSequence(seed).spawn(2), así que los registros deben ser
+# idénticos bit a bit. Solo es legítimo regenerarla si se cambia a propósito el orden
+# o el número de los sorteos, y explicándolo en el PR; nunca para que un test pase.
+# Para regenerarla, ejecuta fingerprint(simulate_mm1(LAM, MU, HORIZON, SEED)) y copia
+# aquí el número de clientes y el sha256.
+MAIN_CUSTOMERS = 1828
+MAIN_SHA256 = "a915afc0fed3c47da2c3e0f446fe16c0d2387e73a4af61125132f799a30d1b0a"
+
 
 @pytest.fixture(scope="module")
 def records() -> tuple[CustomerRecord, ...]:
     return simulate_mm1(lam=LAM, mu=MU, horizon=HORIZON, seed=SEED)
+
+
+def fingerprint(records) -> tuple[int, str]:
+    """Number of records and sha256 of their four times as little-endian float64.
+
+    A missing service start or departure counts as NaN.
+    """
+    nan = float("nan")
+    times = np.array(
+        [
+            (
+                r.arrival,
+                r.service_time,
+                nan if r.service_start is None else r.service_start,
+                nan if r.departure is None else r.departure,
+            )
+            for r in records
+        ],
+        dtype="<f8",
+    )
+    return len(records), hashlib.sha256(times.tobytes()).hexdigest()
 
 
 def started(records):
@@ -24,6 +57,21 @@ def test_misma_semilla_mismos_registros(records):
     again = simulate_mm1(lam=LAM, mu=MU, horizon=HORIZON, seed=SEED)
 
     assert again == records
+
+
+def test_huella_de_main(records):
+    assert fingerprint(records) == (MAIN_CUSTOMERS, MAIN_SHA256)
+
+
+def test_mismo_seedsequence_dos_veces():
+    # El mismo objeto, reutilizado, da los mismos flujos: las réplicas y los
+    # notebooks pasan así la semilla. SeedSequence.spawn lo modificaría.
+    seq = np.random.SeedSequence(SEED)
+
+    first = simulate_mm1(lam=LAM, mu=MU, horizon=HORIZON, seed=seq)
+    second = simulate_mm1(lam=LAM, mu=MU, horizon=HORIZON, seed=seq)
+
+    assert first == second
 
 
 def test_semillas_distintas_registros_distintos():

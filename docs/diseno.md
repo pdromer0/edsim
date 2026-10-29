@@ -507,6 +507,11 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 16 | Métricas derivadas de los registros por cliente, sin traza aparte en el modelo | Una única fuente de verdad: hechos registrados y estados derivados, como en el log de eventos |
 | 17 | Tests estadísticos marcados como slow: el hook de Claude Code los omite y el CI los ejecuta todos | Ciclo de trabajo rápido sin renunciar a la validación estadística |
 | 18 | Notebooks de Jupyter sin lógica propia, con nbstripout en pre-commit y nbmake en el CI en modo rápido | Explorar y aprender sin estado oculto ni salidas en git; Jupyter por ser el estándar frente a marimo |
+| 19 | Perfiles de llegadas en TOML: repartos horario y semanal en porcentaje y factores mensuales de tasa, normalizados a media 1 en el código | Parámetros en términos que entiende un clínico; tomllib sin dependencias; la base conserva su significado |
+| 20 | λ(t) continua: interpolación lineal periódica entre los centros de las horas; día, mes y Z cambian a medianoche; reloj sin cambio de hora | Sin saltos artificiales a las en punto; Λ exacta con trapecios |
+| 21 | Llegadas por thinning de Lewis–Shedler, perezoso, con cota por día comprobada en cada candidata | Exacto sin integrar ni invertir Λ; funciona en vivo; la comprobación evita recortes silenciosos |
+| 22 | Sobredispersión con un efecto diario Z gamma de media 1, parametrizado por el CV (6 %), con flujo propio y guardado como ground truth | El CV se traslada entre centros, a diferencia del índice de dispersión; Z queda disponible para validar modelos |
+| 23 | Validación con cinco pruebas al nivel 0,01, Bonferroni dentro de a y de d, Pearson condicional y pruebas de potencia; la hipótesis sale del perfil | Cada prueba busca un error distinto; las falsas alarmas quedan en el 5 % al combinar pruebas; sin hipótesis independiente no hay potencia |
 
 ### Preguntas resueltas
 
