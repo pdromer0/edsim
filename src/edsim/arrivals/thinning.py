@@ -38,7 +38,8 @@ from datetime import date, timedelta
 
 import numpy as np
 import simpy
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
+from scipy import stats
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, day_scale, day_shape_area, shape
@@ -159,6 +160,61 @@ def _day_effects(daily_cv: float, rng: np.random.Generator) -> Iterator[float]:
     while True:
         # numpy's gamma takes the scale theta, not the rate 1 / theta.
         yield float(rng.gamma(k, theta))
+
+
+def day_effect_distribution(daily_cv: float) -> stats.rv_continuous:
+    """The distribution of the daily effect Z: gamma with mean 1 and CV ``daily_cv``.
+
+    It is the distribution ``draw_day_effects`` and the thinning draw from,
+    as a frozen SciPy distribution, for plots and tests.
+
+    Args:
+        daily_cv: Coefficient of variation of Z; positive.
+
+    Returns:
+        The frozen gamma, with shape ``1 / CV**2`` and scale ``CV**2``.
+
+    Raises:
+        ValueError: If ``daily_cv`` is not a finite positive number. With 0,
+            Z is the constant 1, not a gamma.
+    """
+    daily_cv = _check_daily_cv(daily_cv)
+    if daily_cv == 0:
+        raise ValueError("daily_cv must be positive for a distribution: with 0, Z is always 1")
+    k, theta = _gamma_parameters(daily_cv)
+    return stats.gamma(a=k, scale=theta)
+
+
+def daily_count_distribution(expected: ArrayLike, daily_cv: float) -> stats.rv_discrete:
+    """The distribution of the arrivals of a day with ``expected`` arrivals without Z.
+
+    Given Z, the day is Poisson with mean ``Z * expected``; over the gamma of
+    Z it is negative binomial, with mean ``e`` and variance
+    ``e + (CV * e)**2``. With ``daily_cv = 0`` it is Poisson with mean ``e``.
+    Each day has its own ``e``, so the counts of a whole run are a mixture
+    of these distributions, not one of them.
+
+    Args:
+        expected: Expected arrivals of the day without Z, ``e``; a positive
+            number or an array, one per day.
+        daily_cv: Coefficient of variation of Z; 0 or more.
+
+    Returns:
+        The frozen SciPy distribution: ``nbinom`` with ``n = 1 / CV**2`` and
+        ``p = 1 / (1 + CV**2 * e)``, or ``poisson`` with CV 0.
+
+    Raises:
+        ValueError: If ``expected`` is not finite and positive, or
+            ``daily_cv`` is negative or not finite.
+    """
+    daily_cv = _check_daily_cv(daily_cv)
+    e = np.asarray(expected, dtype=float)
+    if not np.all(np.isfinite(e)) or np.any(e <= 0):
+        raise ValueError(f"expected must be finite and positive, got {expected!r}")
+    if daily_cv == 0:
+        return stats.poisson(e)
+    k, theta = _gamma_parameters(daily_cv)
+    return stats.nbinom(n=k, p=1 / (1 + theta * e))
 
 
 def draw_day_effects(

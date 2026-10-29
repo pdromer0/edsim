@@ -20,6 +20,8 @@ from edsim.arrivals.thinning import (
     CandidateRecord,
     DayRecord,
     arrival_source,
+    daily_count_distribution,
+    day_effect_distribution,
     draw_day_effects,
     iter_arrivals,
     simulate_arrivals,
@@ -197,6 +199,64 @@ def test_z_no_depende_del_perfil(profile, run):
 
     assert effects_of(days) == effects_of(run[1])
     assert times_of(arrivals) != times_of(run[0])
+
+
+def test_distribucion_de_z_a_mano():
+    z = day_effect_distribution(CV)
+
+    assert z.mean() == pytest.approx(1, rel=1e-12)
+    assert z.std() == pytest.approx(CV, rel=1e-12)
+    assert z.kwds == {"a": pytest.approx(GAMMA_SHAPE, abs=5e-3), "scale": GAMMA_SCALE}
+
+
+def test_las_z_sorteadas_siguen_su_distribucion():
+    # Kolmogórov–Smirnov de 20 000 Z del flujo propio frente a la gamma teórica.
+    # Semilla fija: con un sorteo correcto, p < 0,01 solo un 1 % de las veces.
+    z = draw_day_effects(CV, 20_000, SEED)
+
+    assert stats.kstest(z, day_effect_distribution(CV).cdf).pvalue >= 0.01
+
+
+def test_distribucion_de_z_con_cv_0_da_error():
+    # Con CV 0, Z es la constante 1: no hay gamma que devolver.
+    with pytest.raises(ValueError, match="daily_cv"):
+        day_effect_distribution(0)
+
+
+def test_distribucion_del_recuento_diario_a_mano():
+    # Lunes 5 de enero (e = 375,56): binomial negativa con CV 0,06 y Poisson con CV 0.
+    nb = daily_count_distribution(EXPECTED_MONDAY, CV)
+    poisson = daily_count_distribution(EXPECTED_MONDAY, 0)
+
+    assert nb.mean() == pytest.approx(EXPECTED_MONDAY, rel=1e-12)
+    assert nb.var() == pytest.approx(VAR_NB_MONDAY, abs=0.05)
+    assert nb.var() == pytest.approx(EXPECTED_MONDAY + (CV * EXPECTED_MONDAY) ** 2, rel=1e-12)
+    assert poisson.mean() == pytest.approx(EXPECTED_MONDAY, rel=1e-12)
+    assert poisson.var() == pytest.approx(VAR_POISSON_MONDAY, abs=0.05)
+
+
+def test_distribucion_del_recuento_con_varias_medias():
+    # Acepta un array de medias, una por día, como los esperados de un run.
+    expected = np.array([250.0, 300.0, 350.0])
+
+    nb = daily_count_distribution(expected, CV)
+
+    assert nb.mean() == pytest.approx(expected, rel=1e-12)
+    assert nb.var() == pytest.approx(expected + (CV * expected) ** 2, rel=1e-12)
+
+
+@pytest.mark.parametrize("expected", [0, -1.0, math.nan, math.inf])
+def test_distribucion_del_recuento_media_invalida(expected):
+    with pytest.raises(ValueError, match="expected"):
+        daily_count_distribution(expected, CV)
+
+
+@pytest.mark.parametrize("cv", [-0.1, math.nan, True])
+def test_distribuciones_cv_invalido(cv):
+    with pytest.raises(ValueError, match="daily_cv"):
+        day_effect_distribution(cv)
+    with pytest.raises(ValueError, match="daily_cv"):
+        daily_count_distribution(300.0, cv)
 
 
 @pytest.mark.parametrize("cv", [-0.1, math.nan, math.inf, True])
