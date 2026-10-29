@@ -28,8 +28,12 @@ generator with itself. Arrivals generated with a base of 330 and validated
 against 300 would always pass, and no power test could fail.
 
 The tests are pure: they take records and a profile and do not simulate.
+``validate_arrivals`` runs the whole validation from a profile and a master
+seed: one long run for a–c, R replications for d and short runs for e, each
+block with its own child of the seed.
 """
 
+import collections
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -39,7 +43,8 @@ from scipy import stats
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate
-from edsim.arrivals.thinning import ArrivalRecord, DayRecord
+from edsim.arrivals.thinning import ArrivalRecord, DayRecord, iter_arrivals, simulate_arrivals
+from edsim.seeds import child_streams
 from edsim.stats import Summary, summarize
 
 ALPHA = 0.01
@@ -414,4 +419,111 @@ def check_p_uniformity(
     """
     return p_value_uniformity(
         [check_rescaled_gaps(profile, arrivals, days).p_value for arrivals, days in runs]
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ArrivalValidation:
+    """Result of a whole validation, with the records it used.
+
+    Attributes:
+        results: Tests a to e, in that order.
+        arrivals: Arrivals of the long run of tests a to c.
+        days: Day records of the long run.
+        replications: Day records of each replication of test d; their
+            arrivals are not kept.
+    """
+
+    results: tuple[ValidationResult, ...]
+    arrivals: tuple[ArrivalRecord, ...]
+    days: tuple[DayRecord, ...]
+    replications: tuple[tuple[DayRecord, ...], ...]
+
+    @property
+    def passed(self) -> bool:
+        """Whether all the tests pass."""
+        return all(r.passed for r in self.results)
+
+    def result(self, name: str) -> ValidationResult:
+        """Return the result of the test called ``name``."""
+        for r in self.results:
+            if r.name == name:
+                return r
+        raise KeyError(name)
+
+
+def _check_count(name: str, value: object, minimum: int) -> int:
+    # bool is a subclass of int in Python: True must not pass as 1.
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
+    return value
+
+
+def _days_only(
+    profile: ArrivalProfile, days: int, seed: np.random.SeedSequence
+) -> tuple[DayRecord, ...]:
+    """Day records of a run, consuming its arrivals without keeping them."""
+    records: list[DayRecord] = []
+    collections.deque(iter_arrivals(profile, days, seed, on_day=records.append), maxlen=0)
+    return tuple(records)
+
+
+def validate_arrivals(
+    profile: ArrivalProfile,
+    days: int = 364,
+    replicas: int = 20,
+    seed: int | np.random.SeedSequence = 2026,
+    *,
+    short_runs: int = 100,
+    short_days: int = 14,
+) -> ArrivalValidation:
+    """Generate arrivals with ``profile`` and run the five tests against it.
+
+    ``child_streams(seed, 3)`` gives one child per block: the long run of
+    ``days`` days (tests a to c), the ``replicas`` replications of ``days``
+    days (test d) and the ``short_runs`` runs of ``short_days`` days (test e).
+    Within a block, run ``i`` uses child ``i`` of the block's seed. So each
+    run depends only on the master seed, its block and its index: the same
+    seed reproduces the validation, and adding replications or short runs
+    keeps the long run and the earlier runs.
+
+    Args:
+        profile: The profile used both to generate and to validate.
+        days: Days of the long run and of each replication, at least
+            ``MIN_DAYS``.
+        replicas: Replications for test d, at least 2.
+        seed: Master seed: an integer or a ``numpy.random.SeedSequence``.
+        short_runs: Short runs for test e, at least 2.
+        short_days: Days of each short run, at least 1.
+
+    Returns:
+        The results of the five tests and the records they used.
+
+    Raises:
+        ValueError: If an argument is not a valid integer.
+    """
+    days = _check_count("days", days, MIN_DAYS)
+    replicas = _check_count("replicas", replicas, 2)
+    short_runs = _check_count("short_runs", short_runs, 2)
+    short_days = _check_count("short_days", short_days, 1)
+
+    long_seq, replicas_seq, short_seq = child_streams(seed, 3)
+    arrivals, day_records = simulate_arrivals(profile, days, long_seq)
+    replications = tuple(
+        _days_only(profile, days, child) for child in child_streams(replicas_seq, replicas)
+    )
+    runs = [
+        simulate_arrivals(profile, short_days, child)
+        for child in child_streams(short_seq, short_runs)
+    ]
+
+    results = (
+        check_volume(profile, day_records),
+        check_hourly_shape(profile, arrivals, day_records),
+        check_rescaled_gaps(profile, arrivals, day_records),
+        check_dispersion(profile, replications),
+        check_p_uniformity(profile, runs),
+    )
+    return ArrivalValidation(
+        results=results, arrivals=arrivals, days=day_records, replications=replications
     )

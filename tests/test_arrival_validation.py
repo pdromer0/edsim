@@ -1,12 +1,13 @@
 import math
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy import stats
 
-from edsim.arrivals.profile import ArrivalProfile
-from edsim.arrivals.thinning import ArrivalRecord, DayRecord
+from edsim.arrivals.profile import ArrivalProfile, load_profile
+from edsim.arrivals.thinning import ArrivalRecord, DayRecord, simulate_arrivals
 from edsim.arrivals.validation import (
     ALPHA,
     WEEKDAY_NAMES,
@@ -19,8 +20,11 @@ from edsim.arrivals.validation import (
     p_value_uniformity,
     pearson_index,
     rescaled_gaps,
+    validate_arrivals,
 )
+from edsim.seeds import child_streams
 
+EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
 MONDAY = date(2026, 1, 5)
 WEDNESDAY = date(2026, 1, 7)
@@ -325,3 +329,61 @@ def test_uniformidad_usa_el_p_valor_de_c_de_cada_ejecucion():
     p_values = [check_rescaled_gaps(profile, a, d).p_value for a, d in runs]
 
     assert check_p_uniformity(profile, runs) == p_value_uniformity(p_values)
+
+
+# --- Validación completa ------------------------------------------------------
+
+# Tamaños mínimos para que los tests rápidos tarden poco: no comprueban si pasa.
+SMALL = dict(days=14, replicas=2, short_runs=2, short_days=2)
+NAMES = ["volume", "hourly_shape", "rescaled_gaps", "dispersion", "p_uniformity"]
+
+
+@pytest.fixture(scope="module")
+def example() -> ArrivalProfile:
+    return load_profile(EXAMPLE)
+
+
+@pytest.fixture(scope="module")
+def small(example):
+    return validate_arrivals(example, seed=7, **SMALL)
+
+
+def test_validacion_cinco_resultados_en_orden(small):
+    assert [r.name for r in small.results] == NAMES
+    assert small.passed == all(r.passed for r in small.results)
+    assert small.result("dispersion") is small.results[3]
+    with pytest.raises(KeyError):
+        small.result("otra")
+
+
+def test_validacion_reproducible(example, small):
+    assert validate_arrivals(example, seed=7, **SMALL) == small
+    assert validate_arrivals(example, seed=8, **SMALL).arrivals != small.arrivals
+
+
+def test_validacion_semillas_por_bloque(example, small):
+    # Hijo 0 para la ejecución larga, 1 para las réplicas y 2 para las cortas.
+    long_seq, reps_seq, _ = child_streams(7, 3)
+
+    assert (small.arrivals, small.days) == simulate_arrivals(example, 14, long_seq)
+    for i, replication in enumerate(small.replications):
+        assert replication == simulate_arrivals(example, 14, child_streams(reps_seq, 2)[i])[1]
+
+
+def test_validacion_bloques_independientes(example, small):
+    # Más réplicas o más ejecuciones cortas no cambian la ejecución larga ni las
+    # réplicas que ya había.
+    more = validate_arrivals(example, seed=7, **{**SMALL, "replicas": 3, "short_runs": 5})
+
+    assert (more.arrivals, more.days) == (small.arrivals, small.days)
+    assert more.replications[:2] == small.replications
+    assert more.result("volume") == small.result("volume")
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [("days", 13), ("replicas", 1), ("short_runs", 1), ("short_days", 0), ("days", 14.0)],
+)
+def test_validacion_argumentos_invalidos(example, argument, value):
+    with pytest.raises(ValueError, match=argument):
+        validate_arrivals(example, seed=7, **{**SMALL, argument: value})
