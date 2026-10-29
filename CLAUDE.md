@@ -41,4 +41,13 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se ve
 - Nunca trabajes en `main`: cada tarea va en su rama y entra por pull request.
 - Nunca subas (`git push`) sin permiso explícito.
 - Nunca fusiones pull requests: la fusión es de Pedro.
-- En los hitos 0 y 1, Pedro ejecuta a mano los comandos de git y GitHub; tú indicas cuáles.
+
+Flujo de cada tarea (desde el hito 2, Claude Code ejecuta git):
+
+1. Actualiza `main` (`git switch main && git pull`) y crea la rama de la tarea (`git switch -c <rama>`).
+2. Haz los commits en la rama.
+3. Pide permiso a Pedro y haz `git push -u origin <rama>`.
+4. Abre el pull request con `gh pr create`.
+5. Pedro revisa y fusiona siempre.
+
+Encadena con `&&` los pasos que dependen del anterior, para que ninguno se ejecute si el previo falla.

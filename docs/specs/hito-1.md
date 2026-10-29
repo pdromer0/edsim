@@ -153,7 +153,7 @@ Un notebook de Jupyter, abierto en Cursor, para exponer y explorar todos los con
 - Debe ejecutarse de principio a fin sin errores ("Restart & Run All"), sin depender del orden en que se ejecutaron las celdas.
 - Las semillas son explícitas en cada sección, para que los resultados sean reproducibles.
 - `nbstripout` en pre-commit borra resultados e imágenes antes de cada commit: se versionan el código y el texto, no las salidas.
-- Fichero: `notebooks/01_mm1_exploracion.ipynb`. Dependencias de desarrollo: `ipykernel` y `nbstripout`.
+- Fichero: `notebooks/01_mm1_exploracion.ipynb`. Dependencias de desarrollo: `ipykernel` y `nbmake`; `nbstripout` se instala como hook de pre-commit, en su propio entorno.
 
 **Contenido**
 
@@ -381,3 +381,31 @@ Este anexo se amplía al cerrar cada tarea del hito: qué se hizo, los conceptos
 - **Errores coherentes.** Validar en `argparse` y convertir los errores internos da un único formato de error, el mismo código de salida y ningún fichero a medias.
 - **El modo Plan en Cursor.** Cuando Claude presenta un plan formal en modo Plan, la extensión lo abre como documento Markdown en el editor, donde se pueden añadir comentarios en línea; si solo lo explica en la conversación, aparece en el panel lateral.
 - **Cerca de la saturación, cuidado con la duración.** El punto de ρ = 0,95 pasa la validación, pero las simulaciones cortas tienden a subestimar las esperas; una mejora futura sería alargar la duración del barrido según ρ se acerca a 1.
+
+### Tarea 1.6: notebook de exploración de la M/M/1
+
+**Qué se hizo**
+
+- `notebooks/01_mm1_exploracion.ipynb`, en español, con una sección 0 de uso y las 11 secciones de la especificación. Cada sección combina explicación, código que solo llama a `edsim`, una gráfica, preguntas "Para experimentar" y un recuadro "Lo que debes recordar".
+- Funciones nuevas en el paquete, con tests escritos antes: `src/edsim/queueing/analysis.py` (tiempos entre llegadas y de servicio, tiempos residuales, la serie escalonada de ocupación, su media en el tiempo y su muestreo en una rejilla), `t_critical` en `stats.py`, `coverage_mm1` en `replications.py` y `format_records` en `report.py`.
+- Un test une las dos formas de calcular las medias en el tiempo: la escalera de ocupación y `mm1_metrics` coinciden con precisión de 10⁻¹².
+- Infraestructura: `ipykernel` y `nbmake` como dependencias de desarrollo; hook `nbstripout` (0.9.1) en pre-commit; un paso del CI que ejecuta el notebook en modo rápido (`EDSIM_NB_RAPIDO=1`); comandos y apertura en Cursor documentados en `CLAUDE.md`.
+- El hook de tests de Claude Code no ejecuta el notebook: pytest solo recoge `tests/`, y `nbmake` solo actúa con `--nbmake`.
+
+**Conceptos**
+
+- **Notebook y kernel.** Celdas de código y de texto; el código lo ejecuta un kernel de Python que conserva las variables entre celdas. Debe ser el de `.venv` para encontrar `edsim`.
+- **Estado oculto.** Ejecutar celdas en cualquier orden puede dejar un notebook que solo funciona en tu sesión. La defensa es *Restart & Run All*, y `nbmake` lo hace en el CI.
+- **`nbstripout`.** Borra resultados e imágenes antes de cada commit: git guarda código y texto, con diffs legibles.
+- **Modo rápido.** Una variable de entorno reduce réplicas y duraciones desde una única celda de parámetros, para que el CI ejecute el notebook en segundos.
+- **El notebook no contiene lógica.** Lo que necesita se añade al paquete con tests; así surgieron piezas reutilizables, como la serie de ocupación, útil para futuros paneles de urgencias.
+- **Ruff también revisa notebooks**, igual que el resto del código.
+
+**Tiempos**: en modo rápido, unos 10 s (el del CI). En modo normal, 288 s, la mayor parte en la cobertura de la sección 8, que reproduce el experimento de 96 y 97 aciertos de 100.
+
+**Lecciones aprendidas**
+
+- **Cuidado con los límites de tiempo.** `nbmake` corta por defecto a los 300 s, y el modo normal tardó 288 s, más de lo estimado. El modo normal se ejecuta con `uv run pytest --nbmake --nbmake-timeout=600 notebooks/`.
+- **`nbstripout` cancela el primer commit.** Al quitar las salidas modifica el fichero y el commit no se crea; hay que repetir `git add` y el commit. Tras cada commit, el notebook queda sin gráficas en Cursor hasta volver a ejecutarlo: conviene explorar libremente y hacer el commit al final.
+- **Encadenar con `&&`.** Con los comandos en líneas separadas, el `push` y el `gh pr create` se ejecutaron aunque el commit había fallado, y el PR falló con "No commits between main and…". Con `git add . && git commit … && git push && gh pr create …`, cada paso solo se ejecuta si el anterior ha ido bien.
+- **Un notebook didáctico empuja a mejorar el paquete.** Las visualizaciones exigieron funciones de análisis que antes no existían y que ahora tienen tests y servirán en hitos posteriores.

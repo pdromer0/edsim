@@ -504,6 +504,9 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 13 | Centro base de 300 urgencias al día, rango 200–400 | Hospital general de tamaño medio |
 | 14 | Repositorio público en GitHub, con ruleset que protege main | Los rulesets solo están disponibles en repositorios públicos del plan gratuito; datos sintéticos, sin secretos |
 | 15 | Código, nombres y docstrings en inglés; documentación, especificaciones y commits en español; claves de configuración en español | Estándar del código; la documentación sirve al aprendizaje en el idioma de Pedro |
+| 16 | Métricas derivadas de los registros por cliente, sin traza aparte en el modelo | Una única fuente de verdad: hechos registrados y estados derivados, como en el log de eventos |
+| 17 | Tests estadísticos marcados como slow: el hook de Claude Code los omite y el CI los ejecuta todos | Ciclo de trabajo rápido sin renunciar a la validación estadística |
+| 18 | Notebooks de Jupyter sin lógica propia, con nbstripout en pre-commit y nbmake en el CI en modo rápido | Explorar y aprender sin estado oculto ni salidas en git; Jupyter por ser el estándar frente a marimo |
 
 ### Preguntas resueltas
 
