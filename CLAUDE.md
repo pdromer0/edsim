@@ -3,7 +3,7 @@
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: [docs/specs/hito-0.md](docs/specs/hito-0.md)
+- Hito en curso: [docs/specs/hito-2.md](docs/specs/hito-2.md)
 
 ## Modo de trabajo
 
@@ -32,7 +32,7 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se ve
 
 - Código, nombres y docstrings en inglés.
 - Documentación, especificaciones y mensajes de commit en español.
-- Claves de los YAML de configuración en español, como en el diseño.
+- Claves de los ficheros de configuración (TOML) en español, como en el diseño.
 - Commits con prefijo `feat`, `fix`, `docs`, `test`, `chore` o `ci`, p. ej. `feat(sim): cola M/M/1 con SimPy`.
 - Decisiones importantes como ADR en [docs/decisiones/](docs/decisiones/README.md); aprendizaje en [docs/diario/](docs/diario/README.md).
 
