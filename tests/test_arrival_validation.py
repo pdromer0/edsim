@@ -1,3 +1,4 @@
+import dataclasses
 import math
 from datetime import date, timedelta
 from pathlib import Path
@@ -387,3 +388,75 @@ def test_validacion_bloques_independientes(example, small):
 def test_validacion_argumentos_invalidos(example, argument, value):
     with pytest.raises(ValueError, match=argument):
         validate_arrivals(example, seed=7, **{**SMALL, argument: value})
+
+
+# --- Validación con semilla fija (slow) ---------------------------------------
+
+# Como en la especificación: 364 días, 20 réplicas y 100 ejecuciones de 14 días.
+# Si un test falla, no se cambia la semilla: se analiza la causa.
+SEED = 2026
+DAYS = 364
+
+
+@pytest.fixture(scope="module")
+def validation_cv0(example):
+    return validate_arrivals(dataclasses.replace(example, daily_cv=0), DAYS, 20, SEED)
+
+
+@pytest.fixture(scope="module")
+def validation_cv006(example):
+    assert example.daily_cv == 0.06
+    return validate_arrivals(example, DAYS, 20, SEED)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fixture", ["validation_cv0", "validation_cv006"])
+def test_las_cinco_pruebas_pasan(request, fixture):
+    validation = request.getfixturevalue(fixture)
+
+    failed = [r.name for r in validation.results if not r.passed]
+    assert validation.passed, f"fallan: {failed}"
+
+
+# --- Potencia (slow) ----------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_potencia_base_330_frente_a_300_falla_volumen(example):
+    # Un 10 % de llegadas de más: el cociente medio ronda 1,1.
+    _, days = simulate_arrivals(dataclasses.replace(example, daily_base=330), DAYS, SEED)
+
+    result = check_volume(example, days)
+
+    assert not result.passed
+    assert result.statistic == pytest.approx(1.1, abs=0.02)
+
+
+@pytest.mark.slow
+def test_potencia_perfil_desplazado_una_hora_falla_forma_y_huecos(example):
+    # Cada hora toma el factor de la anterior: el pico pasa de las 11 h a las 12 h.
+    h = example.hour_factors
+    shifted = dataclasses.replace(example, hour_factors=h[-1:] + h[:-1])
+    arrivals, days = simulate_arrivals(shifted, DAYS, SEED)
+
+    # b: los recuentos por hora no tienen la forma esperada. c: los huecos reescalados
+    # con la λ equivocada se estiran donde λ se subestima y se encogen donde se
+    # sobrestima, y dejan de ser Exp(1).
+    assert not check_hourly_shape(example, arrivals, days).passed
+    assert not check_rescaled_gaps(example, arrivals, days).passed
+
+
+@pytest.mark.slow
+def test_potencia_cv_ignorado_falla_dispersion(example, validation_cv006):
+    # Las réplicas generadas con CV 0,06, validadas como si el CV fuera 0: la teoría
+    # sin Z pasa a ser 1 y el Pearson observado ronda 2,1.
+    result = check_dispersion(
+        dataclasses.replace(example, daily_cv=0), validation_cv006.replications
+    )
+
+    assert not result.passed
+    unconditional, conditional = result.details
+    assert not unconditional.passed
+    # El condicional usa la Z real de los registros y sigue pasando: el error está en
+    # la hipótesis sobre Z, no en el Poisson de cada día.
+    assert conditional.passed
