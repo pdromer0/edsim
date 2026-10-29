@@ -408,3 +408,35 @@ def test_simpy_consume_el_generador(profile):
     env.run(until=DAY)
 
     assert seen == [a for a in arrivals if a.time < DAY]
+
+
+# --- Dispersión diaria (slow) -------------------------------------------------
+
+PEARSON_DAYS = 1092  # tres años de 364 días
+
+
+def pearson_index(profile: ArrivalProfile, days: tuple[DayRecord, ...]) -> float:
+    """P = media de (c − e)²/e por día, con e esperado sin Z (calculado sin el run)."""
+    ends = np.arange(len(days) + 1) * DAY
+    expected = np.diff(cumulative_rate(ends, profile))
+    counts = np.array([d.accepted for d in days])
+    return float(np.mean((counts - expected) ** 2 / expected))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("cv", [0, CV])
+def test_indice_de_pearson(tmp_path, cv):
+    # Dado Z, el día es Poisson de media Z·e; sobre la gamma, Var(c) = e + CV²·e², así
+    # que E[(c − e)²/e] = 1 + CV²·e y P ≈ 1 + CV²·ē: 1 sin Z y ≈ 2,08 con CV 0,06.
+    # Cada término es ≈ (Var/e)·χ²₁, de desviación √2·Var/e: P tiene un error típico
+    # ≈ P·√(2/n), 0,043 con CV 0 y 0,089 con CV 0,06. La tolerancia son 4 errores
+    # típicos (±0,17 y ±0,36), muy por debajo de la distancia entre ambas teorías (1,08).
+    profile = example_with_cv(tmp_path, cv)
+    _, days = simulate_arrivals(profile, PEARSON_DAYS, SEED)
+    mean_expected = statistics.fmean(d.expected / d.day_effect for d in days)
+    theory = 1 + cv**2 * mean_expected
+
+    observed = pearson_index(profile, days)
+
+    tolerance = 4 * theory * math.sqrt(2 / PEARSON_DAYS)
+    assert observed == pytest.approx(theory, abs=tolerance), f"P = {observed:.3f}"
