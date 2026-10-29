@@ -18,6 +18,9 @@ from edsim.arrivals.validation import (
     check_rescaled_gaps,
     check_volume,
     conditional_pearson_index,
+    daily_residuals,
+    expected_per_day,
+    hourly_counts,
     p_value_uniformity,
     pearson_index,
     rescaled_gaps,
@@ -189,6 +192,37 @@ def test_forma_horaria_hora_del_reloj_en_varios_dias():
     assert result.statistic == pytest.approx(0, abs=1e-12)
 
 
+def test_recuentos_horarios_son_los_de_la_prueba_b():
+    # El caso a mano de arriba: 34 llegadas a las 0 h y 10 en el resto; 11 esperadas
+    # por hora tras reescalar al total. El chi-cuadrado con estos recuentos es el de b.
+    profile = flat_profile(240)
+    times = [h * 60 + 1 + i for h in range(24) for i in range(34 if h == 0 else 10)]
+    arrivals, days = make_arrivals(times), make_days(profile, [264])
+
+    observed, expected = hourly_counts(profile, arrivals, days)
+
+    assert observed.tolist() == [34] + [10] * 23
+    assert expected == pytest.approx([11] * 24, rel=1e-12)
+    statistic = np.sum((observed - expected) ** 2 / expected)
+    assert check_hourly_shape(profile, arrivals, days).statistic == pytest.approx(
+        statistic, rel=1e-12
+    )
+
+
+def test_recuentos_horarios_con_z_y_el_perfil_de_ejemplo(example):
+    # Con un perfil no plano y Z distinta por día, la prueba b sigue siendo un
+    # chi-cuadrado de exactamente estos recuentos.
+    arrivals, days = simulate_arrivals(example, 3, 11)
+
+    observed, expected = hourly_counts(example, arrivals, days)
+
+    assert observed.sum() == len(arrivals)
+    assert expected.sum() == pytest.approx(len(arrivals), rel=1e-12)
+    result = check_hourly_shape(example, arrivals, days)
+    statistic, p_value = stats.chisquare(observed, expected)
+    assert (result.statistic, result.p_value) == (statistic, p_value)
+
+
 # --- c. Huecos reescalados ----------------------------------------------------
 
 
@@ -251,6 +285,55 @@ def test_pearson_condicional_a_mano():
 
     assert conditional_pearson_index(profile, exact) == pytest.approx(0, abs=1e-12)
     assert conditional_pearson_index(profile, off) == pytest.approx(1)
+
+
+def test_residuos_diarios_a_mano():
+    # e = 100, CV 0,1: sin Z, (c − e)/√(e + CV²·e²) = ±10/√200. Con Z = 1,1 y 0,9,
+    # los esperados condicionales son 110 y 90, justo los recuentos: residuo 0.
+    profile = flat_profile(100, cv=0.1)
+    days = make_days(profile, [110, 90], effects=[1.1, 0.9])
+
+    conditional, unconditional = daily_residuals(profile, days)
+
+    assert conditional == pytest.approx([0, 0], abs=1e-12)
+    assert unconditional == pytest.approx([10 / math.sqrt(200), -10 / math.sqrt(200)])
+
+
+def test_residuos_condicionales_al_cuadrado_dan_el_pearson_condicional():
+    profile = flat_profile(100, cv=0.1)
+    days = make_days(profile, [121, 81], effects=[1.1, 0.9])
+
+    conditional, _ = daily_residuals(profile, days)
+
+    assert conditional == pytest.approx([11 / math.sqrt(110), -9 / math.sqrt(90)])
+    assert np.mean(conditional**2) == pytest.approx(conditional_pearson_index(profile, days))
+
+
+def test_residuos_sin_z_con_cv_0_dan_el_pearson():
+    # Con CV 0, el residuo sin Z es (c − e)/√e y su cuadrado medio es el Pearson.
+    profile = flat_profile(100)
+    days = make_days(profile, [112, 95, 101], effects=[1.2, 0.9, 1.0])
+
+    _, unconditional = daily_residuals(profile, days)
+
+    assert np.mean(unconditional**2) == pytest.approx(pearson_index(profile, days))
+
+
+def test_confianza_de_cada_intervalo():
+    profile = flat_profile(240)
+    volume = check_volume(profile, make_days(profile, [240 + (k % 3) - 1 for k in range(14)]))
+    dispersion = check_dispersion(profile, replications_with_deviations(profile, [8, 12, 10]))
+    shape = check_hourly_shape(
+        profile,
+        make_arrivals([h * 60 + 1 + i for h in range(24) for i in range(10)]),
+        make_days(profile, [240]),
+    )
+
+    assert volume.confidence == 1 - ALPHA / 8
+    assert all(d.confidence == 1 - ALPHA / 8 for d in volume.details)
+    assert dispersion.confidence == 1 - ALPHA / 2
+    assert all(d.confidence == 1 - ALPHA / 2 for d in dispersion.details)
+    assert shape.confidence is None
 
 
 def replications_with_deviations(profile, deviations) -> list[tuple[DayRecord, ...]]:
@@ -460,3 +543,29 @@ def test_potencia_cv_ignorado_falla_dispersion(example, validation_cv006):
     # El condicional usa la Z real de los registros y sigue pasando: el error está en
     # la hipótesis sobre Z, no en el Poisson de cada día.
     assert conditional.passed
+
+    # Lo mismo, visto con los residuos de recuentos_diarios.png. Con la hipótesis CV 0,
+    # el residuo sin Z es (c − e)/√e, cuya varianza es 1 + CV²·e con el CV real: su
+    # desviación típica teórica es √(1 + 0,06²·ē) ≈ √2,08 ≈ 1,44. El condicional usa
+    # la Z real y tiene desviación típica 1.
+    # Tolerancia: hay n = 20 × 364 = 7.280 días independientes, y el error típico de
+    # una desviación típica muestral es ≈ σ/√(2n): 0,012 para 1,44 y 0,008 para 1.
+    # ±0,06 y ±0,04 son unas 5 veces esos errores (falsa alarma prácticamente
+    # imposible), y 1,44 − 0,06 queda muy por encima de 1: el histograma sin Z sale
+    # claramente más ancho que la N(0, 1).
+    hypothesis = dataclasses.replace(example, daily_cv=0)
+    # Todas las réplicas cubren los mismos días: ē es la media del perfil en ellos.
+    mean_expected = np.mean(expected_per_day(example, DAYS))
+    conditional_r, unconditional_r = (
+        np.concatenate(parts)
+        for parts in zip(
+            *(daily_residuals(hypothesis, r) for r in validation_cv006.replications),
+            strict=True,
+        )
+    )
+    assert len(unconditional_r) == 20 * DAYS
+    assert np.std(unconditional_r) == pytest.approx(
+        math.sqrt(1 + 0.06**2 * mean_expected), abs=0.06
+    )
+    assert np.std(unconditional_r) > 1.3
+    assert np.std(conditional_r) == pytest.approx(1, abs=0.04)
