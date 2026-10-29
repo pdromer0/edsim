@@ -357,11 +357,39 @@ def test_llegadas_errores_de_uso(comando, config, extra, message, tmp_path, caps
             ]
         )
 
-    err = capsys.readouterr().err
+    captured = capsys.readouterr()
     assert exc.value.code == 2
-    assert message in err
-    assert "Traceback" not in err
+    assert message in captured.err
+    assert "Traceback" not in captured.err
+    # Nada en la salida estándar: ni la cabecera de validar ni resultados.
+    assert captured.out == ""
     assert not out_dir.exists()
+
+
+SALIDA_COMMANDS = {
+    "generar": ["llegadas", "generar", "--config", str(EXAMPLE), *GENERATE_ARGS],
+    "validar": ["llegadas", "validar", "--config", str(EXAMPLE), *VALIDATE_ARGS],
+    "barrido": ["mm1", "barrido", "--rhos", "0.3,0.6", *SMALL_ARGS],
+}
+
+
+@pytest.mark.parametrize("comando", SALIDA_COMMANDS)
+@pytest.mark.parametrize("dentro", [False, True], ids=["fichero", "dentro_de_un_fichero"])
+def test_salida_que_no_es_un_directorio(comando, dentro, tmp_path, capsys):
+    # --salida es un fichero, o está dentro de uno: código 2 antes de calcular nada.
+    blocker = tmp_path / "ocupado.txt"
+    blocker.write_text("no tocar\n")
+    out_dir = blocker / "sub" if dentro else blocker
+
+    with pytest.raises(SystemExit) as exc:
+        main([*SALIDA_COMMANDS[comando], "--salida", str(out_dir)])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "--salida" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    assert blocker.read_text() == "no tocar\n"
 
 
 def test_config_por_defecto_es_config_llegadas(monkeypatch, tmp_path):
