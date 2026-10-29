@@ -17,6 +17,7 @@ from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.rate import cumulative_rate, day_scale, day_shape_area, rate
 from edsim.arrivals.thinning import (
     ArrivalRecord,
+    CandidateRecord,
     DayRecord,
     arrival_source,
     draw_day_effects,
@@ -381,6 +382,89 @@ def test_days_invalido(profile, days):
         iter_arrivals(profile, days, SEED)
     with pytest.raises(ValueError, match="days"):
         simulate_arrivals(profile, days, SEED)
+
+
+# --- Gancho de las candidatas -------------------------------------------------
+
+
+def run_with_candidates(profile, days=DAYS, seed=SEED):
+    """simulate_arrivals with on_candidate, collecting every candidate."""
+    candidates: list[CandidateRecord] = []
+    return simulate_arrivals(profile, days, seed, on_candidate=candidates.append), candidates
+
+
+def test_gancho_no_cambia_las_llegadas(profile, run):
+    # El gancho solo observa: no sortea nada ni cambia la aritmética, así que las
+    # llegadas y los días son idénticos bit a bit.
+    (arrivals, days), _ = run_with_candidates(profile)
+
+    assert (arrivals, days) == run
+    assert fingerprint(arrivals) == fingerprint(run[0])
+
+
+def test_gancho_con_cv0_mantiene_la_huella_de_main(profile_cv0):
+    (arrivals, _), _ = run_with_candidates(profile_cv0)
+
+    assert fingerprint(arrivals) == (MAIN_ARRIVALS, MAIN_SHA256)
+
+
+def test_gancho_una_llamada_por_candidata(profile):
+    (arrivals, days), candidates = run_with_candidates(profile)
+    day_of = [math.floor(c.time / DAY) for c in candidates]
+
+    # Las llamadas de cada día son sus candidatas: la que pasa de medianoche no cuenta.
+    assert np.bincount(day_of, minlength=DAYS).tolist() == [d.candidates for d in days]
+    accepted = [c for c in candidates if c.accepted]
+    assert np.bincount([math.floor(c.time / DAY) for c in accepted], minlength=DAYS).tolist() == [
+        d.accepted for d in days
+    ]
+    # Las aceptadas son exactamente las llegadas, en el mismo orden.
+    assert [c.time for c in accepted] == times_of(arrivals)
+
+
+def test_gancho_tiempos_crecientes_y_dentro_del_dia(profile):
+    _, candidates = run_with_candidates(profile)
+    times = np.array([c.time for c in candidates])
+
+    assert np.all(np.diff(times) > 0)
+    assert times[0] >= 0
+    assert times[-1] < DAYS * DAY
+
+
+def test_gancho_altura_y_aceptacion(profile):
+    (_, days), candidates = run_with_candidates(profile)
+    times = np.array([c.time for c in candidates])
+    heights = np.array([c.height for c in candidates])
+    accepted = np.array([c.accepted for c in candidates])
+    bounds = np.array([d.bound for d in days])[np.floor(times / DAY).astype(int)]
+    lam = rate(times, profile, day_effects=effects_of(days))
+
+    # La altura es U · cota, con U uniforme en [0, 1): cae bajo la cota del día.
+    assert np.all(heights >= 0)
+    assert np.all(heights < bounds)
+    # Se acepta si y solo si la altura no supera λ(t). λ se calcula con rate() y la
+    # misma Z, que coincide bit a bit con la del thinning.
+    assert np.array_equal(accepted, heights <= lam)
+    # U uniforme: la altura relativa media ronda 1/2 (≈ 28 000 candidatas, error típico
+    # 1/√(12n) ≈ 0,0017; la tolerancia son unos 6).
+    assert np.mean(heights / bounds) == pytest.approx(0.5, abs=0.01)
+
+
+def test_gancho_y_on_day_juntos(profile):
+    # Los dos ganchos conviven: cada día se cierra después de sus candidatas.
+    events: list[tuple[int, int]] = []  # (día, 0 candidata | 1 cierre)
+
+    arrivals = iter_arrivals(
+        profile,
+        3,
+        SEED,
+        on_day=lambda d: events.append((d.day, 1)),
+        on_candidate=lambda c: events.append((math.floor(c.time / DAY), 0)),
+    )
+    list(arrivals)
+
+    assert [e for e in events if e[1] == 1] == [(0, 1), (1, 1), (2, 1)]
+    assert events == sorted(events)
 
 
 # --- Proceso SimPy ------------------------------------------------------------

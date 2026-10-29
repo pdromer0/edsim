@@ -63,6 +63,23 @@ class ArrivalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateRecord:
+    """One candidate of the thinning, accepted or not, for teaching and tests.
+
+    Attributes:
+        time: Minutes since 00:00 of the profile's ``start_date``.
+        height: ``U * bound``, with ``U`` the acceptance uniform: a point drawn
+            uniformly under the bound of the day.
+        accepted: Whether the candidate was kept, which happens when
+            ``height <= lambda(time)``: the point falls under the rate curve.
+    """
+
+    time: float
+    height: float
+    accepted: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DayRecord:
     """Ground truth of one simulated day (ADR 0006).
 
@@ -179,6 +196,7 @@ def iter_arrivals(
     seed: int | np.random.SeedSequence,
     *,
     on_day: Callable[[DayRecord], None] | None = None,
+    on_candidate: Callable[[CandidateRecord], None] | None = None,
     bound_factor: float = 1.0,
 ) -> Iterator[ArrivalRecord]:
     """Generate the arrivals of ``days`` full days, lazily and in order.
@@ -206,6 +224,11 @@ def iter_arrivals(
             closed: after its last arrival, when the next one is asked for (or
             when the generator is exhausted). A day left unfinished, because
             the consumer stopped asking, is not reported.
+        on_candidate: Called with a ``CandidateRecord`` for every candidate
+            inside a day, accepted or not, before the arrival is yielded. The
+            candidate that falls past midnight is not reported, so the calls
+            of a day are its ``DayRecord.candidates``. It only observes: the
+            arrivals are the same, bit for bit, with or without it.
         bound_factor: Multiplies the bound of every day. Only for tests and
             teaching: a value below 1 makes the bound too low and the
             generator raises.
@@ -224,7 +247,7 @@ def iter_arrivals(
     arrivals_seq, day_effect_seq = child_streams(seed, 2)
     rng = np.random.default_rng(arrivals_seq)
     z_rng = np.random.default_rng(day_effect_seq)
-    return _thinning(profile, days, rng, z_rng, on_day, bound_factor)
+    return _thinning(profile, days, rng, z_rng, on_day, on_candidate, bound_factor)
 
 
 def _thinning(
@@ -233,6 +256,7 @@ def _thinning(
     rng: np.random.Generator,
     z_rng: np.random.Generator,
     on_day: Callable[[DayRecord], None] | None,
+    on_candidate: Callable[[CandidateRecord], None] | None,
     bound_factor: float,
 ) -> Iterator[ArrivalRecord]:
     max_h = max(profile.hour_factors)
@@ -263,7 +287,11 @@ def _thinning(
                     f"thinning bound too low on day {day}: lambda({t:.4f}) = {lam:.6g} "
                     f"exceeds the bound {bound:.6g}"
                 )
-            if rng.random() * bound <= lam:
+            height = rng.random() * bound
+            keep = height <= lam
+            if on_candidate is not None:
+                on_candidate(CandidateRecord(time=t, height=height, accepted=keep))
+            if keep:
                 accepted += 1
                 yield ArrivalRecord(arrival_id=next_id, time=t)
                 next_id += 1
@@ -283,12 +311,16 @@ def _thinning(
 
 
 def simulate_arrivals(
-    profile: ArrivalProfile, days: int, seed: int | np.random.SeedSequence
+    profile: ArrivalProfile,
+    days: int,
+    seed: int | np.random.SeedSequence,
+    *,
+    on_candidate: Callable[[CandidateRecord], None] | None = None,
 ) -> tuple[tuple[ArrivalRecord, ...], tuple[DayRecord, ...]]:
     """Generate all the arrivals of ``days`` full days, for batch analysis.
 
     Consumes ``iter_arrivals`` entirely; see it for the algorithm and the
-    arguments.
+    arguments, including ``on_candidate``.
 
     Returns:
         The arrivals in order and one ``DayRecord`` per day.
@@ -297,7 +329,9 @@ def simulate_arrivals(
         ValueError: If ``days`` is not a positive integer.
     """
     day_records: list[DayRecord] = []
-    arrivals = tuple(iter_arrivals(profile, days, seed, on_day=day_records.append))
+    arrivals = tuple(
+        iter_arrivals(profile, days, seed, on_day=day_records.append, on_candidate=on_candidate)
+    )
     return arrivals, tuple(day_records)
 
 
