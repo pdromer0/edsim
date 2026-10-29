@@ -95,7 +95,12 @@ def _check_shift_starts(key: str, values: object) -> tuple[int, ...]:
 
 
 def _check_shares(key: str, values: object) -> tuple[float, ...]:
-    """Non-negative weights with a positive sum, normalized to sum 1."""
+    """Non-negative weights with a positive sum, normalized to sum 1.
+
+    Shares that already sum to 1 (up to 1e-12) are kept as they are. Dividing
+    them again by a sum such as 0.9999999999999999 would change their last
+    bit, and ``dataclasses.replace`` would not give back the same center.
+    """
     shares = [
         _check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
     ]
@@ -105,6 +110,8 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
     total = sum(shares)
     if total <= 0:
         raise ValueError(f"{key} must have a positive sum, got {list(values)!r}")
+    if math.isclose(total, 1, rel_tol=0, abs_tol=1e-12):
+        return tuple(shares)
     return tuple(x / total for x in shares)
 
 

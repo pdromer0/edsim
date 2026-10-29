@@ -159,11 +159,20 @@ def test_reparto_con_ceros_valido(tmp_path, shares):
     assert sum(c.level_shares) == pytest.approx(1, rel=1e-12)
 
 
-def test_normalizacion_idempotente(center):
-    # Construir con el reparto ya normalizado no lo vuelve a cambiar.
-    again = dataclasses.replace(center)
+@pytest.mark.parametrize(
+    "shares",
+    [
+        [0.3, 12.1, 33.6, 52.6, 1.4],
+        # Normalizado suma 0.9999999999999999: dividir otra vez cambiaría el último bit.
+        [0.3, 12.1, 33.6, 52.6, 0],
+    ],
+)
+def test_normalizacion_idempotente(center, shares):
+    # Construir con el reparto ya normalizado no lo vuelve a cambiar, ni en un bit.
+    first = dataclasses.replace(center, level_shares=shares)
+    again = dataclasses.replace(first)
 
-    assert again.level_shares == pytest.approx(center.level_shares, rel=1e-15)
+    assert again.level_shares == first.level_shares
 
 
 def test_inmutable(center):
