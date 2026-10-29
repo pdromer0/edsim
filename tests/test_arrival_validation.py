@@ -10,9 +10,14 @@ from edsim.arrivals.thinning import ArrivalRecord, DayRecord
 from edsim.arrivals.validation import (
     ALPHA,
     WEEKDAY_NAMES,
+    check_dispersion,
     check_hourly_shape,
+    check_p_uniformity,
     check_rescaled_gaps,
     check_volume,
+    conditional_pearson_index,
+    p_value_uniformity,
+    pearson_index,
     rescaled_gaps,
 )
 
@@ -21,7 +26,7 @@ MONDAY = date(2026, 1, 5)
 WEDNESDAY = date(2026, 1, 7)
 
 
-def flat_profile(base: float = 240, start: date = MONDAY) -> ArrivalProfile:
+def flat_profile(base: float = 240, start: date = MONDAY, cv: float = 0) -> ArrivalProfile:
     """Profile with every factor equal to 1: the rate is base / 1440 all the time.
 
     Every day expects ``base`` arrivals and every hour ``base / 24``, so the
@@ -32,7 +37,7 @@ def flat_profile(base: float = 240, start: date = MONDAY) -> ArrivalProfile:
         hour_factors=(1,) * 24,
         weekday_factors=(1,) * 7,
         month_factors=(1,) * 12,
-        daily_cv=0,
+        daily_cv=cv,
         start_date=start,
     )
 
@@ -219,3 +224,104 @@ def test_huecos_todos_iguales_falla():
 
     assert result.statistic == pytest.approx(1 - math.exp(-1), rel=1e-9)
     assert not result.passed
+
+
+# --- d. Dispersión ------------------------------------------------------------
+
+
+def test_pearson_sin_z_a_mano():
+    # e = 100 los dos días: (10²/100 + 10²/100) / 2 = 1. Z no interviene.
+    profile = flat_profile(100)
+    days = make_days(profile, [110, 90], effects=[1.1, 0.9])
+
+    assert pearson_index(profile, days) == pytest.approx(1)
+
+
+def test_pearson_condicional_a_mano():
+    # Esperado con Z: 110 y 90. Con 121 y 81: (11²/110 + 9²/90) / 2 = (1,1 + 0,9) / 2 = 1.
+    profile = flat_profile(100)
+
+    exact = make_days(profile, [110, 90], effects=[1.1, 0.9])
+    off = make_days(profile, [121, 81], effects=[1.1, 0.9])
+
+    assert conditional_pearson_index(profile, exact) == pytest.approx(0, abs=1e-12)
+    assert conditional_pearson_index(profile, off) == pytest.approx(1)
+
+
+def replications_with_deviations(profile, deviations) -> list[tuple[DayRecord, ...]]:
+    """One 2-day replication per deviation d, with counts 100 ± d and Z = 1: P = d²/100."""
+    return [make_days(profile, [100 + d, 100 - d]) for d in deviations]
+
+
+def test_dispersion_pasa_con_la_teoria_dentro():
+    # P de cada réplica: 1; 0,25; 1,69. Media 0,98 y el 1 dentro de los dos intervalos.
+    profile = flat_profile(100)
+    replications = replications_with_deviations(profile, [10, 5, 13])
+
+    result = check_dispersion(profile, replications)
+
+    assert result.name == "dispersion"
+    assert result.statistic == pytest.approx((1 + 0.25 + 1.69) / 3)
+    assert result.target == 1
+    assert [d.name for d in result.details] == ["unconditional", "conditional"]
+    assert all("99.5" in d.criterion for d in result.details)  # Bonferroni: 1 − 0,01/2
+    assert result.passed
+
+
+def test_dispersion_falla_con_varianza_de_mas():
+    # P ≈ 4: 4; 4; 4,41; 3,61; 4. Con 3 réplicas no bastaría: t(0,9975; 2 g.l.) ≈ 14 y el
+    # intervalo contendría el 1. Con 5, t ≈ 5,6 y el intervalo, ≈ [3,3; 4,7], lo excluye.
+    profile = flat_profile(100)
+
+    result = check_dispersion(profile, replications_with_deviations(profile, [20, 20, 21, 19, 20]))
+
+    assert not result.passed
+    assert not any(d.passed for d in result.details)
+
+
+def test_dispersion_teoria_con_cv_del_perfil():
+    # Teoría sin Z: 1 + CV²·ē = 1 + 0,01 · 100 = 2; la del condicional sigue siendo 1.
+    profile = flat_profile(100, cv=0.1)
+
+    result = check_dispersion(profile, replications_with_deviations(profile, [10, 5, 13]))
+
+    assert result.target == pytest.approx(2)
+    assert result.details[1].target == 1
+
+
+def test_dispersion_necesita_dos_replicas():
+    profile = flat_profile(100)
+    with pytest.raises(ValueError, match="2 replications"):
+        check_dispersion(profile, replications_with_deviations(profile, [10]))
+
+
+# --- e. Uniformidad de los p-valores ------------------------------------------
+
+
+def test_p_valores_uniformes_pasa():
+    n = 50
+    result = p_value_uniformity((np.arange(1, n + 1) - 0.5) / n)
+
+    assert result.name == "p_uniformity"
+    assert result.statistic == pytest.approx(0.5 / n)
+    assert result.passed
+
+
+def test_p_valores_todos_pequenos_falla():
+    result = p_value_uniformity([0.001] * 50)
+
+    assert result.statistic == pytest.approx(0.999)
+    assert not result.passed
+
+
+def test_uniformidad_usa_el_p_valor_de_c_de_cada_ejecucion():
+    profile = flat_profile(1440)
+    gaps = stats.expon.ppf((np.arange(1, 101) - 0.5) / 100)
+    runs = [
+        (make_arrivals(np.cumsum(gaps)), make_days(profile, [100])),
+        (make_arrivals(np.arange(1, 101, dtype=float)), make_days(profile, [100])),
+        (make_arrivals(np.cumsum(gaps[::-1]) * 1.3), make_days(profile, [100])),
+    ]
+    p_values = [check_rescaled_gaps(profile, a, d).p_value for a, d in runs]
+
+    assert check_p_uniformity(profile, runs) == p_value_uniformity(p_values)

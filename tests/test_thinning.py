@@ -23,6 +23,7 @@ from edsim.arrivals.thinning import (
     iter_arrivals,
     simulate_arrivals,
 )
+from edsim.arrivals.validation import pearson_index
 
 EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
@@ -413,14 +414,6 @@ def test_simpy_consume_el_generador(profile):
 # --- Dispersión diaria (slow) -------------------------------------------------
 
 PEARSON_DAYS = 1092  # tres años de 364 días
-
-
-def pearson_index(profile: ArrivalProfile, days: tuple[DayRecord, ...]) -> float:
-    """P = media de (c − e)²/e por día, con e esperado sin Z (calculado sin el run)."""
-    ends = np.arange(len(days) + 1) * DAY
-    expected = np.diff(cumulative_rate(ends, profile))
-    counts = np.array([d.accepted for d in days])
-    return float(np.mean((counts - expected) ** 2 / expected))
 
 
 @pytest.mark.slow

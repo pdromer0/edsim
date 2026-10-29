@@ -7,6 +7,10 @@ a. volume: observed / expected arrivals per day, in total and per weekday.
 b. hourly shape: arrivals per hour of the clock, with a chi-square test.
 c. rescaled gaps: the gaps of Lambda(t_i) against an exponential of mean 1,
    with a Kolmogorov–Smirnov test.
+d. dispersion: Pearson's index of the daily counts in R replications,
+   against its theory, with and without Z.
+e. uniformity of the p-values of c over many short runs, with a
+   Kolmogorov–Smirnov test against U(0, 1).
 
 All of them use the level ``ALPHA = 0.01``: with five tests at 5 %, a correct
 generator would raise some false alarm in 23 % of the validations; at 1 %, in
@@ -262,3 +266,152 @@ def check_rescaled_gaps(
     """
     statistic, p_value = stats.kstest(rescaled_gaps(profile, arrivals, days), "expon")
     return _p_value_result("rescaled_gaps", statistic, p_value)
+
+
+def _counts_and_expected(
+    profile: ArrivalProfile, days: Sequence[DayRecord]
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Accepted arrivals and expected arrivals without Z of each day."""
+    index = np.array([d.day for d in days])
+    counts = np.array([d.accepted for d in days], dtype=float)
+    return counts, expected_per_day(profile, int(index.max()) + 1)[index]
+
+
+def pearson_index(profile: ArrivalProfile, days: Sequence[DayRecord]) -> float:
+    """Pearson's dispersion index of the daily counts, with expected values without Z.
+
+    ``P = mean of (c - e)**2 / e`` over the days, with ``e`` from the profile
+    alone. Given Z, a day is Poisson with mean ``Z * e``; over the gamma,
+    ``Var(c) = e + CV**2 * e**2``, so ``E[P] = 1 + CV**2 * mean(e)``: 1 without
+    Z, and about 2.08 with CV 0.06 and 300 arrivals a day.
+
+    Args:
+        profile: The profile of the hypothesis.
+        days: Day records of one run, from day 0.
+
+    Returns:
+        The index P.
+    """
+    counts, expected = _counts_and_expected(profile, days)
+    return float(np.mean((counts - expected) ** 2 / expected))
+
+
+def conditional_pearson_index(profile: ArrivalProfile, days: Sequence[DayRecord]) -> float:
+    """Pearson's index given Z: expected values ``Z * e``, with the Z of the records.
+
+    Given Z, each day is Poisson with mean ``Z * e``, so the theory is 1 with
+    or without overdispersion. Together with ``pearson_index``, it tells the
+    errors in Z (only the index without Z is off) from the errors in the
+    Poisson of each day (both are off).
+
+    Args:
+        profile: The profile of the hypothesis.
+        days: Day records of one run, from day 0, for their counts and Z.
+
+    Returns:
+        The conditional index.
+    """
+    counts, expected = _counts_and_expected(profile, days)
+    expected = expected * _day_effects(days)
+    return float(np.mean((counts - expected) ** 2 / expected))
+
+
+def check_dispersion(
+    profile: ArrivalProfile, replications: Sequence[Sequence[DayRecord]]
+) -> ValidationResult:
+    """Test d: the daily dispersion, with Pearson's index in replications.
+
+    Estimating a variance needs many days (with one year, the daily variance
+    has an error of about 7 %), so the test computes both indexes in each
+    independent replication and builds a confidence interval with
+    ``summarize``:
+
+    - without Z (``pearson_index``): the theory ``1 + CV**2 * mean(e)``, with
+      the profile's ``daily_cv``, must fall inside;
+    - given Z (``conditional_pearson_index``): 1 must fall inside.
+
+    Each interval is at the level ``1 - ALPHA / 2`` (Bonferroni), and the
+    test passes if both contain their theory.
+
+    Args:
+        profile: The profile of the hypothesis, whose ``daily_cv`` sets the
+            theory.
+        replications: Day records of each replication, at least 2.
+
+    Returns:
+        The result, with the mean index without Z and its interval, and both
+        intervals in ``details``.
+
+    Raises:
+        ValueError: If there are fewer than 2 replications.
+    """
+    if len(replications) < 2:
+        raise ValueError(
+            f"the dispersion test needs at least 2 replications, got {len(replications)}"
+        )
+    mean_expected = float(
+        np.mean(np.concatenate([_counts_and_expected(profile, r)[1] for r in replications]))
+    )
+    theory = 1 + profile.daily_cv**2 * mean_expected
+
+    confidence = 1 - ALPHA / 2
+    details = (
+        _interval_result(
+            "unconditional",
+            summarize((pearson_index(profile, r) for r in replications), confidence),
+            theory,
+        ),
+        _interval_result(
+            "conditional",
+            summarize((conditional_pearson_index(profile, r) for r in replications), confidence),
+            1.0,
+        ),
+    )
+    unconditional = details[0]
+    return ValidationResult(
+        name="dispersion",
+        statistic=unconditional.statistic,
+        p_value=None,
+        ci_low=unconditional.ci_low,
+        ci_high=unconditional.ci_high,
+        target=theory,
+        criterion=unconditional.criterion,
+        passed=all(d.passed for d in details),
+        details=details,
+    )
+
+
+def p_value_uniformity(p_values: Sequence[float] | NDArray[np.float64]) -> ValidationResult:
+    """Kolmogorov–Smirnov test of p-values against a uniform on (0, 1).
+
+    With a correct generator, the p-value of a test is uniform: 1 % of the
+    runs give p < 0.01 by chance. Small biases that one run cannot see pile
+    the p-values up near 0.
+
+    Args:
+        p_values: P-values of independent runs.
+
+    Returns:
+        The result ``"p_uniformity"``, with the Kolmogorov–Smirnov distance
+        and its p-value.
+    """
+    statistic, p_value = stats.kstest(np.asarray(p_values, dtype=float), "uniform")
+    return _p_value_result("p_uniformity", statistic, p_value)
+
+
+def check_p_uniformity(
+    profile: ArrivalProfile,
+    runs: Sequence[tuple[Sequence[ArrivalRecord], Sequence[DayRecord]]],
+) -> ValidationResult:
+    """Test e: the p-values of test c over many short runs are uniform.
+
+    Args:
+        profile: The profile of the hypothesis.
+        runs: Arrivals and day records of each independent run.
+
+    Returns:
+        The result of ``p_value_uniformity`` on the p-values of test c.
+    """
+    return p_value_uniformity(
+        [check_rescaled_gaps(profile, arrivals, days).p_value for arrivals, days in runs]
+    )
