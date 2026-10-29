@@ -6,7 +6,7 @@ import pytest
 from scipy.integrate import quad
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
-from edsim.arrivals.rate import cumulative_rate, day_scale, rate
+from edsim.arrivals.rate import cumulative_rate, day_scale, rate, shape
 
 EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
@@ -177,6 +177,19 @@ def test_escala_diaria(profile):
     assert day_scale(np.array(days), profile) == pytest.approx(
         [day_scale_reference(profile, d) for d in days], rel=1e-12
     )
+
+
+def test_tasa_es_escala_por_forma(profile):
+    # El thinning evalúa λ(t) como day_scale · shape(t − inicio del día): debe ser
+    # idéntico a rate, bit a bit. Se parte de t, como el thinning: day·1440 + m
+    # redondea, y restar después el inicio no devuelve exactamente m.
+    for day in (0, 6, 27, 250):
+        start = day * DAY
+        t = start + np.arange(0, DAY, 0.37)
+        thinning_lambda = day_scale(day, profile) * shape(t - start, profile)
+        assert np.array_equal(thinning_lambda, rate(t, profile))
+    assert type(shape(30.0, profile)) is float
+    assert shape(11 * 60 + 30, profile) == pytest.approx(max(profile.hour_factors), rel=1e-15)
 
 
 @pytest.mark.parametrize("day", [-1, 1.5, True, [0, -2]])

@@ -31,7 +31,7 @@ import numpy as np
 import simpy
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate, day_scale, rate
+from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate, day_scale, shape
 
 _ROUNDING = 1e-12
 """Relative margin for lambda over the bound, which may differ in the last bits."""
@@ -162,7 +162,9 @@ def _thinning(
     for day in range(days):
         start = day * MINUTES_PER_DAY
         end = start + MINUTES_PER_DAY
-        bound = day_scale(day, profile) * max_h * bound_factor
+        # lambda(t) = scale * shape(minute): the scale is computed once per day.
+        scale = day_scale(day, profile)
+        bound = scale * max_h * bound_factor
         candidates = accepted = 0
 
         t = float(start)
@@ -172,7 +174,7 @@ def _thinning(
             if t >= end:
                 break  # past midnight: discarded, the next day restarts at 00:00
             candidates += 1
-            lam = rate(t, profile)
+            lam = scale * shape(t - start, profile)
             if lam > bound * (1 + _ROUNDING):
                 raise RuntimeError(
                     f"thinning bound too low on day {day}: lambda({t:.4f}) = {lam:.6g} "

@@ -27,6 +27,8 @@ Both functions are vectorized: they take a scalar or an array of any shape,
 because the validation computes Lambda at hundreds of thousands of arrivals.
 """
 
+from functools import cache
+
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
@@ -101,8 +103,47 @@ def day_scale(day: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.flo
     return _as_output(_day_scale(days.astype(np.int64), profile))
 
 
+def _shape(minutes: ArrayLike, profile: ArrivalProfile) -> NDArray[np.float64]:
+    """Hourly shape at each minute of the day, as an array."""
+    # The knots at 0 and 1440 carry the midnight value, so a plain np.interp
+    # joins 23:30 with 0:30 across midnight. It is the same interpolation as
+    # in _shape_area, and much cheaper per call than np.interp(period=...),
+    # which sorts the knots every time.
+    x, y, _ = _shape_knots(profile)
+    return np.interp(minutes, x, y)
+
+
+def shape(minutes: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
+    """Hourly shape of the rate: the hour factors joined by straight lines.
+
+    It is the factor that varies within a day, so that
+    ``rate(t) = day_scale(day of t) * shape(minute of t)``, with exactly the
+    same arithmetic as ``rate``. The thinning generator computes the scale
+    once per day and the shape at every candidate, which is much cheaper than
+    calling ``rate`` with a scalar.
+
+    No check is made on ``minutes``, to keep the per-candidate cost low:
+    outside ``[0, 1440]`` the value is clamped to the midnight value.
+
+    Args:
+        minutes: Minutes since 00:00 of the day, in ``[0, 1440)``; a scalar or
+            an array.
+        profile: The arrival profile.
+
+    Returns:
+        The shape, with mean 1 over a day: a float for a scalar ``minutes``,
+        otherwise an array with the shape of ``minutes``.
+    """
+    return _as_output(_shape(minutes, profile))
+
+
+@cache
 def _shape_knots(profile: ArrivalProfile) -> tuple[NDArray, NDArray, NDArray]:
     """Knots of the hourly shape within one day and the cumulative area at each.
+
+    Cached per profile, which is frozen and hashable: the thinning generator
+    needs the knots at every candidate. The arrays are read-only, because
+    every caller shares them.
 
     The knots are 0, 30, 90, ..., 1410 and 1440 minutes. At 0 and 1440 the
     shape is halfway between the 23 h and 0 h factors, by periodicity. The
@@ -117,7 +158,10 @@ def _shape_knots(profile: ArrivalProfile) -> tuple[NDArray, NDArray, NDArray]:
     x = np.concatenate([[0.0], 60 * _HOUR_CENTRES, [MINUTES_PER_DAY]])
     y = np.concatenate([[midnight], h, [midnight]])
     trapezoids = np.diff(x) * (y[:-1] + y[1:]) / 2
-    return x, y, np.concatenate([[0.0], np.cumsum(trapezoids)])
+    area = np.concatenate([[0.0], np.cumsum(trapezoids)])
+    for array in (x, y, area):
+        array.flags.writeable = False
+    return x, y, area
 
 
 def _shape_area(minutes: NDArray[np.float64], profile: ArrivalProfile) -> NDArray[np.float64]:
@@ -150,9 +194,7 @@ def rate(t: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
     """
     times = _check_times(t)
     days, minutes = _split(times)
-    # np.interp with period=24 joins 23:30 with 0:30 across midnight.
-    shape = np.interp(minutes / 60, _HOUR_CENTRES, profile.hour_factors, period=24)
-    return _as_output(_day_scale(days, profile) * shape)
+    return _as_output(_day_scale(days, profile) * _shape(minutes, profile))
 
 
 def cumulative_rate(t: ArrayLike, profile: ArrivalProfile) -> float | NDArray[np.float64]:
