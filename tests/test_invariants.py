@@ -108,7 +108,14 @@ def two_patients() -> list[Event]:
 
 
 def test_comprobaciones_registradas():
-    assert list(CHECKS) == ["conservation", "time", "transitions", "capacity"]
+    assert list(CHECKS) == [
+        "conservation",
+        "time",
+        "transitions",
+        "capacity",
+        "nobody_jumps_the_queue",
+        "displacement",
+    ]
 
 
 def test_ground_truth_desde_los_sorteos():
@@ -651,3 +658,211 @@ def test_capacidad_maxima_de_la_plantilla(center):
     events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False))
 
     assert violations(events, wider, "capacity") == []
+
+
+# --- Nadie se cuela ----------------------------------------------------------------------
+
+
+def stay_in_box(
+    arrival_id: int, t0: float, level: int, box_time: float, box: int, start: float | None = None
+) -> list[Row]:
+    """Recorrido sin pruebas: triaje de t0 a t0+5, box en box_time y valoración de 20
+    minutos desde start (box_time si no se da)."""
+    start = box_time if start is None else start
+    rows = [
+        (t0, "patient_arrived", {}),
+        (t0, "patient_registered", {}),
+        (t0, "triage_started", {}),
+        (t0 + 5, "triage_completed", {"nivel": level}),
+        (box_time, "box_assigned", {"box": box}),
+        (start, "assessment_started", {"tipo": "inicial", "pool": "medicos", "box": box}),
+        (start + 20, "assessment_ended", {"tipo": "inicial", "interrumpida": False}),
+        (start + 20, "disposition_decided", {"destino": "alta"}),
+        (start + 20, "patient_departed", {"destino": "alta"}),
+    ]
+    return [(t, arrival_id, event_type, payload) for t, event_type, payload in rows]
+
+
+@pytest.fixture(scope="module")
+def roomy(center) -> CenterConfig:
+    """Enfermeras y médicos de sobra: solo cuentan los boxes."""
+    return dataclasses.replace(center, triage_nurses=(5, 5, 5), doctors=(5, 5, 5))
+
+
+@pytest.mark.parametrize(("first", "expected"), [(1, ["EP-000001"]), (2, [])])
+def test_box_para_quien_tiene_la_clave_menor(roomy, first, expected):
+    # Un box, ocupado por A de 5 a 95. B (nivel 4) espera desde 15 y C (nivel 2) desde
+    # 25. En 95 el box debe ir a C; si va a B, B se ha colado.
+    one_box = dataclasses.replace(roomy, boxes=1)
+    events = build(
+        journey(0, 0.0),
+        stay_in_box(1, 10.0, 4, 95.0 if first == 1 else 115.0, 1),
+        stay_in_box(2, 20.0, 2, 95.0 if first == 2 else 115.0, 1),
+    )
+
+    found = violations(events, one_box, "nobody_jumps_the_queue")
+
+    assert [v.episode_id for v in found] == expected
+    if found:
+        assert "box" in found[0].message and "EP-000002" in found[0].message
+        assert found[0].sim_time == 95.0
+
+
+def test_medico_para_quien_tiene_la_clave_menor(center):
+    # Un médico, ocupado por A de 5 a 25. B (nivel 4) espera médico en el box 2 desde 6 y
+    # C (nivel 2) en el box 3 desde 7. En 25 el médico va a B: se ha colado.
+    small = dataclasses.replace(center, boxes=3, triage_nurses=(5, 5, 5))
+    events = build(
+        journey(0, 0.0, tests=False),
+        stay_in_box(1, 1.0, 4, 6.0, 2, start=25.0),
+        stay_in_box(2, 2.0, 2, 7.0, 3, start=45.0),
+    )
+
+    (v,) = violations(events, small, "nobody_jumps_the_queue")
+
+    assert v.episode_id == "EP-000001"
+    assert v.sim_time == 25.0
+    assert "doctor" in v.message and "EP-000002" in v.message
+
+
+def test_espera_que_empieza_en_el_mismo_instante_no_cuenta(center):
+    # El caso del desalojo con médicos escasos: en 25 A suelta el médico y SimPy se lo da
+    # a B (nivel 4, esperando desde 6). En ese mismo instante C (nivel 2) recibe un box y
+    # empieza a esperar médico, y su box_assigned sale antes que el assessment_started de
+    # B. B no se ha colado: el médico era suyo antes de que C lo pidiera.
+    small = dataclasses.replace(center, boxes=3, triage_nurses=(5, 5, 5))
+    c = stay_in_box(2, 20.0, 2, 25.0, 3, start=45.0)
+    # Hasta su box_assigned, C va antes que B en el fichero; después, detrás.
+    events = build(
+        journey(0, 0.0, tests=False), c[:5], stay_in_box(1, 1.0, 4, 6.0, 2, start=25.0), c[5:]
+    )
+    order = [(e.episode_id, e.event_type) for e in events if e.sim_time == 25.0]
+    assert order.index(("EP-000002", "box_assigned")) < order.index(
+        ("EP-000001", "assessment_started")
+    )
+
+    assert violations(events, small, "nobody_jumps_the_queue") == []
+
+
+def test_quien_vuelve_tras_un_desalojo_espera_con_su_clave(roomy):
+    # A (nivel 3, llegada 0) es desalojado en 12 y espera box desde ahí. B (nivel 3,
+    # llegada 20) termina el triaje en 25. Cuando L sale en 32, el box es de A, que llegó
+    # antes aunque pidiera de nuevo después; aquí va a B (32-52) y A vuelve en 53.
+    one_box = dataclasses.replace(roomy, boxes=1)
+    rows = [
+        (r[0] + 21, *r[1:]) if r[1] == A and r[0] >= 32 else r
+        for r in displaced_stay("espera_de_medico")
+    ]
+    events = build(rows, stay_in_box(1, 20.0, 3, 32.0, 1))
+
+    (v,) = violations(events, one_box, "nobody_jumps_the_queue")
+
+    assert v.episode_id == "EP-000001"
+    assert v.sim_time == 32.0
+    assert "EP-000000" in v.message
+
+
+# --- Desalojo ------------------------------------------------------------------------------
+
+
+def _set(rows: list[Row], arrival_id: int, event_type: str, **payload: object) -> list[Row]:
+    index = next(i for i, r in enumerate(rows) if r[1] == arrival_id and r[2] == event_type)
+    return replace_payload(rows, index, **payload)
+
+
+def test_desalojo_valido(one_box):
+    assert violations(build(displaced_stay("valoracion")), one_box, "displacement") == []
+
+
+def test_desaloja_quien_no_es_nivel_1(one_box):
+    rows = _set(displaced_stay("valoracion"), L, "triage_completed", nivel=2)
+
+    messages = [v.message for v in violations(build(rows), one_box, "displacement")]
+
+    assert any("EP-000009" in m and "level 2" in m for m in messages)
+
+
+def test_desalojado_de_nivel_1(one_box):
+    rows = _set(displaced_stay("valoracion"), A, "triage_completed", nivel=1)
+
+    messages = [v.message for v in violations(build(rows), one_box, "displacement")]
+
+    assert any("EP-000000" in m and "level 1" in m for m in messages)
+
+
+def test_desalojado_de_otro_box(one_box):
+    rows = _set(displaced_stay("valoracion"), A, "patient_displaced", box=2)
+    two_boxes = dataclasses.replace(one_box, boxes=2)
+
+    messages = [v.message for v in violations(build(rows), two_boxes, "displacement")]
+
+    assert any("box 2" in m and "box 1" in m for m in messages)
+
+
+def test_el_nivel_1_recibe_otro_box(one_box):
+    rows = displaced_stay("valoracion")
+    index = next(i for i, r in enumerate(rows) if r[1] == L and r[2] == "box_assigned")
+    rows = replace_payload(rows, index, box=2)
+    rows = _set(rows, L, "assessment_started", box=2)
+    two_boxes = dataclasses.replace(one_box, boxes=2)
+
+    (v,) = violations(build(rows), two_boxes, "displacement")
+
+    assert v.episode_id == "EP-000009"
+    assert "box 2" in v.message and "box 1" in v.message
+
+
+def test_el_nivel_1_recibe_el_box_en_otro_instante(one_box):
+    rows = [
+        (r[0] + 1, *r[1:]) if r[1] == L and r[2] in ("box_assigned", "assessment_started") else r
+        for r in displaced_stay("valoracion")
+    ]
+
+    found = violations(build(rows), one_box, "displacement")
+
+    # Además, en 12 L espera con el box libre.
+    (late,) = [v for v in found if v.sim_time == 13.0]
+    assert late.episode_id == "EP-000009"
+    assert "12" in late.message
+
+
+def test_el_nivel_1_no_recibe_el_box(one_box):
+    rows = [
+        r
+        for r in displaced_stay("valoracion")
+        if not (r[1] == L and r[0] >= 12 and r[2] != "triage_completed")
+    ]
+
+    found = violations(build(rows), one_box, "displacement")
+
+    assert any(v.event_id is None and "EP-000009" in v.message for v in found)
+
+
+def test_nivel_1_esperando_con_un_nivel_mayor_en_un_box(roomy):
+    # Un box con A (nivel 3) de 5 a 95; L (nivel 1) termina el triaje en 10 y espera sin
+    # desalojar a nadie hasta 95.
+    one_box = dataclasses.replace(roomy, boxes=1)
+    events = build(journey(0, 0.0), stay_in_box(9, 5.0, 1, 95.0, 1))
+
+    found = violations(events, one_box, "displacement")
+
+    assert [v.sim_time for v in found] == [10.0]
+    assert "EP-000009" in found[0].message and "level 3" in found[0].message
+
+
+def test_nivel_1_esperando_con_un_box_libre(roomy):
+    # Dos boxes: A (nivel 1) en el 1; L (nivel 1) espera de 10 a 25 con el 2 libre.
+    two_boxes = dataclasses.replace(roomy, boxes=2)
+    events = build(stay_in_box(0, 0.0, 1, 5.0, 1), stay_in_box(9, 5.0, 1, 25.0, 2))
+
+    found = violations(events, two_boxes, "displacement")
+
+    assert [v.sim_time for v in found] == [10.0]
+    assert "free" in found[0].message
+
+
+def test_nivel_1_esperando_con_todos_los_boxes_de_nivel_1(roomy):
+    one_box = dataclasses.replace(roomy, boxes=1)
+    events = build(stay_in_box(0, 0.0, 1, 5.0, 1), stay_in_box(9, 5.0, 1, 25.0, 1))
+
+    assert violations(events, one_box, "displacement") == []

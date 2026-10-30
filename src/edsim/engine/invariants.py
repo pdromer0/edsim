@@ -13,9 +13,10 @@ check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
 Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
-are edges of ``TRANSITIONS``, and ``patient_displaced`` frees the box in the
-capacity check. Task 3.5 will compare with the staffing in force instead of the
-maximum.
+are edges of ``TRANSITIONS``, ``patient_displaced`` frees the box in the
+capacity check, and two checks follow the priority (level, arrival):
+"nobody jumps the queue" and displacement. Task 3.5 will compare with the
+staffing in force instead of the maximum.
 """
 
 from collections import Counter
@@ -369,12 +370,212 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
     return out
 
 
+def _keys(events: Sequence[Event]) -> dict[str, tuple[int, float]]:
+    """Priority (level, arrival) of each triaged episode, from its events."""
+    arrival: dict[str, float] = {}
+    keys: dict[str, tuple[int, float]] = {}
+    for e in events:
+        if e.event_type == "patient_arrived":
+            arrival.setdefault(e.episode_id, e.sim_time)
+        elif e.event_type == "triage_completed" and e.episode_id in arrival:
+            keys[e.episode_id] = (e.payload["nivel"], arrival[e.episode_id])
+    return keys
+
+
+def check_nobody_jumps_the_queue(
+    events: Sequence[Event], context: InvariantContext
+) -> list[Violation]:
+    """Boxes and doctors go by the key (level, arrival).
+
+    When an episode gets a box (``box_assigned``) or a doctor
+    (``assessment_started``), no other episode waiting for that resource
+    since an earlier instant has a lower key. Who waits, from the log:
+
+    - for a box: from ``triage_completed`` or ``patient_displaced`` to
+      ``box_assigned``;
+    - for a doctor: holding a box with an assessment to do, from
+      ``box_assigned`` or ``test_resulted`` to ``assessment_started`` or
+      ``patient_displaced``.
+
+    A wait that began in the same instant does not count: SimPy may have
+    granted the resource before the other request was made, even if the
+    events of the instant come in another order in the file.
+    """
+    name = "nobody_jumps_the_queue"
+    keys = _keys(events)
+    out: list[Violation] = []
+    waiting: dict[str, dict[str, float]] = {"box": {}, "doctor": {}}  # episode → since
+    has_box: set[str] = set()
+    to_assess: set[str] = set()  # an assessment is next in the box
+
+    def check(e: Event, resource: str) -> None:
+        mine = keys.get(e.episode_id)
+        if mine is None:
+            return
+        for other, since in waiting[resource].items():
+            if other != e.episode_id and since < e.sim_time and keys[other] < mine:
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"{e.episode_id} {keys[e.episode_id]} got a {resource} while "
+                        f"{other} {keys[other]} waited for one since {since!r}",
+                    )
+                )
+                return
+
+    for e in events:
+        episode = e.episode_id
+        match e.event_type:
+            case "triage_completed":
+                waiting["box"][episode] = e.sim_time
+                to_assess.add(episode)
+            case "box_assigned":
+                check(e, "box")
+                waiting["box"].pop(episode, None)
+                has_box.add(episode)
+                if episode in to_assess:
+                    waiting["doctor"][episode] = e.sim_time
+            case "assessment_started":
+                check(e, "doctor")
+                waiting["doctor"].pop(episode, None)
+                to_assess.discard(episode)
+            case "assessment_ended" if e.payload["interrumpida"]:
+                to_assess.add(episode)  # resumed when back in a box
+            case "test_resulted":
+                to_assess.add(episode)
+                if episode in has_box:
+                    waiting["doctor"][episode] = e.sim_time
+            case "patient_displaced":
+                has_box.discard(episode)
+                waiting["doctor"].pop(episode, None)
+                waiting["box"][episode] = e.sim_time
+            case "patient_departed":
+                has_box.discard(episode)
+    return out
+
+
+def check_displacement(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """Only a level 1 displaces, only a higher level, and only when it must.
+
+    - In every ``patient_displaced``, ``desalojado_por`` is a level 1, the
+      displaced patient is of a higher level and its ``box`` is the one it
+      held; the next ``box_assigned`` of the level 1 is that box, in the same
+      instant.
+    - At the end of every instant, a level 1 waiting for a box finds every
+      box taken, and by levels 1. It is checked when the instant is over
+      because a displacement takes several events of one instant
+      (``triage_completed`` of the level 1, ``patient_displaced``, its
+      ``box_assigned``). Each wait is reported once.
+    """
+    name = "displacement"
+    keys = _keys(events)
+    out: list[Violation] = []
+    box_of: dict[str, int] = {}
+    occupant: dict[int, str] = {}
+    owed: dict[str, tuple[int, float]] = {}  # level 1 → box and instant it took
+    level1_waiting: set[str] = set()
+    reported: set[str] = set()
+
+    def level(episode: str) -> int | None:
+        key = keys.get(episode)
+        return None if key is None else key[0]
+
+    def end_of_instant(last: Event) -> None:
+        for episode in sorted(level1_waiting - reported):
+            if len(occupant) < context.center.boxes:
+                free = context.center.boxes - len(occupant)
+                problem = f"{free} free box(es)"
+            else:
+                higher = sorted(
+                    (box, level(holder)) for box, holder in occupant.items() if level(holder) != 1
+                )
+                if not higher:
+                    continue
+                box, other = higher[0]
+                problem = f"box {box} held by {occupant[box]}, level {other}"
+            reported.add(episode)
+            out.append(
+                Violation(
+                    name,
+                    f"level 1 {episode} waits for a box with {problem}",
+                    last.event_id,
+                    episode,
+                    last.sim_time,
+                )
+            )
+
+    previous: Event | None = None
+    for e in events:
+        if previous is not None and e.sim_time != previous.sim_time:
+            end_of_instant(previous)
+        previous = e
+        episode = e.episode_id
+        match e.event_type:
+            case "triage_completed" if e.payload["nivel"] == 1:
+                level1_waiting.add(episode)
+            case "box_assigned":
+                box = e.payload["box"]
+                level1_waiting.discard(episode)
+                reported.discard(episode)
+                if episode in owed:
+                    expected, when = owed.pop(episode)
+                    if (box, e.sim_time) != (expected, when):
+                        out.append(
+                            _at(
+                                name,
+                                e,
+                                f"{episode} got box {box} at {e.sim_time!r}, but it "
+                                f"displaced the patient of box {expected} at {when!r}",
+                            )
+                        )
+                box_of[episode] = box
+                occupant[box] = episode
+            case "patient_displaced":
+                by = e.payload["desalojado_por"]
+                if level(by) != 1:
+                    out.append(_at(name, e, f"displaced by {by}, of level {level(by)}, not 1"))
+                if level(episode) == 1:
+                    out.append(_at(name, e, f"{episode} of level 1 displaced by {by}"))
+                held = box_of.pop(episode, None)
+                if held != e.payload["box"]:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"{episode} displaced from box {e.payload['box']}, "
+                            f"but it held box {held}",
+                        )
+                    )
+                if held is not None and occupant.get(held) == episode:
+                    del occupant[held]
+                owed[by] = (e.payload["box"], e.sim_time)
+            case "patient_departed":
+                held = box_of.pop(episode, None)
+                if held is not None and occupant.get(held) == episode:
+                    del occupant[held]
+    if previous is not None:
+        end_of_instant(previous)
+
+    for by, (box, when) in owed.items():
+        out.append(
+            Violation(
+                name,
+                f"{by} displaced the patient of box {box} at {when!r} but never got it",
+                episode_id=by,
+            )
+        )
+    return out
+
+
 CHECKS: Mapping[str, Check] = MappingProxyType(
     {
         "conservation": check_conservation,
         "time": check_time,
         "transitions": check_transitions,
         "capacity": check_capacity,
+        "nobody_jumps_the_queue": check_nobody_jumps_the_queue,
+        "displacement": check_displacement,
     }
 )
 """The invariants, by name, in the order ``check_invariants`` runs them."""

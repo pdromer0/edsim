@@ -6,6 +6,7 @@ médicos y 30 boxes; cada escenario reduce lo que necesita.
 """
 
 import dataclasses
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -374,3 +375,59 @@ def test_sin_nivel_1_ningun_desalojo(center):
         check_invariants(events, no_level1, ground_truth=result.ground_truth, inside=result.inside)
         == []
     )
+
+
+# --- Estrés ----------------------------------------------------------------------------
+
+# Calibrado en la tarea 3.4 con semilla 2026: 350 desalojos (233 en valoración, 60 en
+# pruebas, 57 esperando médico) y 85 pacientes desalojados más de una vez, en 0,4 s.
+# Los umbrales son holgados: solo garantizan que el test no pase en vacío.
+STRESS_DAYS = 4
+
+
+def displacement_stages(events: list[Event]) -> Counter[str]:
+    """Etapa de cada desalojo, según el evento anterior del episodio desalojado."""
+    stage_of = {
+        "assessment_ended": "valoracion",
+        "test_ordered": "pruebas",
+        "box_assigned": "espera_de_medico",
+        "test_resulted": "espera_de_medico",
+    }
+    last: dict[str, str] = {}
+    stages: Counter[str] = Counter()
+    for e in events:
+        if e.event_type == "patient_displaced":
+            stages[stage_of[last[e.episode_id]]] += 1
+        if e.episode_id is not None:
+            last[e.episode_id] = e.event_type
+    return stages
+
+
+def test_estres_con_muchos_niveles_1(center):
+    stress = dataclasses.replace(center, boxes=24, level_shares=(30.0, 15.0, 20.0, 25.0, 10.0))
+    profile = load_profile(DATA / "llegadas_ejemplo.toml")
+    sink = MemorySink()
+
+    result = simulate_ed(stress, profile, STRESS_DAYS, 2026, sink=sink)
+
+    events = sink.events
+    assert (
+        check_invariants(events, stress, ground_truth=result.ground_truth, inside=result.inside)
+        == []
+    )
+    stages = displacement_stages(events)
+    assert sum(stages.values()) >= 150
+    assert all(stages[stage] >= 20 for stage in ("valoracion", "pruebas", "espera_de_medico"))
+    displaced = Counter(e.episode_id for e in events if e.event_type == "patient_displaced")
+    assert sum(1 for n in displaced.values() if n > 1) >= 20
+    # Algún resultado llega con el paciente esperando box (fuera de su box).
+    in_box: set[str] = set()
+    outside = 0
+    for e in events:
+        if e.event_type == "box_assigned":
+            in_box.add(e.episode_id)
+        elif e.event_type in ("patient_displaced", "patient_departed"):
+            in_box.discard(e.episode_id)
+        elif e.event_type == "test_resulted" and e.episode_id not in in_box:
+            outside += 1
+    assert outside >= 5
