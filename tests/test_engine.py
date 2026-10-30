@@ -28,10 +28,10 @@ SEED = 2026
 DAYS = 3
 
 # Huella SHA-256 de eventos.jsonl con el centro y el perfil de ejemplo, semilla 2026
-# y 3 días. Se regenera a propósito en las tareas 3.4 (prioridad y desalojo) y 3.5
-# (turnos), que cambian el orden de servicio, explicando el cambio en el commit;
-# nunca para que un test pase.
-FINGERPRINT = "740d77b7f0538125bb76b0019af0abc07ba6d7cf7fc85f044e4f4c1a0d4cbed1"
+# y 3 días. Se regenera a propósito cuando cambia el orden de servicio, explicando el
+# cambio en el commit; nunca para que un test pase. Regenerada en la tarea 3.4
+# (médicos por prioridad y 3 desalojos); toca otra vez en la 3.5 (turnos).
+FINGERPRINT = "78bdbed4bbebdbf9addd953b5b8496f911ac215560c62cf6112b001ff9a03e00"
 
 
 @pytest.fixture(scope="module")
