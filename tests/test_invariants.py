@@ -299,13 +299,16 @@ def test_box_antes_del_triaje(center):
 
 
 def test_valoracion_interrumpida_sin_desalojo(center):
+    # Cortar la valoración es válido, pero solo si le sigue patient_displaced: aquí le
+    # sigue test_ordered, y la violación está en ese evento.
     rows = replace_payload(journey(0, 0.0), 6, interrumpida=True)
     assert rows[6][2] == "assessment_ended"
 
     (v,) = violations(build(rows), center, "transitions")
 
-    assert v.sim_time == 25.0
-    assert "True" in v.message
+    assert v.event_id == build(rows)[7].event_id
+    assert "test_ordered" in v.message
+    assert "cut_initial" in v.message
 
 
 def test_reevaluacion_sin_pruebas(center):
@@ -332,6 +335,249 @@ def test_destino_de_la_salida_distinto_de_la_decision(center):
     (v,) = violations(build(rows), center, "transitions")
 
     assert "ingreso" in v.message and "alta" in v.message
+
+
+# --- Desalojo en el autómata y en la capacidad --------------------------------------
+#
+# A (llegada 0, nivel 3) entra en el box 1 en el minuto 5. En td, L (llegada 9, nivel 1,
+# triaje td-5 a td) lo desaloja y recibe el box 1 en ese instante; L se valora 20
+# minutos sin pruebas y sale en td+20, y A recupera el box 1 justo después. Centro de
+# un box, un médico y una enfermera: nadie se solapa.
+
+A, L = 0, 9
+
+
+def _start(t: float, tipo: str) -> tuple:
+    return (t, "assessment_started", {"tipo": tipo, "pool": "medicos", "box": 1})
+
+
+def _end(t: float, tipo: str, cut: bool = False) -> tuple:
+    return (t, "assessment_ended", {"tipo": tipo, "interrumpida": cut})
+
+
+def _displaced(t: float, by: int = L) -> tuple:
+    return (t, "patient_displaced", {"box": 1, "desalojado_por": f"EP-{by:06d}"})
+
+
+def _box(t: float) -> tuple:
+    return (t, "box_assigned", {"box": 1})
+
+
+def _out(t: float) -> list[tuple]:
+    return [
+        (t, "disposition_decided", {"destino": "alta"}),
+        (t, "patient_departed", {"destino": "alta"}),
+    ]
+
+
+_PREFIX = [
+    (0.0, "patient_arrived", {}),
+    (0.0, "patient_registered", {}),
+    (0.0, "triage_started", {}),
+    (5.0, "triage_completed", {"nivel": 3}),
+    _box(5.0),
+]
+
+# Recorrido de A con un desalojo en cada estado con box: (td, filas de A).
+DISPLACED_STAYS = {
+    "valoracion": (
+        12.0,
+        [_start(5, "inicial"), _end(12, "inicial", cut=True), _displaced(12), _box(32)]
+        + [_start(32, "inicial"), _end(45, "inicial"), (45, "test_ordered", {})]
+        + [(105, "test_resulted", {}), _start(105, "reevaluacion"), _end(115, "reevaluacion")]
+        + _out(115),
+    ),
+    "espera_de_medico": (
+        12.0,
+        [_displaced(12), _box(32), _start(32, "inicial"), _end(52, "inicial")] + _out(52),
+    ),
+    "pruebas": (
+        30.0,
+        [_start(5, "inicial"), _end(25, "inicial"), (25, "test_ordered", {}), _displaced(30)]
+        + [_box(50), (85, "test_resulted", {}), _start(85, "reevaluacion")]
+        + [_end(95, "reevaluacion")]
+        + _out(95),
+    ),
+    "resultado_esperando_box": (
+        30.0,
+        [_start(5, "inicial"), _end(25, "inicial"), (25, "test_ordered", {}), _displaced(30)]
+        + [(40, "test_resulted", {}), _box(50), _start(50, "reevaluacion")]
+        + [_end(60, "reevaluacion")]
+        + _out(60),
+    ),
+    "espera_de_reevaluacion": (
+        88.0,
+        [_start(5, "inicial"), _end(25, "inicial"), (25, "test_ordered", {})]
+        + [(85, "test_resulted", {}), _displaced(88), _box(108), _start(108, "reevaluacion")]
+        + [_end(118, "reevaluacion")]
+        + _out(118),
+    ),
+    "reevaluacion": (
+        90.0,
+        [_start(5, "inicial"), _end(25, "inicial"), (25, "test_ordered", {})]
+        + [(85, "test_resulted", {}), _start(85, "reevaluacion")]
+        + [_end(90, "reevaluacion", cut=True), _displaced(90), _box(110)]
+        + [_start(110, "reevaluacion"), _end(115, "reevaluacion")]
+        + _out(115),
+    ),
+}
+
+
+def displacer(td: float, arrival_id: int = L) -> list[Row]:
+    """El nivel 1: triaje de td-5 a td, box 1 en td, valoración de 20 y salida."""
+    t0 = td - 5
+    rows = [
+        (t0, "patient_arrived", {}),
+        (t0, "patient_registered", {}),
+        (t0, "triage_started", {}),
+        (td, "triage_completed", {"nivel": 1}),
+        _box(td),
+        _start(td, "inicial"),
+        _end(td + 20, "inicial"),
+        (td + 20, "disposition_decided", {"destino": "ingreso"}),
+        (td + 20, "patient_departed", {"destino": "ingreso"}),
+    ]
+    return [(t, arrival_id, event_type, payload) for t, event_type, payload in rows]
+
+
+def displaced_stay(stage: str) -> list[Row]:
+    """Filas de A y de L ordenadas como las emitiría el motor.
+
+    Antes de que L salga (td+20), en un mismo instante van primero las de A (el
+    desalojado se procesa antes que la concesión); desde td+20, primero las de L (su
+    salida libera el box que recibe A).
+    """
+    td, rows = DISPLACED_STAYS[stage]
+    a_rows = [(t, A, event_type, payload) for t, event_type, payload in _PREFIX + rows]
+    back = td + 20
+
+    def order(row: Row) -> tuple[float, int]:
+        time, arrival_id = row[0], row[1]
+        first = (arrival_id == A) == (time < back)
+        return (time, 0 if first else 1)
+
+    return sorted(a_rows + displacer(td), key=order)
+
+
+@pytest.fixture(scope="module")
+def one_box(center) -> CenterConfig:
+    return dataclasses.replace(center, boxes=1)
+
+
+@pytest.mark.parametrize("stage", DISPLACED_STAYS)
+def test_desalojo_en_cada_estado_con_box_es_valido(one_box, stage):
+    events = build(displaced_stay(stage))
+    td, _ = DISPLACED_STAYS[stage]
+
+    displaced = [e for e in events if e.event_type == "patient_displaced"]
+    assert [(e.episode_id, e.sim_time) for e in displaced] == [("EP-000000", td)]
+    assert (
+        check_invariants(events, one_box, ground_truth=truth((A, 0.0), (L, td - 5)), inside=0) == []
+    )
+
+
+@pytest.mark.parametrize("stage", DISPLACED_STAYS)
+def test_desalojo_cortado_por_el_horizonte_es_valido(one_box, stage):
+    rows = displaced_stay(stage)
+    for k in range(1, len(rows) + 1):
+        events = build(rows[:k])
+        found = [
+            v for v in check_invariants(events, one_box) if v.check in ("transitions", "capacity")
+        ]
+        assert found == [], k
+
+
+def test_dos_desalojos_del_mismo_paciente(one_box):
+    # A valorándose desde 5; L9 lo desaloja en 12 (le faltan 13) y sale en 32; A vuelve
+    # en 32 y L8 lo desaloja en 40 (le faltan 5); L8 sale en 60 y A termina en 65.
+    l9 = displacer(12.0, 9)
+    l8 = displacer(40.0, 8)
+    a = [(t, A, event_type, payload) for t, event_type, payload in _PREFIX]
+    a += [
+        (5.0, A, *_start(5, "inicial")[1:]),
+        (12.0, A, *_end(12, "inicial", cut=True)[1:]),
+        (12.0, A, *_displaced(12, by=9)[1:]),
+    ]
+    a2 = [
+        (32.0, A, *_box(32)[1:]),
+        (32.0, A, *_start(32, "inicial")[1:]),
+        (40.0, A, *_end(40, "inicial", cut=True)[1:]),
+        (40.0, A, *_displaced(40, by=8)[1:]),
+    ]
+    a3 = [
+        (60.0, A, *_box(60)[1:]),
+        (60.0, A, *_start(60, "inicial")[1:]),
+        (65.0, A, *_end(65, "inicial")[1:]),
+    ] + [(65.0, A, event_type, payload) for _, event_type, payload in _out(65)]
+    # build ordena por instante de forma estable: en 12 y 40 van antes las filas de A
+    # (el desalojado antes que la concesión); en 32 y 60, la salida del nivel 1 antes
+    # que el box de A.
+    events = build(a + l9 + a2 + l8 + a3)
+
+    displaced = [e.payload["desalojado_por"] for e in events if e.event_type == "patient_displaced"]
+    assert displaced == ["EP-000009", "EP-000008"]
+    assert check_invariants(events, one_box) == []
+
+
+def _a_rows(*rows: tuple) -> list[Row]:
+    return [(t, A, event_type, payload) for t, event_type, payload in _PREFIX + list(rows)]
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        # Entre assessment_ended y test_ordered no hay yield: no cabe un desalojo.
+        ((_start(5, "inicial"), _end(25, "inicial"), _displaced(25)), "'assessed'"),
+        # Vuelve al box tras cortar la valoración inicial y hace la reevaluación.
+        (
+            (_start(5, "inicial"), _end(12, "inicial", cut=True), _displaced(12), _box(32))
+            + (_start(32, "reevaluacion"),),
+            "'in_box'",
+        ),
+        # Sin pruebas pedidas, no llega un resultado mientras espera box.
+        ((_displaced(12), (20, "test_resulted", {})), "'waiting_box_initial'"),
+        # Desalojado otra vez sin haber recuperado el box.
+        ((_displaced(12), _displaced(20)), "'waiting_box_initial'"),
+        # Reevaluación cortada que no sigue con patient_displaced.
+        (
+            (_start(5, "inicial"), _end(25, "inicial"), (25, "test_ordered", {}))
+            + ((85, "test_resulted", {}), _start(85, "reevaluacion"))
+            + (_end(90, "reevaluacion", cut=True), _box(90)),
+            "'cut_reassessment'",
+        ),
+        # Valoración en curso sin box: tras el desalojo, assessment_started directo.
+        ((_displaced(12), _start(20, "inicial")), "'waiting_box_initial'"),
+    ],
+    ids=[
+        "sin_yield",
+        "etapa_cambiada",
+        "resultado_sin_pruebas",
+        "doble",
+        "corte_sin_desalojo",
+        "sin_box",
+    ],
+)
+def test_desalojo_fuera_del_automata(center, rows, expected):
+    (v,) = violations(build(_a_rows(*rows)), center, "transitions")
+
+    assert expected in v.message
+
+
+def test_el_desalojo_libera_el_box(one_box):
+    events = build(displaced_stay("valoracion"))
+
+    assert violations(events, one_box, "capacity") == []
+
+
+def test_desalojado_de_un_box_que_no_era_el_suyo(one_box):
+    rows = displaced_stay("valoracion")
+    index = next(i for i, r in enumerate(rows) if r[2] == "patient_displaced")
+    rows = replace_payload(rows, index, box=2)
+    wider = dataclasses.replace(one_box, boxes=2)
+
+    messages = [v.message for v in violations(build(rows), wider, "capacity")]
+
+    assert any("displaced from box 2" in m and "box 1" in m for m in messages)
 
 
 # --- Capacidad ---------------------------------------------------------------------

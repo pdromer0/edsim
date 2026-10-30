@@ -12,11 +12,10 @@ still alive in SimPy). Comparing with them is what makes conservation a real
 check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
-Milestone 3.3 has no priority, displacement or shifts. Task 3.4 adds the checks
-"nobody jumps the queue" and displacement as new entries of ``CHECKS``, and
-``patient_displaced`` and interrupted assessments as new edges of
-``TRANSITIONS``; task 3.5 will compare with the staffing in force instead of
-the maximum.
+Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
+are edges of ``TRANSITIONS``, and ``patient_displaced`` frees the box in the
+capacity check. Task 3.5 will compare with the staffing in force instead of the
+maximum.
 """
 
 from collections import Counter
@@ -189,21 +188,58 @@ TRANSITIONS: Mapping[str, Mapping[Symbol, str]] = MappingProxyType(
         "registered": {"triage_started": "in_triage"},
         "in_triage": {"triage_completed": "triaged"},
         "triaged": {"box_assigned": "in_box"},
-        "in_box": {("assessment_started", "inicial"): "assessing"},
-        "assessing": {("assessment_ended", "inicial", False): "assessed"},
+        # In the box, waiting for a doctor for the first assessment.
+        "in_box": {
+            ("assessment_started", "inicial"): "assessing",
+            "patient_displaced": "waiting_box_initial",
+        },
+        "assessing": {
+            ("assessment_ended", "inicial", False): "assessed",
+            ("assessment_ended", "inicial", True): "cut_initial",
+        },
+        "cut_initial": {"patient_displaced": "waiting_box_initial"},
+        "waiting_box_initial": {"box_assigned": "in_box"},
+        # No yield between the end of the assessment and test_ordered or the
+        # decision: no displacement in "assessed" nor in "decided".
         "assessed": {
             "test_ordered": "awaiting_tests",
             "disposition_decided": "decided",
         },
-        "awaiting_tests": {"test_resulted": "tests_resulted"},
-        "tests_resulted": {("assessment_started", "reevaluacion"): "reassessing"},
-        "reassessing": {("assessment_ended", "reevaluacion", False): "reassessed"},
+        "awaiting_tests": {
+            "test_resulted": "tests_resulted",
+            "patient_displaced": "waiting_box_tests",
+        },
+        # The tests keep running while the patient waits for a box.
+        "waiting_box_tests": {
+            "test_resulted": "waiting_box_reassessment",
+            "box_assigned": "awaiting_tests",
+        },
+        # Results in, in the box, waiting for a doctor for the reassessment.
+        "tests_resulted": {
+            ("assessment_started", "reevaluacion"): "reassessing",
+            "patient_displaced": "waiting_box_reassessment",
+        },
+        "waiting_box_reassessment": {"box_assigned": "tests_resulted"},
+        "reassessing": {
+            ("assessment_ended", "reevaluacion", False): "reassessed",
+            ("assessment_ended", "reevaluacion", True): "cut_reassessment",
+        },
+        "cut_reassessment": {"patient_displaced": "waiting_box_reassessment"},
         "reassessed": {"disposition_decided": "decided"},
         "decided": {"patient_departed": "departed"},
         "departed": {},
     }
 )
-"""State machine of an episode without displacement: state → symbol → next state.
+"""State machine of an episode: state → symbol → next state.
+
+A displacement can happen in any state where the patient holds a box and the
+process is stopped at a ``yield``: waiting for a doctor (``in_box``,
+``tests_resulted``), in an assessment (``assessing``, ``reassessing``, which
+first emit ``assessment_ended`` with ``interrumpida`` true) or waiting for the
+tests (``awaiting_tests``). After it, the patient waits for a box in a
+``waiting_box_*`` state that remembers the stage, and the next
+``box_assigned`` takes it back to that stage, so an interrupted assessment
+starts again with the same type.
 
 There is no final state: a run cut by the horizon leaves episodes anywhere,
 and a prefix of a valid path is valid.
@@ -263,7 +299,8 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
 
     - Boxes: every ``box_assigned`` gives a number in 1..``boxes`` that is
       free, to an episode without a box; the box is freed by the episode's
-      ``patient_departed``. Assessments happen in the episode's box.
+      ``patient_departed`` or ``patient_displaced``, whose ``box`` must be
+      the episode's. Assessments happen in the episode's box.
     - Doctors (``assessment_started`` to ``assessment_ended``) and triage
       nurses (``triage_started`` to ``triage_completed``) busy never exceed
       the largest staff of their shifts. Without shifts, in task 3.3, that is
@@ -312,6 +349,19 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                     out.append(_at(name, e, f"{episode} already in box {box_of[episode]}"))
                 occupant[box] = episode
                 box_of[episode] = box
+            case "patient_displaced":
+                box = box_of.pop(episode, None)
+                if box != e.payload["box"]:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"displaced from box {e.payload['box']}, but the patient "
+                            f"is in box {box}",
+                        )
+                    )
+                if box is not None and occupant.get(box) == episode:
+                    del occupant[box]
             case "patient_departed":
                 box = box_of.pop(episode, None)
                 if box is not None and occupant.get(box) == episode:
