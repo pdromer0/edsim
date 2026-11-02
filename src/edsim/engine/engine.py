@@ -2,10 +2,12 @@
 
 ``run_engine`` is the core: it takes the arrivals as an iterable and the
 draws of each patient as an injectable function, so that tests can build exact
-scenarios by hand. For each arrival it calls the sampler, in arrival order,
-keeps the ground truth of the episode and starts the patient process. The run
-stops at ``days * 1440`` minutes: events scheduled at that instant or later do
-not happen, and patients still inside have no ``patient_departed``.
+scenarios by hand. It first starts the shifts (``start_shifts``), which set
+the staff of minute 0 and change it at each start of a shift. For each arrival
+it calls the sampler, in arrival order, keeps the ground truth of the episode
+and starts the patient process. The run stops at ``days * 1440`` minutes:
+events scheduled at that instant or later do not happen, and patients still
+inside have no ``patient_departed``.
 
 ``simulate_ed`` is the run with a seed: it derives five independent streams
 with ``child_streams(seed, 5)`` (ADR 0007). Stream 0 goes as it is to
@@ -30,10 +32,14 @@ from edsim.engine.events import EventLog, EventSink
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.patient import patient
 from edsim.engine.resources import make_pools
+from edsim.engine.shifts import start_shifts
 from edsim.seeds import child_streams
 
 N_STREAMS = 5
 """Streams of a run: arrivals, then the four of the sampler."""
+
+DEFAULT_WARMUP_DAYS = 2
+"""Warm-up of a run in full days (docs/specs/hito-3.md: 24-48 h in the design)."""
 
 Sampler = Callable[[ArrivalRecord], PatientDraws]
 """Draws of the patient of an arrival, such as ``ProvisionalSampler``.
@@ -65,6 +71,16 @@ def _check_days(days: object) -> int:
     return days
 
 
+def _check_warmup(warmup_days: object, days: int) -> int:
+    if isinstance(warmup_days, bool) or not isinstance(warmup_days, int):
+        raise ValueError(f"warmup_days must be an integer, got {warmup_days!r}")
+    if not 0 <= warmup_days < days:
+        raise ValueError(
+            f"warmup_days must be at least 0 and less than days ({days}), got {warmup_days!r}"
+        )
+    return warmup_days
+
+
 def run_engine(
     center: CenterConfig,
     arrivals: Iterable[ArrivalRecord],
@@ -91,6 +107,9 @@ def run_engine(
     days = _check_days(days)
     env = simpy.Environment()
     pools = make_pools(env, center)
+    # Before any other process: the staffing_changed of minute 0 go first in the
+    # log, and each change of shift is the first event of its instant.
+    start_shifts(env, log, pools, center, days)
     episodes: list[EpisodeTruth] = []
     processes: list[simpy.Process] = []
 
@@ -114,11 +133,14 @@ class EDResult:
         run_id: Identifier of the run, in every event of the log.
         ground_truth: Episodes and days of the run.
         inside: Patient processes still alive in SimPy at the horizon.
+        warmup_days: Full days of warm-up. The log is complete, warm-up
+            included; the metrics use the window [warm-up, horizon].
     """
 
     run_id: str
     ground_truth: GroundTruth
     inside: int
+    warmup_days: int
 
 
 def default_run_id(seed: int | np.random.SeedSequence) -> str:
@@ -148,6 +170,7 @@ def simulate_ed(
     seed: int | np.random.SeedSequence,
     *,
     sink: EventSink,
+    warmup_days: int = DEFAULT_WARMUP_DAYS,
     run_id: str | None = None,
     sampler: Sampler | None = None,
 ) -> EDResult:
@@ -160,17 +183,24 @@ def simulate_ed(
         seed: Seed of the run: an integer or a ``SeedSequence``, which is not
             modified, so the same object gives the same run.
         sink: Where the events go, such as ``MemorySink`` or ``JsonlSink``.
+        warmup_days: Full days of warm-up, at least 0 and less than ``days``.
+            It does not cut the log: in batch the log is complete, so the
+            invariants hold in the whole file, and the metrics use the window
+            [warm-up, horizon] (docs/specs/hito-3.md).
         run_id: Identifier of the run; ``default_run_id(seed)`` if ``None``.
         sampler: Draws of each patient; a ``ProvisionalSampler`` with streams
             1 to 4 if ``None``. Injected only in tests.
 
     Returns:
-        The run identifier, the ground truth and the patients still inside.
+        The run identifier, the ground truth, the patients still inside and
+        the warm-up.
 
     Raises:
-        ValueError: If ``days`` is not a positive integer.
+        ValueError: If ``days`` is not a positive integer, or ``warmup_days``
+            is not an integer in [0, ``days``).
     """
     days = _check_days(days)
+    warmup_days = _check_warmup(warmup_days, days)
     streams = child_streams(seed, N_STREAMS)
     if run_id is None:
         run_id = default_run_id(seed)
@@ -185,4 +215,5 @@ def simulate_ed(
         run_id=run_id,
         ground_truth=GroundTruth(episodes=run.episodes, days=tuple(day_records)),
         inside=run.inside,
+        warmup_days=warmup_days,
     )

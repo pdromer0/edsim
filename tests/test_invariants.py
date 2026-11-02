@@ -76,9 +76,32 @@ def journey(
     return [(time, arrival_id, event_type, payload) for time, event_type, payload in rows]
 
 
-def build(*journeys: list[Row]) -> list[Event]:
-    """Emite las filas ordenadas por instante; a igualdad, en el orden en que se dan."""
-    rows = sorted((row for j in journeys for row in j), key=lambda row: row[0])
+STAFF = (1, 1)
+"""Plantilla del centro pequeño: (enfermeras, médicos)."""
+
+
+def staffing_rows(staff: tuple[int, int]) -> list[Row]:
+    """Los dos staffing_changed del minuto 0, como los emite el motor."""
+    nurses, doctors = staff
+    return [
+        (
+            0.0,
+            None,
+            "staffing_changed",
+            {"recurso": "enfermeria_triaje", "anterior": 0, "nueva": nurses},
+        ),
+        (0.0, None, "staffing_changed", {"recurso": "medicos", "anterior": 0, "nueva": doctors}),
+    ]
+
+
+def build(*journeys: list[Row], staff: tuple[int, int] | None = STAFF) -> list[Event]:
+    """Emite las filas ordenadas por instante; a igualdad, en el orden en que se dan.
+
+    Antes van los staffing_changed del minuto 0 con la plantilla ``staff``
+    (enfermeras, médicos), salvo con ``staff=None``.
+    """
+    first = [] if staff is None else staffing_rows(staff)
+    rows = sorted((row for j in [first, *journeys] for row in j), key=lambda row: row[0])
     sink = MemorySink()
     log = EventLog("rtest", START, sink)
     for time, arrival_id, event_type, payload in rows:
@@ -144,7 +167,7 @@ def test_violacion_apunta_al_evento(center):
 def test_log_valido_sin_violaciones(center):
     events = two_patients()
 
-    assert len(events) == 13 + 9
+    assert len(events) == 2 + 13 + 9  # staffing_changed y dos recorridos
     assert check_invariants(events, center, ground_truth=truth((0, 0.0), (1, 30.0)), inside=0) == []
 
 
@@ -250,12 +273,12 @@ def test_dentro_al_final_cuenta_los_cortados(center):
 def test_tiempo_que_decrece(center):
     events = build(journey(0, 0.0))
     # EventLog no deja emitir hacia atrás: se rompe el log después.
-    assert events[5].event_type == "assessment_started" and events[5].sim_time == 5.0
-    events[5] = dataclasses.replace(events[5], sim_time=1.0)
+    assert events[7].event_type == "assessment_started" and events[7].sim_time == 5.0
+    events[7] = dataclasses.replace(events[7], sim_time=1.0)
 
     (v,) = violations(events, center, "time")
 
-    assert v.event_id == events[5].event_id
+    assert v.event_id == events[7].event_id
     assert "decreased" in v.message
 
 
@@ -275,7 +298,8 @@ def test_evento_antes_de_la_llegada(center):
 def test_evento_con_tiempo_anterior_a_la_llegada(center):
     events = build(journey(0, 10.0))
     # El registro va detrás de la llegada en el fichero, pero en el minuto 9.
-    events[1] = dataclasses.replace(events[1], sim_time=9.0)
+    assert events[3].event_type == "patient_registered"
+    events[3] = dataclasses.replace(events[3], sim_time=9.0)
 
     messages = [v.message for v in violations(events, center, "time")]
 
@@ -313,7 +337,7 @@ def test_valoracion_interrumpida_sin_desalojo(center):
 
     (v,) = violations(build(rows), center, "transitions")
 
-    assert v.event_id == build(rows)[7].event_id
+    assert v.event_id == build(rows)[9].event_id  # 2 staffing_changed delante
     assert "test_ordered" in v.message
     assert "cut_initial" in v.message
 
@@ -631,18 +655,18 @@ def test_valoracion_en_otro_box(center):
     assert "box 2" in v.message and "box 1" in v.message
 
 
-def test_medicos_por_encima_de_la_capacidad(center):
-    # A con médico de 5 a 25; B llega en el 10 y empieza valoración en el 15.
+def test_medicos_por_encima_de_la_plantilla(center):
+    # Un médico de plantilla: A con médico de 5 a 25; B empieza valoración en el 15.
     events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False))
 
     (v,) = violations(events, center, "capacity")
 
     assert v.episode_id == "EP-000001"
     assert v.sim_time == 15.0
-    assert "doctors" in v.message
+    assert "1 doctors busy" in v.message and "staff in force 1" in v.message
 
 
-def test_enfermeras_por_encima_de_la_capacidad(center):
+def test_enfermeras_por_encima_de_la_plantilla(center):
     # A en triaje de 0 a 5; B empieza su triaje en el 2.
     events = build(journey(0, 0.0, box=1), journey(1, 2.0, box=2, tests=False))
 
@@ -652,12 +676,99 @@ def test_enfermeras_por_encima_de_la_capacidad(center):
     assert nurses[0].sim_time == 2.0
 
 
-def test_capacidad_maxima_de_la_plantilla(center):
-    # Con dos médicos en algún turno, dos valoraciones a la vez caben.
+def test_dos_valoraciones_caben_con_plantilla_2(center):
     wider = dataclasses.replace(center, doctors=(2, 1, 1))
-    events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False))
+    events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False), staff=(1, 2))
 
     assert violations(events, wider, "capacity") == []
+
+
+def staffing(time: float, recurso: str, anterior: int, nueva: int) -> list[Row]:
+    return [
+        (time, None, "staffing_changed", {"recurso": recurso, "anterior": anterior, "nueva": nueva})
+    ]
+
+
+def test_empieza_con_el_pool_a_la_plantilla_vigente_tras_una_bajada(center):
+    # Dos médicos hasta el 10 y uno después. A valora de 5 a 25; B empieza en el 15 con
+    # A ocupado y la plantilla ya en 1: violación. Seguir con A tras la bajada no lo es.
+    wider = dataclasses.replace(center, doctors=(2, 1, 1))
+    events = build(
+        journey(0, 0.0, box=1),
+        journey(1, 10.0, box=2, tests=False),
+        staffing(10.0, "medicos", 2, 1),
+        staff=(1, 2),
+    )
+
+    (v,) = violations(events, wider, "capacity")
+
+    assert (v.episode_id, v.sim_time) == ("EP-000001", 15.0)
+    assert "staff in force 1" in v.message
+
+
+def test_por_encima_de_la_plantilla_maxima(center):
+    # Un log que anuncia 2 médicos con una plantilla máxima de 1: la segunda valoración
+    # cabe en la plantilla anunciada, pero no en la máxima.
+    events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False), staff=(1, 2))
+
+    (v,) = violations(events, center, "capacity")
+
+    assert (v.episode_id, v.sim_time) == ("EP-000001", 15.0)
+    assert "above the largest staff 1" in v.message
+
+
+def test_atencion_antes_del_primer_staffing_changed(center):
+    # Sin staffing_changed: el primer triaje y la primera valoración son violaciones,
+    # una por pool (como en las transiciones, un error no da una cascada).
+    events = build(journey(0, 0.0, box=1), staff=None)
+
+    messages = [(v.sim_time, v.message) for v in violations(events, center, "capacity")]
+
+    assert messages == [
+        (0.0, "triage_started before the first staffing_changed of enfermeria_triaje"),
+        (5.0, "assessment_started before the first staffing_changed of medicos"),
+    ]
+
+
+def test_por_encima_de_la_maxima_sin_plantilla(center):
+    # Sin staffing_changed la plantilla no limita, pero la máxima sí: dos valoraciones a
+    # la vez con un médico como máximo.
+    events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False), staff=None)
+
+    messages = [v.message for v in violations(events, center, "capacity")]
+
+    assert "2 doctors busy, above the largest staff 1" in messages
+
+
+def test_plantilla_de_un_solo_pool(center):
+    # Solo el de médicos: el triaje es una violación, las valoraciones no.
+    events = build(journey(0, 0.0, box=1), staffing(0.0, "medicos", 0, 1), staff=None)
+
+    (v,) = violations(events, center, "capacity")
+
+    assert v.message == "triage_started before the first staffing_changed of enfermeria_triaje"
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        (staffing(10.0, "medicos", 2, 1), "anterior 2, but the staff in force was 1"),
+        (
+            [(0.0, None, "staffing_changed", {"recurso": "medicos", "anterior": 3, "nueva": 1})],
+            "anterior 3, but the staff in force was 0",
+        ),
+    ],
+)
+def test_staffing_changed_con_anterior_incoherente(center, rows, expected):
+    staff = None if rows[0][0] == 0.0 else STAFF
+    first = staffing(0.0, "enfermeria_triaje", 0, 1) if staff is None else []
+    events = build(first, rows, journey(0, 0.0, box=1), staff=staff)
+
+    messages = [v.message for v in violations(events, center, "capacity")]
+
+    assert len(messages) == 1
+    assert messages[0].startswith("staffing_changed of medicos with ")
+    assert expected in messages[0]
 
 
 # --- Nadie se cuela ----------------------------------------------------------------------

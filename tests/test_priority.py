@@ -21,7 +21,14 @@ from edsim.engine.engine import EngineRun, run_engine, simulate_ed
 from edsim.engine.events import Event, EventLog, MemorySink
 from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.invariants import check_invariants
-from edsim.engine.resources import BoxNumbers, Holder, priority_key, should_displace
+from edsim.engine.resources import (
+    RESERVATION_PRIORITY,
+    TRIAGE_PRIORITY,
+    BoxNumbers,
+    Holder,
+    priority_key,
+    should_displace,
+)
 
 DATA = Path(__file__).parent / "data"
 START = date(2026, 1, 5)
@@ -92,6 +99,12 @@ def test_clave_de_prioridad():
     assert priority_key(1, 900.0) < priority_key(2, 0.0) < priority_key(2, 0.5)
 
 
+def test_la_reserva_va_antes_que_cualquier_paciente():
+    # Mejor que el nivel 1 con la llegada más temprana posible y que el triaje.
+    assert RESERVATION_PRIORITY < priority_key(1, 0.0)
+    assert RESERVATION_PRIORITY < TRIAGE_PRIORITY
+
+
 def test_solo_el_nivel_1_desaloja_y_solo_a_niveles_mayores():
     env = simpy.Environment()
     boxes = simpy.PreemptiveResource(env, capacity=2)
@@ -148,7 +161,9 @@ THREE_BOXES = [
 
 @pytest.fixture(scope="module")
 def three_boxes(center):
-    small = dataclasses.replace(center, boxes=3)
+    # Tres enfermeras en todos los turnos: el escenario empieza en el minuto 0, de noche,
+    # y sus instantes cuentan con que los tres primeros se triajan a la vez.
+    small = dataclasses.replace(center, boxes=3, triage_nurses=(3, 3, 3))
     events, run = simulate(small, THREE_BOXES)
     return events, run, small
 

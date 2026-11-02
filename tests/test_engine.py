@@ -30,8 +30,9 @@ DAYS = 3
 # Huella SHA-256 de eventos.jsonl con el centro y el perfil de ejemplo, semilla 2026
 # y 3 días. Se regenera a propósito cuando cambia el orden de servicio, explicando el
 # cambio en el commit; nunca para que un test pase. Regenerada en la tarea 3.4
-# (médicos por prioridad y 3 desalojos); toca otra vez en la 3.5 (turnos).
-FINGERPRINT = "78bdbed4bbebdbf9addd953b5b8496f911ac215560c62cf6112b001ff9a03e00"
+# (médicos por prioridad y 3 desalojos) y en la 3.5 (turnos: 14 staffing_changed y
+# menos plantilla de noche).
+FINGERPRINT = "452f7d08345d19c6e0ee9b290fe185044d182dbb27b9105d67fde6913b820800"
 
 
 @pytest.fixture(scope="module")
@@ -212,7 +213,7 @@ def test_muestreador_inyectado(center, profile):
         seen.append(arrival)
         return draws
 
-    _, result = simulate(center, profile, days=1, sampler=sampler)
+    _, result = simulate(center, profile, days=1, warmup_days=0, sampler=sampler)
 
     assert [(a.arrival_id, a.time) for a in seen] == [
         (t.arrival_id, t.arrival_time) for t in result.ground_truth.episodes
@@ -277,9 +278,47 @@ def test_run_id_en_el_log(center, profile, base):
     assert result.run_id == "r2026"
     assert events[0].event_id == "r2026-000000000"
 
-    events, result = simulate(center, profile, days=1, run_id="prueba")
+    events, result = simulate(center, profile, days=1, warmup_days=0, run_id="prueba")
     assert result.run_id == "prueba"
     assert {e.run_id for e in events} == {"prueba"}
+
+
+# --- Calentamiento --------------------------------------------------------------------
+
+
+def test_calentamiento_por_defecto(base):
+    _, result = base
+    assert result.warmup_days == 2
+
+
+@pytest.mark.parametrize("warmup", [0, 1, DAYS - 1])
+def test_calentamiento_en_el_resultado(center, profile, warmup):
+    _, result = simulate(center, profile, days=DAYS, warmup_days=warmup)
+    assert result.warmup_days == warmup
+
+
+@pytest.mark.parametrize("warmup", [-1, DAYS, DAYS + 1, 2.0, True, "2", None])
+def test_calentamiento_invalido(center, profile, warmup):
+    with pytest.raises(ValueError, match="warmup_days"):
+        simulate(center, profile, days=DAYS, warmup_days=warmup)
+
+
+def test_calentamiento_con_dias_invalidos_falla_por_los_dias(center, profile):
+    # Se validan antes los días: el error nombra days, no warmup_days.
+    with pytest.raises(ValueError, match=r"^days must be"):
+        simulate(center, profile, days=0, warmup_days=0)
+
+
+def test_el_log_incluye_el_calentamiento(base):
+    # En batch el log es completo: hay pacientes antes del fin del calentamiento.
+    events, result = base
+    warmup_end = result.warmup_days * MINUTES_PER_DAY
+
+    arrivals = [e for e in events if e.event_type == "patient_arrived"]
+
+    assert len(arrivals) == len(result.ground_truth.episodes)
+    assert arrivals[0].episode_id == result.ground_truth.episodes[0].episode_id
+    assert arrivals[0].sim_time < warmup_end
 
 
 # --- Regresión ----------------------------------------------------------------------------

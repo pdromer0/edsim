@@ -14,6 +14,10 @@ versión nueva cambia algo, fallan aquí y no, de forma confusa, en el motor.
 - Salir del with cancela una petición en cola y libera una concedida; liberar a un
   usuario ya desalojado no falla.
 - Solo se intenta conceder la cabeza de la cola.
+- Fuera de un with (reservas de turno): cancel() solo quita una petición que espera;
+  release() solo quita una concedida, y la plaza pasa al siguiente al procesarse el
+  Release. release() de una petición que espera no hace nada: hay que cancelarla.
+- Con la misma prioridad para todos, PriorityResource concede en el orden de Resource.
 """
 
 from collections.abc import Generator
@@ -334,3 +338,150 @@ def test_tuplas_con_enteros_y_reales_se_comparan_sin_error(resource_type):
         resource.request(priority=priority, preempt=False)
 
     assert [r.priority for r in resource.queue] == [(1, 10.0), (5, 2.0), (5, 3), (5, 3.25)]
+
+
+# --- Reservas de turno: cancelar y liberar fuera de un with -------------------------------
+#
+# Las reservas de turno (tarea 3.5) son peticiones creadas por el proceso de turnos, sin
+# with y sin que nadie las espere con yield. Para quitarlas al subir la plantilla, la que
+# aún espera se cancela y la concedida se libera; estos tests fijan por qué.
+
+
+def test_cancelar_una_peticion_en_cola_la_quita_sin_conceder_nada():
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    holder = resource.request(priority=(1, 0.0))
+    waiting = resource.request(priority=(0, 0.0), preempt=False)
+    assert resource.queue == [waiting]
+
+    waiting.cancel()
+    env.run()
+
+    assert resource.queue == []
+    assert resource.users == [holder]
+    assert not waiting.triggered
+
+
+def test_cancelar_una_peticion_concedida_no_hace_nada():
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    granted = resource.request(priority=(0, 0.0), preempt=False)
+    assert granted.triggered
+
+    granted.cancel()
+    env.run()
+
+    assert resource.users == [granted]
+
+
+def test_liberar_fuera_del_with_concede_al_procesarse_la_liberacion():
+    # release() quita la petición de users en la misma llamada, pero el siguiente de la
+    # cola recibe la plaza cuando SimPy procesa el evento Release: más tarde en el mismo
+    # instante, no dentro de la llamada.
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    reservation = resource.request(priority=(0, 0.0), preempt=False)
+    marks: list = []
+
+    def patient() -> Generator[simpy.Event]:
+        with resource.request(priority=(1, 0.0)) as request:
+            yield request
+            marks.append(("concedido", env.now))
+
+    def shift() -> Generator[simpy.Event]:
+        yield env.timeout(480)
+        resource.release(reservation)
+        marks.append(("tras release", reservation in resource.users, len(resource.queue)))
+
+    env.process(patient())
+    env.process(shift())
+    env.run()
+
+    assert marks == [("tras release", False, 1), ("concedido", 480)]
+
+
+def test_liberar_una_peticion_en_cola_no_la_quita():
+    # La trampa: release() de una petición que espera no hace nada (users.remove falla en
+    # silencio) y la petición sigue en la cola. En cuanto se libera una plaza, la ocupa:
+    # una reserva fantasma que deja la plantilla corta. Por eso se cancela.
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    holder = resource.request(priority=(1, 0.0))
+    waiting = resource.request(priority=(0, 0.0), preempt=False)
+
+    resource.release(waiting)
+    env.run(until=1)
+    assert resource.queue == [waiting]
+
+    resource.release(holder)
+    env.run(until=2)
+    assert resource.users == [waiting]
+
+
+@pytest.mark.parametrize("cancel_first", [True, False])
+def test_el_orden_de_cancelar_y_liberar_en_un_instante_no_importa(cancel_first):
+    # Una reserva concedida y otra en cola; se quitan las dos en el mismo instante. Como la
+    # concesión llega al procesarse el Release, la plaza va al paciente en ambos órdenes.
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    granted = resource.request(priority=(0, 0.0), preempt=False)
+    env.run(until=1)
+    waiting = resource.request(priority=(0, 0.0), preempt=False)
+    patient = resource.request(priority=(1, 1.0))
+
+    if cancel_first:
+        waiting.cancel()
+        resource.release(granted)
+    else:
+        resource.release(granted)
+        waiting.cancel()
+    env.run(until=2)
+
+    assert resource.users == [patient]
+    assert resource.queue == []
+
+
+def grant_order(resource_type: type, requests: list[tuple[float, str]]) -> list[str]:
+    """Orden en que un recurso de una plaza concede peticiones hechas en ``at``."""
+    env = simpy.Environment()
+    resource = resource_type(env, capacity=1)
+    kwargs = {} if resource_type is simpy.Resource else {"priority": (1, 0.0)}
+    order: list[str] = []
+
+    def user(at: float, name: str) -> Generator[simpy.Event]:
+        yield env.timeout(at)
+        with resource.request(**kwargs) as request:
+            yield request
+            order.append(name)
+            yield env.timeout(10)
+
+    for at, name in requests:
+        env.process(user(at, name))
+    env.run()
+    return order
+
+
+def test_prioridad_igual_concede_en_el_orden_de_resource():
+    # Con la misma prioridad para todos, PriorityResource ordena por el instante de la
+    # petición y, en el mismo instante, conserva el orden de llegada a la cola (sort
+    # estable): el mismo orden FIFO que Resource.
+    requests = [(1.0, "a"), (1.0, "b"), (2.0, "c"), (2.0, "d"), (2.0, "e"), (3.0, "f")]
+
+    fifo = grant_order(simpy.Resource, requests)
+
+    assert fifo == ["a", "b", "c", "d", "e", "f"]
+    assert grant_order(simpy.PriorityResource, requests) == fifo
+
+
+def test_la_reserva_adelanta_a_quien_pidio_antes():
+    # (0, 0.0) va por delante de cualquier (nivel, llegada) con nivel >= 1 y de la
+    # prioridad de triaje (1, 0.0), aunque esas peticiones se hicieran antes.
+    env = simpy.Environment()
+    resource = simpy.PriorityResource(env, capacity=1)
+    resource.request(priority=(1, 0.0))  # ocupa el recurso
+    env.run(until=1)
+    early = [resource.request(priority=p) for p in [(1, 0.0), (1, 0.5), (5, 0.0)]]
+    env.run(until=2)
+    reservation = resource.request(priority=(0, 0.0), preempt=False)
+
+    assert resource.queue == [reservation, *early]

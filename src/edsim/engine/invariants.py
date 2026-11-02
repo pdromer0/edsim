@@ -15,8 +15,9 @@ would be true by construction.
 Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
 are edges of ``TRANSITIONS``, ``patient_displaced`` frees the box in the
 capacity check, and two checks follow the priority (level, arrival):
-"nobody jumps the queue" and displacement. Task 3.5 will compare with the
-staffing in force instead of the maximum.
+"nobody jumps the queue" and displacement. Task 3.5 compares the doctors and
+nurses busy with the staff in force, read from ``staffing_changed``: the log
+says which staff applies, without asking the configuration.
 """
 
 from collections import Counter
@@ -295,6 +296,18 @@ def check_transitions(events: Sequence[Event], context: InvariantContext) -> lis
     return out
 
 
+@dataclass(slots=True)
+class _StaffPool:
+    """What ``check_capacity`` knows of one staff pool while reading the log."""
+
+    recurso: str
+    label: str
+    largest: int
+    staff: int | None = None  # in force; None before its first staffing_changed
+    busy: int = 0
+    unstaffed_reported: bool = False
+
+
 def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
     """No pool is used beyond its capacity.
 
@@ -303,31 +316,81 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
       ``patient_departed`` or ``patient_displaced``, whose ``box`` must be
       the episode's. Assessments happen in the episode's box.
     - Doctors (``assessment_started`` to ``assessment_ended``) and triage
-      nurses (``triage_started`` to ``triage_completed``) busy never exceed
-      the largest staff of their shifts. Without shifts, in task 3.3, that is
-      the capacity of the pool.
+      nurses (``triage_started`` to ``triage_completed``), with the staff in
+      force given by the last ``staffing_changed`` of the pool:
+
+      - no triage or assessment starts with the pool already busy at the
+        staff in force;
+      - the busy never exceed the largest staff of the shifts (reported only
+        when the staff in force does not already catch it: one error, one
+        violation);
+      - no triage or assessment starts before the first ``staffing_changed``
+        of its pool (reported once per pool);
+      - the ``anterior`` of each ``staffing_changed`` is the staff in force,
+        0 for the first one.
+
+      More busy than the staff after a staff goes down is not a violation:
+      nobody is interrupted, the reservations wait for them to finish. Only
+      a start is checked.
     """
     name = "capacity"
     center = context.center
-    doctors, nurses = max(center.doctors), max(center.triage_nurses)
+    nurses = _StaffPool("enfermeria_triaje", "triage nurses", max(center.triage_nurses))
+    doctors = _StaffPool("medicos", "doctors", max(center.doctors))
+    pools = {pool.recurso: pool for pool in (nurses, doctors)}
     out: list[Violation] = []
     occupant: dict[int, str] = {}
     box_of: dict[str, int] = {}
-    busy_doctors = busy_nurses = 0
+
+    def start(e: Event, pool: _StaffPool) -> None:
+        if pool.staff is None and not pool.unstaffed_reported:
+            pool.unstaffed_reported = True
+            out.append(
+                _at(name, e, f"{e.event_type} before the first staffing_changed of {pool.recurso}")
+            )
+        if pool.staff is not None and pool.busy >= pool.staff:
+            out.append(
+                _at(
+                    name,
+                    e,
+                    f"{e.event_type} with {pool.busy} {pool.label} busy, "
+                    f"staff in force {pool.staff}",
+                )
+            )
+        elif pool.busy + 1 > pool.largest:
+            # Only when the staff in force allowed it: a staff above the largest
+            # one, or no staff yet. Otherwise one error would give two violations.
+            out.append(
+                _at(
+                    name,
+                    e,
+                    f"{pool.busy + 1} {pool.label} busy, above the largest staff {pool.largest}",
+                )
+            )
+        pool.busy += 1
 
     for e in events:
         episode = e.episode_id
         match e.event_type:
+            case "staffing_changed":
+                pool = pools[e.payload["recurso"]]
+                staff = 0 if pool.staff is None else pool.staff
+                if e.payload["anterior"] != staff:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"staffing_changed of {pool.recurso} with anterior "
+                            f"{e.payload['anterior']}, but the staff in force was {staff}",
+                        )
+                    )
+                pool.staff = e.payload["nueva"]
             case "triage_started":
-                busy_nurses += 1
-                if busy_nurses > nurses:
-                    out.append(_at(name, e, f"{busy_nurses} triage nurses busy, capacity {nurses}"))
+                start(e, nurses)
             case "triage_completed":
-                busy_nurses -= 1
+                nurses.busy -= 1
             case "assessment_started":
-                busy_doctors += 1
-                if busy_doctors > doctors:
-                    out.append(_at(name, e, f"{busy_doctors} doctors busy, capacity {doctors}"))
+                start(e, doctors)
                 box = e.payload["box"]
                 if box_of.get(episode) != box:
                     out.append(
@@ -339,7 +402,7 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                         )
                     )
             case "assessment_ended":
-                busy_doctors -= 1
+                doctors.busy -= 1
             case "box_assigned":
                 box = e.payload["box"]
                 if not 1 <= box <= center.boxes:
