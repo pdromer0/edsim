@@ -7,9 +7,11 @@ presentación, no el motor. La tabla y las gráficas de la validación usan el
 
 import csv
 import dataclasses
+import io
 from pathlib import Path
 from types import MappingProxyType
 
+import numpy as np
 import pytest
 
 from edsim.arrivals.profile import load_profile
@@ -25,6 +27,10 @@ from edsim.engine.report import (
     RunParameters,
     format_engine_validation,
     format_run_summary,
+    plot_census,
+    plot_hourly_census,
+    plot_mg1,
+    plot_waits_by_level,
     write_episodes_csv,
     write_ground_truth_days_csv,
 )
@@ -304,3 +310,123 @@ def test_csv_de_dias(run, tmp_path):
         assert int(row["candidatas"]) == d.candidates
         assert int(row["aceptadas"]) == d.accepted
         check_parameters(row)
+
+
+# --- Gráficas ------------------------------------------------------------------------------
+
+
+def line(ax, label):
+    (found,) = [li for li in ax.get_lines() if li.get_label() == label]
+    return found
+
+
+def png_bytes(fig):
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png")
+    return buffer.getvalue()
+
+
+def test_grafica_censo(run, center):
+    _, analysis = run
+    start_date = load_profile(EXAMPLE_PROFILE).start_date
+
+    fig = plot_census(analysis, center, start_date)
+    (ax,) = fig.axes
+
+    # Una semana desde el fin del calentamiento, recortada al horizonte (2 días aquí).
+    assert ax.get_xlim() == (WARMUP, DAYS)
+    stairs = {p.get_label(): p for p in ax.patches}
+    assert set(stairs) == {"Censo", "Boxes ocupados"}
+    for label, name in (("Censo", "census"), ("Boxes ocupados", "boxes_busy")):
+        values, edges, _ = stairs[label].get_data()
+        assert edges[0] == WARMUP and edges[-1] == DAYS
+        # Cada escalón es el valor de la curva en ese instante.
+        middle = (edges[:-1] + edges[1:]) / 2 * 1440
+        expected = [analysis.curves.value(name, t) for t in middle]
+        np.testing.assert_array_equal(values, expected)
+    capacity = line(ax, f"Capacidad: {center.boxes} boxes")
+    assert set(capacity.get_ydata()) == {center.boxes}
+    assert png_bytes(fig).startswith(b"\x89PNG")
+
+
+def test_grafica_censo_semana_completa(center):
+    # Con un horizonte largo se dibujan 7 días exactos desde el fin del calentamiento.
+    sink = MemorySink()
+    simulate_ed(center, load_profile(EXAMPLE_PROFILE), 10, SEED, sink=sink, warmup_days=2)
+    analysis = analyze_run(sink.events, center, 10, 2)
+
+    fig = plot_census(analysis, center, load_profile(EXAMPLE_PROFILE).start_date)
+
+    assert fig.axes[0].get_xlim() == (2, 9)
+
+
+def test_grafica_esperas_por_nivel(run):
+    _, analysis = run
+    m = analysis.metrics
+    empty = LevelMetrics(
+        5, 0, MappingProxyType(dict.fromkeys(MEASURES)), MappingProxyType(dict.fromkeys(MEASURES))
+    )
+    m = dataclasses.replace(m, by_level=(*m.by_level[:4], empty))
+
+    fig = plot_waits_by_level(m)
+
+    assert [ax.get_title() for ax in fig.axes] == ["Box", "Médico", "Puerta-médico"]
+    for ax, name in zip(fig.axes, ("box_wait", "doctor_wait", "door_to_doctor"), strict=True):
+        levels = m.by_level[:4]  # el nivel 5 no tiene episodios: no se dibuja
+        heights = [bar.get_height() for bar in ax.containers[0]]
+        np.testing.assert_allclose(heights, [lv.mean[name] for lv in levels])
+        p90 = line(ax, "p90")
+        np.testing.assert_allclose(p90.get_ydata(), [lv.p90[name] for lv in levels])
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        assert labels == [f"{lv.level}\nn = {lv.n}" for lv in levels]
+    assert png_bytes(fig).startswith(b"\x89PNG")
+
+
+def test_grafica_mg1(engine_validation_pequena):
+    v = engine_validation_pequena
+    replicas, wq = v.mg1, v.result("mg1").details[0]
+    theory = replicas.theory
+
+    fig = plot_mg1(replicas, wq)
+    (ax,) = fig.axes
+
+    points = line(ax, f"Wq de cada réplica ({len(replicas.wq)})")
+    np.testing.assert_array_equal(points.get_xdata(), np.arange(1, len(replicas.wq) + 1))
+    np.testing.assert_array_equal(points.get_ydata(), replicas.wq)
+    pk = line(ax, f"Pollaczek–Khinchine: {theory.wq:.2f} min")
+    assert set(pk.get_ydata()) == {theory.wq}
+    # La M/M/1 es Pollaczek–Khinchine con el segundo momento de una exponencial,
+    # E[S²] = 2·E[S]²; debe quedar por encima de la lognormal, de CV menor que 1.
+    mm1 = theory.lam * 2 * theory.mean_service**2 / (2 * (1 - theory.rho))
+    reference = line(ax, f"M/M/1 de la misma media: {mm1:.2f} min")
+    assert list(reference.get_ydata()) == pytest.approx([mm1, mm1])
+    assert mm1 > theory.wq
+    mean = line(ax, f"Media {wq.statistic:.2f} e IC al 99.667 %")
+    assert set(mean.get_ydata()) == {wq.statistic}
+    # La banda del IC es la del detalle wq, el mismo de la tabla.
+    (band,) = ax.patches
+    assert (band.get_y(), band.get_y() + band.get_height()) == pytest.approx(
+        (wq.ci_low, wq.ci_high)
+    )
+    assert png_bytes(fig).startswith(b"\x89PNG")
+
+
+def test_grafica_censo_por_hora(engine_validation_pequena):
+    hourly = engine_validation_pequena.hourly
+
+    fig = plot_hourly_census(hourly)
+    (ax,) = fig.axes
+
+    expected = line(ax, "m(t): carga ofrecida")
+    np.testing.assert_array_equal(expected.get_ydata(), hourly.expected)
+    (container,) = ax.containers
+    data = container.lines[0]
+    mean = hourly.census.mean(axis=0)
+    np.testing.assert_array_equal(data.get_xdata(), np.arange(24))
+    np.testing.assert_allclose(data.get_ydata(), mean)
+    # Las barras de error van del límite inferior al superior de cada IC.
+    (bars,) = container.lines[2]
+    segments = bars.get_segments()
+    np.testing.assert_allclose([s[0][1] for s in segments], hourly.ci_low)
+    np.testing.assert_allclose([s[1][1] for s in segments], hourly.ci_high)
+    assert png_bytes(fig).startswith(b"\x89PNG")

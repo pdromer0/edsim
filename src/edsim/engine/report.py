@@ -18,15 +18,28 @@ import csv
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import astuple, dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.arrivals.report import WEEKDAYS
 from edsim.arrivals.thinning import DayRecord
 from edsim.arrivals.validation import ValidationResult
-from edsim.engine.analysis import SHIFTS, LevelMetrics, RunAnalysis
+from edsim.engine.analysis import SHIFTS, LevelMetrics, RunAnalysis, StepCurves, WindowMetrics
+from edsim.engine.center import CenterConfig
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
-from edsim.engine.validation import LITTLE_TOLERANCE, UTILIZATION_TOLERANCE
+from edsim.engine.validation import (
+    HOURS,
+    LITTLE_TOLERANCE,
+    UTILIZATION_TOLERANCE,
+    HourlyCensus,
+    MG1Replicas,
+)
 
 # --- Run parameters ---------------------------------------------------------------------
 
@@ -400,3 +413,234 @@ def write_ground_truth_days_csv(
                     *astuple(parameters),
                 )
             )
+
+
+# --- Plots ----------------------------------------------------------------------------------
+# Figures use matplotlib's Agg canvas directly instead of pyplot, as in
+# arrivals/report.py: importing this module never changes the global backend.
+# Colors are slots 1 to 3 of the reference categorical palette (dataviz skill),
+# which pass the colorblind checks for every pair: what was simulated in blue,
+# the theory or the capacity in orange, a second simulated curve in aqua. The
+# M/M/1 reference, which is not a hypothesis being tested, is the muted gray.
+
+OBSERVED_COLOR = "#2a78d6"
+THEORY_COLOR = "#eb6834"
+SECOND_COLOR = "#1baf7a"
+MUTED_COLOR = "#898781"
+
+CENSUS_DAYS = 7
+"""Days of the long run shown by ``plot_census``: one week."""
+
+WAIT_PANELS = (("box_wait", "Box"), ("doctor_wait", "Médico"), ("door_to_doctor", "Puerta-médico"))
+
+
+def _figure(width: float, height: float) -> Figure:
+    fig = Figure(figsize=(width, height), layout="constrained")
+    FigureCanvasAgg(fig)
+    return fig
+
+
+def _window_stairs(
+    curves: StepCurves, name: str, start: float, end: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """The steps of a curve that cover ``[start, end]``, with the edges clipped to it."""
+    edges = curves.edges
+    keep = (edges[1:] > start) & (edges[:-1] < end)
+    values = curves[name][keep]
+    kept_edges = np.append(edges[:-1][keep], edges[1:][keep][-1])
+    return values, np.clip(kept_edges, start, end)
+
+
+def plot_census(
+    analysis: RunAnalysis, center: CenterConfig, start_date: date, days: int = CENSUS_DAYS
+) -> Figure:
+    """Census and busy boxes of one week of a run, against the number of boxes.
+
+    The week starts at the end of the warm-up and is cut at the horizon if the
+    run is shorter. The curves are the step functions of the log: the census
+    can go above the boxes, because it counts the patients waiting for triage
+    or for a box; the busy boxes never can.
+
+    Args:
+        analysis: The analysis of the run, such as ``EngineValidation.long_run``.
+        center: The configuration of the run, for the number of boxes.
+        start_date: Date of minute 0 (the profile's ``start_date``), for the
+            names of the days.
+        days: Days shown.
+
+    Returns:
+        The figure, attached to an Agg canvas; save it with ``savefig``.
+    """
+    start = analysis.metrics.start
+    end = min(start + days * MINUTES_PER_DAY, analysis.curves.horizon)
+    first_day, last_day = round(start / MINUTES_PER_DAY), round(end / MINUTES_PER_DAY)
+
+    fig = _figure(10, 4.5)
+    ax = fig.add_subplot()
+    for name, label, color in (
+        ("census", "Censo", OBSERVED_COLOR),
+        ("boxes_busy", "Boxes ocupados", SECOND_COLOR),
+    ):
+        values, edges = _window_stairs(analysis.curves, name, start, end)
+        ax.stairs(
+            values, edges / MINUTES_PER_DAY, baseline=None, color=color, linewidth=1.5, label=label
+        )
+    ax.plot(
+        [first_day, last_day],
+        [center.boxes, center.boxes],
+        "--",
+        color=THEORY_COLOR,
+        linewidth=2,
+        label=f"Capacidad: {center.boxes} boxes",
+    )
+    ticks = range(first_day, last_day + 1)
+    ax.set_xticks(list(ticks))
+    ax.set_xticklabels(
+        [
+            f"{WEEKDAYS[(start_date + timedelta(days=d)).weekday()][:3]} "
+            f"{(start_date + timedelta(days=d)).day}"
+            for d in ticks
+        ]
+    )
+    ax.set_xlim(first_day, last_day)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("Día (las marcas son las 0 h)")
+    ax.set_ylabel("Pacientes")
+    ax.set_title(f"Censo y boxes ocupados: días {first_day} a {last_day} de la ejecución")
+    ax.grid(alpha=0.3)
+    # Outside the axes: the curves can be high at both ends of the week.
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1))
+    return fig
+
+
+def plot_waits_by_level(metrics: WindowMetrics) -> Figure:
+    """Box, doctor and door-to-doctor waits by level: mean as bars, p90 as markers.
+
+    One panel per wait, each with its own scale. The doctor wait is
+    ``doctor_wait``, every wait for a doctor while holding a box. Levels
+    without episodes in the window are left out; the label under each bar
+    gives the number of episodes.
+
+    Returns:
+        The figure, attached to an Agg canvas; save it with ``savefig``.
+    """
+    levels = [lv for lv in metrics.by_level if lv.n > 0]
+    x = np.arange(len(levels))
+
+    fig = _figure(11, 4.2)
+    axes = fig.subplots(1, len(WAIT_PANELS))
+    for ax, (name, title) in zip(axes, WAIT_PANELS, strict=True):
+        ax.bar(x, [lv.mean[name] for lv in levels], width=0.6, color=OBSERVED_COLOR, label="Media")
+        ax.plot(
+            x,
+            [lv.p90[name] for lv in levels],
+            "D",
+            color=THEORY_COLOR,
+            markersize=8,
+            label="p90",
+        )
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{lv.level}\nn = {lv.n}" for lv in levels])
+        ax.set_ylim(bottom=0)
+        ax.set_title(title)
+        ax.set_xlabel("Nivel de triaje")
+        ax.grid(axis="y", alpha=0.3)
+    axes[0].set_ylabel("Minutos")
+    axes[0].legend(loc="upper left")
+    fig.suptitle("Esperas por nivel en la ventana: media y p90")
+    return fig
+
+
+def plot_mg1(replicas: MG1Replicas, wq: ValidationResult) -> Figure:
+    """The Wq of each replication of the M/G/1 and its interval, against the theory.
+
+    The band is the interval of the ``wq`` detail of the ``mg1`` result, the
+    same one the table prints. Pollaczek–Khinchine is the hypothesis; the
+    M/M/1 with the same mean service time, ``Wq = ρ·E[S] / (1 − ρ)``, is a
+    reference: the gap between both lines is the factor ``(1 + CV²) / 2``.
+
+    Args:
+        replicas: The values of each replication and the theory.
+        wq: The ``wq`` detail of the ``mg1`` result.
+
+    Returns:
+        The figure, attached to an Agg canvas; save it with ``savefig``.
+    """
+    theory = replicas.theory
+    n = len(replicas.wq)
+    x = np.arange(1, n + 1)
+    mm1 = theory.rho * theory.mean_service / (1 - theory.rho)
+
+    fig = _figure(8, 4.5)
+    ax = fig.add_subplot()
+    ax.axhspan(wq.ci_low, wq.ci_high, color=OBSERVED_COLOR, alpha=0.15, linewidth=0)
+    ax.axhline(
+        wq.statistic,
+        color=OBSERVED_COLOR,
+        linewidth=2,
+        label=f"Media {wq.statistic:.2f} e IC al {_percent(wq.confidence)}",
+    )
+    ax.plot(
+        x, replicas.wq, "o", color=OBSERVED_COLOR, markersize=8, label=f"Wq de cada réplica ({n})"
+    )
+    ax.axhline(
+        theory.wq,
+        color=THEORY_COLOR,
+        linewidth=2,
+        label=f"Pollaczek–Khinchine: {theory.wq:.2f} min",
+    )
+    ax.axhline(
+        mm1,
+        color=MUTED_COLOR,
+        linewidth=2,
+        linestyle="--",
+        label=f"M/M/1 de la misma media: {mm1:.2f} min",
+    )
+    ax.set_xlim(0.5, n + 0.5)
+    ax.set_xticks(x if n <= 20 else x[::5])
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("Réplica")
+    ax.set_ylabel("Espera media de triaje Wq (min)")
+    ax.set_title(f"M/G/1 del triaje: λ = {60 * theory.lam:g}/h, ρ = {theory.rho:.3f}")
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(loc="lower right")
+    return fig
+
+
+def plot_hourly_census(hourly: HourlyCensus) -> Figure:
+    """Mean census by hour of the clock, with its interval, against m(t).
+
+    Each point is the mean over the replications of the census of that hour,
+    with the interval that the Mₜ/G/∞ check uses (Bonferroni among the 24
+    hours) as its error bar; the line is the offered load m(t) averaged the
+    same way.
+
+    Returns:
+        The figure, attached to an Agg canvas; save it with ``savefig``.
+    """
+    hours = np.arange(HOURS)
+    mean = hourly.census.mean(axis=0)
+    errors = np.array([mean - hourly.ci_low, hourly.ci_high - mean])
+
+    fig = _figure(8, 4.5)
+    ax = fig.add_subplot()
+    ax.plot(hours, hourly.expected, color=THEORY_COLOR, linewidth=2, label="m(t): carga ofrecida")
+    ax.errorbar(
+        hours,
+        mean,
+        yerr=errors,
+        fmt="o",
+        color=OBSERVED_COLOR,
+        markersize=6,
+        capsize=3,
+        label=f"Censo medio e IC ({hourly.census.shape[0]} réplicas)",
+    )
+    ax.set_xticks(hours[::2])
+    ax.set_xlim(-0.6, 23.6)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("Hora del reloj")
+    ax.set_ylabel("Pacientes dentro (media de la hora)")
+    ax.set_title("Mₜ/G/∞: censo por hora con capacidad infinita frente a m(t)")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left")
+    return fig
