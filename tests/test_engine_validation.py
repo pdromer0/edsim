@@ -20,6 +20,7 @@ from edsim.engine.center import load_center
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.validation import (
     INFINITE,
+    check_engine_validation_counts,
     check_infinite_server,
     check_mg1,
     check_more_doctors,
@@ -318,6 +319,55 @@ def test_validate_engine_argumentos(center, profile, kwargs, match):
         validate_engine(center, profile, **kwargs)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"replicas": 1}, "replicas"),
+        ({"replicas": True}, "replicas"),
+        ({"paired_replicas": 1}, "paired_replicas"),
+        ({"n_stays": 10}, "n_stays"),
+        ({"long_days": 2}, "warmup_days"),
+        ({"mg1_days": 0}, "days"),
+        ({"warmup_days": -1}, "warmup_days"),
+    ],
+)
+def test_check_engine_validation_counts(kwargs, match):
+    # Las mismas comprobaciones que validate_engine, sin simular: la CLI las usa
+    # antes de imprimir nada.
+    with pytest.raises(ValueError, match=match):
+        check_engine_validation_counts(**kwargs)
+
+
+def test_check_engine_validation_counts_por_defecto():
+    check_engine_validation_counts()
+    check_engine_validation_counts(replicas=2, paired_replicas=2, n_stays=1000)
+
+
+def test_validate_engine_guarda_la_ejecucion_larga():
+    # Réplicas y días mínimos: aquí se prueba qué guarda, no la estadística.
+    center = load_center(ROOT / "tests" / "data" / "centro_ejemplo.toml")
+    v = validate_engine(
+        center,
+        load_profile(EXAMPLE_PROFILE),
+        seed=SEED,
+        replicas=2,
+        mg1_days=2,
+        mtginf_days=2,
+        long_days=3,
+        paired_replicas=2,
+        paired_days=2,
+        warmup_days=1,
+        n_stays=1000,
+    )
+    long_run = v.long_run
+    assert (long_run.metrics.start, long_run.metrics.end) == (1440.0, 3 * 1440.0)
+    assert long_run.curves.horizon == 3 * 1440.0
+    for law in long_run.little:
+        assert v.result(f"little_{law.name}").statistic == law.relative_error
+    for u in long_run.utilization:
+        assert v.result(f"utilization_{u.pool}").statistic == u.relative_error
+
+
 # --- validate_engine completo (slow) ----------------------------------------------------
 
 
@@ -353,6 +403,7 @@ def test_validate_engine_mg1(validation):
     assert all(d.confidence == pytest.approx(1 - 0.01 / 3) for d in mg1.details)
     assert len(validation.mg1.wq) == 20
     assert validation.mg1.theory.wq == pytest.approx(13.10, abs=5e-3)
+    assert validation.long_run.metrics.end == 28 * 1440
 
 
 @pytest.mark.slow

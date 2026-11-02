@@ -2,16 +2,20 @@
 
 Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
-``simulate_arrivals``, ``validate_arrivals``) and hands the results to the
-report modules for the tables, the CSV files and the plots.
+``simulate_arrivals``, ``validate_arrivals``, ``simulate_ed``,
+``validate_engine``) and hands the results to the report modules for the
+tables, the CSV files and the plots.
 
-Exit codes: 0 if all goes well; 1 if ``llegadas validar`` runs and some test
-fails (the plots are written anyway); 2 for usage errors, including a missing
-or invalid configuration, the limits of ``validar`` or a ``--salida`` that is
-not a directory, before anything is computed or any file is created.
+Exit codes: 0 if all goes well; 1 if ``llegadas validar`` or ``motor
+validar`` runs and some check fails, or ``motor simular`` finds a broken
+invariant (the files are written anyway, to find out why); 2 for usage
+errors, including a missing or invalid configuration, invalid limits or a
+``--salida`` that is not a directory, before anything is printed or computed
+and before any file is created.
 """
 
 import argparse
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
 
@@ -27,6 +31,23 @@ from edsim.arrivals.report import (
 )
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
+from edsim.engine.analysis import analyze_run
+from edsim.engine.center import load_center
+from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
+from edsim.engine.events import JsonlSink, read_events
+from edsim.engine.invariants import check_invariants
+from edsim.engine.report import (
+    RunParameters,
+    format_engine_validation,
+    format_run_summary,
+    plot_census,
+    plot_hourly_census,
+    plot_mg1,
+    plot_waits_by_level,
+    write_episodes_csv,
+    write_ground_truth_days_csv,
+)
+from edsim.engine.validation import check_engine_validation_counts, validate_engine
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
 
@@ -42,6 +63,15 @@ QQ_PLOT = "qq_reescalado.png"
 RESIDUALS_PLOT = "recuentos_diarios.png"
 SHORT_DAYS = 14
 """Days of each short run of test e, as in the specification."""
+
+DEFAULT_CENTER = "config/centro.toml"
+EVENTS_FILE = "eventos.jsonl"
+EPISODES_CSV = "ground_truth_episodios.csv"
+GROUND_TRUTH_DAYS_CSV = "ground_truth_dias.csv"
+CENSUS_PLOT = "censo.png"
+WAITS_PLOT = "esperas_por_nivel.png"
+MG1_PLOT = "mg1.png"
+HOURLY_CENSUS_PLOT = "censo_por_hora.png"
 
 
 def parse_rhos(text: str) -> tuple[float, ...]:
@@ -144,15 +174,21 @@ def _sweep(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
+def _load_file[T](
+    path: str, option: str, loader: Callable[[str], T], parser: argparse.ArgumentParser
+) -> tuple[T, str]:
+    """Load a configuration file and its fingerprint, or stop with a usage error (code 2)."""
+    try:
+        return loader(path), config_fingerprint(path)
+    # OSError: missing file or a directory. ValueError: invalid configuration,
+    # and also invalid TOML, because tomllib.TOMLDecodeError is a ValueError.
+    except (OSError, ValueError) as e:
+        parser.error(f"{option} {path}: {e}")
+
+
 def _load_config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> ArrivalProfile:
     """Load the profile and its fingerprint, or stop with a usage error (code 2)."""
-    try:
-        profile = load_profile(args.config)
-        args.huella = config_fingerprint(args.config)
-    # OSError: missing file or a directory. ValueError: invalid profile, and
-    # also invalid TOML, because tomllib.TOMLDecodeError is a ValueError.
-    except (OSError, ValueError) as e:
-        parser.error(f"--config {args.config}: {e}")
+    profile, args.huella = _load_file(args.config, "--config", load_profile, parser)
     return profile
 
 
@@ -227,6 +263,131 @@ def _validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0 if validation.passed else 1
 
 
+def _engine_header(args: argparse.Namespace) -> str:
+    return (
+        f"Motor · centro {args.centro} (huella {args.huella_centro})"
+        f" · llegadas {args.llegadas} (huella {args.huella_llegadas})"
+    )
+
+
+def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentParser):
+    center, args.huella_centro = _load_file(args.centro, "--centro", load_center, parser)
+    profile, args.huella_llegadas = _load_file(args.llegadas, "--llegadas", load_profile, parser)
+    return center, profile
+
+
+def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
+    center, profile = _load_engine_configs(args, parser)
+    try:
+        check_horizon(args.dias, args.calentamiento)
+    except ValueError as e:
+        parser.error(str(e))
+    run_id = default_run_id(args.semilla) if args.run_id is None else args.run_id
+    print(
+        f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
+        f" · semilla {args.semilla} · run_id {run_id}\n"
+    )
+
+    # The directory is created only once every argument has been checked.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    events_path = out_dir / EVENTS_FILE
+    with JsonlSink(events_path) as sink:
+        result = simulate_ed(
+            center,
+            profile,
+            args.dias,
+            args.semilla,
+            sink=sink,
+            warmup_days=args.calentamiento,
+            run_id=run_id,
+        )
+    parameters = RunParameters(
+        center=args.centro,
+        center_fingerprint=args.huella_centro,
+        profile=args.llegadas,
+        profile_fingerprint=args.huella_llegadas,
+        days=args.dias,
+        warmup_days=args.calentamiento,
+        seed=args.semilla,
+        run_id=run_id,
+    )
+    episodes_path = out_dir / EPISODES_CSV
+    days_path = out_dir / GROUND_TRUTH_DAYS_CSV
+    write_episodes_csv(result.ground_truth.episodes, episodes_path, parameters)
+    write_ground_truth_days_csv(result.ground_truth.days, days_path, parameters)
+
+    # The summary is derived from the file just written, as anybody would read
+    # it: the log is the only output of the engine (event sourcing).
+    events = list(read_events(events_path))
+    violations = check_invariants(
+        events, center, ground_truth=result.ground_truth, inside=result.inside
+    )
+    print(
+        format_run_summary(analyze_run(events, center, args.dias, args.calentamiento), violations)
+    )
+    print(f"\nLog: {events_path}\nCSV: {episodes_path}\nCSV: {days_path}")
+    return 1 if violations else 0
+
+
+def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
+    center, profile = _load_engine_configs(args, parser)
+    try:
+        check_engine_validation_counts(replicas=args.replicas)
+    except ValueError as e:
+        parser.error(str(e))
+    print(
+        f"{_engine_header(args)}\n{args.replicas} réplicas · semilla {args.semilla}\n\n"
+        "Validando el motor: invariantes, leyes operacionales, M/G/1, Mₜ/G/∞ y condiciones"
+        " extremas. Con los valores por defecto tarda unos 90 s.\n",
+        flush=True,
+    )
+    validation = validate_engine(center, profile, seed=args.semilla, replicas=args.replicas)
+    print(format_engine_validation(validation.results))
+
+    # The plots are written even if a check fails: they help to find out why.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    figures = (
+        (CENSUS_PLOT, plot_census(validation.long_run, center, profile.start_date)),
+        (WAITS_PLOT, plot_waits_by_level(validation.long_run.metrics)),
+        (MG1_PLOT, plot_mg1(validation.mg1, validation.result("mg1").details[0])),
+        (HOURLY_CENSUS_PLOT, plot_hourly_census(validation.hourly)),
+    )
+    print()
+    for name, fig in figures:
+        fig.savefig(out_dir / name, dpi=150)
+        print(f"Gráfica: {out_dir / name}")
+    return 0 if validation.passed else 1
+
+
+def run_id_text(text: str) -> str:
+    """A ``--run-id``: any non-empty text, as ``EventLog`` requires."""
+    if not text:
+        raise argparse.ArgumentTypeError("no puede estar vacío")
+    return text
+
+
+def _add_engine_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--centro",
+        default=DEFAULT_CENTER,
+        metavar="FICHERO",
+        help="configuración del centro en TOML (por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--llegadas",
+        default=DEFAULT_CONFIG,
+        metavar="FICHERO",
+        help="perfil de llegadas en TOML (por defecto: %(default)s)",
+    )
+
+
+def _add_engine_output_options(parser: argparse.ArgumentParser) -> None:
+    _add_output_options(parser)
+    parser.set_defaults(salida="resultados/motor")
+
+
 def _add_arrival_options(parser: argparse.ArgumentParser, days: int) -> None:
     parser.add_argument(
         "--config",
@@ -260,7 +421,7 @@ def _add_output_options(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the ``edsim`` parser with its ``mm1`` and ``llegadas`` subcommands."""
+    """Build the ``edsim`` parser with its ``mm1``, ``llegadas`` and ``motor`` subcommands."""
     parser = argparse.ArgumentParser(
         prog="edsim",
         description="Simulador de urgencias hospitalarias que genera datos "
@@ -368,6 +529,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_output_options(validate)
     validate.set_defaults(handler=_validate, subparser=validate)
+
+    engine = commands.add_parser(
+        "motor",
+        help="motor de eventos: simulación y validación",
+        description="Motor de eventos discretos del servicio de urgencias.",
+    )
+    engine_actions = engine.add_subparsers(dest="accion", required=True, metavar="accion")
+
+    simulate = engine_actions.add_parser(
+        "simular",
+        help="simula el centro y guarda el log y el ground truth",
+        description=f"Simula N días y guarda en el directorio de salida {EVENTS_FILE} (el "
+        f"log de eventos), {EPISODES_CSV} y {GROUND_TRUTH_DAYS_CSV} (el ground truth). "
+        "Comprueba las invariantes e imprime un resumen derivado del log. Termina con "
+        "código 1 si alguna invariante falla.",
+    )
+    _add_engine_options(simulate)
+    simulate.add_argument(
+        "--dias",
+        type=int,
+        default=14,
+        metavar="N",
+        help="días completos simulados, con el calentamiento (por defecto: %(default)s)",
+    )
+    simulate.add_argument(
+        "--calentamiento",
+        type=int,
+        default=2,
+        metavar="N",
+        help="días completos de calentamiento, fuera de las métricas (por defecto: %(default)s)",
+    )
+    simulate.add_argument(
+        "--run-id",
+        type=run_id_text,
+        default=None,
+        metavar="ID",
+        help="identificador de la ejecución en el log (por defecto: r y la semilla)",
+    )
+    _add_engine_output_options(simulate)
+    simulate.set_defaults(handler=_simulate_engine, subparser=simulate)
+
+    engine_validate = engine_actions.add_parser(
+        "validar",
+        help="valida el motor y guarda cuatro gráficas",
+        description="Ejecuta la validación del motor (invariantes, Little, utilización, "
+        "M/G/1, Mₜ/G/∞, capacidad infinita y más médicos), imprime la tabla y guarda "
+        f"{CENSUS_PLOT}, {WAITS_PLOT}, {MG1_PLOT} y {HOURLY_CENSUS_PLOT}. Tarda unos "
+        "90 s. Termina con código 1 si alguna comprobación falla.",
+    )
+    _add_engine_options(engine_validate)
+    engine_validate.add_argument(
+        "--replicas",
+        type=int,
+        default=20,
+        metavar="R",
+        help="réplicas de la M/G/1 y de la Mₜ/G/∞ (por defecto: %(default)s)",
+    )
+    _add_engine_output_options(engine_validate)
+    engine_validate.set_defaults(handler=_validate_engine, subparser=engine_validate)
 
     return parser
 

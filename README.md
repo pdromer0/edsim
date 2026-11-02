@@ -22,6 +22,10 @@ uv run pre-commit install    # activa los hooks de pre-commit (una vez)
 uv run edsim --version       # CLI
 uv run edsim mm1 comparar    # M/M/1: tabla de teoría frente a simulación
 uv run edsim mm1 barrido     # M/M/1: CSV y gráfica de Wq frente a ρ en resultados/mm1/
+uv run edsim llegadas generar  # llegadas: dos CSV en resultados/llegadas/
+uv run edsim llegadas validar  # llegadas: cinco pruebas y tres gráficas
+uv run edsim motor simular   # motor: log JSONL, ground truth y resumen en resultados/motor/
+uv run edsim motor validar   # motor: tabla de validación y cuatro gráficas (unos 90 s)
 uv run pytest                # tests
 uv run ruff check .          # lint
 uv run ruff format .         # formato

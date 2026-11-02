@@ -81,6 +81,23 @@ def _check_warmup(warmup_days: object, days: int) -> int:
     return warmup_days
 
 
+def check_horizon(days: object, warmup_days: object) -> tuple[int, int]:
+    """Check the horizon and the warm-up of a run, as ``simulate_ed`` does.
+
+    The CLI calls it before creating any file, so that a usage error leaves
+    nothing half written.
+
+    Returns:
+        ``(days, warmup_days)``.
+
+    Raises:
+        ValueError: If ``days`` is not a positive integer (checked first), or
+            ``warmup_days`` is not an integer in [0, ``days``).
+    """
+    days = _check_days(days)
+    return days, _check_warmup(warmup_days, days)
+
+
 def run_engine(
     center: CenterConfig,
     arrivals: Iterable[ArrivalRecord],
@@ -199,8 +216,7 @@ def simulate_ed(
         ValueError: If ``days`` is not a positive integer, or ``warmup_days``
             is not an integer in [0, ``days``).
     """
-    days = _check_days(days)
-    warmup_days = _check_warmup(warmup_days, days)
+    days, warmup_days = check_horizon(days, warmup_days)
     streams = child_streams(seed, N_STREAMS)
     if run_id is None:
         run_id = default_run_id(seed)
