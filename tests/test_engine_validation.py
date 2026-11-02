@@ -18,18 +18,24 @@ from edsim.arrivals.rate import cumulative_rate
 from edsim.engine import analysis
 from edsim.engine.center import load_center
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
+from edsim.engine.engine import simulate_ed
+from edsim.engine.events import MemorySink
 from edsim.engine.validation import (
     INFINITE,
+    census_by_day_and_hour,
     check_engine_validation_counts,
     check_infinite_server,
     check_mg1,
     check_more_doctors,
     check_operational_laws,
+    check_warmup,
+    draws_sample,
     flat_profile,
     hourly_grid_means,
     infinite_center,
     mg1_center,
     offered_load,
+    offered_load_by_pool,
     pollaczek_khinchine,
     stay_sample,
     total_stay,
@@ -429,3 +435,99 @@ def test_potencia_utilizacion_con_un_recorte_mal_hecho(center, profile, monkeypa
     for pool in ("enfermeria_triaje", "medicos", "boxes"):
         assert not by_name[f"utilization_{pool}"].passed, pool
     assert by_name["little_system"].passed  # Little no usa los intervalos
+
+
+# --- Carga ofrecida por pool ---------------------------------------------------------------
+
+
+def test_muestra_de_sorteos_es_la_de_las_estancias(center):
+    draws = draws_sample(center, 500, seed=7)
+    assert np.array_equal(stay_sample(center, 500, seed=7), [total_stay(d) for d in draws])
+
+
+def test_carga_por_pool_a_mano():
+    # λ constante de 0,1 por minuto. Dos pacientes: uno sin pruebas (triaje 5,
+    # valoración 20) y otro con pruebas (triaje 5, valoración 10, respuesta 30,
+    # reevaluación 10). Pasada la estancia máxima, m = λ · E[tiempo en el pool].
+    no_tests = dataclasses.replace(DRAWS, assessment_time=20.0, needs_tests=False)
+    tests = dataclasses.replace(
+        DRAWS, assessment_time=10.0, test_turnaround=30.0, reassessment_time=10.0
+    )
+    load = offered_load_by_pool(flat_profile(daily_base=144), [no_tests, tests], horizon=200)
+
+    assert set(load) == {"census", "enfermeria_triaje", "medicos", "boxes"}
+    assert load["census"][150] == pytest.approx(0.1 * (25 + 55) / 2, rel=1e-12)
+    assert load["enfermeria_triaje"][150] == pytest.approx(0.1 * 5, rel=1e-12)
+    assert load["medicos"][150] == pytest.approx(0.1 * (20 + 20) / 2, rel=1e-12)
+    assert load["boxes"][150] == pytest.approx(0.1 * (20 + 50) / 2, rel=1e-12)
+    # Al principio nadie ha terminado el triaje: ni boxes ni médicos.
+    assert load["boxes"][4] == load["medicos"][4] == 0.0
+    assert load["enfermeria_triaje"][4] == pytest.approx(0.1 * 4, rel=1e-12)
+
+
+def test_carga_del_censo_es_la_de_offered_load(center, profile):
+    draws = draws_sample(center, 5000, seed=3)
+    stays = np.array([total_stay(d) for d in draws])
+    flat_z = dataclasses.replace(profile, daily_cv=0.0)
+    by_pool = offered_load_by_pool(flat_z, draws, horizon=2 * 1440)
+    np.testing.assert_allclose(
+        by_pool["census"], offered_load(flat_z, stays, 2 * 1440), rtol=1e-12, atol=1e-12
+    )
+    # Censo = enfermería + boxes (sin esperas, el box empieza al acabar el triaje).
+    np.testing.assert_allclose(
+        by_pool["census"], by_pool["enfermeria_triaje"] + by_pool["boxes"], rtol=1e-12, atol=1e-12
+    )
+
+
+def test_carga_por_pool_sin_muestra(profile):
+    with pytest.raises(ValueError, match="empty"):
+        offered_load_by_pool(profile, [], horizon=10)
+
+
+# --- Medias horarias de la Mₜ/G/∞ ----------------------------------------------------------
+
+
+def test_medias_horarias_iguales_que_antes(center):
+    # La fórmula de la tarea 3.6, escrita aquí, da los mismos bits que la nueva.
+    sink = MemorySink()
+    simulate_ed(center, load_profile(EXAMPLE_PROFILE), 3, SEED, sink=sink, warmup_days=1)
+    curves = analysis.step_curves(sink.events, 3 * 1440)
+    edges = np.append(curves.times, curves.horizon)
+    cumulative = np.concatenate([[0.0], np.cumsum(np.diff(edges) * curves["census"])])
+    hours = np.arange(1440, 3 * 1440 + 1, 60, dtype=float)
+    old = (np.diff(np.interp(hours, edges, cumulative)) / 60).reshape(-1, 24).mean(axis=0)
+    new = analysis.hourly_means_by_day(curves, "census", 1440, 3 * 1440).mean(axis=0)
+    assert np.array_equal(old, new)
+
+
+# --- Calentamiento ---------------------------------------------------------------------------
+
+
+def test_censo_por_dia_y_hora(center):
+    census = census_by_day_and_hour(center, load_profile(EXAMPLE_PROFILE), 2, SEED, 2)
+    assert census.shape == (2, 2, 24)
+    # Desde vacío: a las 0 h del día 0 hay menos gente que a las 0 h del día 1.
+    assert census[:, 0, 0].mean() < census[:, 1, 0].mean()
+    again = census_by_day_and_hour(center, load_profile(EXAMPLE_PROFILE), 2, SEED, 2)
+    assert np.array_equal(census, again)
+
+
+def test_comprobacion_del_calentamiento_a_mano():
+    # 5 réplicas iguales salvo ruido; el día 0 tiene la hora 2 desplazada a propósito.
+    rng = np.random.default_rng(1)
+    census = 20 + rng.normal(0, 1, size=(5, 8, 24))
+    census[:, 0, 2] -= 10
+    result = check_warmup(census, 0, 7)
+    assert result.name == "warmup" and not result.passed
+    assert [d.name for d in result.details if not d.passed] == ["02h"]
+    assert result.statistic == 1
+    assert result.confidence == pytest.approx(1 - 0.01 / 24)
+    assert check_warmup(census, 1, 7).passed
+
+
+@pytest.mark.parametrize(
+    ("shape", "day", "ref"), [((1, 8, 24), 0, 7), ((5, 8, 23), 0, 7), ((5, 8, 24), 0, 8)]
+)
+def test_comprobacion_del_calentamiento_argumentos(shape, day, ref):
+    with pytest.raises(ValueError):
+        check_warmup(np.zeros(shape), day, ref)
