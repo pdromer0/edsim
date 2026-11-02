@@ -11,6 +11,12 @@ from edsim.arrivals.report import config_fingerprint, format_validation
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import validate_arrivals
 from edsim.cli import main
+from edsim.engine.analysis import analyze_run
+from edsim.engine.center import load_center
+from edsim.engine.engine import simulate_ed
+from edsim.engine.events import MemorySink, read_events
+from edsim.engine.invariants import Violation
+from edsim.engine.report import format_engine_validation, format_run_summary
 from edsim.queueing.replications import METRIC_NAMES, compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep
 
@@ -51,7 +57,7 @@ def test_version(capsys):
     assert capsys.readouterr().out.strip() == f"edsim {version('edsim')}"
 
 
-@pytest.mark.parametrize("argv", [[], ["mm1"], ["llegadas"]])
+@pytest.mark.parametrize("argv", [[], ["mm1"], ["llegadas"], ["motor"]])
 def test_subcomando_obligatorio(argv, capsys):
     with pytest.raises(SystemExit) as exc:
         main(argv)
@@ -370,6 +376,24 @@ SALIDA_COMMANDS = {
     "generar": ["llegadas", "generar", "--config", str(EXAMPLE), *GENERATE_ARGS],
     "validar": ["llegadas", "validar", "--config", str(EXAMPLE), *VALIDATE_ARGS],
     "barrido": ["mm1", "barrido", "--rhos", "0.3,0.6", *SMALL_ARGS],
+    "motor simular": [
+        "motor",
+        "simular",
+        "--centro",
+        str(Path(__file__).parent / "data" / "centro_ejemplo.toml"),
+        "--llegadas",
+        str(EXAMPLE),
+        "--dias",
+        "2",
+    ],
+    "motor validar": [
+        "motor",
+        "validar",
+        "--centro",
+        str(Path(__file__).parent / "data" / "centro_ejemplo.toml"),
+        "--llegadas",
+        str(EXAMPLE),
+    ],
 }
 
 
@@ -401,3 +425,254 @@ def test_config_por_defecto_es_config_llegadas(monkeypatch, tmp_path):
     with (out_dir / "dias.csv").open(newline="", encoding="utf-8") as f:
         (row,) = csv.DictReader(f)
     assert row["config"] == "config/llegadas.toml"
+
+
+# --- motor ------------------------------------------------------------------------------
+
+ENGINE_CENTER = Path(__file__).parent / "data" / "centro_ejemplo.toml"
+ENGINE_FILES = ("eventos.jsonl", "ground_truth_episodios.csv", "ground_truth_dias.csv")
+ENGINE_PLOTS = ("censo.png", "esperas_por_nivel.png", "mg1.png", "censo_por_hora.png")
+# Corridas mínimas: aquí se prueba la CLI, no el motor.
+SIMULATE_ARGS = [
+    "--centro",
+    str(ENGINE_CENTER),
+    "--llegadas",
+    str(EXAMPLE),
+    "--dias",
+    "2",
+    "--calentamiento",
+    "1",
+    "--semilla",
+    "7",
+]
+ENGINE_VALIDATE_ARGS = ["--centro", str(ENGINE_CENTER), "--llegadas", str(EXAMPLE)]
+
+
+def simulate_in_memory():
+    sink = MemorySink()
+    center = load_center(ENGINE_CENTER)
+    result = simulate_ed(center, load_profile(EXAMPLE), 2, 7, sink=sink, warmup_days=1)
+    return center, sink.events, result
+
+
+def read_rows(path):
+    with path.open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def test_simular_escribe_log_y_ground_truth(tmp_path, capsys):
+    out_dir = tmp_path / "a" / "b"  # no existe: la CLI debe crearlo
+
+    code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(out_dir)])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    center, events, result = simulate_in_memory()
+    # El log del fichero es, evento a evento, el de la misma ejecución en memoria.
+    assert list(read_events(out_dir / "eventos.jsonl")) == events
+    episodes = read_rows(out_dir / "ground_truth_episodios.csv")
+    days = read_rows(out_dir / "ground_truth_dias.csv")
+    assert [float(r["minuto_llegada"]) for r in episodes] == [
+        e.arrival_time for e in result.ground_truth.episodes
+    ]
+    assert [int(r["aceptadas"]) for r in days] == [d.accepted for d in result.ground_truth.days]
+    for row in (episodes[0], episodes[-1], days[0], days[-1]):
+        assert row["centro"] == str(ENGINE_CENTER)
+        assert row["huella_centro"] == config_fingerprint(ENGINE_CENTER)
+        assert row["llegadas"] == str(EXAMPLE)
+        assert row["huella_llegadas"] == config_fingerprint(EXAMPLE)
+        assert (row["dias"], row["calentamiento"], row["semilla"]) == ("2", "1", "7")
+        assert row["run_id"] == "r7"
+    for text in (
+        f"huella {config_fingerprint(ENGINE_CENTER)}",
+        f"huella {config_fingerprint(EXAMPLE)}",
+        "2 días (1 de calentamiento)",
+        "semilla 7",
+        "run_id r7",
+    ):
+        assert text in out
+    # El resumen impreso es exactamente el de esa ejecución.
+    summary = format_run_summary(analyze_run(events, center, 2, 1), [])
+    assert summary in out
+    assert summary.endswith("Invariantes: 0 violaciones")
+    for name in ENGINE_FILES:
+        assert str(out_dir / name) in out
+
+
+def test_simular_con_run_id(tmp_path):
+    code = main(
+        ["motor", "simular", *SIMULATE_ARGS, "--run-id", "prueba", "--salida", str(tmp_path)]
+    )
+
+    assert code == 0
+    first = next(read_events(tmp_path / "eventos.jsonl"))
+    assert first.run_id == "prueba"
+    assert first.event_id == "prueba-000000000"
+    (row, *_) = read_rows(tmp_path / "ground_truth_dias.csv")
+    assert row["run_id"] == "prueba"
+
+
+def test_simular_devuelve_1_si_falla_una_invariante(tmp_path, monkeypatch, capsys):
+    broken = Violation("capacity", "box 3 ocupado dos veces", "r7-000000042", "EP-000007", 99.5)
+    monkeypatch.setattr("edsim.cli.check_invariants", lambda *args, **kwargs: [broken])
+
+    code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "Invariantes: FALLAN 1 violaciones (capacity 1)" in out
+    assert "box 3 ocupado dos veces" in out
+    # Los ficheros se escriben igualmente, para diagnosticar.
+    for name in ENGINE_FILES:
+        assert (tmp_path / name).is_file()
+
+
+def test_simular_comprueba_las_invariantes_con_el_ground_truth(tmp_path, monkeypatch):
+    calls = []
+
+    def spy(events, center, **kwargs):
+        calls.append((list(events), center, kwargs))
+        return []
+
+    monkeypatch.setattr("edsim.cli.check_invariants", spy)
+
+    main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path)])
+
+    center, events, result = simulate_in_memory()
+    ((checked, checked_center, kwargs),) = calls
+    assert checked == events
+    assert checked_center == center
+    assert kwargs == {"ground_truth": result.ground_truth, "inside": result.inside}
+
+
+def small_engine_validation_with(validation, passed):
+    results = tuple(dataclasses.replace(r, passed=passed(r)) for r in validation.results)
+    return dataclasses.replace(validation, results=results)
+
+
+def test_validar_motor_imprime_tabla_y_guarda_las_graficas(
+    tmp_path, monkeypatch, capsys, engine_validation_pequena
+):
+    calls = []
+
+    def fake(*args, **kwargs):
+        calls.append((args, kwargs))
+        return engine_validation_pequena
+
+    monkeypatch.setattr("edsim.cli.validate_engine", fake)
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["motor", "validar", *ENGINE_VALIDATE_ARGS, "--replicas", "5", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    ((args, kwargs),) = calls
+    assert args == (load_center(ENGINE_CENTER), load_profile(EXAMPLE))
+    assert kwargs == {"seed": 2026, "replicas": 5}
+    for text in ("5 réplicas", "semilla 2026", "unos 90 s"):
+        assert text in out
+    # El aviso va antes de la tabla, y la tabla es la del resultado.
+    table = format_engine_validation(engine_validation_pequena.results)
+    assert out.index("unos 90 s") < out.index(table)
+    for name in ENGINE_PLOTS:
+        assert (out_dir / name).read_bytes().startswith(b"\x89PNG")
+        assert str(out_dir / name) in out
+
+
+def test_validar_motor_devuelve_1_si_falla_y_guarda_las_graficas(
+    tmp_path, monkeypatch, capsys, engine_validation_pequena
+):
+    failing = small_engine_validation_with(
+        engine_validation_pequena, lambda r: r.name != "more_doctors"
+    )
+    monkeypatch.setattr("edsim.cli.validate_engine", lambda *args, **kwargs: failing)
+
+    code = main(["motor", "validar", *ENGINE_VALIDATE_ARGS, "--salida", str(tmp_path)])
+
+    assert code == 1
+    assert "FALLAN 4. Más médicos" in capsys.readouterr().out
+    for name in ENGINE_PLOTS:
+        assert (tmp_path / name).is_file()
+
+
+@pytest.mark.parametrize(
+    ("accion", "extra", "message"),
+    [
+        ("simular", ["--centro", "no_existe.toml"], "--centro"),
+        ("simular", ["--llegadas", "no_existe.toml"], "--llegadas"),
+        ("simular", ["--centro", "toml_invalido"], "--centro"),
+        ("simular", ["--centro", "centro_invalido"], "recursos.boxes"),
+        ("simular", ["--dias", "0"], "days"),
+        ("simular", ["--dias", "2", "--calentamiento", "2"], "warmup_days"),
+        ("simular", ["--calentamiento", "-1"], "warmup_days"),
+        ("simular", ["--dias", "catorce"], "--dias"),
+        ("simular", ["--run-id", ""], "--run-id"),
+        ("validar", ["--centro", "no_existe.toml"], "--centro"),
+        ("validar", ["--llegadas", "toml_invalido"], "--llegadas"),
+        ("validar", ["--replicas", "1"], "replicas"),
+        ("validar", ["--replicas", "dos"], "--replicas"),
+    ],
+)
+def test_motor_errores_de_uso(accion, extra, message, tmp_path, monkeypatch, capsys):
+    # Si algo llegara a simular o validar, el test lo vería.
+    monkeypatch.setattr("edsim.cli.validate_engine", lambda *a, **k: pytest.fail("validó"))
+    files = {
+        "no_existe.toml": str(tmp_path / "no_existe.toml"),
+        "toml_invalido": write_config(tmp_path, "boxes = \n"),
+        "centro_invalido": write_config(
+            tmp_path, ENGINE_CENTER.read_text().replace("boxes = 30", "boxes = 0")
+        ),
+    }
+    extra = [files.get(x, x) for x in extra]
+    base = SIMULATE_ARGS if accion == "simular" else ENGINE_VALIDATE_ARGS
+    out_dir = tmp_path / "salida"
+
+    with pytest.raises(SystemExit) as exc:
+        main(["motor", accion, *base, *extra, "--salida", str(out_dir)])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert message in captured.err
+    assert "Traceback" not in captured.err
+    # Nada en la salida estándar: ni la cabecera ni el aviso de los 90 s.
+    assert captured.out == ""
+    assert not out_dir.exists()
+
+
+def test_motor_ficheros_por_defecto(monkeypatch, tmp_path):
+    # Desde la raíz del repositorio, --centro y --llegadas se pueden omitir.
+    monkeypatch.chdir(Path(__file__).parent.parent)
+    out_dir = tmp_path / "salida"
+
+    assert (
+        main(["motor", "simular", "--dias", "1", "--calentamiento", "0", "--salida", str(out_dir)])
+        == 0
+    )
+    (row,) = read_rows(out_dir / "ground_truth_dias.csv")
+    assert (row["centro"], row["llegadas"]) == ("config/centro.toml", "config/llegadas.toml")
+
+
+@pytest.mark.slow
+def test_validar_motor_de_verdad(tmp_path, capsys):
+    # La validación completa con los valores por defecto, como en la medida del PR.
+    root = Path(__file__).parent.parent
+    code = main(
+        [
+            "motor",
+            "validar",
+            "--centro",
+            str(root / "config" / "centro.toml"),
+            "--llegadas",
+            str(root / "config" / "llegadas.toml"),
+            "--salida",
+            str(tmp_path),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "Resultado: pasan las 11 comprobaciones" in out
+    for name in ENGINE_PLOTS:
+        assert (tmp_path / name).read_bytes().startswith(b"\x89PNG")
