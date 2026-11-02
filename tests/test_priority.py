@@ -29,6 +29,8 @@ from edsim.engine.resources import (
     priority_key,
     should_displace,
 )
+from edsim.engine.scenarios import hand_draws as draws
+from edsim.engine.scenarios import run_scenario, three_boxes
 
 DATA = Path(__file__).parent / "data"
 START = date(2026, 1, 5)
@@ -37,17 +39,6 @@ START = date(2026, 1, 5)
 @pytest.fixture(scope="module")
 def center() -> CenterConfig:
     return load_center(DATA / "centro_ejemplo.toml")
-
-
-def draws(level: int, triage: float, assessment: float, **kwargs) -> PatientDraws:
-    """Sorteos a mano; sin pruebas y con alta salvo que se diga."""
-    values = {
-        "reassessment_time": 10.0,
-        "needs_tests": False,
-        "test_turnaround": 60.0,
-        "admitted": False,
-    } | kwargs
-    return PatientDraws(level=level, triage_time=triage, assessment_time=assessment, **values)
 
 
 def simulate(
@@ -147,31 +138,26 @@ def test_no_se_traspasa_un_box_libre():
 
 # --- Escenario de tres boxes de la sesión conceptual ---------------------------------
 
-# P1 nivel 3, P2 nivel 4 y P3 nivel 5 ocupan los tres boxes; P4 (nivel 2) espera; P5
-# (nivel 1) desaloja a P3 en plena valoración. P4 recibe el box antes que P3, y P3
-# reanuda con el tiempo que le faltaba.
-THREE_BOXES = [
-    (0.0, draws(3, 5, 60)),  # P1, EP-0: box 1 de 5 a 65
-    (1.0, draws(4, 5, 60)),  # P2, EP-1: box 2 de 6 a 66
-    (2.0, draws(5, 5, 40)),  # P3, EP-2: box 3 en 7, valoración 7-47
-    (10.0, draws(2, 5, 20)),  # P4, EP-3: espera box desde 15
-    (15.0, draws(1, 5, 30, admitted=True)),  # P5, EP-4: termina el triaje en 20
-]
+# El escenario (edsim.engine.scenarios.three_boxes): P1 nivel 3, P2 nivel 4 y P3 nivel 5
+# ocupan los tres boxes; P4 (nivel 2) espera; P5 (nivel 1) desaloja a P3 en plena
+# valoración. P4 recibe el box antes que P3, y P3 reanuda con el tiempo que le faltaba.
+# P1 box 1 de 5 a 65; P2 box 2 de 6 a 66; P3 box 3 en 7, valoración 7-47; P4 espera box
+# desde 15; P5 termina el triaje en 20.
 
 
 @pytest.fixture(scope="module")
-def three_boxes(center):
+def three_boxes_run(center):
     # Tres enfermeras en todos los turnos: el escenario empieza en el minuto 0, de noche,
     # y sus instantes cuentan con que los tres primeros se triajan a la vez.
-    small = dataclasses.replace(center, boxes=3, triage_nurses=(3, 3, 3))
-    events, run = simulate(small, THREE_BOXES)
-    return events, run, small
+    scenario = three_boxes(center)
+    result = run_scenario(scenario)
+    return result.events, result.run, scenario.center
 
 
-def test_tres_boxes_desalojo_en_plena_valoracion(three_boxes):
+def test_tres_boxes_desalojo_en_plena_valoracion(three_boxes_run):
     # En 20 los tres boxes tienen nivel > 1: P5 echa al de clave mayor, P3 (5, 2), que
     # lleva 13 de sus 40 minutos. Primero el desalojado, luego la concesión.
-    events, _, _ = three_boxes
+    events, _, _ = three_boxes_run
 
     assert at(events, 20.0) == [
         ("EP-000004", "triage_completed", {"nivel": 1}),
@@ -182,9 +168,9 @@ def test_tres_boxes_desalojo_en_plena_valoracion(three_boxes):
     ]
 
 
-def test_tres_boxes_p4_antes_que_p3(three_boxes):
+def test_tres_boxes_p4_antes_que_p3(three_boxes_run):
     # P5 sale en 50: el box 3 va a P4 (2, 10), no a P3 (5, 2), que llegó antes.
-    events, _, _ = three_boxes
+    events, _, _ = three_boxes_run
 
     assert at(events, 50.0) == [
         ("EP-000004", "assessment_ended", ended("inicial")),
@@ -196,9 +182,9 @@ def test_tres_boxes_p4_antes_que_p3(three_boxes):
     assert trace(events, 3)[-1] == ("patient_departed", 70.0, ALTA)
 
 
-def test_tres_boxes_p3_reanuda_con_lo_que_le_faltaba(three_boxes):
+def test_tres_boxes_p3_reanuda_con_lo_que_le_faltaba(three_boxes_run):
     # P1 sale en 65 y P3 recibe el box 1: le faltaban 40 - 13 = 27 minutos, acaba en 92.
-    events, run, small = three_boxes
+    events, run, small = three_boxes_run
 
     assert trace(events, 2) == [
         ("patient_arrived", 2.0, {}),

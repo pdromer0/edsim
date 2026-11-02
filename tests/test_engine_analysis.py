@@ -6,7 +6,9 @@ los comentarios. Las funciones de análisis no comprueban que el log sea válido
 cosa de las invariantes; aquí solo pliegan los eventos.
 """
 
+import dataclasses
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ from edsim.engine import analysis
 from edsim.engine.analysis import (
     CURVES,
     MEASURES,
+    StepCurves,
     analyze_run,
     busy_intervals,
     episode_table,
@@ -562,3 +565,83 @@ def test_analyze_run_usa_la_ventana_de_los_dias(center):
 def test_ventana_invalida(two_patients, center, start, end):
     with pytest.raises(ValueError, match="start"):
         metrics_of(two_patients, center, start, end, DAY)
+
+
+# --- Medias por hora y por día ----------------------------------------------------------
+
+
+def staircase(values_by_hour, days):
+    """Curvas a mano: el censo vale ``values_by_hour[h]`` en la hora h de cada día."""
+    times = np.arange(days * 24, dtype=float) * 60
+    census = np.tile(np.asarray(values_by_hour, dtype=np.int64), days)
+    values = {name: np.zeros_like(census) for name in CURVES} | {"census": census}
+    return StepCurves(times=times, values=MappingProxyType(values), horizon=days * DAY)
+
+
+def test_medias_horarias_por_dia():
+    hourly = list(range(24))
+    curves = staircase(hourly, 3)
+    means = analysis.hourly_means_by_day(curves, "census", DAY, 3 * DAY)
+    assert means.shape == (2, 24)
+    assert means.tolist() == [hourly, hourly]
+
+
+def test_medias_horarias_con_un_cambio_dentro_de_la_hora():
+    # Censo 0 hasta las 0:30 y 2 después: la hora 0 tiene media 1.
+    values = {name: np.zeros(2, dtype=np.int64) for name in CURVES}
+    values["census"] = np.array([0, 2])
+    curves = StepCurves(np.array([0.0, 30.0]), MappingProxyType(values), DAY)
+    means = analysis.hourly_means_by_day(curves, "census", 0.0, DAY)
+    assert means[0, 0] == 1.0 and means[0, 1] == 2.0
+
+
+def test_medias_horarias_exigen_dias_enteros():
+    curves = staircase(range(24), 2)
+    with pytest.raises(ValueError, match="whole days"):
+        analysis.hourly_means_by_day(curves, "census", 60.0, DAY)
+
+
+def test_medias_diarias():
+    curves = staircase([0] * 12 + [4] * 12, 3)
+    assert analysis.daily_means(curves, "census", 1, 3).tolist() == [2.0, 2.0]
+
+
+# --- Esperas emparejadas ------------------------------------------------------------------
+
+
+def test_esperas_emparejadas_por_episodio(two_patients):
+    # La misma tabla con B sin espera de médico: diferencia 0 para A y -10 para B.
+    base = episode_table(two_patients)
+    better = (base[0], dataclasses.replace(base[1], doctor_wait=0.0))
+    paired = analysis.paired_waits(base, better, "doctor_wait", 0.0, DAY)
+    assert paired.episode_ids == ("EP-000000", "EP-000001")
+    assert paired.levels.tolist() == [3, 4]
+    assert paired.difference.tolist() == [0.0, -10.0]
+
+
+def test_esperas_emparejadas_saltan_al_que_sigue_dentro(two_patients):
+    # En la otra ejecución B sigue dentro: se empareja solo A, aunque B vaya primero.
+    base = episode_table(two_patients)
+    other = (dataclasses.replace(base[1], departure=None, doctor_wait=None), base[0])
+    paired = analysis.paired_waits(base, other, "stay", 0.0, DAY)
+    assert paired.episode_ids == ("EP-000000",)
+    assert paired.base.tolist() == paired.other.tolist() == [100.0]
+
+
+def test_esperas_emparejadas_cuando_el_primero_sigue_dentro(two_patients):
+    # A sigue dentro en la base: B, el segundo de la base, se empareja con B y no con
+    # el primero completado de la otra ejecución (que es A).
+    base = episode_table(two_patients)
+    first_inside = (dataclasses.replace(base[0], departure=None, doctor_wait=None), base[1])
+    paired = analysis.paired_waits(first_inside, base, "stay", 0.0, DAY)
+    assert paired.episode_ids == ("EP-000001",)
+    assert paired.base.tolist() == paired.other.tolist() == [base[1].stay]
+
+
+def test_esperas_emparejadas_exigen_los_mismos_pacientes(two_patients):
+    base = episode_table(two_patients)
+    moved = (base[0], dataclasses.replace(base[1], arrival=106.0))
+    with pytest.raises(ValueError, match="same patients"):
+        analysis.paired_waits(base, moved, "stay", 0.0, DAY)
+    with pytest.raises(ValueError, match="measure"):
+        analysis.paired_waits(base, base, "espera", 0.0, DAY)

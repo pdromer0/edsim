@@ -340,7 +340,7 @@ def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     print(
         f"{_engine_header(args)}\n{args.replicas} réplicas · semilla {args.semilla}\n\n"
         "Validando el motor: invariantes, leyes operacionales, M/G/1, Mₜ/G/∞ y condiciones"
-        " extremas. Con los valores por defecto tarda unos 90 s.\n",
+        " extremas. Con los valores por defecto tarda unos 2 minutos.\n",
         flush=True,
     )
     validation = validate_engine(center, profile, seed=args.semilla, replicas=args.replicas)
@@ -576,7 +576,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Ejecuta la validación del motor (invariantes, Little, utilización, "
         "M/G/1, Mₜ/G/∞, capacidad infinita y más médicos), imprime la tabla y guarda "
         f"{CENSUS_PLOT}, {WAITS_PLOT}, {MG1_PLOT} y {HOURLY_CENSUS_PLOT}. Tarda unos "
-        "90 s. Termina con código 1 si alguna comprobación falla.",
+        "2 minutos. Termina con código 1 si alguna comprobación falla.",
     )
     _add_engine_options(engine_validate)
     engine_validate.add_argument(

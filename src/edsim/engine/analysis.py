@@ -733,3 +733,136 @@ def analyze_run(
         little=little_laws(table, curves, start, horizon),
         utilization=utilization_identities(events, curves, start, horizon),
     )
+
+
+# --- By day and by hour of the clock ------------------------------------------------------
+
+HOURS_PER_DAY = 24
+
+
+def _check_whole_days(curves: StepCurves, start: float, end: float) -> None:
+    _check_window(start, end, curves.horizon)
+    if start % MINUTES_PER_DAY or end % MINUTES_PER_DAY:
+        raise ValueError(f"start and end must be whole days in minutes, got {start=} and {end=}")
+
+
+def hourly_means_by_day(curves: StepCurves, name: str, start: float, end: float) -> np.ndarray:
+    """Mean of a curve in each hour of each day of ``[start, end]``.
+
+    Exact: the area of a step function up to any instant is the linear
+    interpolation of its cumulative area at the steps.
+
+    Args:
+        curves: The step curves of a log.
+        name: A name of ``CURVES``.
+        start: Start, a whole day in minutes.
+        end: End, a whole day in minutes, at most the horizon.
+
+    Returns:
+        Shape ``(days, 24)``: row ``d`` is day ``start / 1440 + d``, column
+        ``h`` the hour ``h`` of the clock.
+
+    Raises:
+        ValueError: If the window is not inside ``[0, horizon]`` or its ends
+            are not whole days.
+    """
+    _check_whole_days(curves, start, end)
+    edges = curves.edges
+    cumulative = np.concatenate([[0.0], np.cumsum(np.diff(edges) * curves[name])])
+    hours = np.arange(start, end + 1, MINUTES_PER_HOUR, dtype=float)
+    area = np.diff(np.interp(hours, edges, cumulative))
+    return (area / MINUTES_PER_HOUR).reshape(-1, HOURS_PER_DAY)
+
+
+def daily_means(curves: StepCurves, name: str, first_day: int, end_day: int) -> np.ndarray:
+    """Time average of a curve over each day of ``[first_day, end_day)``.
+
+    Raises:
+        ValueError: If the days are not inside the log.
+    """
+    _check_window(first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY, curves.horizon)
+    return np.array(
+        [
+            curves.mean(name, d * MINUTES_PER_DAY, (d + 1) * MINUTES_PER_DAY)
+            for d in range(first_day, end_day)
+        ]
+    )
+
+
+# --- Paired runs ----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PairedWaits:
+    """One measure of the same episodes in two runs with the same seed.
+
+    Attributes:
+        measure: A name of ``MEASURES``.
+        episode_ids: The episodes paired, in arrival order.
+        levels: Their triage level.
+        arrivals: Their arrival, in minutes.
+        base: The measure in the first run.
+        other: The measure in the second run.
+    """
+
+    measure: str
+    episode_ids: tuple[str, ...]
+    levels: np.ndarray
+    arrivals: np.ndarray
+    base: np.ndarray
+    other: np.ndarray
+
+    @property
+    def difference(self) -> np.ndarray:
+        """``other - base``, episode by episode."""
+        return self.other - self.base
+
+
+def paired_waits(
+    base: Sequence[EpisodeRecord],
+    other: Sequence[EpisodeRecord],
+    measure: str,
+    start: float,
+    end: float,
+) -> PairedWaits:
+    """Pair, episode by episode, one measure of two runs with the same patients.
+
+    With the same seed every patient arrives at the same instant and draws
+    the same values (common random numbers): only the waits change. The
+    episodes are paired by ``episode_id``, among those that arrive in
+    ``[start, end)`` and depart in both runs (``completed_in_window``): an
+    episode still inside in one run is left out of both.
+
+    Args:
+        base: The episodes of the first run, from ``episode_table``.
+        other: Those of the second run.
+        measure: A name of ``MEASURES``.
+        start: Start of the window, in minutes.
+        end: End of the window.
+
+    Raises:
+        ValueError: If ``measure`` is unknown, or an episode arrives at
+            different instants in both runs: they are not the same patients.
+    """
+    if measure not in MEASURES:
+        raise ValueError(f"measure must be one of {MEASURES}, got {measure!r}")
+    other_by_id = {e.episode_id: e for e in completed_in_window(other, start, end)}
+    arrival_of = {e.episode_id: e.arrival for e in other}
+    pairs = []
+    for b in completed_in_window(base, start, end):
+        if b.episode_id in arrival_of and arrival_of[b.episode_id] != b.arrival:
+            raise ValueError(
+                f"{b.episode_id} arrives at {b.arrival} and at {arrival_of[b.episode_id]}:"
+                " the runs do not have the same patients"
+            )
+        o = other_by_id.get(b.episode_id)
+        if o is not None:
+            pairs.append((b, o))
+    return PairedWaits(
+        measure=measure,
+        episode_ids=tuple(b.episode_id for b, _ in pairs),
+        levels=np.array([b.level for b, _ in pairs], dtype=np.int64),
+        arrivals=np.array([b.arrival for b, _ in pairs], dtype=float),
+        base=np.array([getattr(b, measure) for b, _ in pairs], dtype=float),
+        other=np.array([getattr(o, measure) for _, o in pairs], dtype=float),
+    )

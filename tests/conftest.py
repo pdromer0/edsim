@@ -23,12 +23,17 @@ from edsim.engine.validation import (
     flat_profile,
     mg1_center,
     pollaczek_khinchine,
+    validate_engine,
 )
 from edsim.stats import summarize
 
 DATA = Path(__file__).parent / "data"
 EXAMPLE_CENTER = DATA / "centro_ejemplo.toml"
 EXAMPLE_PROFILE = DATA / "llegadas_ejemplo.toml"
+CONFIG = Path(__file__).parent.parent / "config"
+REAL_CENTER = CONFIG / "centro.toml"
+REAL_PROFILE = CONFIG / "llegadas.toml"
+REAL_SEED = 2026
 
 _VALIDATION_NAMES = (
     "invariants",
@@ -78,7 +83,7 @@ def _count(name, statistic, passed=True, details=(), confidence=None, **interval
 
 @pytest.fixture(scope="session")
 def engine_validation_pequena():
-    """Un ``EngineValidation`` construido a mano, sin la validación de 90 s.
+    """Un ``EngineValidation`` construido a mano, sin la validación de 2 minutos.
 
     La ejecución larga es de verdad (3 días del centro de ejemplo, semilla 7);
     la M/G/1 usa la teoría real con tres Wq inventados, y el censo por hora,
@@ -143,3 +148,15 @@ def engine_validation_pequena():
         hourly=hourly,
         long_run=long_run,
     )
+
+
+@pytest.fixture(scope="session")
+def engine_validation_real():
+    """La validación completa de verdad: ``validate_engine`` con ``config/centro.toml``,
+    ``config/llegadas.toml``, la semilla 2026 y los valores por defecto.
+
+    Tarda unos 2 minutos, así que se ejecuta una sola vez por sesión: la comparten los
+    tests slow de test_engine_validation.py y el de ``motor validar`` en test_cli.py,
+    que la recibe con ``monkeypatch`` en lugar de repetirla.
+    """
+    return validate_engine(load_center(REAL_CENTER), load_profile(REAL_PROFILE), seed=REAL_SEED)

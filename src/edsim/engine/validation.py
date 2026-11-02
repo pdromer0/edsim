@@ -41,7 +41,7 @@ from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, rate
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.arrivals.validation import ALPHA, ValidationResult
-from edsim.engine.analysis import RunAnalysis, analyze_run
+from edsim.engine.analysis import RunAnalysis, analyze_run, hourly_means_by_day, step_curves
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.engine import EDResult, Sampler, simulate_ed
@@ -340,18 +340,32 @@ def total_stay(draws: PatientDraws) -> float:
     return stay
 
 
-def stay_sample(center: CenterConfig, n: int, seed: int | np.random.SeedSequence) -> np.ndarray:
-    """``n`` stays without waits, from the engine's own sampler.
+def draws_sample(
+    center: CenterConfig, n: int, seed: int | np.random.SeedSequence
+) -> list[PatientDraws]:
+    """``n`` patients drawn by the engine's own sampler, for the offered load.
 
     The sampler is called as the engine calls it, with the four streams of
     ``child_streams(seed, 4)`` (indices 0 to 3, the roles of the engine's
     streams 1 to 4); the arrival is not used by the provisional model. The
     seed must be independent of the replications', so that the estimate of
-    P(stay > u) and the census compared with it do not share numbers.
+    the offered load and the census compared with it do not share numbers.
     """
     sampler = ProvisionalSampler(center, child_streams(seed, 4))
     arrival = ArrivalRecord(0, 0.0)
-    return np.array([total_stay(sampler(arrival)) for _ in range(n)])
+    return [sampler(arrival) for _ in range(n)]
+
+
+def stay_sample(center: CenterConfig, n: int, seed: int | np.random.SeedSequence) -> np.ndarray:
+    """``n`` stays without waits: ``total_stay`` of ``draws_sample(center, n, seed)``."""
+    return np.array([total_stay(d) for d in draws_sample(center, n, seed)])
+
+
+def _convolve_load(profile: ArrivalProfile, occupancy: np.ndarray, horizon: int) -> np.ndarray:
+    """m(j) = Σ_k λ(j − k − ½) · occupancy[k], for j = 0..``horizon``, with λ = 0 before 0."""
+    lam = rate(np.arange(horizon) + 0.5, profile)
+    load = np.convolve(lam, occupancy)[:horizon]
+    return np.concatenate([[0.0], load])
 
 
 def offered_load(profile: ArrivalProfile, stays: np.ndarray, horizon: int) -> np.ndarray:
@@ -378,9 +392,75 @@ def offered_load(profile: ArrivalProfile, stays: np.ndarray, horizon: int) -> np
     # Survival at the midpoints k + 1/2, until the longest stay.
     midpoints = np.arange(int(math.ceil(ordered[-1])) + 1) + 0.5
     survival = 1 - np.searchsorted(ordered, midpoints, side="right") / ordered.size
-    lam = rate(np.arange(horizon) + 0.5, profile)
-    load = np.convolve(lam, survival)[:horizon]
-    return np.concatenate([[0.0], load])
+    return _convolve_load(profile, survival, horizon)
+
+
+OFFERED_LOAD_POOLS = ("census", "enfermeria_triaje", "medicos", "boxes")
+"""Keys of ``offered_load_by_pool``: the census and the three pools."""
+
+
+def _held_intervals(d: PatientDraws) -> dict[str, list[tuple[float, float]]]:
+    """Ages, in minutes since the arrival, at which a patient who never waits
+    holds each pool. The box is held from the end of the triage to the
+    departure; a doctor, during the assessment and, with tests, during the
+    reassessment that follows the results."""
+    triaged = d.triage_time
+    assessed = triaged + d.assessment_time
+    doctor = [(triaged, assessed)]
+    if d.needs_tests:
+        results = assessed + d.test_turnaround
+        doctor.append((results, results + d.reassessment_time))
+    stay = total_stay(d)
+    return {
+        "census": [(0.0, stay)],
+        "enfermeria_triaje": [(0.0, triaged)],
+        "medicos": doctor,
+        "boxes": [(triaged, stay)],
+    }
+
+
+def offered_load_by_pool(
+    profile: ArrivalProfile, draws: list[PatientDraws], horizon: int
+) -> dict[str, np.ndarray]:
+    """Offered load of the census and of each pool, m(t) at every whole minute.
+
+    The same integral as ``offered_load``, with P(S > u) replaced by the
+    probability that a patient who never waits holds the pool at age u::
+
+        m(j) = Σ_k λ(j − k − ½) · P(holds the pool at age k + ½).
+
+    It is the number of professionals or boxes that the demand keeps busy
+    without queues: a lower bound of the busy curves of the real center,
+    where waiting with a box held adds box time (docs/specs/hito-3.md,
+    "Dimensionado provisional"). λ comes from ``rate``, without daily effects.
+
+    Args:
+        profile: The arrival profile.
+        draws: A sample of patients, such as ``draws_sample(...)``.
+        horizon: Last minute of the grid, a whole number.
+
+    Returns:
+        One array per name of ``OFFERED_LOAD_POOLS``, with ``horizon + 1``
+        values: m(0), ..., m(horizon).
+    """
+    if not draws:
+        raise ValueError("draws must not be empty")
+    intervals = {pool: [] for pool in OFFERED_LOAD_POOLS}
+    for d in draws:
+        for pool, held in _held_intervals(d).items():
+            intervals[pool].extend(held)
+    out = {}
+    for pool, held in intervals.items():
+        a, b = np.array(held).T
+        # [a, b) contains the midpoint k + ½ exactly for ceil(a − ½) <= k < ceil(b − ½).
+        low = np.ceil(a - 0.5).astype(np.int64)
+        high = np.ceil(b - 0.5).astype(np.int64)
+        counts = np.zeros(int(high.max()) + 1, dtype=np.int64)
+        np.add.at(counts, low, 1)
+        np.add.at(counts, high, -1)
+        occupancy = np.cumsum(counts)[:-1] / len(draws)
+        out[pool] = _convolve_load(profile, occupancy, horizon)
+    return out
 
 
 def hourly_grid_means(values: np.ndarray, start: int, end: int) -> np.ndarray:
@@ -399,18 +479,8 @@ def hourly_grid_means(values: np.ndarray, start: int, end: int) -> np.ndarray:
 
 
 def _hourly_step_means(analysis: RunAnalysis, name: str, start: float, end: float) -> np.ndarray:
-    """Mean by hour of the clock of a step curve, over the days of ``[start, end]``.
-
-    Exact: the area of a step function at any instant is the linear
-    interpolation of its cumulative area at the steps.
-    """
-    curves = analysis.curves
-    t = curves.times
-    edges = np.append(t, curves.horizon)
-    cumulative = np.concatenate([[0.0], np.cumsum(np.diff(edges) * curves[name])])
-    hours = np.arange(start, end + 1, _MINUTES_PER_HOUR, dtype=float)
-    area = np.diff(np.interp(hours, edges, cumulative))
-    return (area / _MINUTES_PER_HOUR).reshape(-1, HOURS).mean(axis=0)
+    """Mean by hour of the clock of a step curve, over the days of ``[start, end]``."""
+    return hourly_means_by_day(analysis.curves, name, start, end).mean(axis=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,7 +785,7 @@ def check_engine_validation_counts(
 
     The arguments and their defaults are those of ``validate_engine``. The CLI
     calls it before printing anything, so that a usage error does not start a
-    run of a minute and a half.
+    run of about two minutes.
 
     Raises:
         ValueError: If a count is not valid.
@@ -808,3 +878,75 @@ def validate_engine(
         hourly=hourly,
         long_run=long_run.analysis,
     )
+
+
+# --- Warm-up ------------------------------------------------------------------------------
+
+
+def census_by_day_and_hour(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    days: int,
+    seed: int | np.random.SeedSequence,
+    replicas: int,
+) -> np.ndarray:
+    """Mean census of each hour of each day, from empty, in several replications.
+
+    Each replication simulates ``days`` days without warm-up (``warmup_days``
+    0), with child ``i`` of ``seed`` for replication ``i``; only its census
+    curve is kept, reduced by hour, and the events are dropped.
+
+    Returns:
+        Shape ``(replicas, days, 24)``.
+
+    Raises:
+        ValueError: If ``days`` is not a positive integer or ``replicas`` is
+            less than 2.
+    """
+    days = _check_count("days", days, 1)
+    replicas = _check_count("replicas", replicas, 2)
+    horizon = days * MINUTES_PER_DAY
+    out = []
+    for child in child_streams(seed, replicas):
+        sink = MemorySink()
+        simulate_ed(center, profile, days, child, sink=sink, warmup_days=0)
+        curves = step_curves(sink.events, horizon)
+        out.append(hourly_means_by_day(curves, "census", 0, horizon))
+    return np.array(out)
+
+
+def check_warmup(census: np.ndarray, day: int, reference_day: int) -> ValidationResult:
+    """Whether day ``day`` already looks like ``reference_day``, hour by hour.
+
+    For each hour, the difference of the mean census between both days is
+    paired by replication (the same seed), and its interval at
+    ``1 - ALPHA / 24`` (Bonferroni among the 24 hours) must contain 0. With a
+    reference one week later (``day + 7``), the day of the week is the same and
+    only the empty start can make them differ.
+
+    Args:
+        census: ``census_by_day_and_hour(...)``, shape ``(replicas, days, 24)``.
+        day: The day to check.
+        reference_day: The day to compare with, such as ``day + 7``.
+
+    Returns:
+        ``warmup``: statistic, the hours whose interval misses 0; the 24
+        intervals in ``details``, named ``00h`` to ``23h``.
+
+    Raises:
+        ValueError: If the shape is not valid, there are fewer than 2
+            replications or a day is outside the array.
+    """
+    census = np.asarray(census, dtype=float)
+    if census.ndim != 3 or census.shape[2] != HOURS or census.shape[0] < 2:
+        raise ValueError(f"census must have shape (replicas >= 2, days, 24), got {census.shape}")
+    for name, d in (("day", day), ("reference_day", reference_day)):
+        if not 0 <= d < census.shape[1]:
+            raise ValueError(f"{name} must be in 0..{census.shape[1] - 1}, got {d}")
+    confidence = 1 - ALPHA / HOURS
+    differences = census[:, day, :] - census[:, reference_day, :]
+    details = tuple(
+        _interval_result(f"{h:02d}h", summarize(differences[:, h], confidence), 0.0)
+        for h in range(HOURS)
+    )
+    return _all_of("warmup", details)
