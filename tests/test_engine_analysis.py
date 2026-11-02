@@ -628,6 +628,16 @@ def test_esperas_emparejadas_saltan_al_que_sigue_dentro(two_patients):
     assert paired.base.tolist() == paired.other.tolist() == [100.0]
 
 
+def test_esperas_emparejadas_cuando_el_primero_sigue_dentro(two_patients):
+    # A sigue dentro en la base: B, el segundo de la base, se empareja con B y no con
+    # el primero completado de la otra ejecución (que es A).
+    base = episode_table(two_patients)
+    first_inside = (dataclasses.replace(base[0], departure=None, doctor_wait=None), base[1])
+    paired = analysis.paired_waits(first_inside, base, "stay", 0.0, DAY)
+    assert paired.episode_ids == ("EP-000001",)
+    assert paired.base.tolist() == paired.other.tolist() == [base[1].stay]
+
+
 def test_esperas_emparejadas_exigen_los_mismos_pacientes(two_patients):
     base = episode_table(two_patients)
     moved = (base[0], dataclasses.replace(base[1], arrival=106.0))
