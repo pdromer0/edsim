@@ -161,7 +161,9 @@ THREE_BOXES = [
 
 @pytest.fixture(scope="module")
 def three_boxes(center):
-    small = dataclasses.replace(center, boxes=3)
+    # Tres enfermeras en todos los turnos: el escenario empieza en el minuto 0, de noche,
+    # y sus instantes cuentan con que los tres primeros se triajan a la vez.
+    small = dataclasses.replace(center, boxes=3, triage_nurses=(3, 3, 3))
     events, run = simulate(small, THREE_BOXES)
     return events, run, small
 

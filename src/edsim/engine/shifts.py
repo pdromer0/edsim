@@ -26,12 +26,14 @@ Nothing here draws random numbers: shifts consume no stream.
 """
 
 from bisect import bisect_right
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 
 import simpy
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
-from edsim.engine.resources import RESERVATION_PRIORITY
+from edsim.engine.center import CenterConfig
+from edsim.engine.events import EventLog
+from edsim.engine.resources import RESERVATION_PRIORITY, Pools
 
 MINUTES_PER_HOUR = 60
 
@@ -128,3 +130,63 @@ class Reservations:
             else:
                 request.cancel()
             self._held.remove(request)
+
+
+def start_shifts(
+    env: simpy.Environment, log: EventLog, pools: Pools, center: CenterConfig, days: int
+) -> None:
+    """Set the staff of minute 0 and start the process that changes it.
+
+    Call it before starting any other process and before ``env.run``:
+
+    - At minute 0 each staff pool gets the staff of the shift in force, with
+      its reservations, and emits ``staffing_changed`` with ``anterior`` 0. It
+      happens here, synchronously, so these events go before any other: every
+      other event of the log is emitted by a process inside ``env.run``.
+    - The timeouts of every change of shift are created now, before any other
+      event is scheduled. SimPy orders the events of one instant by the order
+      in which they were scheduled, so each change of shift is the first event
+      of its instant: no request made in that instant is granted with the
+      staff of the shift that ends. (A professional who finishes exactly then
+      needs nothing else: SimPy hands the place on when it processes the
+      release, which is scheduled in that instant and so comes after the
+      change; the place goes to a reservation.)
+
+    Args:
+        env: The SimPy environment, at minute 0.
+        log: Where ``staffing_changed`` goes.
+        pools: The pools of the run; the staff pools get the reservations.
+        center: Shift starts and staff per shift.
+        days: Horizon in full days; changes at or after it do not happen.
+    """
+    staff = {
+        "enfermeria_triaje": (Reservations(pools.nurses), center.triage_nurses),
+        "medicos": (Reservations(pools.doctors), center.doctors),
+    }
+    first = shift_at(center.shift_starts, env.now)
+    for recurso, (reservations, per_shift) in staff.items():
+        reservations.set_staff(per_shift[first])
+        log.emit("staffing_changed", env.now, recurso=recurso, anterior=0, nueva=per_shift[first])
+
+    changes = [
+        (env.timeout(t - env.now), shift) for t, shift in shift_changes(center.shift_starts, days)
+    ]
+    env.process(_shift_process(env, log, staff, changes))
+
+
+def _shift_process(
+    env: simpy.Environment,
+    log: EventLog,
+    staff: dict[str, tuple[Reservations, tuple[int, ...]]],
+    changes: list[tuple[simpy.Timeout, int]],
+) -> Generator[simpy.Event]:
+    """At each start of a shift, emit ``staffing_changed`` and apply it, if the staff changes."""
+    for timeout, shift in changes:
+        yield timeout
+        for recurso, (reservations, per_shift) in staff.items():
+            before, after = reservations.staff, per_shift[shift]
+            if after != before:
+                # Emitted before applying it: the starts that a rise allows come
+                # later in this instant, after the event that allows them.
+                log.emit("staffing_changed", env.now, recurso=recurso, anterior=before, nueva=after)
+                reservations.set_staff(after)

@@ -58,12 +58,16 @@ def simulate(
 
 
 def trace(events: list[Event], arrival_id: int | None = None) -> list[tuple]:
-    """(tipo, instante, payload) de los eventos, de un episodio o de todos."""
+    """(tipo, instante, payload) de los eventos de un episodio o de todos los pacientes.
+
+    Sin episodio deja fuera los eventos de recursos (staffing_changed), que no son de
+    ningún paciente.
+    """
     episode = None if arrival_id is None else f"EP-{arrival_id:06d}"
     return [
         (e.event_type, e.sim_time, dict(e.payload))
         for e in events
-        if episode is None or e.episode_id == episode
+        if e.episode_id is not None and (episode is None or e.episode_id == episode)
     ]
 
 
@@ -143,7 +147,7 @@ def test_paciente_con_pruebas(center):
         ("disposition_decided", 105.0, {"destino": "alta"}),
         ("patient_departed", 105.0, {"destino": "alta"}),
     ]
-    assert {e.episode_id for e in events} == {"EP-000000"}
+    assert {e.episode_id for e in events} == {"EP-000000", None}  # None: staffing_changed
     assert run.inside == 0
     assert_valid(events, center, run)
 

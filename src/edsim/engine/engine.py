@@ -2,10 +2,12 @@
 
 ``run_engine`` is the core: it takes the arrivals as an iterable and the
 draws of each patient as an injectable function, so that tests can build exact
-scenarios by hand. For each arrival it calls the sampler, in arrival order,
-keeps the ground truth of the episode and starts the patient process. The run
-stops at ``days * 1440`` minutes: events scheduled at that instant or later do
-not happen, and patients still inside have no ``patient_departed``.
+scenarios by hand. It first starts the shifts (``start_shifts``), which set
+the staff of minute 0 and change it at each start of a shift. For each arrival
+it calls the sampler, in arrival order, keeps the ground truth of the episode
+and starts the patient process. The run stops at ``days * 1440`` minutes:
+events scheduled at that instant or later do not happen, and patients still
+inside have no ``patient_departed``.
 
 ``simulate_ed`` is the run with a seed: it derives five independent streams
 with ``child_streams(seed, 5)`` (ADR 0007). Stream 0 goes as it is to
@@ -30,6 +32,7 @@ from edsim.engine.events import EventLog, EventSink
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.patient import patient
 from edsim.engine.resources import make_pools
+from edsim.engine.shifts import start_shifts
 from edsim.seeds import child_streams
 
 N_STREAMS = 5
@@ -104,6 +107,9 @@ def run_engine(
     days = _check_days(days)
     env = simpy.Environment()
     pools = make_pools(env, center)
+    # Before any other process: the staffing_changed of minute 0 go first in the
+    # log, and each change of shift is the first event of its instant.
+    start_shifts(env, log, pools, center, days)
     episodes: list[EpisodeTruth] = []
     processes: list[simpy.Process] = []
 
