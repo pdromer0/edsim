@@ -6,12 +6,13 @@ so that the occupancy of each box can be rebuilt from it. ``BoxNumbers`` keeps
 the free numbers in a heap and always gives the lowest one, so the assignment
 is deterministic, and knows who holds each box and with which level.
 
-Task 3.4: the boxes are a ``PreemptiveResource`` and the doctors a
-``PriorityResource``, both ordered by ``priority_key`` = (level, arrival);
-only a level 1 displaces, and only patients of a higher level. The triage
-nurses stay a FIFO ``Resource``: the level is not known before the triage.
-Task 3.5 adds the shift reservations that lower the effective capacity of the
-staff pools.
+The boxes are a ``PreemptiveResource`` and the doctors a ``PriorityResource``,
+both ordered by ``priority_key`` = (level, arrival); only a level 1 displaces,
+and only patients of a higher level. The triage nurses are a
+``PriorityResource`` too, only because of the shift reservations: every
+patient asks with ``TRIAGE_PRIORITY``, so the triage stays FIFO. The
+reservations (``edsim.engine.shifts``) ask with ``RESERVATION_PRIORITY`` and
+lower the effective capacity of the staff pools.
 """
 
 import heapq
@@ -22,6 +23,28 @@ import simpy
 from edsim.engine.center import CenterConfig
 
 Priority = tuple[int, float]
+
+RESERVATION_PRIORITY: Priority = (0, 0.0)
+"""Priority of a shift reservation: before any patient, whenever it asks.
+
+A "level 0", lower than level 1 with the earliest arrival. SimPy compares the
+priority before the time of the request, so a reservation made at 22:00 goes
+ahead of a level 1 that asked at 21:59: the freed place goes to the
+reservation, and the staff goes down as soon as someone finishes. It is a
+tuple so that it compares with ``priority_key`` and ``TRIAGE_PRIORITY``
+without a ``TypeError``. It never displaces: the staff pools are
+``PriorityResource``, which ignore ``preempt``, so nobody is cut in the
+middle of a triage or an assessment.
+"""
+
+TRIAGE_PRIORITY: Priority = (1, 0.0)
+"""Priority of every patient asking for a triage nurse.
+
+The same for all, because the level is not known before the triage: SimPy
+breaks the tie by the time of the request and, in the same instant, keeps the
+order of the queue, so the triage is FIFO, as with ``simpy.Resource``. Any
+value worse than ``RESERVATION_PRIORITY`` would do.
+"""
 
 
 def priority_key(level: int, arrival_time: float) -> Priority:
@@ -145,8 +168,8 @@ class Pools:
     """The resources of one run.
 
     Attributes:
-        nurses: Triage nurses (``enfermeria_triaje``), FIFO, held during the
-            triage.
+        nurses: Triage nurses (``enfermeria_triaje``), FIFO through
+            ``TRIAGE_PRIORITY``, held during the triage.
         doctors: Doctors (``medicos``), by priority without displacement,
             held during each assessment.
         boxes: Boxes, by priority with displacement by a level 1, held from
@@ -156,7 +179,7 @@ class Pools:
             displaced whom (``Preempted.by`` is a process).
     """
 
-    nurses: simpy.Resource
+    nurses: simpy.PriorityResource
     doctors: simpy.PriorityResource
     boxes: simpy.PreemptiveResource
     box_numbers: BoxNumbers
@@ -166,12 +189,11 @@ class Pools:
 def make_pools(env: simpy.Environment, center: CenterConfig) -> Pools:
     """Create the pools: staff with the largest staff of its shifts, and the boxes.
 
-    The capacity of a ``simpy.Resource`` cannot change. Task 3.5 will keep this
-    maximum and lower the effective capacity with reservations; until then the
-    largest staff of the day is on duty all day.
+    The capacity of a ``simpy.Resource`` cannot change: each staff pool keeps
+    this maximum, and the shift reservations lower its effective capacity.
     """
     return Pools(
-        nurses=simpy.Resource(env, capacity=max(center.triage_nurses)),
+        nurses=simpy.PriorityResource(env, capacity=max(center.triage_nurses)),
         doctors=simpy.PriorityResource(env, capacity=max(center.doctors)),
         boxes=simpy.PreemptiveResource(env, capacity=center.boxes),
         box_numbers=BoxNumbers(center.boxes),

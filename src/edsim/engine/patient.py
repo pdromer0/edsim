@@ -33,7 +33,13 @@ from simpy.resources.resource import Preempted
 
 from edsim.engine.clinical import PatientDraws
 from edsim.engine.events import EventLog, episode_id
-from edsim.engine.resources import Holder, Pools, priority_key, should_displace
+from edsim.engine.resources import (
+    TRIAGE_PRIORITY,
+    Holder,
+    Pools,
+    priority_key,
+    should_displace,
+)
 
 Emit = Callable[..., object]
 
@@ -104,7 +110,8 @@ def patient(
     emit("patient_arrived", env.now)
     emit("patient_registered", env.now)
 
-    with pools.nurses.request() as nurse:
+    # The same priority for every patient: FIFO (see TRIAGE_PRIORITY).
+    with pools.nurses.request(priority=TRIAGE_PRIORITY) as nurse:
         yield nurse
         emit("triage_started", env.now)
         yield env.timeout(draws.triage_time)

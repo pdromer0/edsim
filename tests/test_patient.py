@@ -114,6 +114,7 @@ def test_pools_con_la_capacidad_maxima(center):
     pools = make_pools(simpy.Environment(), center)
 
     assert pools.nurses.capacity == 3
+    assert type(pools.nurses) is simpy.PriorityResource  # por las reservas de turno
     assert pools.doctors.capacity == 12
     assert pools.boxes.capacity == 30
     assert [pools.box_numbers.take() for _ in range(30)] == list(range(1, 31))
@@ -235,6 +236,24 @@ def test_cola_de_triaje_fifo(center):
 
     starts = [(e.episode_id, e.sim_time) for e in events if e.event_type == "triage_started"]
     assert starts == [("EP-000000", 10.0), ("EP-000001", 15.0), ("EP-000002", 20.0)]
+    assert_valid(events, one_nurse, run)
+
+
+def test_triaje_fifo_sin_mirar_el_nivel(center):
+    # El nivel se sortea al llegar, pero no se conoce hasta el triaje: con una enfermera,
+    # tres llegadas en el mismo instante y dos después se triajan por orden de llegada.
+    one_nurse = dataclasses.replace(center, triage_nurses=(1, 1, 1))
+    levels = [5, 1, 3, 2, 4]
+    times = [10.0, 10.0, 10.0, 11.0, 12.0]
+    patients = [
+        (t, dataclasses.replace(WITHOUT_TESTS, level=level))
+        for t, level in zip(times, levels, strict=True)
+    ]
+
+    events, run, _ = simulate(one_nurse, patients)
+
+    starts = [(e.episode_id, e.sim_time) for e in events if e.event_type == "triage_started"]
+    assert starts == [(f"EP-{i:06d}", 10.0 + 5 * i) for i in range(5)]
     assert_valid(events, one_nurse, run)
 
 
