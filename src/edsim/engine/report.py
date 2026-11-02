@@ -527,7 +527,7 @@ def plot_waits_by_level(metrics: WindowMetrics) -> Figure:
     levels = [lv for lv in metrics.by_level if lv.n > 0]
     x = np.arange(len(levels))
 
-    fig = _figure(11, 4.2)
+    fig = _figure(13, 4.5)
     axes = fig.subplots(1, len(WAIT_PANELS))
     for ax, (name, title) in zip(axes, WAIT_PANELS, strict=True):
         ax.bar(x, [lv.mean[name] for lv in levels], width=0.6, color=OBSERVED_COLOR, label="Media")
@@ -540,14 +540,15 @@ def plot_waits_by_level(metrics: WindowMetrics) -> Figure:
             label="p90",
         )
         ax.set_xticks(x)
-        ax.set_xticklabels([f"{lv.level}\nn = {lv.n}" for lv in levels])
+        ax.set_xticklabels([f"{lv.level}\nn = {lv.n}" for lv in levels], fontsize=9)
         ax.set_ylim(bottom=0)
         ax.set_title(title)
         ax.set_xlabel("Nivel de triaje")
         ax.grid(axis="y", alpha=0.3)
     axes[0].set_ylabel("Minutos")
-    axes[0].legend(loc="upper left")
     fig.suptitle("Esperas por nivel en la ventana: media y p90")
+    # Outside the axes, so that it never hides a tall p90 of level 1.
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="outside upper right")
     return fig
 
 
