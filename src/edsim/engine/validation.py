@@ -11,6 +11,14 @@ something (docs/specs/hito-3.md, "Validación del motor"):
   Poisson with mean m(t) = ∫ λ(s) · P(stay > t − s) ds. It catches errors in
   the flow with lambda(t). The same runs check an extreme condition: every
   wait is exactly 0 and every stay is exactly the sum of its durations.
+- Operational laws, on one long run of the real center: Little's law
+  (system, triage queue, box queue) within 2 %, the identity of utilization
+  within 1e-9, and the invariants with zero violations. They are not
+  statistical: they compare two ways of computing the same thing.
+- More doctors with the same seed: every patient is the same (common random
+  numbers), so the paired difference of the mean doctor wait must be below 0.
+
+``validate_engine`` runs them all and returns one result per check.
 
 As in the validation of the arrivals (milestone 2), every hypothesis comes
 from the configuration, never from what the engine wrote; the level is
@@ -39,6 +47,7 @@ from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_pa
 from edsim.engine.engine import EDResult, Sampler, simulate_ed
 from edsim.engine.events import Event, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
+from edsim.engine.invariants import check_invariants
 from edsim.seeds import child_streams
 from edsim.stats import Summary, summarize
 
@@ -529,3 +538,229 @@ def check_infinite_server(
         ci_high=np.array([d.ci_high for d in details]),
     )
     return _all_of("mtginf", details), exact, hourly
+
+
+# --- Operational laws -------------------------------------------------------------------
+
+LITTLE_TOLERANCE = 0.02
+"""Largest relative error of Little's law on the long run."""
+
+UTILIZATION_TOLERANCE = 1e-9
+"""Largest relative error of the identity of utilization: rounding only."""
+
+
+def _tolerance_result(name: str, error: float, tolerance: float) -> ValidationResult:
+    return ValidationResult(
+        name=name,
+        statistic=float(error),
+        p_value=None,
+        ci_low=None,
+        ci_high=None,
+        target=None,
+        criterion=f"relative error <= {tolerance:g}",
+        passed=bool(error <= tolerance),
+    )
+
+
+def check_operational_laws(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    *,
+    days: int = 28,
+    warmup_days: int = 2,
+    seed: int | np.random.SeedSequence,
+) -> tuple[ValidationResult, ...]:
+    """Invariants, Little's law and the identity of utilization on one long run.
+
+    Returns:
+        ``invariants`` (statistic: violations), ``little_system``,
+        ``little_triage_queue``, ``little_box_queue`` and one
+        ``utilization_<pool>`` per pool (statistic: relative error).
+    """
+    days, warmup_days = _check_days(days, warmup_days)
+    run = _run(center, profile, days, warmup_days, seed)
+    violations = check_invariants(
+        run.events, center, ground_truth=run.result.ground_truth, inside=run.result.inside
+    )
+    invariants = ValidationResult(
+        name="invariants",
+        statistic=float(len(violations)),
+        p_value=None,
+        ci_low=None,
+        ci_high=None,
+        target=0.0,
+        criterion="0 violations",
+        passed=not violations,
+    )
+    return (
+        invariants,
+        *(
+            _tolerance_result(f"little_{law.name}", law.relative_error, LITTLE_TOLERANCE)
+            for law in run.analysis.little
+        ),
+        *(
+            _tolerance_result(f"utilization_{u.pool}", u.relative_error, UTILIZATION_TOLERANCE)
+            for u in run.analysis.utilization
+        ),
+    )
+
+
+# --- More doctors -------------------------------------------------------------------------
+
+
+def check_more_doctors(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    *,
+    extra: int = 2,
+    replicas: int = 10,
+    days: int = 14,
+    warmup_days: int = 2,
+    seed: int | np.random.SeedSequence,
+) -> ValidationResult:
+    """More doctors with the same seed lower the mean doctor wait.
+
+    Each replication runs ``center`` and the same center with ``extra`` more
+    doctors in every shift, with the same seed: the arrivals and the draws of
+    every patient are the same, only the waits change. The difference of the
+    mean ``doctor_wait`` (more doctors minus base) is paired, so the noise of
+    the patients cancels out. Its interval at ``1 - ALPHA`` must lie entirely
+    below 0, and the ground truth of the episodes must be identical in every
+    pair.
+
+    Returns:
+        The result, with the mean difference in minutes and its interval
+        (``target`` 0, which the interval must stay below).
+    """
+    extra = _check_count("extra", extra, 1)
+    replicas = _check_count("replicas", replicas, 2)
+    days, warmup_days = _check_days(days, warmup_days)
+    more = dataclasses.replace(center, doctors=tuple(d + extra for d in center.doctors))
+
+    differences, same_patients = [], True
+    for child in child_streams(seed, replicas):
+        base = _run(center, profile, days, warmup_days, child)
+        plus = _run(more, profile, days, warmup_days, child)
+        same_patients &= base.result.ground_truth.episodes == plus.result.ground_truth.episodes
+        differences.append(
+            plus.analysis.metrics.overall.mean["doctor_wait"]
+            - base.analysis.metrics.overall.mean["doctor_wait"]
+        )
+
+    summary = summarize(differences, 1 - ALPHA)
+    return ValidationResult(
+        name="more_doctors",
+        statistic=summary.mean,
+        p_value=None,
+        ci_low=summary.ci_low,
+        ci_high=summary.ci_high,
+        target=0.0,
+        criterion=f"{100 * summary.confidence:g}% CI < 0 and the same patients",
+        passed=bool(summary.ci_high < 0 and same_patients),
+        confidence=summary.confidence,
+    )
+
+
+# --- The whole validation -----------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EngineValidation:
+    """Result of ``validate_engine``, with what the plots need.
+
+    Attributes:
+        results: One per check: invariants, Little (3), utilization (3),
+            M/G/1, Mₜ/G/∞, infinite capacity and more doctors.
+        mg1: The values of each replication of the M/G/1 and its theory.
+        hourly: The census by hour against m(t).
+    """
+
+    results: tuple[ValidationResult, ...]
+    mg1: MG1Replicas
+    hourly: HourlyCensus
+
+    @property
+    def passed(self) -> bool:
+        """Whether every check passes."""
+        return all(r.passed for r in self.results)
+
+    def result(self, name: str) -> ValidationResult:
+        """Return the result of the check called ``name``."""
+        for r in self.results:
+            if r.name == name:
+                return r
+        raise KeyError(name)
+
+
+def validate_engine(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    seed: int | np.random.SeedSequence = 2026,
+    *,
+    replicas: int = 20,
+    mg1_days: int = 30,
+    mtginf_days: int = 14,
+    long_days: int = 28,
+    paired_replicas: int = 10,
+    paired_days: int = 14,
+    warmup_days: int = 2,
+    n_stays: int = 200_000,
+) -> EngineValidation:
+    """Run every check of the engine.
+
+    ``child_streams(seed, 5)`` gives one child per block: the M/G/1, the
+    Mₜ/G/∞, the long run, the more-doctors pairs and the sample of stays.
+    So each block depends only on the master seed and its index, and the
+    sample of stays is independent of the replications it is compared with.
+
+    Args:
+        center: The center: the long run and the pairs use it as it is; the
+            reference queues take its clinical model.
+        profile: The arrival profile, such as ``config/llegadas.toml``.
+        seed: Master seed.
+        replicas: Replications of the M/G/1 and the Mₜ/G/∞.
+        mg1_days: Days of each replication of the M/G/1.
+        mtginf_days: Days of each replication of the Mₜ/G/∞.
+        long_days: Days of the long run of the operational laws.
+        paired_replicas: Pairs of runs with more doctors.
+        paired_days: Days of each run of a pair.
+        warmup_days: Warm-up of every run, in days.
+        n_stays: Size of the sample of stays of m(t).
+
+    Raises:
+        ValueError: If a count is not valid; checked before simulating.
+    """
+    replicas = _check_count("replicas", replicas, 2)
+    paired_replicas = _check_count("paired_replicas", paired_replicas, 2)
+    n_stays = _check_count("n_stays", n_stays, 1000)
+    for days in (mg1_days, mtginf_days, long_days, paired_days):
+        _check_days(days, warmup_days)
+
+    mg1_seed, mtginf_seed, long_seed, paired_seed, stay_seed = child_streams(seed, 5)
+    laws = check_operational_laws(
+        center, profile, days=long_days, warmup_days=warmup_days, seed=long_seed
+    )
+    mg1, mg1_replicas = check_mg1(
+        center, replicas=replicas, days=mg1_days, warmup_days=warmup_days, seed=mg1_seed
+    )
+    mtginf, infinite, hourly = check_infinite_server(
+        center,
+        profile,
+        replicas=replicas,
+        days=mtginf_days,
+        warmup_days=warmup_days,
+        seed=mtginf_seed,
+        stay_seed=stay_seed,
+        n_stays=n_stays,
+    )
+    more_doctors = check_more_doctors(
+        center,
+        profile,
+        replicas=paired_replicas,
+        days=paired_days,
+        warmup_days=warmup_days,
+        seed=paired_seed,
+    )
+    return EngineValidation(
+        results=(*laws, mg1, mtginf, infinite, more_doctors), mg1=mg1_replicas, hourly=hourly
+    )

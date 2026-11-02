@@ -15,12 +15,15 @@ import pytest
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.rate import cumulative_rate
+from edsim.engine import analysis
 from edsim.engine.center import load_center
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.validation import (
     INFINITE,
     check_infinite_server,
     check_mg1,
+    check_more_doctors,
+    check_operational_laws,
     flat_profile,
     hourly_grid_means,
     infinite_center,
@@ -29,6 +32,7 @@ from edsim.engine.validation import (
     pollaczek_khinchine,
     stay_sample,
     total_stay,
+    validate_engine,
 )
 from edsim.seeds import child_streams
 
@@ -126,17 +130,6 @@ def test_check_mg1_argumentos(center):
 
 
 # --- M/G/1: simulación (slow) -------------------------------------------------------------
-
-
-@pytest.mark.slow
-def test_mg1_pasa_con_semilla_fija(center):
-    result, replicas = check_mg1(center, seed=SEED)
-
-    assert result.passed, result
-    assert [d.name for d in result.details] == ["wq", "rho", "lq"]
-    assert all(d.confidence == pytest.approx(1 - 0.01 / 3) for d in result.details)
-    assert len(replicas.wq) == 20
-    assert replicas.theory.wq == pytest.approx(13.10, abs=5e-3)
 
 
 def exponential_triage(center):
@@ -261,17 +254,6 @@ def test_check_infinite_server_argumentos(center, profile):
 
 
 @pytest.mark.slow
-def test_mtginf_y_capacidad_infinita_pasan(center, profile):
-    result, infinite, hourly = check_infinite_server(center, profile, seed=SEED, stay_seed=SEED + 1)
-
-    assert result.passed, [d for d in result.details if not d.passed]
-    assert len(result.details) == 24
-    assert result.confidence == pytest.approx(1 - 0.01 / 24)
-    assert infinite.passed, infinite
-    assert hourly.census.shape == (20, 24) and hourly.expected.shape == (24,)
-
-
-@pytest.mark.slow
 def test_potencia_mtginf_con_el_perfil_desplazado(center, profile):
     # Se simula con el perfil una hora más tarde y se valida contra el real.
     h = profile.hour_factors
@@ -285,3 +267,118 @@ def test_potencia_mtginf_con_el_perfil_desplazado(center, profile):
     # Medido: 5 horas fuera (8 a 11 h y 21 h, donde λ(t) sube o baja deprisa).
     assert result.statistic >= 4  # varias horas fuera, no una por azar
     assert infinite.passed  # sin colas sigue sin haber esperas
+
+
+# --- Leyes operacionales y más médicos: piezas --------------------------------------------
+
+EXAMPLE_PROFILE = ROOT / "tests" / "data" / "llegadas_ejemplo.toml"
+
+
+def test_leyes_operacionales_en_una_ejecucion_corta(center):
+    # Tres días bastan para las invariantes y la utilización; Little necesita la larga.
+    results = check_operational_laws(
+        center, load_profile(EXAMPLE_PROFILE), days=3, warmup_days=1, seed=SEED
+    )
+    by_name = {r.name: r for r in results}
+    assert list(by_name) == [
+        "invariants",
+        "little_system",
+        "little_triage_queue",
+        "little_box_queue",
+        "utilization_enfermeria_triaje",
+        "utilization_medicos",
+        "utilization_boxes",
+    ]
+    assert by_name["invariants"].passed and by_name["invariants"].statistic == 0
+    assert all(
+        by_name[f"utilization_{p}"].passed for p in ("enfermeria_triaje", "medicos", "boxes")
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [({"extra": 0}, "extra"), ({"replicas": 1}, "replicas"), ({"days": 1}, "warmup_days")],
+)
+def test_check_more_doctors_argumentos(center, profile, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        check_more_doctors(center, profile, seed=SEED, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"replicas": 1}, "replicas"),
+        ({"paired_replicas": 1}, "paired_replicas"),
+        ({"n_stays": 10}, "n_stays"),
+        ({"long_days": 2}, "warmup_days"),
+    ],
+)
+def test_validate_engine_argumentos(center, profile, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        validate_engine(center, profile, **kwargs)
+
+
+# --- validate_engine completo (slow) ----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def validation(center, profile):
+    """La validación completa con la semilla 2026, una vez para todo el módulo."""
+    return validate_engine(center, profile, seed=SEED)
+
+
+@pytest.mark.slow
+def test_validate_engine_todas_pasan(validation):
+    failed = [r for r in validation.results if not r.passed]
+    assert validation.passed, failed
+    assert [r.name for r in validation.results] == [
+        "invariants",
+        "little_system",
+        "little_triage_queue",
+        "little_box_queue",
+        "utilization_enfermeria_triaje",
+        "utilization_medicos",
+        "utilization_boxes",
+        "mg1",
+        "mtginf",
+        "infinite_capacity",
+        "more_doctors",
+    ]
+
+
+@pytest.mark.slow
+def test_validate_engine_mg1(validation):
+    mg1 = validation.result("mg1")
+    assert [d.name for d in mg1.details] == ["wq", "rho", "lq"]
+    assert all(d.confidence == pytest.approx(1 - 0.01 / 3) for d in mg1.details)
+    assert len(validation.mg1.wq) == 20
+    assert validation.mg1.theory.wq == pytest.approx(13.10, abs=5e-3)
+
+
+@pytest.mark.slow
+def test_validate_engine_mtginf(validation):
+    mtginf = validation.result("mtginf")
+    assert len(mtginf.details) == 24
+    assert mtginf.confidence == pytest.approx(1 - 0.01 / 24)
+    assert validation.hourly.census.shape == (20, 24)
+    assert validation.hourly.expected.shape == (24,)
+
+
+@pytest.mark.slow
+def test_validate_engine_mas_medicos(validation):
+    more = validation.result("more_doctors")
+    assert more.ci_high < 0 and more.statistic < 0
+
+
+@pytest.mark.slow
+def test_potencia_utilizacion_con_un_recorte_mal_hecho(center, profile, monkeypatch):
+    # Versión incorrecta: no recorta por la izquierda, así que cuenta entera la parte
+    # anterior al calentamiento de los servicios que lo cruzan.
+    monkeypatch.setattr(
+        analysis, "_time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
+    )
+    by_name = {r.name: r for r in check_operational_laws(center, profile, seed=SEED)}
+
+    for pool in ("enfermeria_triaje", "medicos", "boxes"):
+        assert not by_name[f"utilization_{pool}"].passed, pool
+    assert by_name["little_system"].passed  # Little no usa los intervalos
