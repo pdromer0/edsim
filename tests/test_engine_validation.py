@@ -14,14 +14,21 @@ import numpy as np
 import pytest
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
+from edsim.arrivals.rate import cumulative_rate
 from edsim.engine.center import load_center
-from edsim.engine.clinical import ProvisionalSampler, lognormal_params
+from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.validation import (
     INFINITE,
+    check_infinite_server,
     check_mg1,
     flat_profile,
+    hourly_grid_means,
+    infinite_center,
     mg1_center,
+    offered_load,
     pollaczek_khinchine,
+    stay_sample,
+    total_stay,
 )
 from edsim.seeds import child_streams
 
@@ -172,3 +179,109 @@ def test_potencia_mg1_con_triaje_exponencial(center):
 def test_flat_profile_con_otra_fecha():
     p = flat_profile(daily_base=100, start_date=date(2026, 3, 1))
     assert isinstance(p, ArrivalProfile) and p.start_date == date(2026, 3, 1)
+
+
+# --- Mₜ/G/∞: piezas -----------------------------------------------------------------------
+
+DRAWS = PatientDraws(
+    level=3,
+    triage_time=5.0,
+    assessment_time=20.0,
+    reassessment_time=10.0,
+    needs_tests=True,
+    test_turnaround=60.0,
+    admitted=False,
+)
+
+
+def test_estancia_total_a_mano():
+    assert total_stay(DRAWS) == 5 + 20 + 60 + 10
+    # Sin pruebas no cuentan la respuesta ni la reevaluación, aunque se sorteen.
+    assert total_stay(dataclasses.replace(DRAWS, needs_tests=False)) == 25
+
+
+def test_centro_infinito(center):
+    c = infinite_center(center)
+    assert c.triage_nurses == c.doctors == (INFINITE,) * 3 and c.boxes == INFINITE
+    assert c.test_probability == center.test_probability
+
+
+def test_muestra_de_estancias_reproducible(center):
+    a = stay_sample(center, 1000, seed=7)
+    b = stay_sample(center, 1000, seed=7)
+    assert a.shape == (1000,) and np.array_equal(a, b)
+    assert not np.array_equal(a, stay_sample(center, 1000, seed=8))
+    # Las mismas que da el muestreador del motor con esa semilla.
+    sampler = ProvisionalSampler(center, child_streams(7, 4))
+    assert a[0] == total_stay(sampler(None))
+
+
+def test_carga_ofrecida_con_tasa_constante():
+    # Con λ constante, pasada la estancia máxima, m = λ·E[S] (la media de la muestra).
+    stays = np.array([10.0, 30.0, 80.0])
+    profile = flat_profile(daily_base=144)  # 0,1 por minuto
+    m = offered_load(profile, stays, horizon=300)
+
+    assert m.shape == (301,)
+    assert m[0] == 0.0
+    assert m[200] == pytest.approx(0.1 * stays.mean(), rel=1e-12)
+    # Antes de la primera salida posible, m(t) = λ·t (nadie ha salido aún).
+    assert m[5] == pytest.approx(0.1 * 5, rel=1e-12)
+
+
+def test_carga_ofrecida_frente_a_la_formula_exacta(center, profile):
+    # m(t) = E[Λ(t) - Λ((t - S)⁺)], exacta para la muestra; la rejilla de 1 minuto
+    # (regla del punto medio) debe acercarse mucho.
+    stays = stay_sample(center, 20_000, seed=11)
+    flat_z = dataclasses.replace(profile, daily_cv=0.0)
+    m = offered_load(flat_z, stays, horizon=3 * 1440)
+    for t in (90, 600, 1000, 2000, 3 * 1440):
+        exact = np.mean(
+            cumulative_rate(t, flat_z) - cumulative_rate(np.maximum(0.0, t - stays), flat_z)
+        )
+        assert m[t] == pytest.approx(exact, rel=1e-3), t
+
+
+def test_medias_horarias_de_la_rejilla():
+    # Una rejilla que vale la hora del día en cada minuto: la media de la hora h es h,
+    # salvo en el borde, donde el trapecio mezcla con la hora siguiente.
+    minutes = np.arange(2 * 1440 + 1)
+    values = (minutes % 1440) // 60
+    means = hourly_grid_means(values.astype(float), start=1440, end=2 * 1440)
+    assert means.shape == (24,)
+    assert means[5] == pytest.approx(5 + 0.5 / 60)
+
+
+def test_check_infinite_server_argumentos(center, profile):
+    with pytest.raises(ValueError, match="n_stays"):
+        check_infinite_server(center, profile, seed=SEED, stay_seed=1, n_stays=1)
+
+
+# --- Mₜ/G/∞ (slow) -----------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_mtginf_y_capacidad_infinita_pasan(center, profile):
+    result, infinite, hourly = check_infinite_server(center, profile, seed=SEED, stay_seed=SEED + 1)
+
+    assert result.passed, [d for d in result.details if not d.passed]
+    assert len(result.details) == 24
+    assert result.confidence == pytest.approx(1 - 0.01 / 24)
+    assert infinite.passed, infinite
+    assert hourly.census.shape == (20, 24) and hourly.expected.shape == (24,)
+
+
+@pytest.mark.slow
+def test_potencia_mtginf_con_el_perfil_desplazado(center, profile):
+    # Se simula con el perfil una hora más tarde y se valida contra el real.
+    h = profile.hour_factors
+    shifted = dataclasses.replace(profile, hour_factors=h[-1:] + h[:-1])
+
+    result, infinite, _ = check_infinite_server(
+        center, shifted, replicas=5, seed=SEED, stay_seed=SEED + 1, hypothesis=profile
+    )
+
+    assert not result.passed
+    # Medido: 5 horas fuera (8 a 11 h y 21 h, donde λ(t) sube o baja deprisa).
+    assert result.statistic >= 4  # varias horas fuera, no una por azar
+    assert infinite.passed  # sin colas sigue sin haber esperas

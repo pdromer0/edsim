@@ -7,6 +7,10 @@ something (docs/specs/hito-3.md, "Validación del motor"):
 - M/G/1: the triage with one nurse, a constant rate and everything else with
   room to spare is an M/G/1 FIFO queue, whose wait is given by
   Pollaczek–Khinchine. It catches waits computed wrong in a FIFO queue.
+- Mₜ/G/∞: with infinite capacity nobody waits, and the census at t is
+  Poisson with mean m(t) = ∫ λ(s) · P(stay > t − s) ds. It catches errors in
+  the flow with lambda(t). The same runs check an extreme condition: every
+  wait is exactly 0 and every stay is exactly the sum of its durations.
 
 As in the validation of the arrivals (milestone 2), every hypothesis comes
 from the configuration, never from what the engine wrote; the level is
@@ -26,13 +30,15 @@ from datetime import date
 import numpy as np
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.arrivals.rate import MINUTES_PER_DAY, rate
+from edsim.arrivals.thinning import ArrivalRecord
 from edsim.arrivals.validation import ALPHA, ValidationResult
 from edsim.engine.analysis import RunAnalysis, analyze_run
 from edsim.engine.center import CenterConfig
-from edsim.engine.clinical import lognormal_params
+from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.engine import EDResult, Sampler, simulate_ed
 from edsim.engine.events import Event, MemorySink
+from edsim.engine.ground_truth import EpisodeTruth
 from edsim.seeds import child_streams
 from edsim.stats import Summary, summarize
 
@@ -298,3 +304,228 @@ def check_mg1(
         target=theory.wq,
     )
     return result, MG1Replicas(theory, tuple(wq), tuple(rho), tuple(lq))
+
+
+# --- Mₜ/G/∞ ------------------------------------------------------------------------------
+
+HOURS = 24
+_MINUTES_PER_HOUR = 60
+
+
+def infinite_center(center: CenterConfig) -> CenterConfig:
+    """The center with every pool at ``INFINITE``: nobody ever queues."""
+    return dataclasses.replace(
+        center,
+        triage_nurses=(INFINITE,) * 3,
+        doctors=(INFINITE,) * 3,
+        boxes=INFINITE,
+    )
+
+
+def total_stay(draws: PatientDraws) -> float:
+    """Stay of a patient who never waits: triage and assessment and, with tests,
+    their turnaround and the reassessment (the box is kept while they run)."""
+    stay = draws.triage_time + draws.assessment_time
+    if draws.needs_tests:
+        stay += draws.test_turnaround + draws.reassessment_time
+    return stay
+
+
+def stay_sample(center: CenterConfig, n: int, seed: int | np.random.SeedSequence) -> np.ndarray:
+    """``n`` stays without waits, from the engine's own sampler.
+
+    The sampler is called as the engine calls it, with streams 1 to 4 of
+    ``child_streams(seed, 4)``; the arrival is not used by the provisional
+    model. The seed must be independent of the replications', so that the
+    estimate of P(stay > u) and the census compared with it do not share
+    numbers.
+    """
+    sampler = ProvisionalSampler(center, child_streams(seed, 4))
+    arrival = ArrivalRecord(0, 0.0)
+    return np.array([total_stay(sampler(arrival)) for _ in range(n)])
+
+
+def offered_load(profile: ArrivalProfile, stays: np.ndarray, horizon: int) -> np.ndarray:
+    """m(t) = ∫ λ(s) · P(S > t − s) ds at every whole minute 0..``horizon``, from empty at 0.
+
+    P(S > u) is the share of ``stays`` greater than u. The integral is a
+    midpoint sum on a grid of 1 minute::
+
+        m(j) = Σ_k λ(j − k − ½) · P(S > k + ½),   with λ = 0 before 0,
+
+    a convolution done with ``numpy.convolve``. λ comes from ``rate`` of
+    milestone 2, without daily effects: every Z is 1. Starting from 0, the
+    empty start is part of m(t), as in the simulation.
+
+    Args:
+        profile: The arrival profile of the hypothesis.
+        stays: A sample of stays, such as ``stay_sample(...)``.
+        horizon: Last minute of the grid, a whole number.
+
+    Returns:
+        ``horizon + 1`` values: m(0), m(1), ..., m(horizon).
+    """
+    ordered = np.sort(np.asarray(stays, dtype=float))
+    # Survival at the midpoints k + 1/2, until the longest stay.
+    midpoints = np.arange(int(math.ceil(ordered[-1])) + 1) + 0.5
+    survival = 1 - np.searchsorted(ordered, midpoints, side="right") / ordered.size
+    lam = rate(np.arange(horizon) + 0.5, profile)
+    load = np.convolve(lam, survival)[:horizon]
+    return np.concatenate([[0.0], load])
+
+
+def hourly_grid_means(values: np.ndarray, start: int, end: int) -> np.ndarray:
+    """Mean by hour of the clock of a function given at every whole minute.
+
+    Each hour of each day of ``[start, end]`` is averaged with the trapezoid
+    rule, and the days are averaged: one value per hour, 0 h to 23 h.
+    ``start`` and ``end`` are whole days, in minutes.
+    """
+    days = (end - start) // MINUTES_PER_DAY
+    segment = np.asarray(values[start : end + 1], dtype=float)
+    # Area of each minute, then of each hour, then the mean of each hour over the days.
+    per_minute = (segment[:-1] + segment[1:]) / 2
+    per_hour = per_minute.reshape(days * HOURS, _MINUTES_PER_HOUR).mean(axis=1)
+    return per_hour.reshape(days, HOURS).mean(axis=0)
+
+
+def _hourly_step_means(analysis: RunAnalysis, name: str, start: float, end: float) -> np.ndarray:
+    """Mean by hour of the clock of a step curve, over the days of ``[start, end]``.
+
+    Exact: the area of a step function at any instant is the linear
+    interpolation of its cumulative area at the steps.
+    """
+    curves = analysis.curves
+    t = curves.times
+    edges = np.append(t, curves.horizon)
+    cumulative = np.concatenate([[0.0], np.cumsum(np.diff(edges) * curves[name])])
+    hours = np.arange(start, end + 1, _MINUTES_PER_HOUR, dtype=float)
+    area = np.diff(np.interp(hours, edges, cumulative))
+    return (area / _MINUTES_PER_HOUR).reshape(-1, HOURS).mean(axis=0)
+
+
+@dataclass(frozen=True, slots=True)
+class HourlyCensus:
+    """Census by hour of the clock against m(t), for the table and the plot.
+
+    Attributes:
+        expected: m(t) averaged by hour, as the census, from 0 h to 23 h.
+        census: Mean census by hour of each replication, one row each.
+        ci_low: Lower bound of the interval of each hour.
+        ci_high: Upper bound.
+    """
+
+    expected: np.ndarray
+    census: np.ndarray
+    ci_low: np.ndarray
+    ci_high: np.ndarray
+
+
+def _exact_infinite_capacity(run: _Run) -> int:
+    """Episodes of a run without queues whose log is not exact.
+
+    Every wait must be exactly 0, and the departure must be the arrival of
+    the log plus the durations of the ground truth, added in the order the
+    engine waits them (as ``test_capacidad_infinita_sin_esperas``).
+    """
+    truth: dict[str, EpisodeTruth] = {e.episode_id: e for e in run.result.ground_truth.episodes}
+    wrong = 0
+    for episode in run.analysis.table:
+        draws = truth[episode.episode_id]
+        waits = (episode.triage_wait, episode.box_wait, episode.doctor_wait)
+        if any(w is not None and w != 0 for w in waits):
+            wrong += 1
+            continue
+        if episode.departure is None:
+            continue
+        t = episode.arrival + draws.triage_time
+        t += draws.assessment_time
+        if draws.needs_tests:
+            t += draws.test_turnaround
+            t += draws.reassessment_time
+        wrong += episode.departure != t
+    return wrong
+
+
+def check_infinite_server(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    *,
+    replicas: int = 20,
+    days: int = 14,
+    warmup_days: int = 2,
+    seed: int | np.random.SeedSequence,
+    stay_seed: int | np.random.SeedSequence,
+    n_stays: int = 200_000,
+    hypothesis: ArrivalProfile | None = None,
+) -> tuple[ValidationResult, ValidationResult, HourlyCensus]:
+    """The center without queues as an Mₜ/G/∞, against m(t).
+
+    Each replication simulates ``infinite_center(center)`` with ``profile``
+    without daily effect (``cv_diario`` 0) and measures the mean census of
+    each hour of the clock over the days of its window. m(t) is averaged the
+    same way, with P(stay > u) from ``n_stays`` draws of the sampler with
+    ``stay_seed``. One interval per hour at ``1 - ALPHA / 24`` (Bonferroni):
+    the check passes if m(t) falls inside all of them.
+
+    The same runs give the extreme condition "infinite capacity": no wait and
+    every stay exactly the sum of its durations, in every replication.
+
+    Args:
+        center: The center whose clinical model is used.
+        profile: The profile of the simulation; its ``cv_diario`` is set to 0.
+        replicas: Independent replications, at least 2.
+        days: Days of each replication, warm-up included.
+        warmup_days: Days left out of the window.
+        seed: Seed of the replications; child ``i`` for replication ``i``.
+        stay_seed: Seed of the sample of stays, independent of ``seed``.
+        n_stays: Size of the sample of stays, at least 1000.
+        hypothesis: Profile of m(t); ``profile`` if ``None``. Only for the
+            power tests: it never changes the simulation.
+
+    Returns:
+        The result of the Mₜ/G/∞ (statistic: hours outside their interval,
+        with the 24 intervals in ``details``), the result of the infinite
+        capacity (statistic: inexact episodes over all the replications) and
+        the census by hour.
+    """
+    replicas = _check_count("replicas", replicas, 2)
+    days, warmup_days = _check_days(days, warmup_days)
+    n_stays = _check_count("n_stays", n_stays, 1000)
+    no_z = dataclasses.replace(profile, daily_cv=0.0)
+    hypothesis = no_z if hypothesis is None else dataclasses.replace(hypothesis, daily_cv=0.0)
+    infinite = infinite_center(center)
+    start, end = warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY
+
+    stays = stay_sample(center, n_stays, stay_seed)
+    expected = hourly_grid_means(offered_load(hypothesis, stays, end), start, end)
+
+    census, wrong = [], 0
+    for child in child_streams(seed, replicas):
+        run = _run(infinite, no_z, days, warmup_days, child)
+        census.append(_hourly_step_means(run.analysis, "census", start, end))
+        wrong += _exact_infinite_capacity(run)
+    census = np.array(census)
+
+    confidence = 1 - ALPHA / HOURS
+    details = tuple(
+        _interval_result(f"{h:02d}h", summarize(census[:, h], confidence), float(expected[h]))
+        for h in range(HOURS)
+    )
+    exact = ValidationResult(
+        name="infinite_capacity",
+        statistic=float(wrong),
+        p_value=None,
+        ci_low=None,
+        ci_high=None,
+        target=0.0,
+        criterion="no wait and exact stays (0 episodes wrong)",
+        passed=wrong == 0,
+    )
+    hourly = HourlyCensus(
+        expected=expected,
+        census=census,
+        ci_low=np.array([d.ci_low for d in details]),
+        ci_high=np.array([d.ci_high for d in details]),
+    )
+    return _all_of("mtginf", details), exact, hourly
