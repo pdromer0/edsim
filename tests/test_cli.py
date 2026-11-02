@@ -571,11 +571,11 @@ def test_validar_motor_imprime_tabla_y_guarda_las_graficas(
     ((args, kwargs),) = calls
     assert args == (load_center(ENGINE_CENTER), load_profile(EXAMPLE))
     assert kwargs == {"seed": 2026, "replicas": 5}
-    for text in ("5 réplicas", "semilla 2026", "unos 90 s"):
+    for text in ("5 réplicas", "semilla 2026", "unos 2 minutos"):
         assert text in out
     # El aviso va antes de la tabla, y la tabla es la del resultado.
     table = format_engine_validation(engine_validation_pequena.results)
-    assert out.index("unos 90 s") < out.index(table)
+    assert out.index("unos 2 minutos") < out.index(table)
     for name in ENGINE_PLOTS:
         assert (out_dir / name).read_bytes().startswith(b"\x89PNG")
         assert str(out_dir / name) in out
@@ -636,7 +636,7 @@ def test_motor_errores_de_uso(accion, extra, message, tmp_path, monkeypatch, cap
     assert exc.value.code == 2
     assert message in captured.err
     assert "Traceback" not in captured.err
-    # Nada en la salida estándar: ni la cabecera ni el aviso de los 90 s.
+    # Nada en la salida estándar: ni la cabecera ni el aviso de los 2 minutos.
     assert captured.out == ""
     assert not out_dir.exists()
 
@@ -655,23 +655,35 @@ def test_motor_ficheros_por_defecto(monkeypatch, tmp_path):
 
 
 @pytest.mark.slow
-def test_validar_motor_de_verdad(tmp_path, capsys):
-    # La validación completa con los valores por defecto, como en la medida del PR.
+def test_validar_motor_de_verdad(tmp_path, monkeypatch, capsys, engine_validation_real):
+    # La validación completa con los valores por defecto, la misma que el fixture de
+    # sesión: la CLI la recibe en lugar de repetirla, y se comprueba que la pide igual.
     root = Path(__file__).parent.parent
+    center, profile = root / "config" / "centro.toml", root / "config" / "llegadas.toml"
+    calls = []
+
+    def same_validation(*args, **kwargs):
+        calls.append((args, kwargs))
+        return engine_validation_real
+
+    monkeypatch.setattr("edsim.cli.validate_engine", same_validation)
     code = main(
         [
             "motor",
             "validar",
             "--centro",
-            str(root / "config" / "centro.toml"),
+            str(center),
             "--llegadas",
-            str(root / "config" / "llegadas.toml"),
+            str(profile),
             "--salida",
             str(tmp_path),
         ]
     )
     out = capsys.readouterr().out
 
+    ((args, kwargs),) = calls
+    assert args == (load_center(center), load_profile(profile))
+    assert kwargs == {"seed": 2026, "replicas": 20}
     assert code == 0, out
     assert "Resultado: pasan las 11 comprobaciones" in out
     for name in ENGINE_PLOTS:

@@ -369,19 +369,15 @@ def test_validate_engine_guarda_la_ejecucion_larga():
 
 
 # --- validate_engine completo (slow) ----------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def validation(center, profile):
-    """La validación completa con la semilla 2026, una vez para todo el módulo."""
-    return validate_engine(center, profile, seed=SEED)
+# engine_validation_real (conftest.py): la validación completa con la semilla 2026, una
+# vez por sesión, compartida con el test slow de la CLI.
 
 
 @pytest.mark.slow
-def test_validate_engine_todas_pasan(validation):
-    failed = [r for r in validation.results if not r.passed]
-    assert validation.passed, failed
-    assert [r.name for r in validation.results] == [
+def test_validate_engine_todas_pasan(engine_validation_real):
+    failed = [r for r in engine_validation_real.results if not r.passed]
+    assert engine_validation_real.passed, failed
+    assert [r.name for r in engine_validation_real.results] == [
         "invariants",
         "little_system",
         "little_triage_queue",
@@ -397,27 +393,27 @@ def test_validate_engine_todas_pasan(validation):
 
 
 @pytest.mark.slow
-def test_validate_engine_mg1(validation):
-    mg1 = validation.result("mg1")
+def test_validate_engine_mg1(engine_validation_real):
+    mg1 = engine_validation_real.result("mg1")
     assert [d.name for d in mg1.details] == ["wq", "rho", "lq"]
     assert all(d.confidence == pytest.approx(1 - 0.01 / 3) for d in mg1.details)
-    assert len(validation.mg1.wq) == 20
-    assert validation.mg1.theory.wq == pytest.approx(13.10, abs=5e-3)
-    assert validation.long_run.metrics.end == 28 * 1440
+    assert len(engine_validation_real.mg1.wq) == 20
+    assert engine_validation_real.mg1.theory.wq == pytest.approx(13.10, abs=5e-3)
+    assert engine_validation_real.long_run.metrics.end == 28 * 1440
 
 
 @pytest.mark.slow
-def test_validate_engine_mtginf(validation):
-    mtginf = validation.result("mtginf")
+def test_validate_engine_mtginf(engine_validation_real):
+    mtginf = engine_validation_real.result("mtginf")
     assert len(mtginf.details) == 24
     assert mtginf.confidence == pytest.approx(1 - 0.01 / 24)
-    assert validation.hourly.census.shape == (20, 24)
-    assert validation.hourly.expected.shape == (24,)
+    assert engine_validation_real.hourly.census.shape == (20, 24)
+    assert engine_validation_real.hourly.expected.shape == (24,)
 
 
 @pytest.mark.slow
-def test_validate_engine_mas_medicos(validation):
-    more = validation.result("more_doctors")
+def test_validate_engine_mas_medicos(engine_validation_real):
+    more = engine_validation_real.result("more_doctors")
     assert more.ci_high < 0 and more.statistic < 0
 
 
