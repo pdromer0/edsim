@@ -20,6 +20,7 @@ from edsim.engine.center import load_center
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import MemorySink
+from edsim.engine.scenarios import exponential_triage
 from edsim.engine.validation import (
     INFINITE,
     census_by_day_and_hour,
@@ -137,27 +138,6 @@ def test_check_mg1_argumentos(center):
 
 
 # --- M/G/1: simulación (slow) -------------------------------------------------------------
-
-
-def exponential_triage(center):
-    """Fábrica de muestreadores con el triaje exponencial de la misma media que la lognormal.
-
-    El resto de sorteos es el del ProvisionalSampler; la exponencial sale de un flujo
-    propio (el quinto hijo de la réplica), así que nada más cambia.
-    """
-    mean = pollaczek_khinchine(mg1_center(center), flat_profile()).mean_service
-
-    def factory(seed):
-        streams = child_streams(seed, 6)
-        base = ProvisionalSampler(center, streams[1:5])
-        rng = np.random.default_rng(streams[5])
-
-        def sampler(arrival):
-            return dataclasses.replace(base(arrival), triage_time=float(rng.exponential(mean)))
-
-        return sampler
-
-    return factory
 
 
 @pytest.mark.slow
