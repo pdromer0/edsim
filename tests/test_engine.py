@@ -17,7 +17,7 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, iter_arrivals
 from edsim.engine.center import CenterConfig, load_center
 from edsim.engine.clinical import PatientDraws
-from edsim.engine.engine import EDResult, default_run_id, simulate_ed
+from edsim.engine.engine import EDResult, check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import Event, JsonlSink, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import check_invariants
@@ -307,6 +307,30 @@ def test_calentamiento_con_dias_invalidos_falla_por_los_dias(center, profile):
     # Se validan antes los días: el error nombra days, no warmup_days.
     with pytest.raises(ValueError, match=r"^days must be"):
         simulate(center, profile, days=0, warmup_days=0)
+
+
+@pytest.mark.parametrize(("days", "warmup"), [(1, 0), (14, 2), (3, 2)])
+def test_check_horizon_acepta(days, warmup):
+    assert check_horizon(days, warmup) == (days, warmup)
+
+
+@pytest.mark.parametrize(
+    ("days", "warmup", "match"),
+    [
+        (0, 0, r"^days must be"),
+        (2.0, 0, r"^days must be"),
+        (True, 0, r"^days must be"),
+        (0, -1, r"^days must be"),  # los días se validan antes
+        (3, 3, "warmup_days"),
+        (3, -1, "warmup_days"),
+        (3, 1.0, "warmup_days"),
+        (3, None, "warmup_days"),
+    ],
+)
+def test_check_horizon_rechaza(days, warmup, match):
+    # La CLI la llama antes de crear ficheros: los mismos errores que simulate_ed.
+    with pytest.raises(ValueError, match=match):
+        check_horizon(days, warmup)
 
 
 def test_el_log_incluye_el_calentamiento(base):

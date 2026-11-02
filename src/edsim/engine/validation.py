@@ -343,11 +343,11 @@ def total_stay(draws: PatientDraws) -> float:
 def stay_sample(center: CenterConfig, n: int, seed: int | np.random.SeedSequence) -> np.ndarray:
     """``n`` stays without waits, from the engine's own sampler.
 
-    The sampler is called as the engine calls it, with streams 1 to 4 of
-    ``child_streams(seed, 4)``; the arrival is not used by the provisional
-    model. The seed must be independent of the replications', so that the
-    estimate of P(stay > u) and the census compared with it do not share
-    numbers.
+    The sampler is called as the engine calls it, with the four streams of
+    ``child_streams(seed, 4)`` (indices 0 to 3, the roles of the engine's
+    streams 1 to 4); the arrival is not used by the provisional model. The
+    seed must be independent of the replications', so that the estimate of
+    P(stay > u) and the census compared with it do not share numbers.
     """
     sampler = ProvisionalSampler(center, child_streams(seed, 4))
     arrival = ArrivalRecord(0, 0.0)
@@ -578,7 +578,11 @@ def check_operational_laws(
         ``utilization_<pool>`` per pool (statistic: relative error).
     """
     days, warmup_days = _check_days(days, warmup_days)
-    run = _run(center, profile, days, warmup_days, seed)
+    return _operational_results(center, _run(center, profile, days, warmup_days, seed))
+
+
+def _operational_results(center: CenterConfig, run: _Run) -> tuple[ValidationResult, ...]:
+    """The results of ``check_operational_laws`` for a run already simulated."""
     violations = check_invariants(
         run.events, center, ground_truth=run.result.ground_truth, inside=run.result.inside
     )
@@ -673,11 +677,15 @@ class EngineValidation:
             M/G/1, Mₜ/G/∞, infinite capacity and more doctors.
         mg1: The values of each replication of the M/G/1 and its theory.
         hourly: The census by hour against m(t).
+        long_run: The analysis of the long run of the operational laws
+            (table, curves and metrics, without its events), for the plots
+            of the census and the waits by level.
     """
 
     results: tuple[ValidationResult, ...]
     mg1: MG1Replicas
     hourly: HourlyCensus
+    long_run: RunAnalysis
 
     @property
     def passed(self) -> bool:
@@ -690,6 +698,33 @@ class EngineValidation:
             if r.name == name:
                 return r
         raise KeyError(name)
+
+
+def check_engine_validation_counts(
+    *,
+    replicas: int = 20,
+    mg1_days: int = 30,
+    mtginf_days: int = 14,
+    long_days: int = 28,
+    paired_replicas: int = 10,
+    paired_days: int = 14,
+    warmup_days: int = 2,
+    n_stays: int = 200_000,
+) -> None:
+    """Check the counts of ``validate_engine`` without simulating anything.
+
+    The arguments and their defaults are those of ``validate_engine``. The CLI
+    calls it before printing anything, so that a usage error does not start a
+    run of a minute and a half.
+
+    Raises:
+        ValueError: If a count is not valid.
+    """
+    _check_count("replicas", replicas, 2)
+    _check_count("paired_replicas", paired_replicas, 2)
+    _check_count("n_stays", n_stays, 1000)
+    for days in (mg1_days, mtginf_days, long_days, paired_days):
+        _check_days(days, warmup_days)
 
 
 def validate_engine(
@@ -728,18 +763,24 @@ def validate_engine(
         n_stays: Size of the sample of stays of m(t).
 
     Raises:
-        ValueError: If a count is not valid; checked before simulating.
+        ValueError: If a count is not valid; checked before simulating, with
+            ``check_engine_validation_counts``.
     """
-    replicas = _check_count("replicas", replicas, 2)
-    paired_replicas = _check_count("paired_replicas", paired_replicas, 2)
-    n_stays = _check_count("n_stays", n_stays, 1000)
-    for days in (mg1_days, mtginf_days, long_days, paired_days):
-        _check_days(days, warmup_days)
+    check_engine_validation_counts(
+        replicas=replicas,
+        mg1_days=mg1_days,
+        mtginf_days=mtginf_days,
+        long_days=long_days,
+        paired_replicas=paired_replicas,
+        paired_days=paired_days,
+        warmup_days=warmup_days,
+        n_stays=n_stays,
+    )
 
     mg1_seed, mtginf_seed, long_seed, paired_seed, stay_seed = child_streams(seed, 5)
-    laws = check_operational_laws(
-        center, profile, days=long_days, warmup_days=warmup_days, seed=long_seed
-    )
+    # The long run is kept, without its events, for the plots of the CLI.
+    long_run = _run(center, profile, long_days, warmup_days, long_seed)
+    laws = _operational_results(center, long_run)
     mg1, mg1_replicas = check_mg1(
         center, replicas=replicas, days=mg1_days, warmup_days=warmup_days, seed=mg1_seed
     )
@@ -762,5 +803,8 @@ def validate_engine(
         seed=paired_seed,
     )
     return EngineValidation(
-        results=(*laws, mg1, mtginf, infinite, more_doctors), mg1=mg1_replicas, hourly=hourly
+        results=(*laws, mg1, mtginf, infinite, more_doctors),
+        mg1=mg1_replicas,
+        hourly=hourly,
+        long_run=long_run.analysis,
     )
