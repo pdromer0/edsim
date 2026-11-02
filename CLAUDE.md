@@ -10,9 +10,14 @@ Simulador de urgencias hospitalarias que genera datos sintéticos para un labora
 Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de trabajo con Claude Code y Cursor".
 
 - Explica el concepto antes de implementar; Pedro pregunta hasta entenderlo.
-- Usa modo plan para cualquier cambio no trivial y espera la aprobación.
-- Trabaja en pasos pequeños.
-- En la revisión, explica cada decisión del diff.
+- Usa modo plan para cualquier cambio no trivial y espera la aprobación del plan.
+- Con el plan aprobado, implementa la tarea completa sin esperar revisión entre pasos: un commit
+  por paso lógico, con ruff y `pytest -m "not slow"` en verde antes de cada commit.
+- Para y pregunta solo si algo contradice el plan o la especificación, una biblioteca no se
+  comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño
+  nueva. Nunca cambies una semilla para que un test pase.
+- Pedro revisa el PR completo: su descripción explica cada decisión del diff, lo que cambió
+  respecto al plan, las comprobaciones, las medidas y las versiones incorrectas.
 
 ## Comandos
 
@@ -48,7 +53,7 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se ve
 Flujo de cada tarea (desde el hito 2, Claude Code ejecuta git):
 
 1. Actualiza `main` (`git switch main && git pull`) y crea la rama de la tarea (`git switch -c <rama>`).
-2. Haz los commits en la rama.
+2. Haz los commits en la rama, uno por paso lógico, sin esperar revisión entre ellos.
 3. Pide permiso a Pedro y haz `git push -u origin <rama>`.
 4. Abre el pull request con `gh pr create`.
 5. Pedro revisa y fusiona siempre.
