@@ -12,7 +12,18 @@ import numpy as np
 import pytest
 from test_invariants import build
 
-from edsim.engine.analysis import CURVES, episode_table, step_curves
+from edsim.engine import analysis
+from edsim.engine.analysis import (
+    CURVES,
+    MEASURES,
+    analyze_run,
+    busy_intervals,
+    episode_table,
+    little_laws,
+    step_curves,
+    utilization_identities,
+    window_metrics,
+)
 from edsim.engine.center import load_center
 
 EXAMPLE = Path(__file__).parent / "data" / "centro_ejemplo.toml"
@@ -318,3 +329,236 @@ def test_todas_las_curvas_tienen_nombre():
 def test_evento_despues_del_horizonte_falla(two_patients):
     with pytest.raises(ValueError, match="horizon"):
         step_curves(two_patients, horizon=180.0)
+
+
+# --- Métricas en la ventana -------------------------------------------------------------
+
+
+def quick(arrival_id: int, t0: float, assess: tuple[float, float], *, level: int = 3) -> list:
+    """Episodio sin esperas de triaje ni de box: triaje t0 a t0+5, box en t0+5,
+    valoración ``assess`` (inicio y fin) y salida al terminarla."""
+    start, end = assess
+    return rows(
+        arrival_id,
+        (t0, "patient_arrived", {}),
+        (t0, "patient_registered", {}),
+        (t0, "triage_started", {}),
+        (t0 + 5, "triage_completed", {"nivel": level}),
+        (t0 + 5, "box_assigned", {"box": arrival_id + 1}),
+        assessment(start, arrival_id + 1),
+        ended(end),
+        *departure(end),
+    )
+
+
+def metrics_of(events, center, start, end, horizon):
+    return window_metrics(episode_table(events), step_curves(events, horizon), center, start, end)
+
+
+def test_medidas_por_episodio():
+    assert MEASURES == (
+        "triage_wait",
+        "box_wait",
+        "doctor_wait",
+        "initial_doctor_wait",
+        "door_to_doctor",
+        "stay",
+    )
+
+
+def test_metricas_por_nivel_y_totales(two_patients, center):
+    m = metrics_of(two_patients, center, 0.0, DAY, DAY)
+
+    assert (m.start, m.end, m.arrivals) == (0.0, DAY, 2)
+    assert m.throughput == 2 / DAY
+    assert m.overall.level is None and m.overall.n == 2
+    assert m.overall.mean["stay"] == 72.5  # (100 + 45) / 2
+    assert m.overall.mean["triage_wait"] == 2.5
+    assert m.overall.p90["triage_wait"] == pytest.approx(4.5)  # entre 0 y 5, interpolación lineal
+    assert m.overall.mean["doctor_wait"] == 5.0
+    assert m.overall.mean["door_to_doctor"] == 17.5  # (10 + 25) / 2
+
+    by_level = {lm.level: lm for lm in m.by_level}
+    assert sorted(by_level) == [1, 2, 3, 4, 5]
+    assert (by_level[3].n, by_level[3].mean["stay"], by_level[3].p90["stay"]) == (1, 100, 100)
+    assert (by_level[4].n, by_level[4].mean["doctor_wait"]) == (1, 10.0)
+    assert by_level[1].n == 0 and by_level[1].mean["stay"] is None
+    assert by_level[1].p90["stay"] is None
+
+
+def test_medias_en_el_tiempo(two_patients, center):
+    m = metrics_of(two_patients, center, 0.0, DAY, DAY)
+    assert m.time_averages["census"] == pytest.approx(145 / DAY, rel=1e-15)
+    assert m.time_averages["waiting_triage"] == pytest.approx(5 / DAY, rel=1e-15)
+    assert m.time_averages["doctors_staff"] == 1.0
+    assert set(m.time_averages) == set(CURVES)
+
+
+# Ventana [1440, 2880]: D llega en 1400 y sale en 1500 (cruza el inicio); E de 1500 a 1560.
+# Censo en la ventana: D 60 + E 60 = 120. Solo E llega dentro y termina: W = 60.
+CROSSING = (quick(0, 1400.0, (1405.0, 1500.0)), quick(1, 1500.0, (1505.0, 1560.0)))
+
+
+def test_la_ventana_recorta_areas_y_filtra_episodios(center):
+    m = metrics_of(build(*CROSSING), center, DAY, 2 * DAY, 2 * DAY)
+
+    assert m.arrivals == 1
+    assert m.overall.n == 1 and m.overall.mean["stay"] == 60.0
+    assert m.time_averages["census"] == pytest.approx(120 / DAY, rel=1e-15)
+
+
+# --- Ocupación por turno ------------------------------------------------------------------
+#
+# Médicos: 1 desde el minuto 0 y 2 desde las 8:00 (480). Turnos 8, 15 y 22.
+# X: triaje 440-445, box 445-500, valoración 450-500. Y: triaje 470-475, box 475-520,
+# valoración 490-520.
+#   Médicos  noche [0, 480) ∪ [1320, 1440): ocupados 30 (X 450-480); plantilla 480·1 + 120·2.
+#            mañana [480, 900): ocupados 20 + 30; plantilla 420·2. Tarde: 0 de 840.
+#   Enfermeras (1 todo el día): noche 10 de 600; mañana y tarde 0 de 420.
+#   Boxes (30): noche X 35 + Y 5 = 40 de 30·600; mañana X 20 + Y 40 = 60 de 30·420.
+
+SHIFT_CHANGE = [
+    (480.0, None, "staffing_changed", {"recurso": "medicos", "anterior": 1, "nueva": 2})
+]
+
+
+def test_ocupacion_por_pool_y_turno_con_cambio_de_plantilla(center):
+    events = build(SHIFT_CHANGE, quick(0, 440.0, (450.0, 500.0)), quick(1, 470.0, (490.0, 520.0)))
+
+    m = metrics_of(events, center, 0.0, DAY, DAY)
+
+    occ = {(o.pool, o.shift): (o.busy_area, o.staff_area) for o in m.occupancy}
+    assert occ[("medicos", "night")] == (30.0, 720.0)
+    assert occ[("medicos", "morning")] == (50.0, 840.0)
+    assert occ[("medicos", "afternoon")] == (0.0, 840.0)
+    assert occ[("enfermeria_triaje", "night")] == (10.0, 600.0)
+    assert occ[("enfermeria_triaje", "morning")] == (0.0, 420.0)
+    assert occ[("boxes", "night")] == (40.0, 30 * 600.0)
+    assert occ[("boxes", "morning")] == (60.0, 30 * 420.0)
+    ratio = {(o.pool, o.shift): o.ratio for o in m.occupancy}
+    assert ratio[("medicos", "morning")] == 50 / 840
+    assert len(m.occupancy) == 9
+
+
+def test_ocupacion_por_turno_recorta_a_la_ventana(center):
+    # Ventana [600, 1440]: la noche es solo [1320, 1440) y la mañana [600, 900).
+    events = build(SHIFT_CHANGE, quick(0, 440.0, (450.0, 500.0)), quick(1, 470.0, (490.0, 700.0)))
+
+    m = metrics_of(events, center, 600.0, DAY, DAY)
+
+    occ = {(o.pool, o.shift): (o.busy_area, o.staff_area) for o in m.occupancy}
+    assert occ[("medicos", "night")] == (0.0, 240.0)
+    assert occ[("medicos", "morning")] == (100.0, 600.0)  # Y 600-700, plantilla 2·300
+
+
+# --- Ley de Little ----------------------------------------------------------------------
+
+
+def laws_of(events, start, end, horizon):
+    table = episode_table(events)
+    return {law.name: law for law in little_laws(table, step_curves(events, horizon), start, end)}
+
+
+def test_little_exacta_sin_recortes(two_patients):
+    # Todos llegan y salen dentro de [0, H]: L·T = suma de las estancias, sin bordes.
+    laws = laws_of(two_patients, 0.0, DAY, DAY)
+
+    assert set(laws) == {"system", "triage_queue", "box_queue"}
+    system = laws["system"]
+    assert (system.l, system.lam, system.w) == pytest.approx((145 / DAY, 2 / DAY, 72.5))
+    assert system.relative_error < 1e-12
+    assert laws["triage_queue"].w == 2.5
+    assert laws["triage_queue"].relative_error < 1e-12
+    assert laws["box_queue"].relative_error == 0.0  # nadie espera box: 0 frente a 0
+
+
+def test_little_de_la_cola_de_box_necesita_las_vueltas(displaced):
+    # P espera box de 15 a 35 tras el desalojo: área 20 = 20 + 0 de espera total.
+    box = laws_of(displaced, 0.0, DAY, DAY)["box_queue"]
+    assert box.w == 10.0
+    assert box.relative_error < 1e-12
+
+
+def test_little_con_recorte_no_es_exacta():
+    # L = 120/1440 frente a λ̂·W = (1/1440)·60: los bordes de la ventana cuentan.
+    system = laws_of(build(*CROSSING), DAY, 2 * DAY, 2 * DAY)["system"]
+    assert system.relative_error == pytest.approx(0.5)
+
+
+# --- Identidad de utilización -------------------------------------------------------------
+#
+# Ventana [1440, 2880] y horizonte 2880. U: triaje 1390-1395, box 1395-1500, médico
+# 1400-1500. V: triaje 2840-2845, box desde 2845 y médico desde 2850, abiertos al final.
+#   Médicos: 60 (U, de 1440 a 1500) + 30 (V, hasta el horizonte) = 90.
+#   Boxes: 60 + 35 = 95. Enfermeras: 5 (V).
+
+U_V = (
+    quick(0, 1390.0, (1400.0, 1500.0)),
+    rows(
+        1,
+        (2840.0, "patient_arrived", {}),
+        (2840.0, "patient_registered", {}),
+        (2840.0, "triage_started", {}),
+        (2845.0, "triage_completed", {"nivel": 3}),
+        (2845.0, "box_assigned", {"box": 2}),
+        assessment(2850.0, 2),
+    ),
+)
+
+
+def test_intervalos_de_servicio():
+    intervals = busy_intervals(build(*U_V), horizon=2 * DAY)
+    assert intervals["medicos"] == [(1400.0, 1500.0), (2850.0, 2 * DAY)]
+    assert intervals["boxes"] == [(1395.0, 1500.0), (2845.0, 2 * DAY)]
+    assert intervals["enfermeria_triaje"] == [(1390.0, 1395.0), (2840.0, 2845.0)]
+
+
+def test_intervalos_de_box_con_desalojo(displaced):
+    assert busy_intervals(displaced, horizon=DAY)["boxes"] == [
+        (5.0, 15.0),
+        (15.0, 35.0),
+        (35.0, 50.0),
+    ]
+
+
+def identities_of(events, start, end, horizon):
+    curves = step_curves(events, horizon)
+    return {u.pool: u for u in utilization_identities(events, curves, start, end)}
+
+
+def test_identidad_de_utilizacion_con_recortes():
+    ids = identities_of(build(*U_V), DAY, 2 * DAY, 2 * DAY)
+
+    assert (ids["medicos"].curve_area, ids["medicos"].interval_area) == (90.0, 90.0)
+    assert (ids["boxes"].curve_area, ids["boxes"].interval_area) == (95.0, 95.0)
+    assert (ids["enfermeria_triaje"].curve_area, ids["enfermeria_triaje"].interval_area) == (5, 5)
+    assert all(u.relative_error == 0.0 for u in ids.values())
+
+
+def test_identidad_detecta_un_recorte_mal_hecho(monkeypatch):
+    # La versión incorrecta no recorta por la izquierda: U cuenta 100 en vez de 60.
+    monkeypatch.setattr(
+        analysis, "_time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
+    )
+    ids = identities_of(build(*U_V), DAY, 2 * DAY, 2 * DAY)
+    assert (ids["medicos"].curve_area, ids["medicos"].interval_area) == (90.0, 130.0)
+    assert ids["medicos"].relative_error > 0.3
+
+
+# --- Todo junto ---------------------------------------------------------------------------
+
+
+def test_analyze_run_usa_la_ventana_de_los_dias(center):
+    run = analyze_run(build(*CROSSING), center, days=2, warmup_days=1)
+
+    assert (run.metrics.start, run.metrics.end) == (DAY, 2 * DAY)
+    assert run.curves.horizon == 2 * DAY
+    assert len(run.table) == 2
+    assert {law.name for law in run.little} == {"system", "triage_queue", "box_queue"}
+    assert {u.pool for u in run.utilization} == {"enfermeria_triaje", "medicos", "boxes"}
+
+
+@pytest.mark.parametrize(("start", "end"), [(-1.0, DAY), (DAY, DAY), (0.0, 2 * DAY)])
+def test_ventana_invalida(two_patients, center, start, end):
+    with pytest.raises(ValueError, match="start"):
+        metrics_of(two_patients, center, start, end, DAY)
