@@ -408,7 +408,7 @@ def test_potencia_utilizacion_con_un_recorte_mal_hecho(center, profile, monkeypa
     # Versión incorrecta: no recorta por la izquierda, así que cuenta entera la parte
     # anterior al calentamiento de los servicios que lo cruzan.
     monkeypatch.setattr(
-        analysis, "_time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
+        analysis, "time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
     )
     by_name = {r.name: r for r in check_operational_laws(center, profile, seed=SEED)}
 

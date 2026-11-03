@@ -541,7 +541,7 @@ def test_identidad_de_utilizacion_con_recortes():
 def test_identidad_detecta_un_recorte_mal_hecho(monkeypatch):
     # La versión incorrecta no recorta por la izquierda: U cuenta 100 en vez de 60.
     monkeypatch.setattr(
-        analysis, "_time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
+        analysis, "time_in_window", lambda start, end, w0, w1: max(0.0, min(end, w1) - start)
     )
     ids = identities_of(build(*U_V), DAY, 2 * DAY, 2 * DAY)
     assert (ids["medicos"].curve_area, ids["medicos"].interval_area) == (90.0, 130.0)

@@ -14,11 +14,12 @@ The months are weighted by their number of days (a 365-day year): a factor of
 1.10 in a 31-day month weighs more in the annual mean than 1.05 in February.
 """
 
-import math
 import tomllib
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+
+from edsim.checks import check_number
 
 DAYS_PER_MONTH = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 """Days of each month, January to December, in a 365-day year."""
@@ -35,16 +36,6 @@ _KEYS = {
 }
 
 
-def _check_number(key: str, value: object) -> float:
-    """Return ``value`` as a float if it is a finite real number."""
-    # bool is a subclass of int in Python: `true` must not pass as 1.
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError(f"{key} must be a number, got {value!r}")
-    if not math.isfinite(value):
-        raise ValueError(f"{key} must be a finite number, got {value!r}")
-    return float(value)
-
-
 def _check_values(key: str, values: object, n: int) -> tuple[float, ...]:
     """Check that ``values`` has ``n`` finite, strictly positive numbers."""
     if not isinstance(values, list | tuple):
@@ -53,7 +44,7 @@ def _check_values(key: str, values: object, n: int) -> tuple[float, ...]:
         raise ValueError(f"{key} must have {n} values, got {len(values)}")
     checked = []
     for i, value in enumerate(values):
-        x = _check_number(f"{key}[{i}]", value)
+        x = check_number(f"{key}[{i}]", value)
         if x <= 0:
             raise ValueError(f"{key}[{i}] must be positive, got {value!r}")
         checked.append(x)
@@ -99,7 +90,7 @@ class ArrivalProfile:
     start_date: date
 
     def __post_init__(self) -> None:
-        base = _check_number("base_diaria", self.daily_base)
+        base = check_number("base_diaria", self.daily_base)
         if base <= 0:
             raise ValueError(f"base_diaria must be positive, got {self.daily_base!r}")
 
@@ -107,7 +98,7 @@ class ArrivalProfile:
         weekdays = _check_values("reparto_semanal", self.weekday_factors, 7)
         months = _check_values("factor_mensual", self.month_factors, 12)
 
-        cv = _check_number("cv_diario", self.daily_cv)
+        cv = check_number("cv_diario", self.daily_cv)
         if cv < 0:
             raise ValueError(f"cv_diario must not be negative, got {self.daily_cv!r}")
 

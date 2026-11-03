@@ -44,8 +44,9 @@ from scipy import stats
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, iter_arrivals, simulate_arrivals
+from edsim.checks import ValidationResult, check_count, interval_result
 from edsim.seeds import child_streams
-from edsim.stats import Summary, summarize
+from edsim.stats import summarize
 
 ALPHA = 0.01
 """Level of every test: a correct generator fails each one 1 % of the times."""
@@ -59,45 +60,6 @@ _HOURS = 24
 _MINUTES_PER_HOUR = 60
 
 
-@dataclass(frozen=True, slots=True)
-class ValidationResult:
-    """Outcome of one validation test.
-
-    Named ``ValidationResult`` and not ``TestResult``: pytest tries to collect
-    every class called ``Test*`` that a test module imports.
-
-    Attributes:
-        name: Key of the test, such as ``"volume"``, or of a part of it, such
-            as ``"monday"``.
-        statistic: The test statistic: a mean ratio, a chi-square value, a
-            Kolmogorov–Smirnov distance or a dispersion index.
-        p_value: P-value, for the tests decided by one (``None`` otherwise).
-        ci_low: Lower bound of the confidence interval, for the tests decided
-            by one (``None`` otherwise).
-        ci_high: Upper bound of the confidence interval.
-        target: Value that must fall inside the interval (``None`` for the
-            tests decided by a p-value).
-        criterion: The pass condition, such as ``"p >= 0.01"`` or
-            ``"1 in 99.875% CI"``.
-        passed: Whether the test passes; with ``details``, whether all of
-            them pass.
-        details: Parts of the test, when it has several intervals.
-        confidence: Level of the confidence interval, such as ``0.99875``,
-            for the tests decided by one (``None`` otherwise).
-    """
-
-    name: str
-    statistic: float
-    p_value: float | None
-    ci_low: float | None
-    ci_high: float | None
-    target: float | None
-    criterion: str
-    passed: bool
-    details: tuple["ValidationResult", ...] = ()
-    confidence: float | None = None
-
-
 def _p_value_result(name: str, statistic: float, p_value: float) -> ValidationResult:
     return ValidationResult(
         name=name,
@@ -108,20 +70,6 @@ def _p_value_result(name: str, statistic: float, p_value: float) -> ValidationRe
         target=None,
         criterion=f"p >= {ALPHA:g}",
         passed=bool(p_value >= ALPHA),
-    )
-
-
-def _interval_result(name: str, summary: Summary, target: float) -> ValidationResult:
-    return ValidationResult(
-        name=name,
-        statistic=summary.mean,
-        p_value=None,
-        ci_low=summary.ci_low,
-        ci_high=summary.ci_high,
-        target=target,
-        criterion=f"{target:g} in {100 * summary.confidence:g}% CI",
-        passed=summary.ci_low <= target <= summary.ci_high,
-        confidence=summary.confidence,
     )
 
 
@@ -183,9 +131,9 @@ def check_volume(profile: ArrivalProfile, days: Sequence[DayRecord]) -> Validati
 
     confidence = 1 - ALPHA / (1 + len(WEEKDAY_NAMES))
     details = (
-        _interval_result("total", summarize(ratios, confidence), 1.0),
+        interval_result("total", summarize(ratios, confidence), 1.0),
         *(
-            _interval_result(name, summarize(ratios[weekdays == k], confidence), 1.0)
+            interval_result(name, summarize(ratios[weekdays == k], confidence), 1.0)
             for k, name in enumerate(WEEKDAY_NAMES)
         ),
     )
@@ -476,12 +424,12 @@ def check_dispersion(
 
     confidence = 1 - ALPHA / 2
     details = (
-        _interval_result(
+        interval_result(
             "unconditional",
             summarize((pearson_index(profile, r) for r in replications), confidence),
             theory,
         ),
-        _interval_result(
+        interval_result(
             "conditional",
             summarize((conditional_pearson_index(profile, r) for r in replications), confidence),
             1.0,
@@ -568,13 +516,6 @@ class ArrivalValidation:
         raise KeyError(name)
 
 
-def _check_count(name: str, value: object, minimum: int) -> int:
-    # bool is a subclass of int in Python: True must not pass as 1.
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
-    return value
-
-
 def check_validation_counts(
     days: int, replicas: int, short_runs: int, short_days: int
 ) -> tuple[int, int, int, int]:
@@ -597,10 +538,10 @@ def check_validation_counts(
         ValueError: If a value is not an integer or is below its limit.
     """
     return (
-        _check_count("days", days, MIN_DAYS),
-        _check_count("replicas", replicas, 2),
-        _check_count("short_runs", short_runs, 2),
-        _check_count("short_days", short_days, 1),
+        check_count("days", days, MIN_DAYS),
+        check_count("replicas", replicas, 2),
+        check_count("short_runs", short_runs, 2),
+        check_count("short_days", short_days, 1),
     )
 
 

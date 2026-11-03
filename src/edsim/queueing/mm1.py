@@ -161,8 +161,12 @@ class MM1Metrics:
     lam_obs: float
 
 
-def _time_in_window(start: float, end: float, window_start: float, window_end: float) -> float:
-    """Length of the interval ``[start, end]`` that falls inside the window."""
+def time_in_window(start: float, end: float, window_start: float, window_end: float) -> float:
+    """Length of the interval ``[start, end]`` that falls inside the window.
+
+    The clipping rule of every time average over a window; ``engine.analysis``
+    uses it too.
+    """
     return max(0.0, min(end, window_end) - max(start, window_start))
 
 
@@ -208,10 +212,10 @@ def mm1_metrics(records: Sequence[CustomerRecord], warmup: float, horizon: float
         start = r.service_start if r.service_start is not None else horizon
         end = r.departure if r.departure is not None else horizon
 
-        area_queue += _time_in_window(r.arrival, start, warmup, horizon)
-        area_system += _time_in_window(r.arrival, end, warmup, horizon)
+        area_queue += time_in_window(r.arrival, start, warmup, horizon)
+        area_system += time_in_window(r.arrival, end, warmup, horizon)
         if r.service_start is not None:
-            area_busy += _time_in_window(r.service_start, end, warmup, horizon)
+            area_busy += time_in_window(r.service_start, end, warmup, horizon)
 
         if warmup <= r.arrival < horizon:
             arrivals_in_window += 1

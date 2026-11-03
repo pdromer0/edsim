@@ -40,7 +40,8 @@ import numpy as np
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, rate
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.arrivals.validation import ALPHA, ValidationResult
+from edsim.arrivals.validation import ALPHA
+from edsim.checks import ValidationResult, all_of, check_count, interval_result, tolerance_result
 from edsim.engine.analysis import RunAnalysis, analyze_run, hourly_means_by_day, step_curves
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
@@ -49,7 +50,7 @@ from edsim.engine.events import Event, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import check_invariants
 from edsim.seeds import child_streams
-from edsim.stats import Summary, summarize
+from edsim.stats import summarize
 
 INFINITE = 10_000
 """Capacity that no run reaches: the pools of the reference queues that must not queue."""
@@ -58,56 +59,9 @@ SamplerFactory = Callable[[np.random.SeedSequence], Sampler]
 """Builds the sampler of a replication from its seed; only for the power tests."""
 
 
-# --- Results ------------------------------------------------------------------------
-# ValidationResult is the one of milestone 2, so that the CLI prints both tables
-# alike. The helpers that build it there are private to arrivals/, which this
-# task does not touch: these are copies (debt for the closing task, a common module).
-
-
-def _interval_result(name: str, summary: Summary, target: float) -> ValidationResult:
-    return ValidationResult(
-        name=name,
-        statistic=summary.mean,
-        p_value=None,
-        ci_low=summary.ci_low,
-        ci_high=summary.ci_high,
-        target=target,
-        criterion=f"{target:g} in {100 * summary.confidence:g}% CI",
-        passed=summary.ci_low <= target <= summary.ci_high,
-        confidence=summary.confidence,
-    )
-
-
-def _all_of(name: str, details: tuple[ValidationResult, ...]) -> ValidationResult:
-    """A check made of several intervals: it passes if all of them do.
-
-    The statistic is the number of intervals that miss their target.
-    """
-    misses = sum(not d.passed for d in details)
-    return ValidationResult(
-        name=name,
-        statistic=float(misses),
-        p_value=None,
-        ci_low=None,
-        ci_high=None,
-        target=None,
-        criterion=f"all {len(details)} targets in their {100 * details[0].confidence:g}% CI",
-        passed=misses == 0,
-        details=details,
-        confidence=details[0].confidence,
-    )
-
-
-def _check_count(name: str, value: object, minimum: int) -> int:
-    # bool is a subclass of int in Python: True must not pass as 1.
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
-    return value
-
-
 def _check_days(days: object, warmup_days: object) -> tuple[int, int]:
-    days = _check_count("days", days, 1)
-    warmup_days = _check_count("warmup_days", warmup_days, 0)
+    days = check_count("days", days, 1)
+    warmup_days = check_count("warmup_days", warmup_days, 0)
     if warmup_days >= days:
         raise ValueError(f"warmup_days must be less than days ({days}), got {warmup_days}")
     return days, warmup_days
@@ -285,7 +239,7 @@ def check_mg1(
     Raises:
         ValueError: If a count is not valid or the queue is unstable.
     """
-    replicas = _check_count("replicas", replicas, 2)
+    replicas = check_count("replicas", replicas, 2)
     days, warmup_days = _check_days(days, warmup_days)
     mg1 = mg1_center(center)
     profile = flat_profile(daily_base)
@@ -301,12 +255,12 @@ def check_mg1(
 
     confidence = 1 - ALPHA / 3
     details = (
-        _interval_result("wq", summarize(wq, confidence), theory.wq),
-        _interval_result("rho", summarize(rho, confidence), theory.rho),
-        _interval_result("lq", summarize(lq, confidence), theory.lq),
+        interval_result("wq", summarize(wq, confidence), theory.wq),
+        interval_result("rho", summarize(rho, confidence), theory.rho),
+        interval_result("lq", summarize(lq, confidence), theory.lq),
     )
     result = dataclasses.replace(
-        _all_of("mg1", details),
+        all_of("mg1", details),
         statistic=details[0].statistic,
         ci_low=details[0].ci_low,
         ci_high=details[0].ci_high,
@@ -568,9 +522,9 @@ def check_infinite_server(
         capacity (statistic: inexact episodes over all the replications) and
         the census by hour.
     """
-    replicas = _check_count("replicas", replicas, 2)
+    replicas = check_count("replicas", replicas, 2)
     days, warmup_days = _check_days(days, warmup_days)
-    n_stays = _check_count("n_stays", n_stays, 1000)
+    n_stays = check_count("n_stays", n_stays, 1000)
     no_z = dataclasses.replace(profile, daily_cv=0.0)
     hypothesis = no_z if hypothesis is None else dataclasses.replace(hypothesis, daily_cv=0.0)
     infinite = infinite_center(center)
@@ -588,7 +542,7 @@ def check_infinite_server(
 
     confidence = 1 - ALPHA / HOURS
     details = tuple(
-        _interval_result(f"{h:02d}h", summarize(census[:, h], confidence), float(expected[h]))
+        interval_result(f"{h:02d}h", summarize(census[:, h], confidence), float(expected[h]))
         for h in range(HOURS)
     )
     exact = ValidationResult(
@@ -607,7 +561,7 @@ def check_infinite_server(
         ci_low=np.array([d.ci_low for d in details]),
         ci_high=np.array([d.ci_high for d in details]),
     )
-    return _all_of("mtginf", details), exact, hourly
+    return all_of("mtginf", details), exact, hourly
 
 
 # --- Operational laws -------------------------------------------------------------------
@@ -617,19 +571,6 @@ LITTLE_TOLERANCE = 0.02
 
 UTILIZATION_TOLERANCE = 1e-9
 """Largest relative error of the identity of utilization: rounding only."""
-
-
-def _tolerance_result(name: str, error: float, tolerance: float) -> ValidationResult:
-    return ValidationResult(
-        name=name,
-        statistic=float(error),
-        p_value=None,
-        ci_low=None,
-        ci_high=None,
-        target=None,
-        criterion=f"relative error <= {tolerance:g}",
-        passed=bool(error <= tolerance),
-    )
 
 
 def check_operational_laws(
@@ -669,11 +610,11 @@ def _operational_results(center: CenterConfig, run: _Run) -> tuple[ValidationRes
     return (
         invariants,
         *(
-            _tolerance_result(f"little_{law.name}", law.relative_error, LITTLE_TOLERANCE)
+            tolerance_result(f"little_{law.name}", law.relative_error, LITTLE_TOLERANCE)
             for law in run.analysis.little
         ),
         *(
-            _tolerance_result(f"utilization_{u.pool}", u.relative_error, UTILIZATION_TOLERANCE)
+            tolerance_result(f"utilization_{u.pool}", u.relative_error, UTILIZATION_TOLERANCE)
             for u in run.analysis.utilization
         ),
     )
@@ -706,8 +647,8 @@ def check_more_doctors(
         The result, with the mean difference in minutes and its interval
         (``target`` 0, which the interval must stay below).
     """
-    extra = _check_count("extra", extra, 1)
-    replicas = _check_count("replicas", replicas, 2)
+    extra = check_count("extra", extra, 1)
+    replicas = check_count("replicas", replicas, 2)
     days, warmup_days = _check_days(days, warmup_days)
     more = dataclasses.replace(center, doctors=tuple(d + extra for d in center.doctors))
 
@@ -790,9 +731,9 @@ def check_engine_validation_counts(
     Raises:
         ValueError: If a count is not valid.
     """
-    _check_count("replicas", replicas, 2)
-    _check_count("paired_replicas", paired_replicas, 2)
-    _check_count("n_stays", n_stays, 1000)
+    check_count("replicas", replicas, 2)
+    check_count("paired_replicas", paired_replicas, 2)
+    check_count("n_stays", n_stays, 1000)
     for days in (mg1_days, mtginf_days, long_days, paired_days):
         _check_days(days, warmup_days)
 
@@ -903,8 +844,8 @@ def census_by_day_and_hour(
         ValueError: If ``days`` is not a positive integer or ``replicas`` is
             less than 2.
     """
-    days = _check_count("days", days, 1)
-    replicas = _check_count("replicas", replicas, 2)
+    days = check_count("days", days, 1)
+    replicas = check_count("replicas", replicas, 2)
     horizon = days * MINUTES_PER_DAY
     out = []
     for child in child_streams(seed, replicas):
@@ -946,7 +887,7 @@ def check_warmup(census: np.ndarray, day: int, reference_day: int) -> Validation
     confidence = 1 - ALPHA / HOURS
     differences = census[:, day, :] - census[:, reference_day, :]
     details = tuple(
-        _interval_result(f"{h:02d}h", summarize(differences[:, h], confidence), 0.0)
+        interval_result(f"{h:02d}h", summarize(differences[:, h], confidence), 0.0)
         for h in range(HOURS)
     )
-    return _all_of("warmup", details)
+    return all_of("warmup", details)

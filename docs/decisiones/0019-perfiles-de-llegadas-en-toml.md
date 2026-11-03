@@ -26,3 +26,7 @@ Motivo: parámetros en los términos que entiende un clínico, sin dependencias 
 - Los repartos no tienen que sumar exactamente 100, y normalizar dos veces no cambia nada.
 - Los tests usan su propio perfil (`tests/data/llegadas_ejemplo.toml`) y un test aparte comprueba que el fichero real es válido: recalibrar el centro no rompe los valores calculados a mano.
 - `dataclasses.replace` vuelve a normalizar y puede cambiar el último bit de los factores; los tests que necesitan otra variante cargan una copia del TOML.
+
+## Nota de actualización (2026-11-03)
+
+TOML es ya el formato de toda la configuración, no solo del perfil de llegadas: en el hito 3 se añadió `config/centro.toml`, leído con `tomllib` y validado en `CenterConfig.__post_init__` con el mismo patrón que `ArrivalProfile` ([especificación del hito 3](../specs/hito-3.md#triaje-y-actividades-provisionales)). El diseño ya no menciona YAML con Pydantic: la tabla de tecnología dice "TOML leído con tomllib y validado con dataclasses al construir", y los ejemplos de catálogo y de experimento están en TOML. La decisión no cambia.
