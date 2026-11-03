@@ -138,6 +138,22 @@ class RunStore:
         )
         return valid, invalid
 
+    def suggest_run_id(self, preferred: str) -> str | None:
+        """Find a free identifier without truncating the preferred name.
+
+        Return None when a collision suffix cannot fit in 64 characters.
+        Occupied names include invalid runs, files and dangling symlinks.
+        """
+        validate_run_id(preferred)
+        candidate = preferred
+        index = 2
+        while self.exists(candidate):
+            candidate = f"{preferred}-{index}"
+            if len(candidate) > 64:
+                return None
+            index += 1
+        return candidate
+
     def list(self) -> list[RunInfo]:
         """Valid runs, most recent first; hidden and invalid runs are omitted."""
         return self._scan()[0]

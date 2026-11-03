@@ -308,3 +308,34 @@ def test_variant_api_is_public():
     for name in ("MAX_VARIANT_NAME_LENGTH", "CenterDifference", "center_diff", "write_variant"):
         assert name in runs.__all__
         assert getattr(runs, name) is not None
+
+
+def test_list_variants_filters_names_and_types_without_reading_contents(tmp_path):
+    from edsim.runs import list_variants
+
+    for name in (
+        "z.toml",
+        "A.toml",
+        "a-2.toml",
+        "x" * 42 + ".toml",
+        ".hidden.toml",
+        "-bad.toml",
+        "ñ.toml",
+        "space name.toml",
+        "x" * 43 + ".toml",
+        "draft.tmp",
+        "draft.toml~",
+        "upper.TOML",
+    ):
+        (tmp_path / name).write_text("contents deliberately not valid TOML")
+    (tmp_path / "directory.toml").mkdir()
+    (tmp_path / "linked.toml").symlink_to(tmp_path / "A.toml")
+    (tmp_path / "missing.toml").symlink_to(tmp_path / "absent")
+    assert [p.name for p in list_variants(tmp_path)] == [
+        "A.toml",
+        "a-2.toml",
+        "x" * 42 + ".toml",
+        "z.toml",
+    ]
+    assert list_variants(tmp_path / "not-created") == ()
+    assert "list_variants" in runs.__all__

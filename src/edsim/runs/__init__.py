@@ -1,6 +1,7 @@
 """Public services for persisted EDsim runs, independent of the UI."""
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
+from edsim.arrivals.report import config_fingerprint
 from edsim.engine.center import (
     CenterConfig,
     center_from_values,
@@ -16,6 +17,7 @@ from edsim.runs.variants import (
     MAX_VARIANT_NAME_LENGTH,
     CenterDifference,
     center_diff,
+    list_variants,
     write_variant,
 )
 
@@ -31,6 +33,8 @@ __all__ = [
     "SimulationResult",
     "center_diff",
     "center_from_values",
+    "config_fingerprint",
+    "list_variants",
     "load_center",
     "load_profile",
     "offered_work",
