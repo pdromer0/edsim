@@ -2,6 +2,7 @@
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.report import config_fingerprint
+from edsim.engine.analysis import EpisodeRecord, RunAnalysis, StepCurves, WindowMetrics
 from edsim.engine.center import (
     CenterConfig,
     center_from_values,
@@ -9,8 +10,27 @@ from edsim.engine.center import (
     read_center_values,
     validate_center_values,
 )
+from edsim.engine.events import TIMEZONE
+from edsim.engine.invariants import Violation
+from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
+from edsim.engine.targets import Compliance
+from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
 from edsim.runs.identifiers import validate_run_id
+from edsim.runs.metrics import (
+    LevelCompliance,
+    WindowCompliance,
+    WindowKPIs,
+    window_compliance,
+    window_kpis,
+)
 from edsim.runs.offered import OfferedWork, offered_work
+from edsim.runs.results import (
+    RunAnalysisError,
+    RunReadError,
+    RunResults,
+    read_run_header,
+    read_run_results,
+)
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
 from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
@@ -27,24 +47,47 @@ __all__ = [
     "CenterConfig",
     "CenterDifference",
     "CenterSummary",
+    "Compliance",
+    "CurveBlocks",
+    "CurveSteps",
     "DurationSummary",
+    "EpisodeRecord",
+    "LevelCompliance",
     "MAX_VARIANT_NAME_LENGTH",
+    "MAX_VIOLATIONS_SHOWN",
+    "SUMMARY_MEASURES",
+    "TIMEZONE",
     "OfferedWork",
     "RunConfigurationError",
+    "RunAnalysis",
+    "RunAnalysisError",
+    "RunReadError",
+    "RunResults",
     "RunInfo",
     "RunStore",
     "SimulationResult",
+    "StepCurves",
+    "WindowCompliance",
+    "WindowKPIs",
+    "WindowMetrics",
+    "Violation",
     "center_diff",
     "center_from_values",
     "config_fingerprint",
+    "curve_blocks",
+    "curve_steps",
     "list_variants",
     "load_center",
     "load_profile",
     "offered_work",
     "read_center_values",
+    "read_run_header",
+    "read_run_results",
     "simulate_run",
     "summarize_center",
     "validate_center_values",
     "validate_run_id",
     "write_variant",
+    "window_compliance",
+    "window_kpis",
 ]

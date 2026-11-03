@@ -15,6 +15,15 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from edsim.runs.identifiers import validate_run_id
 
+_RUN_FILES = (
+    "run.json",
+    "centro.toml",
+    "llegadas.toml",
+    "eventos.jsonl",
+    "ground_truth_episodios.csv",
+    "ground_truth_dias.csv",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RunInfo:
@@ -168,23 +177,22 @@ class RunStore:
 
     def archive(self, run_id: str) -> bytes:
         """Zip the six persisted files, rejecting symlinks and non-regular entries."""
-        directory = self._path(run_id)
-        files = [
-            directory / name
-            for name in (
-                "run.json",
-                "centro.toml",
-                "llegadas.toml",
-                "eventos.jsonl",
-                "ground_truth_episodios.csv",
-                "ground_truth_dias.csv",
-            )
-        ]
-        for path in files:
-            if not stat.S_ISREG(path.lstat().st_mode):
-                raise ValueError(f"archive requires regular files: {path}")
+        files = [self._file(run_id, name) for name in _RUN_FILES]
         buffer = BytesIO()
         with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
             for path in files:
                 archive.write(path, arcname=path.name)
         return buffer.getvalue()
+
+    def _file(self, run_id: str, filename: str) -> Path:
+        """Resolve one regular format file before opening it, including FIFOs."""
+        if filename not in _RUN_FILES:
+            raise ValueError(f"unknown run filename: {filename!r}")
+        path = self._path(run_id) / filename
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError(f"run requires regular files: {path}")
+        return path
+
+    def read_file(self, run_id: str, filename: str) -> bytes:
+        """Read one of the six format files, rejecting links and other entries."""
+        return self._file(run_id, filename).read_bytes()

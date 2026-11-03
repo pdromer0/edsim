@@ -139,3 +139,76 @@ def test_utilization_table_preserves_core_values_and_strict_thresholds():
     html = style_utilization(frame).to_html()
     assert "85,0%" in html
     assert "#ffdddd" in html and "#fff0cc" in html
+
+
+def test_results_kpis_keep_counts_and_missing_statistics_numeric():
+    import pandas as pd
+
+    from edsim.runs import WindowKPIs
+    from edsim_app.frames import format_number, kpis_frame
+
+    frame = kpis_frame(WindowKPIs(0, 3.5, 2.25, None, None, None, None, 0, 0, None))
+    assert is_numeric_dtype(frame["Valor"])
+    values = frame.set_index("Indicador")["Valor"]
+    assert values["Llegadas por día"] == 3.5
+    assert values["Episodios desalojados"] == values["Desalojos totales"] == 0
+    assert pd.isna(values["Estancia media"])
+    assert format_number(None) == format_number(float("nan")) == "—"
+    assert format_number(0.125, percentage=True) == "12,5 %"
+
+
+def test_results_empty_level_preserves_none_and_formats_dash(catalog):
+    import pandas as pd
+
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.frames import style_waits, waits_frame
+
+    result = read_run_results(RunStore(catalog), "older")
+    first = result.analysis.metrics.by_level[0]
+    empty = replace(first, n=0, mean=dict.fromkeys(first.mean), p90=dict.fromkeys(first.p90))
+    metrics = replace(
+        result.analysis.metrics, by_level=(empty, *result.analysis.metrics.by_level[1:])
+    )
+    compliance = replace(
+        result.compliance.by_level[0], n=0, exceeded=0, exceeded_share=None, share_out=None
+    )
+    result = replace(
+        result,
+        analysis=replace(result.analysis, metrics=metrics),
+        compliance=replace(
+            result.compliance, by_level=(compliance, *result.compliance.by_level[1:])
+        ),
+    )
+    frame = waits_frame(result)
+    assert frame.loc[0, "n"] == 0
+    assert pd.isna(frame.loc[0, "Estancia media (min)"])
+    assert frame.loc[0, "Pacientes que superan el máximo"] == 0
+    assert pd.isna(frame.loc[0, "Superan el máximo"])
+    assert "—" in style_waits(frame).to_html()
+
+
+def test_results_occupancy_keeps_ratios_above_one_and_little_product(catalog):
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.frames import hourly_census_frame, little_frame, occupancy_frame, style_little
+
+    result = read_run_results(RunStore(catalog), "older")
+    original = result.analysis.metrics.occupancy[0]
+    occupancy = replace(original, busy_area=original.staff_area * 1.2)
+    metrics = replace(
+        result.analysis.metrics, occupancy=(occupancy, *result.analysis.metrics.occupancy[1:])
+    )
+    changed = replace(result, analysis=replace(result.analysis, metrics=metrics))
+    frame = occupancy_frame(changed)
+    assert len(frame) == 9 and frame.iloc[0]["Ocupación"] == 1.2
+    assert frame.iloc[0]["Etiqueta"] == "120,0 %"
+    little = little_frame(result)
+    assert little["λ·W"].tolist() == [law.lam * law.w for law in result.analysis.little]
+    assert little["Error relativo"].tolist() == [
+        law.relative_error for law in result.analysis.little
+    ]
+    assert "λ·W" in style_little(little).to_html()
+    hourly = hourly_census_frame(result)
+    assert hourly["Hora del día"].tolist() == list(range(24))
+    assert hourly["Censo medio"].tolist() == result.hourly_census.tolist()
+    hourly.loc[0, "Censo medio"] = -1
+    assert result.hourly_census[0] >= 0

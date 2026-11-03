@@ -41,6 +41,22 @@ def catalog(catalog_root, run_templates):
 
 
 @pytest.fixture
+def weekly_catalog(catalog):
+    """Eight days is the smallest horizon that exercises a second weekly block."""
+    simulate_run(
+        "tests/data/centro_ejemplo.toml",
+        "tests/data/llegadas_ejemplo.toml",
+        8,
+        7,
+        output_dir=catalog / "weekly",
+        run_id="weekly",
+        warmup_days=1,
+        origin="app",
+    )
+    return catalog
+
+
+@pytest.fixture
 def run_info():
     return RunInfo(
         format_version=1,
@@ -71,6 +87,7 @@ def simulation_files(tmp_path, monkeypatch):
     from edsim_app import defaults, preview
 
     st.cache_data.clear()
+    st.cache_resource.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
     for name in ("centro.toml", "llegadas.toml"):
@@ -85,3 +102,4 @@ def simulation_files(tmp_path, monkeypatch):
     )
     yield config
     st.cache_data.clear()
+    st.cache_resource.clear()

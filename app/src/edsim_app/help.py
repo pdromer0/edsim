@@ -3,6 +3,38 @@
 import streamlit as st
 
 
+def render_results_help() -> None:
+    """Explain the two populations and the limitations of replaying invariants."""
+    with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "Las llegadas y el censo usan toda la ventana sin calentamiento, incluidos "
+            "los pacientes que siguen dentro al final. Las esperas, estancias, desalojos "
+            "e ingresos usan solo episodios que llegan en la ventana y salen. «—» indica "
+            "una estadística sin pacientes. El nivel 1 exige atención inmediata (0 minutos). "
+            "Manchester mide puerta-médico: exactamente "
+            "en el máximo cumple; los días fuera de objetivo tienen menos del 90 % de "
+            "pacientes dentro del máximo y se cuentan solo días con pacientes del nivel."
+        )
+        st.write(
+            "Puerta-médico incluye la espera de triaje y el propio triaje. Por eso el "
+            "nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual: sus "
+            "pacientes superan el máximo y sus días con pacientes salen al 100 % fuera "
+            "de objetivo. Es el hallazgo del hito 3 sobre el nivel 1 sin prioridad en "
+            "el triaje, pendiente de resolver en el hito 4."
+        )
+        st.write(
+            "Dos subcomprobaciones de conservación solo existen durante la simulación: "
+            "llegadas frente al ground truth y procesos vivos en SimPy (inside). Al "
+            "recalcular desde el log no se pueden repetir; el recuento puede diferir "
+            "del guardado. El cero guardado conserva la comprobación completa original."
+        )
+        st.write(
+            "La ley de Little compara L (pacientes medios) con λ·W (llegadas por minuto "
+            "por tiempo medio en minutos). Una ventana finita puede dar diferencias "
+            "porque sus bordes cortan episodios."
+        )
+
+
 def render_runs_help() -> None:
     """Explain persisted runs, reproducibility, and invalid catalog entries."""
     with st.expander("¿Qué estoy viendo?"):
