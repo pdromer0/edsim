@@ -516,3 +516,18 @@ def test_service_missing_input_cleans_temporary(simulate, tmp_path):
     with pytest.raises(FileNotFoundError):
         simulate(center=tmp_path / "missing.toml")
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("mask", [0o002, 0o022, 0o027, 0o077])
+def test_published_directory_matches_normal_mkdir_permissions(simulate, tmp_path, mask):
+    import os
+    import stat
+
+    previous = os.umask(mask)
+    try:
+        reference = tmp_path / "reference"
+        reference.mkdir()
+        simulate()
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE((tmp_path / "run").stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)

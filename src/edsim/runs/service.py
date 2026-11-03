@@ -1,6 +1,7 @@
 """Create complete, reproducible runs before publishing them to disk."""
 
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -93,6 +94,11 @@ def simulate_run(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{run_id}-", dir=destination.parent))
     try:
+        # Observe normal mkdir permissions without changing the process-wide umask.
+        mode_reference = temporary / ".permissions"
+        mode_reference.mkdir()
+        temporary.chmod(stat.S_IMODE(mode_reference.stat().st_mode))
+        mode_reference.rmdir()
         center_copy, profile_copy = temporary / "centro.toml", temporary / "llegadas.toml"
         shutil.copyfile(center, center_copy)
         shutil.copyfile(profile, profile_copy)
