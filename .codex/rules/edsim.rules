@@ -1,0 +1,114 @@
+# Permisos de EDsim para Codex 0.166.0.
+# match y not_match son ejemplos que el motor valida al cargar las reglas.
+
+# Permite cambiar o crear ramas: .git es de solo lectura dentro del sandbox.
+prefix_rule(
+    pattern = ["git", "switch"],
+    decision = "allow",
+    match = ["git switch -c prueba"],
+    not_match = ["git status"],
+)
+
+# Permite preparar cambios: el índice de .git es de solo lectura dentro del sandbox.
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "allow",
+    match = ["git add ."],
+    not_match = ["git commit -m prueba"],
+)
+
+# Permite crear commits: .git es de solo lectura dentro del sandbox.
+prefix_rule(
+    pattern = ["git", "commit"],
+    decision = "allow",
+    match = ["git commit -m prueba"],
+    not_match = ["git push"],
+)
+
+# Permite actualizar la rama: necesita red y escribir en .git, restringidos en el sandbox.
+prefix_rule(
+    pattern = ["git", "pull"],
+    decision = "allow",
+    match = ["git pull --ff-only"],
+    not_match = ["git push"],
+)
+
+# Permite consultar el estado de git cuando se solicita salir del sandbox; .git sigue protegido dentro de él.
+prefix_rule(
+    pattern = ["git", "status"],
+    decision = "allow",
+    match = ["git status --short"],
+    not_match = ["git log"],
+)
+
+# Permite consultar diferencias cuando se solicita salir del sandbox; no autoriza otros subcomandos de git.
+prefix_rule(
+    pattern = ["git", "diff"],
+    decision = "allow",
+    match = ["git diff --check"],
+    not_match = ["git status"],
+)
+
+# Permite consultar el historial cuando se solicita salir del sandbox; no autoriza escrituras en .git.
+prefix_rule(
+    pattern = ["git", "log"],
+    decision = "allow",
+    match = ["git log -5 --oneline"],
+    not_match = ["git diff"],
+)
+
+# Permite abrir el PR de la tarea: necesita salir del sandbox porque la red está cerrada.
+prefix_rule(
+    pattern = ["gh", "pr", "create"],
+    decision = "allow",
+    match = ["gh pr create --fill"],
+    not_match = ["gh pr merge 1"],
+)
+
+# Permite consultar un PR: necesita salir del sandbox porque la red está cerrada.
+prefix_rule(
+    pattern = ["gh", "pr", "view"],
+    decision = "allow",
+    match = ["gh pr view 1"],
+    not_match = ["gh pr merge 1"],
+)
+
+# Permite consultar las comprobaciones del PR: necesita red, cerrada en el sandbox.
+prefix_rule(
+    pattern = ["gh", "pr", "checks"],
+    decision = "allow",
+    match = ["gh pr checks 1"],
+    not_match = ["gh pr merge 1"],
+)
+
+# Permite consultar ejecuciones de CI: necesita red, cerrada en el sandbox.
+prefix_rule(
+    pattern = ["gh", "run", "view"],
+    decision = "allow",
+    match = ["gh run view 1"],
+    not_match = ["gh run cancel 1"],
+)
+
+# El push necesita red y permiso explícito de Pedro antes de publicar cambios.
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    match = ["git push -u origin prueba"],
+    not_match = ["git pull"],
+)
+
+# Sincronizar dependencias necesita red, cerrada en el sandbox; requiere permiso de Pedro.
+prefix_rule(
+    pattern = ["uv", "sync"],
+    decision = "prompt",
+    match = ["uv sync --locked"],
+    not_match = ["uv run pytest"],
+)
+
+# La fusión de pull requests está reservada a Pedro; el agente nunca fusiona.
+prefix_rule(
+    pattern = ["gh", "pr", "merge"],
+    decision = "forbidden",
+    match = ["gh pr merge 1"],
+    not_match = ["gh pr create --fill"],
+)

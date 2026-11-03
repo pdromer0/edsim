@@ -1,0 +1,8 @@
+# Permite escribir en el espacio de trabajo y mantiene las restricciones del sandbox.
+sandbox_mode = "workspace-write"
+
+# Permite solicitar aprobación cuando una acción necesita salir del sandbox.
+approval_policy = "on-request"
+
+# La red permanece desactivada por defecto; el modelo es una preferencia personal.
+# En Codex 0.166.0 los hooks están activados por defecto.
