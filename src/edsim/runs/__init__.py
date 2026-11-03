@@ -11,14 +11,23 @@ from edsim.engine.center import (
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
+from edsim.runs.variants import (
+    MAX_VARIANT_NAME_LENGTH,
+    CenterDifference,
+    center_diff,
+    write_variant,
+)
 
 __all__ = [
     "ArrivalProfile",
     "CenterConfig",
+    "CenterDifference",
+    "MAX_VARIANT_NAME_LENGTH",
     "RunConfigurationError",
     "RunInfo",
     "RunStore",
     "SimulationResult",
+    "center_diff",
     "center_from_values",
     "load_center",
     "load_profile",
@@ -26,4 +35,5 @@ __all__ = [
     "simulate_run",
     "validate_center_values",
     "validate_run_id",
+    "write_variant",
 ]
