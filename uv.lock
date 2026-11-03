@@ -457,6 +457,7 @@ name = "edsim-app"
 version = "0.1.0"
 source = { editable = "app" }
 dependencies = [
+    { name = "altair" },
     { name = "edsim" },
     { name = "jinja2" },
     { name = "pandas" },
@@ -465,6 +466,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "altair", specifier = ">=6.3.0" },
     { name = "edsim", editable = "." },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "pandas", specifier = ">=3.1.0" },

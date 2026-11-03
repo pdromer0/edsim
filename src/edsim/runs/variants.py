@@ -18,6 +18,28 @@ from edsim.runs.identifiers import validate_run_id
 MAX_VARIANT_NAME_LENGTH = 64 - len("-r") - 20
 
 
+def list_variants(root: str | Path) -> tuple[Path, ...]:
+    """List regular, non-hidden variant files in stable name order.
+
+    Only names are checked; contents are validated when the user opens them.
+    Missing directories are empty catalogs. Other filesystem errors propagate.
+    """
+    root = Path(root)
+    if not root.exists():
+        return ()
+    result = []
+    for path in sorted(root.iterdir()):
+        if path.is_symlink() or not path.is_file() or path.suffix != ".toml":
+            continue
+        try:
+            validate_run_id(path.stem)
+        except ValueError:
+            continue
+        if len(path.stem) <= MAX_VARIANT_NAME_LENGTH:
+            result.append(path)
+    return tuple(result)
+
+
 @dataclass(frozen=True, slots=True)
 class CenterDifference:
     """One changed TOML key and its normalized values, before and after."""

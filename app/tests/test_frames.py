@@ -13,7 +13,7 @@ def test_run_table_columns_values_and_fixed_timezone(run_info):
         {
             "Ejecución": "example",
             "Variante del centro": "base",
-            "Fecha de creación": "04/07/2026 00:30:00",
+            "Fecha de creación (UTC+1)": "04/07/2026 00:30:00",
             "Días": 4,
             "Calentamiento (días)": 2,
             "Semilla": 2026,
@@ -39,7 +39,7 @@ def test_empty_table_keeps_all_headers():
     assert list(frame.columns) == [
         "Ejecución",
         "Variante del centro",
-        "Fecha de creación",
+        "Fecha de creación (UTC+1)",
         "Días",
         "Calentamiento (días)",
         "Semilla",
@@ -56,3 +56,86 @@ def test_decimal_comma_does_not_turn_numbers_into_strings(run_info):
     assert "307,5" in styled.to_html()
     assert is_numeric_dtype(styled.data["Llegadas por día"])
     assert styled.data.loc[0, "Llegadas por día"] == 307.5
+
+
+def test_offered_blocks_integrate_linear_load_and_exclude_final_endpoint():
+    from datetime import date
+
+    import numpy as np
+
+    from edsim.runs import OfferedWork
+    from edsim_app.frames import offered_frame
+
+    minutes = np.arange(1441)
+    load = minutes.astype(float)
+    capacity = np.where(minutes < 8 * 60, 2, 4)
+    work = OfferedWork(
+        date(2026, 1, 5),
+        1,
+        1,
+        minutes,
+        {"medicos": load},
+        {"medicos": capacity},
+        {"medicos": (0, 0, 0)},
+    )
+    frame = offered_frame(work, "medicos")
+    assert frame.shape == (96, 3)
+    assert frame["Carga ofrecida"].iloc[0] == 7.5
+    assert frame["Carga ofrecida"].iloc[-1] == 1432.5
+    assert frame["Capacidad"].iloc[31:33].tolist() == [2, 4]
+    assert frame["Fecha y hora"].iloc[0].isoformat() == "2026-01-05T00:00:00+01:00"
+    assert frame["Fecha y hora"].iloc[-1].isoformat() == "2026-01-05T23:45:00+01:00"
+    work.load["medicos"][:] = 3.25
+    assert (offered_frame(work, "medicos")["Carga ofrecida"] == 3.25).all()
+
+
+def test_offered_blocks_cross_check_shift_utilization():
+    import pytest
+
+    from edsim.runs import load_center, load_profile, offered_work
+    from edsim_app.frames import POOL_LABELS, offered_frame
+
+    center = load_center("tests/data/centro_ejemplo.toml")
+    profile = load_profile("tests/data/llegadas_ejemplo.toml")
+    work = offered_work(center, profile, days=2, sample_size=32)
+    for pool in POOL_LABELS:
+        frame = offered_frame(work, pool)
+        hours = frame["Fecha y hora"].dt.hour
+        morning, afternoon, night = center.shift_starts
+        masks = (
+            (hours >= morning) & (hours < afternoon),
+            (hours >= afternoon) & (hours < night),
+            (hours < morning) | (hours >= night),
+        )
+        for index, mask in enumerate(masks):
+            assert mask.any()
+            selected = frame.loc[mask]
+            assert selected["Capacidad"].nunique() == 1
+            actual = selected["Carga ofrecida"].mean() / selected["Capacidad"].iloc[0]
+            assert actual == pytest.approx(work.utilization[pool][index], rel=1e-12)
+
+
+def test_utilization_table_preserves_core_values_and_strict_thresholds():
+    from datetime import date
+
+    import numpy as np
+
+    from edsim.runs import OfferedWork
+    from edsim_app.frames import POOL_LABELS, style_utilization, utilization_frame
+
+    work = OfferedWork(
+        date(2026, 1, 5),
+        1,
+        1,
+        np.arange(1441),
+        {},
+        {},
+        {pool: (0.85, 1, 1.01) for pool in POOL_LABELS},
+    )
+    frame = utilization_frame(work)
+    assert frame["Utilización"].tolist() == [0.85, 1, 1.01] * 3
+    assert frame["Estado"].tolist() == ["Hasta 0,85", "Por encima de 0,85", "Por encima de 1"] * 3
+    assert frame["Turno"].tolist() == ["Mañana", "Tarde", "Noche"] * 3
+    html = style_utilization(frame).to_html()
+    assert "85,0%" in html
+    assert "#ffdddd" in html and "#fff0cc" in html

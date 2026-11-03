@@ -660,3 +660,34 @@ def test_published_directory_matches_normal_mkdir_permissions(simulate, tmp_path
     finally:
         os.umask(previous)
     assert stat.S_IMODE((tmp_path / "run").stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)
+
+
+def test_suggest_run_id_uses_first_free_name_including_invalid_entries(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    assert store.suggest_run_id("centro-r2026") == "centro-r2026"
+    assert not store.root.exists()
+    store.root.mkdir()
+    (store.root / "centro-r2026").mkdir()
+    (store.root / "centro-r2026-2").write_text("occupied")
+    (store.root / "centro-r2026-3").symlink_to(tmp_path / "absent")
+    assert store.suggest_run_id("centro-r2026") == "centro-r2026-4"
+
+
+def test_suggest_run_id_never_truncates_and_validates_preferred(tmp_path):
+    store = RunStore(tmp_path)
+    preferred = "v" * 42 + "-r" + "9" * 20
+    assert len(preferred) == 64
+    assert store.suggest_run_id(preferred) == preferred
+    (tmp_path / preferred).mkdir()
+    assert store.suggest_run_id(preferred) is None
+    with pytest.raises(ValueError, match="run_id"):
+        store.suggest_run_id("../invalid")
+
+
+def test_configuration_fingerprint_is_public(tmp_path):
+    import edsim.runs as runs
+
+    path = tmp_path / "profile.toml"
+    path.write_bytes(b"abc")
+    assert "config_fingerprint" in runs.__all__
+    assert runs.config_fingerprint(path) == "ba7816bf8f01"

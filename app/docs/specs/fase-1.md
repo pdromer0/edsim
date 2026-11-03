@@ -119,8 +119,18 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Todos los errores a la vez:** una función del núcleo valida cada clave por separado, con las mismas comprobaciones y mensajes que `CenterConfig`, y devuelve un error por clave; `load_center` y el editor comparten esa validación. Los mensajes del núcleo siguen en inglés, como en la CLI; la app los muestra junto a su campo, con la etiqueta en español.
 - **Variantes:** `write_variant` parte del texto de la base con tomlkit, cambia solo los valores y conserva comentarios y formato; la base sin cambios se escribe byte a byte igual. El nombre sigue la regla del `run_id`. Guardar con un nombre existente pide confirmación: una variante es un borrador, y las ejecuciones que la usaron no cambian porque guardan su propia copia.
 - **Diferencias:** `center_diff` compara los centros normalizados clave a clave, así que escribir el reparto en porcentajes o en fracciones no cuenta como cambio.
-- **Carga ofrecida:** `offered_work` reutiliza `offered_load_by_pool` del hito 3 con una muestra de pacientes de semilla fija, independiente de la ejecución. m(t) empieza vacía, así que se calcula un día más y se descarta el primero: la gráfica muestra 7 días. Comprobación: la media de m(t) en días completos es λ̄ × tiempo medio de ocupación de la muestra (identidad exacta) y se acerca a λ̄ × E\[tiempo\] calculado a mano con las lognormales (con tolerancia estadística).
+- **Carga ofrecida:** `offered_work` reutiliza `offered_load_by_pool` del hito 3 con una muestra de pacientes de semilla fija, independiente de la ejecución. m(t) empieza vacía, así que se calculan antes los días previos que hagan falta, max(1, ceil(edad máxima de ocupación de la muestra / 1440)), con una copia del perfil de fecha retrocedida; la gráfica muestra 7 días desde fecha\_inicio (carga en régimen, no la ejecución, que empieza vacía). Comprobación con tasa constante o periódica diaria: la media de m(t) en días completos es λ̄ × tiempo medio de ocupación de la muestra (identidad exacta) y se acerca a λ̄ × E\[tiempo\] calculado a mano con las lognormales (con tolerancia estadística).
 - **Tarea crítica:** tomlkit entra como dependencia del núcleo. La A.3 se divide en A.3a (núcleo, con `@codex review`) y A.3b (página).
+
+**Detalles de la A.3b** (decididos el 3 de noviembre de 2026, con lo aprendido en la A.3a):
+
+- **Origen del borrador:** el centro base (`config/centro.toml`) o una variante de `resultados/variantes/`, listadas por una función del núcleo (ficheros `*.toml` con nombre válido, sin ocultos). El borrador vive en el estado de sesión con claves propias, como la selección de la A.2b, y se guarda siempre sobre el fichero del que salió, para conservar sus comentarios.
+- **Solo se simula lo que está en disco:** con cambios sin guardar, «Simular» se desactiva y pide guardar la variante. Así `run.json` dice de qué fichero salió cada ejecución y su copia coincide con un fichero que existe.
+- **Errores y cambios:** cada campo muestra su error de `validate_center_values` (el mensaje del núcleo, bajo una etiqueta en español); «Guardar» y «Simular» se desactivan mientras haya alguno. La lista de cambios frente a la base usa `center_diff`. Sobrescribir una variante pide confirmación en dos pasos, como el borrado.
+- **Números derivados en el núcleo:** el reparto normalizado, la media de cada duración, los puntos de la curva de cada lognormal y los porcentajes globales de pruebas e ingreso salen de una función del núcleo reexportada en `edsim.runs`, con tests de valores calculados a mano. La página no calcula.
+- **Carga prevista:** `offered_work` en caché por los valores del centro y la huella del perfil (0,4 s por cálculo). La gráfica muestra un recurso cada vez, carga frente a capacidad, con medias de 15 minutos; la tabla de utilización por turno señala los turnos por encima de 0,85 y de 1. Si hay más de un día previo, la ayuda lo explica.
+- **Ejecución:** perfil `config/llegadas.toml`, días de 1 a 60 (14), calentamiento menor que los días (2), semilla (2026) y `run_id` propuesto `<variante>-r<semilla>` (`centro-r2026` para la base); si existe, se propone `-2`, `-3`… El panel de estado tiene un solo paso: `simulate_run` no informa del progreso, y añadirle una llamada de progreso cambiaría su contrato. Al terminar, un resumen y «Ver resultados», que elige la ejecución y abre Resultados con `?run=`.
+- **Retoque de la A.2b:** la tabla de Ejecuciones dice «Fecha de creación (UTC+1)».
 
 ### Resultados
 
@@ -181,7 +191,7 @@ edsim-app (paquete aparte, Streamlit)        CLI
         ▼                                       ▼
 edsim.runs (núcleo, servicios nuevos sin Streamlit)
   Ejecuciones: RunStore, simulate_run
-  Centro y carga: center_to_toml, offered_work
+  Centro y carga: write_variant, offered_work
   Métricas: window_kpis, episode_segments
   Replay y comparar: ReplayIndex, compare_runs
         │ usa
@@ -227,7 +237,7 @@ edsim/                        # repositorio
     runs/                     # sin Streamlit; también lo usa la CLI
       store.py                # RunStore: listar, abrir, crear y borrar ejecuciones; run.json
       service.py              # simulate_run: simular, escribir, comprobar y resumir
-      variants.py             # valores en bruto y errores por campo; variantes con tomlkit; diferencias
+      variants.py             # variantes con tomlkit y diferencias (la validación por campo, en engine/center.py)
       offered.py              # carga ofrecida de médicos y boxes por minuto y por turno
       kpis.py                 # KPIs de la ventana y cumplimiento de los máximos de Manchester
       timeline.py             # tramos de estado de cada episodio
@@ -276,7 +286,7 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 | `simulate_run(...) -> SimulationResult` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros, y volver a simular desde la carpeta también |
 | `RunStore(root)` | `list`, `open`, `exists`, invalid y `delete` de ejecuciones | Ida y vuelta de `run.json`; ignora carpetas temporales |
 | `write_variant(base, values, path)` y `center_diff(a, b)` | Escribe los valores en bruto de un centro sobre el TOML base, conservando sus comentarios, y lista las claves que cambian comparando centros normalizados | `Una variante escrita y leída da los mismos valores con centros aleatorios válidos; la base sin cambios se escribe byte a byte igual` |
-| `offered_work(center, profile, days)` | Minutos de médico y de box ofrecidos por minuto y utilización prevista por turno, con `offered_load` del hito 3 | Con plantilla constante, la media coincide con λ × E\[tiempo\] calculado a mano |
+| `offered_work(center, profile, days)` | Minutos de médico y de box ofrecidos por minuto y utilización prevista por turno, con `offered_load` del hito 3 | Con tasa constante o periódica diaria, la media de la ventana es λ̄ × el tiempo medio de ocupación (exacta con la muestra y cercana al valor calculado a mano); con perfiles generales, la convolución se comprueba a mano en minutos elegidos |
 | `window_kpis(analysis)` y `manchester_compliance(table, start, end)` | KPIs de la ventana y porcentaje por encima del máximo de cada nivel (el nivel 1, inmediato, solo muestra el tiempo) | Valores calculados a mano en un log pequeño |
 | `episode_segments(events)` | Tramos de estado de cada episodio, con su box | Los tramos de cada episodio son contiguos y suman su estancia |
 | `ReplayIndex.from_events(events)` y `.state_at(t)` | Estado del servicio en el minuto t: colas, boxes, plantilla, salidas recientes y últimos eventos | Los contadores coinciden con `step_curves` en todos los minutos de una ejecución |
@@ -694,3 +704,83 @@ Revisión en el chat del diff completo, sin hallazgos que bloquearan. Dos detall
 
 - A.3b: la cabecera de la tabla debe decir «Fecha de creación (UTC+1)»; en verano España está en UTC+2 y la hora mostrada no coincidiría con el reloj.
 - A.4: la comprobación de cada recarga usa `exists`, que da verdadero también para una carpeta rota. Resultados abrirá la ejecución con `open` y mostrará un mensaje claro si falla.
+
+### Tarea A.3a: núcleo de Simular
+
+PR #32 (rama `feat/app-simular-nucleo`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (`5f8abc3`). Seis commits: especificación, validación por campo, tomlkit, variantes y diferencias, carga ofrecida y una corrección que Codex encontró en su propia revisión. Tarea crítica: `@codex review` no encontró problemas y la revisión del chat tampoco encontró nada que bloqueara.
+
+**Qué se hizo**
+
+- `engine/center.py`: una sola tabla une cada clave TOML con su comprobación y la usan `CenterConfig`, `read_center_values`, `validate_center_values` (todos los errores, uno por clave), `center_from_values` y `load_center`, que conserva sus mensajes (`tests/test_center.py` sin tocar). Una clave literal con punto en la raíz del TOML no se confunde con una clave de tabla.
+- `runs/variants.py`: `write_variant` cambia con tomlkit solo los elementos que difieren, devuelve los bytes de la base si no hay cambios, publica con `os.link` (o `os.replace` al sobrescribir) desde un temporal oculto `.tmp` con los permisos de un fichero normal; `center_diff` compara centros normalizados; `MAX_VARIANT_NAME_LENGTH = 42`.
+- `runs/offered.py`: `offered_work` con días previos adaptativos, ventana desde `fecha_inicio`, carga y capacidad minuto a minuto y utilización por turno para médicos, boxes y enfermería de triaje.
+- tomlkit 0.15.2 como dependencia del núcleo; reexportaciones en `edsim.runs`, incluidos `load_center`, `load_profile` y `ArrivalProfile`.
+
+**Cambios respecto al plan y a la especificación**
+
+- Días previos adaptativos, max(1, ceil(edad máxima / 1440)), en lugar de «un día más»: con duraciones largas, un día dejaba fuera trabajo de pacientes llegados antes.
+- La identidad de Little se comprueba solo con tasa constante o periódica diaria; con perfiles generales se comprueba la convolución a mano.
+- Ventana desde `fecha_inicio` con un perfil de fecha retrocedida, para que la gráfica hable del mismo calendario que la simulación.
+- Publicación con `os.link` en lugar de comprobar y sustituir; nombre de variante de hasta 42 caracteres.
+- Añadidos tras revisar el plan: permisos normales del temporal, temporal invisible para `*.toml`, reexportaciones para la página y medidas con `days=7`.
+- La validación por campo vive en `engine/center.py`, junto a `CenterConfig`, no en `runs/variants.py`.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Valor en bruto, normalizado y texto | `0.70` y `0.7` valen lo mismo pero son bytes distintos; el reparto en porcentajes cambia al normalizarse. El editor trabaja con lo escrito; el centro normalizado sirve para validar y comparar |
+| Una sola fuente de reglas | Una tabla clave → comprobación alimenta la construcción, el editor y el cargador: imposible que discrepen |
+| Edición con conservación de formato | tomlkit guarda comentarios y espacios; solo se tocan los elementos que cambian, y sin cambios no se reescribe nada |
+| Publicar sin sobrescribir | Comprobar y después sustituir deja una carrera; un enlace duro (`os.link`) crea el nombre de forma atómica y falla si ya existe |
+| Permisos de los temporales | `mkstemp` crea ficheros privados (0600) y la publicación los hereda: hay que darles los permisos normales sin tocar la `umask` global |
+| Carga ofrecida | m(t) = trabajo que la demanda mantendría ocupado sin colas, una convolución de λ(t) con la probabilidad de ocupar el recurso a cada edad, estimada con una muestra |
+| Arranque vacío y días previos | m(t) empieza vacía; hacen falta tantos días previos como la ocupación más larga. Una lognormal no tiene techo: el máximo de la muestra, y con él los días previos, depende de la muestra |
+| Little en una ventana | La media de m(t) es λ̄ × tiempo medio solo si no entra ni sale trabajo neto por los bordes: tasa constante o periódica con la ventana. Con factores semanales y mensuales es una aproximación |
+| Error de Monte Carlo | La carga se estima con una muestra; dos semillas distintas miden cuánto cambia el resultado por azar |
+
+**Medidas** (centro y perfil base, 7 días; medianas de tres procesos)
+
+| Muestra | Tiempo | Días previos (semillas 73001 / 73002) | Mayor diferencia de utilización entre semillas |
+| --- | --- | --- | --- |
+| 5.000 | 0,04 s | 1 / 1 | 0,030 (boxes) |
+| 20.000 | 0,19 s | 2 / 1 | 0,006 (boxes) |
+| 50.000 | 0,42 s | 2 / 1 | 0,007 (boxes) |
+
+Se usa 50.000 pacientes con la semilla 73001, elegida antes de explorar. La ocupación más larga observada fue de 2.210 minutos, unas 37 horas.
+
+**Versiones incorrectas temporales**
+
+| Mutación | Resultado |
+| --- | --- |
+| Devolver solo el primer error | Faltan tres diagnósticos en el test de errores simultáneos |
+| Reasignar todas las claves | Se pierde `0.70`: fallan cuatro casos de saltos de línea y el de final sin salto |
+| Comparar el reparto sin tolerancia | Diferencia falsa entre porcentajes y fracciones, solo en los últimos bits |
+| Comprobar y publicar con `os.replace` | La carrera sustituye el fichero ajeno sin `FileExistsError` |
+| Publicar con el modo de `mkstemp` | Seis fallos por 0600 |
+| Temporal con extensión `.toml` | Visible como variante antes de publicarse |
+| No descartar los días previos | Fallan Little con tasa constante y periódica y la plantilla constante |
+| Forzar un día previo con ocupaciones largas | La carga sale por debajo: 5,55 médicos frente a 6,20 |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite rápida del núcleo | 1.216 tests (18 `slow` excluidos) en 57 s |
+| Suite completa del núcleo | 1.234 tests en 230 s |
+| App | 48 tests en 12 s |
+| Notebooks en modo rápido | 3 en 29 s |
+
+Un test falló por 1,8 × 10⁻¹⁵ porque `ArrivalProfile` renormaliza sus factores; se aísló la causa con factores unidad, sin cambiar la semilla ni ensanchar la tolerancia.
+
+**Lecciones aprendidas**
+
+- Una predicción sin calcular («el centro base usa un día previo») puede estar mal: el test comprueba la regla y su resultado, no la intuición.
+- Una identidad matemática tiene condiciones; un test que la exige fuera de ellas falla por una razón correcta.
+- Las preguntas de Codex durante el plan mejoraron tres decisiones de la especificación: pararse a preguntar es parte del método.
+- El mismo error de permisos apareció dos veces, con carpetas (A.2a) y con ficheros (A.3a): la lección es el patrón, no el caso.
+
+**Pendiente para la tarea A.3b**
+
+- Cabecera «Fecha de creación (UTC+1)» en Ejecuciones (de la A.2b).
+- `offered_work` tarda 0,4 s: la página lo guarda en caché para no recalcular en cada cambio.

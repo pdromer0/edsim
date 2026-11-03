@@ -303,3 +303,9 @@ def test_base_simulation_does_not_hide_internal_errors(catalog_root, monkeypatch
     assert app.exception[0].message == "injected internal failure"
     assert not app.error
     assert not catalog_root.exists()
+
+
+def test_catalog_creation_header_names_the_fixed_timezone(catalog):
+    app = AppTest.from_file(MAIN, default_timeout=15).run(timeout=15)
+    assert not app.exception
+    assert "Fecha de creación (UTC+1)" in app.dataframe[0].value.columns
