@@ -79,6 +79,17 @@ La app tiene seis páginas en dos grupos de la barra lateral: **Ejecutar** (Ejec
 - Sin ejecuciones, la página ofrece un botón: «Simular el centro base (14 días, semilla 2026)».
 - También aparecen las ejecuciones de la CLI, que guarda por defecto en `resultados/ejecuciones/<run_id>`.
 
+**Detalles de la A.2b** (decididos el 3 de noviembre de 2026, con lo aprendido en la A.2a):
+
+- **Selección:** un `st.selectbox` con los `run_id` elige la ejecución; la tabla solo muestra. `AppTest` no puede pulsar filas de `st.dataframe`, y así la selección se prueba.
+- **`?run=`:** Streamlit borra los parámetros de la URL al cambiar de página. Durante la sesión manda el estado de sesión; `main.py` vuelve a escribir `?run=` en cada recarga y `st.switch_page` lo pasa con `query_params`. Un enlace con un `?run=` que no existe avisa y lo limpia.
+- **Barra lateral:** en todas las páginas muestra la ejecución elegida y las marcas A y B.
+- **Carpeta del catálogo:** `resultados/ejecuciones`, relativa a la carpeta desde la que se lanza la app; la variable de entorno `EDSIM_EJECUCIONES` la cambia (la usan los tests). La página muestra la ruta.
+- **Columnas:** las llegadas por día son una propiedad del núcleo, `RunInfo.arrivals_per_day` (llegadas de la ventana entre los días de la ventana); la fecha se muestra en la zona del log (UTC+1).
+- **Zip:** lo crea una función del núcleo, `RunStore.archive(run_id) -> bytes`, con los seis ficheros en la raíz del zip. `st.download_button` la recibe como función, que solo se ejecuta al pulsar, para no comprimir hasta 80 MB en cada recarga.
+- **Carpetas no válidas:** un desplegable con el nombre y el motivo de cada una. Las que tienen un nombre válido se pueden borrar con confirmación; un nombre fuera de la regla o un enlace simbólico se borra a mano, y la página lo explica.
+- **Centro base:** el botón llama a `simulate_run` con `config/centro.toml` y `config/llegadas.toml`, 14 días, semilla 2026 y origen `app`, dentro de un `st.status`.
+
 ### Simular
 
 Tres pasos en la misma página, de arriba abajo.
@@ -253,8 +264,8 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 
 | Función | Qué hace | Comprobación clave |
 | --- | --- | --- |
-| `simulate_run(...) -> RunInfo` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros, y volver a simular desde la carpeta también |
-| `RunStore(root)` | `list`, `open`, `exists` y `delete` de ejecuciones | Ida y vuelta de `run.json`; ignora carpetas temporales |
+| `simulate_run(...) -> SimulationResult` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros, y volver a simular desde la carpeta también |
+| `RunStore(root)` | `list`, `open`, `exists`, invalid y `delete` de ejecuciones | Ida y vuelta de `run.json`; ignora carpetas temporales |
 | `center_to_toml(center, base)` y `center_diff(a, b)` | Escribe un centro como TOML y lista las claves que cambian | `load_center(center_to_toml(c)) == c` con centros aleatorios válidos |
 | `offered_work(center, profile, days)` | Minutos de médico y de box ofrecidos por minuto y utilización prevista por turno, con `offered_load` del hito 3 | Con plantilla constante, la media coincide con λ × E\[tiempo\] calculado a mano |
 | `window_kpis(analysis)` y `manchester_compliance(table, start, end)` | KPIs de la ventana y porcentaje por encima del máximo de cada nivel (el nivel 1, inmediato, solo muestra el tiempo) | Valores calculados a mano en un log pequeño |
@@ -268,7 +279,7 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 
 - **Estado de sesión:** la ejecución elegida (sincronizada con `?run=`), las marcas A y B y el borrador del centro en edición.
 - **Caché:** `st.cache_data` para leer y analizar una ejecución, con la clave `run_id` y la fecha de modificación del log; `st.cache_resource` para el `ReplayIndex`. Como mucho tres ejecuciones en caché.
-- **Simulación:** síncrona dentro de la sesión, con un panel de estado. La app limita el horizonte a 60 días; la tarea A.2a mide tiempo y memoria y ajusta el límite (el hito 3 dejó pendiente medir el peso del log).
+- **Simulación:** síncrona dentro de la sesión, con un panel de estado. La app limita el horizonte a 60 días; las medidas de la A.2a lo confirman: 60 días se simulan en unos 12 s y el log pesa unos 1,35 MB por día (anexo de la A.2a).
 - **Reproducción:** un `st.fragment` con `run_every` avanza el minuto según la velocidad y solo vuelve a dibujar el plano y la barra de estado.
 - **Objetivos:** abrir una ejecución de 14 días en menos de 3 s la primera vez y de 0,5 s desde la caché; cada fotograma del replay, en menos de 200 ms.
 - **Borrar:** solo dentro de `resultados/ejecuciones/`, con confirmación.
@@ -381,7 +392,7 @@ Orden: A.1, A.2a y A.2b primero, porque todo lo demás lee ejecuciones del catá
 ## Preguntas abiertas
 
 - ¿Nombre de la app en la interfaz: «EDsim» a secas o algo como «EDsim Lab»?
-- ¿Límite de 60 días por ejecución, o lo fija la medida de la tarea A.2a?
+- Resuelta en la A.2a: límite de 60 días por ejecución y 14 por defecto, con las medidas del anexo.
 - ¿La página Resultados reutiliza las gráficas de matplotlib de la CLI o se rehacen todas en Altair? La propuesta es Altair, por la interactividad.
 
 ## Anexo: guía de referencia de la fase 1
@@ -523,3 +534,87 @@ Revisión en el chat del diff completo, sin `@codex review`: desde esta tarea, l
 - `AGENTS.md` raíz: «Hito en curso» sigue apuntando al hito 3, ya cerrado; cambiarlo por «Último hito cerrado: hito 3 (el hito 4 aún no tiene especificación)».
 - `tests/test_dependency_boundary.py`: generar el conjunto prohibido del script del subproceso a partir de `FORBIDDEN_PACKAGES`, para que haya una sola fuente.
 - Antes de fusionar el PR #29, Pedro añade `tests-app` al ruleset.
+
+### Tarea A.2a: núcleo de ejecuciones
+
+PR #30 (rama `feat/app-ejecuciones-nucleo`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (`033dc13`). Ocho commits: especificación, retoques de la A.1, caracterización, metadatos y catálogo, servicio, CLI y dos correcciones tras la revisión del chat. Tarea crítica: `@codex review` no encontró problemas importantes.
+
+**Qué se hizo**
+
+- `edsim.runs` con `__all__`: `validate_run_id`, `RunInfo` (exactamente `run.json`, versión de formato 1), `SimulationResult` (`info`, `analysis` y `violations`), `simulate_run` y `RunStore` (`list`, `invalid`, `open`, `exists` y `delete`).
+- `simulate_run` copia los TOML en una carpeta oculta junto al destino, carga desde las copias, simula, escribe los CSV con la ruta original como procedencia, comprueba las invariantes con `ground_truth` e `inside`, escribe `run.json` el último y renombra. Un `finally` borra la carpeta temporal ante cualquier fallo, también `KeyboardInterrupt`.
+- `edsim motor simular` valida argumentos, configuración y destino, imprime la cabecera y llama a `simulate_run`; guarda por defecto en `resultados/ejecuciones/<run_id>` y rechaza un destino ocupado con código 2. Los fallos internos se propagan.
+- Regla del `run_id` en `--run-id`, `simulate_run` y `RunStore`; `default_run_id` no cambia y, si genera un ID que no cumple la regla, se pide uno explícito.
+- Retoques de la A.1, dos reglas P1 nuevas en las *Review guidelines* y README.
+
+**Cambios respecto al plan**
+
+- Plan: `SimulationResult` en lugar de campos opcionales en `RunInfo`; `default_run_id` intacto; `exists` indica si el nombre está ocupado e `invalid()` lista las carpetas no válidas; destino de la caracterización inexistente; test explícito que modifica el original tras copiarlo; limpieza con `KeyboardInterrupt`; ámbitos de commit del núcleo.
+- Tras la revisión del PR: la CLI capturaba como error de uso cualquier `OSError` o `ValueError` del servicio, también los fallos internos, e imprimía la cabecera después de simular. Ahora valida antes, imprime la cabecera al principio y solo captura la carrera de `FileExistsError`.
+- Tras la revisión del PR: `tempfile.mkdtemp` crea la carpeta con permisos 0700, que la ejecución publicada heredaba. Ahora toma los permisos de un `mkdir` normal, observados en una carpeta de referencia para no tocar la `umask` del proceso.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Escritura atómica | Se prepara todo en una carpeta oculta del mismo disco y se publica con un solo renombrado; `run.json` va el último. Quien mira el catálogo ve la ejecución entera o no la ve |
+| Copiar primero | Simular desde la copia garantiza que lo simulado y lo archivado son los mismos bytes; leer el original dos veces abre la puerta a que cambie entre lecturas |
+| Test de caracterización | Antes de refactorizar se congela lo que el código produce hoy (SHA-256 del log y de los CSV). Después no se toca: si falla, el refactor ha cambiado el comportamiento |
+| Validar en la frontera | La regla del `run_id` se aplica donde un texto se convierte en ruta (CLI, servicio y catálogo), no en el motor, que solo lo escribe en el log |
+| Tipos que dicen lo que son | `RunInfo` es siempre `run.json` completo; `SimulationResult` añade lo que solo existe recién simulado. Sin campos `None` según la procedencia |
+| Ocupado frente a válido | Un nombre puede estar ocupado por una carpeta incompleta: `exists` responde a «¿puedo escribir aquí?» y `invalid()` a «¿qué hay roto?» |
+| Error de uso frente a fallo interno | El código 2 dice «has pedido algo mal»; un fallo del programa debe verse con su traza. Capturar excepciones amplias mezcla los dos |
+| Permisos y `umask` | `mkdtemp` crea carpetas privadas (0700) por seguridad; al publicarlas hay que devolverles los permisos normales |
+| Medir en procesos nuevos | Cada medida en un proceso limpio, con la memoria máxima del proceso (incluye el intérprete y las bibliotecas) y tres muestras |
+
+**Medidas** (centro base, semilla 2026, 2 días de calentamiento; medianas de tres muestras)
+
+| Días | Simular | Log | Eventos | Leer | Analizar | Leer + analizar | Memoria máxima |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 14 | 2,0 s | 18,6 MB | 49.843 | 0,57 s | 0,09 s | 0,61 s | 186 MiB |
+| 30 | 4,9 s | 41,6 MB | 111.545 | 1,41 s | 0,28 s | 1,66 s | 256 MiB |
+| 60 | 12,4 s | 81,4 MB | 218.501 | 2,63 s | 0,89 s | 3,82 s | 373 MiB |
+
+El log crece de forma casi lineal, entre 1,33 y 1,39 MB por día, y todas las ejecuciones salieron sin violaciones. Abrir una ejecución de 14 días cumple de sobra el objetivo de 3 s; una de 60 días tarda unos 3,8 s. Se mantiene el límite de 60 días y el valor por defecto de 14.
+
+**Versiones incorrectas temporales**
+
+| Mutación | Predicción | Resultado |
+| --- | --- | --- |
+| Escribir directamente en el destino | Tras un fallo queda una ejecución a medias publicada | Falla la atomicidad con `RuntimeError` y con `KeyboardInterrupt` |
+| Quitar la validación del ID en `delete` | `-x` está dentro de la carpeta, pero la regla debe rechazarlo | No se lanza el `ValueError`: borra `-x` |
+| Cargar el original después de copiarlo | El log deja de coincidir con la configuración archivada | Falla la igualdad del log (primera diferencia en el byte 6.251) |
+
+La primera ejecución de la mutación de escritura directa falló antes de tiempo: el test buscaba el log solo bajo un nombre oculto. Se corrigió el test, y entonces falló por la razón prevista.
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Caracterización | Sin cambios desde su commit, anterior al refactor, y en verde después |
+| Suite rápida del núcleo | 1.099 tests (18 `slow` excluidos) en 33 s |
+| Suite completa del núcleo | 1.117 tests en 199 s |
+| App | 9 tests en 1,1 s |
+| Especificación | Mismo SHA-256 que la exportación del chat |
+
+**Revisión del PR: dos revisores**
+
+|  | Codex (`@codex review`) | Chat del proyecto |
+| --- | --- | --- |
+| Hallazgos | Ninguno importante | Errores internos convertidos en errores de uso; cabecera después de simular; permisos 0700 heredados de `mkdtemp`; `delete` no puede borrar nombres fuera de la regla ni enlaces (para la A.2b) |
+| Estilo | Comprueba el diff contra las reglas escritas | Razona sobre el comportamiento visible de la herramienta y sobre el futuro (Docker en el hito 8) |
+
+**Lecciones aprendidas**
+
+- Un test de caracterización se diseña para el código de después: con `--salida tmp_path` habría fallado tras el refactor y habría que haberlo tocado.
+- Un hash de un CSV incluye la procedencia: rutas relativas o el test depende de la máquina.
+- Capturar excepciones amplias para dar mensajes amables esconde los fallos del programa.
+- Que un test se ponga rojo no basta: tiene que ponerse rojo por la razón prevista (la mutación de escritura directa lo demostró).
+- Las respuestas de un catálogo deben coincidir con lo que rechaza quien escribe: «no existe» y «no puedo escribir» a la vez confunden.
+- Un revisor automático sin hallazgos no sustituye a la revisión del comportamiento.
+
+**Pendiente para la tarea A.2b**
+
+- Las páginas vacías de la A.1 siguen diciendo «La tarea A.2 añadirá…» en Ejecuciones: la A.2b la sustituye por la página real.
+- `invalid()` incluye nombres fuera de la regla y enlaces simbólicos que `delete` no puede borrar: la página los muestra con su motivo y explica que se borran a mano.
+- pandas pasa a ser dependencia directa de `edsim-app` en cuanto la app lo importe.
