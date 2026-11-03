@@ -2,7 +2,7 @@
 
 Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
-``simulate_arrivals``, ``validate_arrivals``, ``simulate_ed``,
+``simulate_arrivals``, ``validate_arrivals``, ``simulate_run``,
 ``validate_engine``) and hands the results to the report modules for the
 tables, the CSV files and the plots.
 
@@ -31,25 +31,20 @@ from edsim.arrivals.report import (
 )
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
-from edsim.engine.analysis import analyze_run
 from edsim.engine.center import load_center
-from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
-from edsim.engine.events import JsonlSink, read_events
-from edsim.engine.invariants import check_invariants
+from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
-    RunParameters,
     format_engine_validation,
     format_run_summary,
     plot_census,
     plot_hourly_census,
     plot_mg1,
     plot_waits_by_level,
-    write_episodes_csv,
-    write_ground_truth_days_csv,
 )
 from edsim.engine.validation import check_engine_validation_counts, validate_engine
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
+from edsim.runs import simulate_run, validate_run_id
 
 DEFAULT_RHOS = "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95"
 CSV_NAME = "barrido.csv"
@@ -277,57 +272,45 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
 
 
 def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    run_id = default_run_id(args.semilla) if args.run_id is None else args.run_id
+    try:
+        validate_run_id(run_id)
+    except ValueError as error:
+        parser.error(f"--run-id: {error}; indica un --run-id explícito válido")
+    if args.salida is None:
+        args.salida = str(Path("resultados/ejecuciones") / run_id)
     out_dir = _output_dir(args, parser)
-    center, profile = _load_engine_configs(args, parser)
+    if out_dir.exists() or out_dir.is_symlink():
+        parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
+    _load_engine_configs(args, parser)
     try:
         check_horizon(args.dias, args.calentamiento)
-    except ValueError as e:
-        parser.error(str(e))
-    run_id = default_run_id(args.semilla) if args.run_id is None else args.run_id
+    except ValueError as error:
+        parser.error(str(error))
     print(
         f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
-        f" · semilla {args.semilla} · run_id {run_id}\n"
+        f" · semilla {args.semilla} · run_id {run_id}\n",
+        flush=True,
     )
-
-    # The directory is created only once every argument has been checked.
-    out_dir.mkdir(parents=True, exist_ok=True)
-    events_path = out_dir / EVENTS_FILE
-    with JsonlSink(events_path) as sink:
-        result = simulate_ed(
-            center,
-            profile,
+    try:
+        result = simulate_run(
+            args.centro,
+            args.llegadas,
             args.dias,
             args.semilla,
-            sink=sink,
+            output_dir=out_dir,
             warmup_days=args.calentamiento,
             run_id=run_id,
+            origin="cli",
         )
-    parameters = RunParameters(
-        center=args.centro,
-        center_fingerprint=args.huella_centro,
-        profile=args.llegadas,
-        profile_fingerprint=args.huella_llegadas,
-        days=args.dias,
-        warmup_days=args.calentamiento,
-        seed=args.semilla,
-        run_id=run_id,
-    )
-    episodes_path = out_dir / EPISODES_CSV
-    days_path = out_dir / GROUND_TRUTH_DAYS_CSV
-    write_episodes_csv(result.ground_truth.episodes, episodes_path, parameters)
-    write_ground_truth_days_csv(result.ground_truth.days, days_path, parameters)
-
-    # The summary is derived from the file just written, as anybody would read
-    # it: the log is the only output of the engine (event sourcing).
-    events = list(read_events(events_path))
-    violations = check_invariants(
-        events, center, ground_truth=result.ground_truth, inside=result.inside
-    )
+    except FileExistsError:
+        parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
+    print(format_run_summary(result.analysis, result.violations))
     print(
-        format_run_summary(analyze_run(events, center, args.dias, args.calentamiento), violations)
+        f"\nLog: {out_dir / EVENTS_FILE}\nCSV: {out_dir / EPISODES_CSV}"
+        f"\nCSV: {out_dir / GROUND_TRUTH_DAYS_CSV}"
     )
-    print(f"\nLog: {events_path}\nCSV: {episodes_path}\nCSV: {days_path}")
-    return 1 if violations else 0
+    return 1 if result.violations else 0
 
 
 def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -361,13 +344,6 @@ def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     return 0 if validation.passed else 1
 
 
-def run_id_text(text: str) -> str:
-    """A ``--run-id``: any non-empty text, as ``EventLog`` requires."""
-    if not text:
-        raise argparse.ArgumentTypeError("no puede estar vacío")
-    return text
-
-
 def _add_engine_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--centro",
@@ -383,9 +359,16 @@ def _add_engine_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_engine_output_options(parser: argparse.ArgumentParser) -> None:
-    _add_output_options(parser)
-    parser.set_defaults(salida="resultados/motor")
+def _add_engine_output_options(
+    parser: argparse.ArgumentParser, *, simulation: bool = False
+) -> None:
+    output_help = (
+        "directorio de salida, que no debe existir (por defecto: resultados/ejecuciones/<run_id>)"
+        if simulation
+        else None
+    )
+    _add_output_options(parser, output_help=output_help)
+    parser.set_defaults(salida=None if simulation else "resultados/motor")
 
 
 def _add_arrival_options(parser: argparse.ArgumentParser, days: int) -> None:
@@ -404,7 +387,7 @@ def _add_arrival_options(parser: argparse.ArgumentParser, days: int) -> None:
     )
 
 
-def _add_output_options(parser: argparse.ArgumentParser) -> None:
+def _add_output_options(parser: argparse.ArgumentParser, *, output_help: str | None = None) -> None:
     parser.add_argument(
         "--semilla",
         type=int,
@@ -416,7 +399,7 @@ def _add_output_options(parser: argparse.ArgumentParser) -> None:
         "--salida",
         default="resultados/llegadas",
         metavar="DIR",
-        help="directorio de salida; se crea si no existe (por defecto: %(default)s)",
+        help=output_help or "directorio de salida; se crea si no existe (por defecto: %(default)s)",
     )
 
 
@@ -562,12 +545,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate.add_argument(
         "--run-id",
-        type=run_id_text,
+        type=validate_run_id,
         default=None,
         metavar="ID",
         help="identificador de la ejecución en el log (por defecto: r y la semilla)",
     )
-    _add_engine_output_options(simulate)
+    _add_engine_output_options(simulate, simulation=True)
     simulate.set_defaults(handler=_simulate_engine, subparser=simulate)
 
     engine_validate = engine_actions.add_parser(

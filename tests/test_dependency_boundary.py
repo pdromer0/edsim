@@ -25,10 +25,13 @@ def test_core_imports_without_ui_dependencies():
 
         assert "edsim.engine" in visited, sorted(visited)
         assert "edsim.engine.engine" in visited, sorted(visited)
-        forbidden = {"streamlit", "pandas", "edsim_app"}
+        assert "edsim.runs" in visited, sorted(visited)
+        assert "edsim.runs.service" in visited, sorted(visited)
+        forbidden = FORBIDDEN_PLACEHOLDER
         loaded = sorted(name for name in sys.modules if name.split(".")[0] in forbidden)
         assert not loaded, f"UI dependencies loaded by the core: {loaded}"
     """)
+    script = script.replace("FORBIDDEN_PLACEHOLDER", repr(sorted(FORBIDDEN_PACKAGES)))
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
@@ -60,4 +63,5 @@ def test_core_has_no_ui_imports_including_inside_functions():
 
     assert "engine/__init__.py" in visited, sorted(visited)
     assert "engine/engine.py" in visited, sorted(visited)
+    assert "runs/service.py" in visited, sorted(visited)
     assert not violations, "UI imports in the core:\n" + "\n".join(violations)

@@ -5,7 +5,7 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: [docs/specs/hito-3.md](docs/specs/hito-3.md)
+- Último hito cerrado: [docs/specs/hito-3.md](docs/specs/hito-3.md) (el hito 4 aún no tiene especificación)
 - App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
 ## Modo de trabajo
@@ -86,3 +86,5 @@ En las revisiones de pull requests, trata como P1:
 - Tests que pasan de forma vacía, sin comprobar que la situación que prueban ocurre de verdad.
 - Código nuevo sin tests en el paquete `edsim` o en la app. Los scripts de herramientas de desarrollo (hooks de `.claude/` y `.codex/`) se verifican a mano y se documenta la comprobación en el PR.
 - Romper la convención de idiomas: código, nombres y docstrings en inglés; documentación, commits y textos de la interfaz en español.
+- Que la app importe algo privado del núcleo o fuera de `__all__` de `edsim.runs`.
+- Que una ejecución se escriba en `resultados/ejecuciones/` sin pasar por `simulate_run`.
