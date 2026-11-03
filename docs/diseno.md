@@ -22,7 +22,7 @@ Seis principios guían todas las decisiones técnicas del proyecto.
 2. **El log de eventos es la fuente de verdad.** Los eventos son inmutables y los estados se derivan de ellos. Esto permite reconstruir qué se sabía en cada instante y evitar el *data leakage*.
 3. **Verdad oculta separada de datos observados.** El simulador guarda el ground truth (gravedad real, paciencia, defectos inyectados) aparte de los datos tal como los vería un sistema hospitalario.
 4. **Correlaciones causales, no ruido independiente.** Las variables se generan en cadena y el estado del sistema realimenta el comportamiento (saturación, abandono, boarding).
-5. **Escenarios como configuración.** Centros, catálogos, escenarios y experimentos son ficheros YAML con semilla y `run_id` trazable. El motor no contiene conocimiento clínico.
+5. **Escenarios como configuración.** Centros, catálogos, escenarios y experimentos son ficheros TOML con semilla y `run_id` trazable. El motor no contiene conocimiento clínico.
 6. **Calibración con datos públicos.** Volúmenes y proporciones se ajustan con estadísticas del Ministerio de Sanidad, literatura española y datasets como MIMIC-IV-ED.
 
 ## Modelo conceptual
@@ -129,13 +129,13 @@ Se usan unos 17 motivos agrupados, alineados con los diagramas de Manchester; el
 
 Cada perfil contiene: peso base; modificadores por edad, hora, estación y día; distribución de gravedad latente; probabilidad de cada prueba; modificadores de duración; y probabilidades de destino.
 
-```yaml
-dolor_toracico:
-  peso_base: 0.05
-  modificadores: { edad: mayor_mas, hora: neutro, estacion: neutro }
-  gravedad_latente: { media_por_edad: [...], dispersion: ... }
-  pruebas: { ecg: 0.98, analitica: 0.90, rx_torax: 0.70 }
-  destino: { depende_de: [gravedad, edad, resultado_pruebas] }
+```toml
+[dolor_toracico]
+peso_base = 0.05
+modificadores = { edad = "mayor_mas", hora = "neutro", estacion = "neutro" }
+gravedad_latente = { media_por_edad = [...], dispersion = ... }
+pruebas = { ecg = 0.98, analitica = 0.90, rx_torax = 0.70 }
+destino = { depende_de = ["gravedad", "edad", "resultado_pruebas"] }
 ```
 
 ## Modelo estadístico y calibración
@@ -195,16 +195,17 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 
 ```json
 {
-  "event_id": "7f3c...",
+  "event_id": "exp042_rep07-000184213",
   "event_type": "triage_completed",
   "schema_version": 1,
   "run_id": "exp042_rep07",
-  "episode_id": "EP-2026-000184",
-  "patient_id": "PT-0091223",
+  "episode_id": "EP-000184",
+  "patient_id": "PT-000184",
   "source_system": "triaje",
-  "event_time": "2026-10-27T17:04:12+01:00",
-  "recorded_time": "2026-10-27T17:11:40+01:00",
-  "ingest_time": "2026-10-27T17:11:41+01:00",
+  "sim_time": 1024.2,
+  "event_time": "2026-10-27T17:04:12.000+01:00",
+  "recorded_time": "2026-10-27T17:11:40.000+01:00",
+  "ingest_time": "2026-10-27T17:11:41.000+01:00",
   "payload": { "nivel": 3, "motivo": "dolor_toracico" }
 }
 ```
@@ -216,14 +217,15 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 | `patient_arrived` | Cruza la puerta | Medio de llegada |
 | `patient_registered` | Admisión | Edad, sexo |
 | `triage_started` / `triage_completed` | Triaje | Nivel, motivo |
-| `assessment_started` / `assessment_ended` | Valoración médica | Pool, box |
+| box\_assigned | Entra en un box (también al reanudar tras un desalojo) | Box |
+| patient\_displaced | Un nivel 1 le quita el box | Box, episodio que desaloja |
+| assessment\_started / assessment\_ended | Valoración médica y reevaluación | Tipo (inicial o reevaluación), pool y box; al terminar, si se interrumpió |
 | `test_ordered` / `test_resulted` | Pruebas | Tipo, resultado normal o alterado |
-| `reassessment_done` | Reevaluación | — |
 | `disposition_decided` | Decisión de destino | Destino |
 | `bed_requested` / `bed_assigned` | Boarding | Servicio |
 | `patient_departed` | Sale de urgencias | Destino final |
 | `patient_left_wbs` | Abandono sin ser visto | Estado en que estaba |
-| `staffing_changed` | Cambio de turno o plantilla | Recurso, cantidad |
+| `staffing_changed` | Cambio de turno o plantilla | Recurso, plantilla anterior y nueva |
 | `shock_started` / `shock_ended` | Evento de sistema | Tipo, intensidad |
 | `control_command` | Orden desde la API | Comando |
 | `system_snapshot` | Cada 5 minutos | Colas, ocupación, saturación |
@@ -256,20 +258,22 @@ Postgres con TimescaleDB para lo operacional y en tiempo real; Parquet con DuckD
 
 Un experimento es un conjunto de variantes de un escenario base, cada una con N réplicas emparejadas por semilla, comparadas con intervalos de confianza sobre las diferencias.
 
-```yaml
-experimento: plantilla_tarde_invierno
-base: hospital_medio_v0
-duracion: { warmup_dias: 3, dias: 28 }
-replicas: 30
-semilla: 2026
-variantes:
-  control: {}
-  medico_extra_tarde:
-    recursos.medicos.turnos.tarde: +1
-  medico_extra_y_gripe:
-    recursos.medicos.turnos.tarde: +1
-    shocks: [brote_gripe_moderado]
-metricas: [espera_p90_por_nivel, estancia_media, abandono_pct, cumplimiento_manchester, ocupacion_boxes]
+```toml
+experimento = "plantilla_tarde_invierno"
+base = "hospital_medio_v0"
+duracion = { calentamiento_dias = 3, dias = 28 }
+replicas = 30
+semilla = 2026
+metricas = ["espera_p90_por_nivel", "estancia_media", "abandono_pct", "cumplimiento_manchester", "ocupacion_boxes"]
+
+[variantes.control]
+
+[variantes.medico_extra_tarde]
+"recursos.medicos.turnos.tarde" = "+1"
+
+[variantes.medico_extra_y_gripe]
+"recursos.medicos.turnos.tarde" = "+1"
+shocks = ["brote_gripe_moderado"]
 ```
 
 ### Tipos de experimento
@@ -318,7 +322,7 @@ El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batc
 | Capa | Elección | Alternativa |
 | --- | --- | --- |
 | Simulación | Python + SimPy + NumPy/SciPy | Salabim |
-| Configuración | YAML validado con Pydantic | JSON Schema |
+| Configuración | TOML leído con tomllib y validado con dataclasses al construir | YAML con Pydantic |
 | API de control | FastAPI | Topic de control |
 | Broker | Apache Kafka 4 en modo KRaft (un nodo) + Redpanda Console como interfaz | Redpanda (ejercicio de compatibilidad) |
 | Streaming | Consumidores Python con Quix Streams | Flink o RisingWave |
@@ -359,7 +363,7 @@ edsim/
 
 ```bash
 edsim run --escenario hospital_medio_v0 --modo directo --velocidad 60
-edsim experimento configs/experimentos/plantilla_tarde_invierno.yaml
+edsim experimento configs/experimentos/plantilla_tarde_invierno.toml
 edsim replay --run exp042_rep07 --velocidad 10
 edsim shock --tipo brote_gripe_moderado --intensidad 1.3
 ```
@@ -410,7 +414,7 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 0. **Entorno:** Python con uv, git, Cursor, Claude Code, `CLAUDE.md`, pytest y pre-commit.
 1. **Colas y SimPy:** eventos discretos, cola M/M/1 y ley de Little; validación contra la teoría.
 2. **Llegadas:** Poisson no homogéneo, *thinning*, sobredispersión y validación estadística.
-3. **Motor y eventos:** paciente, triaje, recursos con prioridad y log de eventos en JSONL.
+3. **Motor y eventos:** paciente, triaje, recursos con prioridad y desalojo, turnos, log de eventos en JSONL y validación del motor.
 4. **Perfiles clínicos:** catálogo de motivos, gravedad latente y primera calibración.
 5. **Cierre del flujo:** abandono, destino, boarding simple y ground truth.
 6. **Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
@@ -421,10 +425,14 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 
 ### Versiones del modelo
 
-- **v0:** un circuito de boxes, recursos en pool, llegadas con patrón horario y semanal.
-- **v1:** consulta rápida (niveles 4–5), críticos (niveles 1–2), plantilla variable por turno.
+- **v0:** un circuito de boxes, recursos en pool con plantilla por turno, llegadas con patrón horario y semanal.
+- **v1:** consulta rápida (niveles 4–5), críticos (niveles 1–2).
 - **v2:** observación, boarding realista, re-triaje y reconsultas en 72 h.
 - **v3:** perfiles de centro intercambiables, profesionales individuales y constantes vitales.
+
+### App web
+
+La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al cerrar el hito 3, una tarea pequeña en los hitos siguientes y la aplicación completa después del hito 6 o de la v0. Decisión y especificación de la fase 1: App web — fase 1.
 
 ## Metodología de trabajo con Claude Code y Cursor
 
@@ -433,8 +441,8 @@ Claude Code escribe el código; Pedro dirige, pregunta y revisa. Cada hito sigue
 1. **Sesión conceptual:** Claude explica qué se va a implementar y por qué (estadística, simulación, tecnología); Pedro pregunta hasta entenderlo.
 2. **Especificación del hito:** alcance, criterios de aceptación y tests, en `docs/specs/`.
 3. **Plan:** Claude Code propone el plan en modo plan antes de tocar código.
-4. **Implementación:** Claude Code escribe en pasos pequeños, con un commit por paso.
-5. **Revisión conjunta:** se recorre el diff explicando cada decisión; Pedro pide cambios o aclaraciones.
+4. **Implementación:** con el plan aprobado, Claude Code implementa la tarea completa, con un commit por paso lógico; solo para si algo contradice el plan o hace falta una decisión nueva.
+5. **Revisión del PR:** la descripción del PR explica cada decisión y lo que cambió respecto al plan; Pedro la revisa con Claude en el chat del hito y pide cambios o aclaraciones (desde la tarea 3.6; antes se revisaba cada diff).
 6. **Cierre:** tests en verde, nota en el diario de aprendizaje (`docs/diario/`) y ADR si hubo una decisión importante.
 
 Se usan las librerías directamente, sin reimplementar fundamentos a mano; los conceptos se explican en la sesión y se profundiza bajo demanda.
@@ -449,7 +457,7 @@ Se usan las librerías directamente, sin reimplementar fundamentos a mano; los c
 - `CLAUDE.md` como memoria del proyecto: convenciones, comandos y modo de trabajo.
 - Modo plan antes de codificar.
 - Tests como barandilla, acordados antes del código.
-- Tareas pequeñas, commit por paso y revisión de cada diff.
+- Tareas pequeñas, commit por paso lógico y revisión del PR completo.
 - Comandos personalizados y *skills* para flujos repetidos (empezar hito, revisar, cerrar hito).
 - *Hooks* para lanzar linter y tests automáticamente.
 - Subagentes, más adelante, para tareas grandes.
@@ -465,16 +473,16 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 | 1 | Actualizar `main` local | Claude Code | `git pull`, con permiso |
 | 2 | Crear rama de la tarea | Claude Code | `git switch -c feat/h1-cola-mm1` |
 | 3 | Proponer el plan | Claude Code propone, Pedro aprueba | Modo plan |
-| 4 | Implementar código y tests | Claude Code | Pasos pequeños |
+| 4 | Implementar código y tests | Claude Code | La tarea completa, con el plan aprobado |
 | 5 | Comprobar tras cada cambio | Automático | Hooks de Claude Code: linter y tests rápidos |
 | 6 | Commit local | Claude Code | Mensaje estándar: `feat(sim): cola M/M/1 con SimPy` |
 | 7 | Comprobar al hacer commit | Automático | Hooks de pre-commit; si fallan, no hay commit |
-| 8 | Revisar el diff | Pedro, con Claude explicando | Control de código de Cursor |
+| 8 | Comprobar la tarea completa | Claude Code | ruff, suite completa y revisión de sus propias gráficas |
 | 9 | Subir la rama | Claude Code, con permiso | `git push` |
 | 10 | Abrir el pull request | Claude Code | `gh pr create` con resumen y checklist |
 | 11 | Ejecutar el CI | Automático | GitHub Actions |
 | 12 | Corregir si el CI falla | Claude Code | `gh run view` y vuelta al paso 4 |
-| 13 | Aprobar y fusionar | Pedro | "Squash and merge" en GitHub |
+| 13 | Revisar el PR y fusionar | Pedro | "Squash and merge" en GitHub |
 | 14 | Limpiar | Automático y Claude Code | GitHub borra la rama; Claude vuelve a `main` y sincroniza |
 
 - **Inicio de hito:** sesión conceptual y especificación en `docs/specs/`, redactada por Claude y aprobada por Pedro.
@@ -512,6 +520,13 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 21 | Llegadas por thinning de Lewis–Shedler, perezoso, con cota por día comprobada en cada candidata | Exacto sin integrar ni invertir Λ; funciona en vivo; la comprobación evita recortes silenciosos |
 | 22 | Sobredispersión con un efecto diario Z gamma de media 1, parametrizado por el CV (6 %), con flujo propio y guardado como ground truth | El CV se traslada entre centros, a diferencia del índice de dispersión; Z queda disponible para validar modelos |
 | 23 | Validación con cinco pruebas al nivel 0,01, Bonferroni dentro de a y de d, Pearson condicional y pruebas de potencia; la hipótesis sale del perfil | Cada prueba busca un error distinto; las falsas alarmas quedan en el 5 % al combinar pruebas; sin hipótesis independiente no hay potencia |
+| 24 | Cada paciente es un proceso SimPy que recorre la máquina de estados; todo lo aleatorio del paciente se sortea al llegar, en orden fijo, con un flujo por fuente, detrás de una función de muestreo inyectable | Los estados son los yield; el paciente k es el mismo con cualquier plantilla (números aleatorios comunes); el hito 4 cambia el muestreo sin tocar el motor |
+| 25 | Tres pools: triaje FIFO; boxes con prioridad (nivel, llegada) y desalojo solo del nivel 1 a pacientes de nivel mayor, con reanudación; médicos con prioridad sin desalojo. El box se retiene toda la estancia y el médico solo en las valoraciones | Reglas de flujo del diseño; el orden no depende de cuándo se pide el recurso; el box como cuello de botella realista |
+| 26 | Plantilla por turnos (8–15, 15–22, 22–8) desde el hito 3, con reservas de capacidad que esperan a que el profesional termine | staffing\_changed y el dimensionado por turno están en la v0; un Resource no cambia de capacidad; nadie deja a un paciente a medias |
+| 27 | Log JSONL con el sobre del diseño más sim\_time, event\_id determinista y hora con desfase fijo +01:00; box\_assigned y patient\_displaced en el catálogo; la reevaluación usa assessment\_started/ended | Reproducibilidad bit a bit; cálculos sin redondeos de reloj; la ocupación de boxes y médicos se deriva del log |
+| 28 | Ground truth en ficheros aparte (episodios y días); el log no lleva campos fuera del catálogo, y un test lo comprueba | Verdad oculta separada; evita data leakage; validación con valores conocidos |
+| 29 | Calentamiento y horizonte en días completos (2 y 14 por defecto); en batch el log es completo y las métricas usan la ventana | Régimen periódico sin estado estacionario; invariantes válidas en todo el fichero |
+| 30 | Validación del motor por niveles: invariantes, leyes operacionales, M/G/1 y Mₜ/G/∞ de referencia, condiciones extremas y huella de regresión, al nivel 0,01 | Sin fórmula cerrada para el sistema completo, cada tipo de comprobación cubre errores que los otros no ven |
 
 ### Preguntas resueltas
 
