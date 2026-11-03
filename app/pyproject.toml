@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Interfaz local de EDsim para explorar simulaciones de urgencias"
 requires-python = ">=3.13"
 dependencies = [
+    "altair>=6.3.0",
     "edsim",
     "jinja2>=3.1.6",
     "pandas>=3.1.0",

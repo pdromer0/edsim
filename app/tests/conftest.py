@@ -59,3 +59,24 @@ def run_info():
         window_arrivals=615,
         simulation_seconds=0.25,
     )
+
+
+@pytest.fixture(autouse=True)
+def simulation_files(tmp_path, monkeypatch):
+    """Isolate center edits and every data-cache entry from other page tests."""
+    import streamlit as st
+
+    from edsim_app import defaults
+
+    st.cache_data.clear()
+    config = tmp_path / "simulation-config"
+    config.mkdir()
+    from pathlib import Path
+
+    for name in ("centro.toml", "llegadas.toml"):
+        (config / name).write_bytes((Path("config") / name).read_bytes())
+    monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")
+    monkeypatch.setattr(defaults, "PROFILE_PATH", config / "llegadas.toml")
+    monkeypatch.setattr(defaults, "VARIANTS_DIR", tmp_path / "variants")
+    yield config
+    st.cache_data.clear()
