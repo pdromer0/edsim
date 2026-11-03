@@ -161,7 +161,7 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Descargas:** un botón por fichero (log JSONL, los dos CSV de ground truth, `centro.toml` y `llegadas.toml`), con la lectura diferida como el zip de la A.2b. Una función del núcleo devuelve los bytes y solo admite los nombres del formato de ejecución.
 - **Fechas en las gráficas:** hora del log (UTC+1) como hora de reloj sin zona, para que el navegador no la desplace (lección de la A.3b).
 - **Igual que la CLI:** un test compara los KPIs, las ocupaciones y los errores de Little de la página con `analyze_run` y `format_run_summary` de la misma ejecución.
-- **Correcciones de la A.3b:** un commit `fix(app)` después del de la especificación, con los cuatro hallazgos de la revisión del PR #33 (anexo).
+- **Correcciones de la A.3b:** un commit `fix(app)` aparte, el PR #34 (a076ab9), fusionado antes de empezar la A.4; la A.4 no las repite.
 - **No es crítica:** añade funciones al núcleo sin cambiar contratos ni el formato en disco; sin `@codex review`.
 
 ### Episodios
@@ -171,6 +171,21 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Ficha del episodio:** llegada (fecha y hora), nivel, destino y estancia; una línea temporal con un tramo por estado (espera de triaje, triaje, espera de box, espera de médico, valoración, espera de pruebas, reevaluación), el box ocupado y los desalojos marcados; y la lista de sus eventos tal como están en el log.
 - **«Ver la verdad»:** un interruptor que añade el `EpisodeTruth` del episodio: nivel y duraciones sorteadas al llegar, frente a lo observado en el log. Una valoración interrumpida por un desalojo se ve aquí como la suma de sus tramos.
 - **«Ver en el replay»** abre el Replay en el minuto de llegada del paciente.
+
+**Detalles de la A.5** (decididos el 3 de noviembre de 2026, con lo aprendido en la A.4):
+
+- **Abrir la ejecución:** como Resultados: `read_run_header` en cada recarga, `RunReadError` y `RunAnalysisError` como mensaje. La tabla sale de `RunResults.analysis.table`, que ya está en caché: Episodios no relee el log para listar.
+- **Índice de eventos por episodio:** una función del núcleo anota en qué posición (bytes) de `eventos.jsonl` está cada evento de cada episodio. A ser posible se construye en la misma lectura que `read_run_results`, para no leer el log dos veces, y vive en la misma caché. La ficha lee y valida solo las líneas de su episodio. Se miden el tiempo del índice, su memoria y el tiempo de una ficha con 14 y 60 días.
+- **Tramos (`episode_segments`, en el núcleo):** del episodio, contiguos, sin huecos ni solapes y sin tramos de duración cero, desde la llegada hasta la salida (o hasta el horizonte si sigue dentro). El estado es dónde está el paciente: espera de triaje, triaje, espera de box, en box esperando médico, valoración, en box esperando pruebas y reevaluación. Cada tramo en box lleva su número de box, y un desalojo devuelve a espera de box. Los tramos suman la estancia, u horizonte menos llegada si no terminó.
+- **Banda de pruebas y desalojos:** aparte de los tramos, una banda «pruebas en curso» de `test_ordered` a `test_resulted` (o al horizonte), porque el laboratorio sigue aunque el paciente pierda su box. Los desalojos se marcan como instantes, con el box y el episodio que desalojó (`desalojado_por`).
+- **Tests de los tramos:** en una ejecución real, todos los episodios tienen tramos contiguos que suman su estancia (criterio de aceptación). Logs escritos a mano para un desalojo durante la valoración, un desalojo esperando pruebas con el resultado llegando en la cola de box, un paciente sin pruebas y uno sin terminar.
+- **Filtros:** nivel, destino, desalojado o no, día de llegada, tramo, y puerta-médico y estancia mayores que un valor, en una función pura probada sin Streamlit. El tramo es excluyente: «sin terminar» si no hay salida, «calentamiento» si llegó antes del fin del calentamiento y salió, y «ventana» si llegó después y salió. Los filtros se recuerdan al navegar, con claves propias.
+- **Tabla:** las columnas de `EpisodeRecord` en minutos y la llegada en hora de reloj (UTC+1), con el número de episodios que pasan los filtros. `st.dataframe` ya se desplaza sin pintar todas las filas, así que no se pagina a mano.
+- **Elegir un episodio:** un selector con los episodios filtrados, recordado al navegar y escrito en la URL junto a la ejecución (`?run=…&episodio=EP-000137`), para que un enlace abra la misma ficha. Si el episodio no existe o deja de pasar los filtros, la página lo dice y no abre la ficha.
+- **Ficha:** llegada (fecha y hora), nivel, destino y estancia; línea temporal en Altair con los tramos, la banda de pruebas y los desalojos, en hora de reloj sin zona; y la lista de sus eventos tal como están en el log.
+- **«Ver la verdad»:** un interruptor añade el `EpisodeTruth` del episodio, leído de `ground_truth_episodios.csv` por una función nueva del núcleo (una vez por ejecución, en caché). Compara lo sorteado con lo observado: nivel, triaje, valoración (la suma de sus tramos si se interrumpió), reevaluación, respuesta de pruebas y destino. Las duraciones sorteadas que no se usaron (reevaluación y respuesta sin pruebas) se marcan como no usadas. En el hito 3 todo coincide, porque el triaje no tiene error; un test lo comprueba en todos los episodios terminados de una ejecución, con una tolerancia de redondeo fijada antes.
+- **«Ver en el replay»:** se deja para la A.7, cuando el Replay sepa abrir un minuto.
+- **No es crítica:** añade funciones al núcleo sin cambiar el formato en disco ni los contratos del motor; sin `@codex review`.
 
 ### Comparar
 
@@ -786,7 +801,7 @@ Un test falló por 1,8 × 10⁻¹⁵ porque `ArrivalProfile` renormaliza sus fac
 
 ### Tarea A.3b: página Simular
 
-PR #33 (rama `feat/app-simular`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (c7046af). Siete commits: especificación, variantes y propuestas de `run_id`, números derivados, cabecera UTC+1, borrador y editor, carga prevista y ejecución. Tarea no crítica: sin `@codex review`; plan y PR revisados en el chat. Se fusionó antes de la ronda de correcciones de la revisión del PR, que queda pendiente (al final de este apartado).
+PR #33 (rama `feat/app-simular`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (c7046af). Siete commits: especificación, variantes y propuestas de `run_id`, números derivados, cabecera UTC+1, borrador y editor, carga prevista y ejecución. Tarea no crítica: sin `@codex review`; plan y PR revisados en el chat. Se fusionó antes de la ronda de correcciones de la revisión del PR, que entraron después en el PR #34 (a076ab9).
 
 **Qué se hizo**
 
@@ -846,7 +861,7 @@ PR #33 (rama `feat/app-simular`), implementado con Codex (codex-cli 0.166.0) y f
 | App | 96 tests en 24,4 s |
 | Notebooks en modo rápido | 3 en 27,6 s |
 
-**Revisión del PR: hallazgos sin corregir al fusionar**
+**Revisión del PR: hallazgos, corregidos en el PR #34**
 
 - Los campos decimales usan el formato `%.17g`, y el navegador muestra 0.29999999999999999 en lugar de 0.3. Con `%.15g` se ve igual que en el TOML.
 - Una variante editada a mano con valores que su widget no representa rompe o falsea la página: `boxes = "treinta"` lanza un error, `30.5` se ve como 30 y `true` como 1.
@@ -864,5 +879,90 @@ PR #33 (rama `feat/app-simular`), implementado con Codex (codex-cli 0.166.0) y f
 
 **Pendiente para la tarea A.4**
 
-- Las correcciones de la revisión del PR #33, en un commit `fix(app)` propio.
+- Hecho: las correcciones de la revisión del PR #33 entraron en el PR #34 (a076ab9), un commit `fix(app)` propio.
 - Resultados abre la ejecución con `RunStore.open` y da un mensaje claro si falla (de la A.2b).
+
+### Tarea A.4: página Resultados
+
+PR #35 (rama `feat/app-resultados`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (4871075). Siete commits: especificación, KPIs y cumplimiento, lectura de resultados y ficheros, medias y máximos por bloque, cabecera e indicadores, ocupación y curvas, y una corrección tras la revisión del PR. Tarea no crítica: sin `@codex review`. Las correcciones de la A.3b entraron antes, en el PR #34 (a076ab9).
+
+**Qué se hizo**
+
+- `runs/metrics.py`: `window_kpis` devuelve `WindowKPIs` (n, llegadas por día, censo medio, estancia y puerta-médico con media y p90, episodios desalojados, desalojos totales y fracción de ingreso). `window_compliance` devuelve `WindowCompliance`: el `Compliance` diario y un `LevelCompliance` por nivel, con los pacientes que superan el máximo contados como enteros.
+- `runs/results.py`: `read_run_header` (metadatos y SHA-256 de `run.json`) y `read_run_results`, que lee las copias guardadas y devuelve `RunResults` (metadatos, centro, fecha de inicio, `RunAnalysis`, KPIs, cumplimiento, perfil horario del censo y violaciones recalculadas si las hay). Errores públicos `RunReadError` (lectura o validación de una entrada) y `RunAnalysisError` (ventana sin episodios completados, comprobada antes de `analyze_run`).
+- `runs/curves.py`: `curve_blocks` (media exacta y máximo por bloque, con el valor vigente al empezar) y `curve_steps` (escalones recortados a una ventana).
+- `RunStore.read_file` y `archive` comparten la lista de los seis ficheros y rechazan enlaces y entradas que no sean ficheros regulares. Reexportaciones en `edsim.runs`, incluidos `EpisodeRecord`, `RunAnalysis`, `StepCurves`, `Violation`, `TIMEZONE` y `SUMMARY_MEASURES`.
+- Página Resultados: cabecera, invariantes, nueve KPIs, tabla y gráfica de esperas por nivel frente a Manchester, mapa de ocupación, curvas por semana con media, máximo, plantilla y calentamiento sombreado, perfil diario, Little con λ·W y cinco descargas diferidas.
+- `results.py` con `st.cache_resource` (4 entradas; clave: raíz del catálogo, `run_id` y huella de `run.json`). `state.py` abre la ejecución elegida en cada recarga y limpia la selección con su motivo si falla.
+
+**Cambios respecto al plan y a la especificación**
+
+- `st.cache_resource` en lugar de `st.cache_data`: `RunAnalysis` contiene `mappingproxy`, que pickle no serializa, y `cache_data` deserializaría el análisis en cada recarga. El resultado se comparte y se trata como de solo lectura; un test lo compara con uno recién calculado tras recargas y navegación.
+- La comprobación previa construye `episode_table` dos veces; cuesta del 3,2 al 3,9 % del servicio, por debajo del umbral del 10 %, y se queda.
+- Decisiones del plan: `RunAnalysis` obligatorio y `RunAnalysisError` específico; recuentos 0 y estadísticas `None` sin población; referencia solo en las curvas de recursos ocupados; columna λ·W; excedidos como enteros.
+- `curve_steps` elimina escalones consecutivos con el mismo valor. La ocupación tiene además una tabla desplegable con los nueve valores.
+- Corrección tras la revisión: mensaje de carga, explicación del nivel 1, rótulo de semana «\[día 0, día 7)» y texto blanco sobre las celdas oscuras del mapa.
+- La exportación de la especificación (e6e14c8e…) es anterior a esas decisiones; el PR explica sus líneas desactualizadas.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Caché de datos y de recursos | `cache_data` guarda una copia serializada y la reconstruye en cada lectura; `cache_resource` comparte el mismo objeto. El segundo es más rápido y no necesita pickle, a cambio de no modificar nunca lo que devuelve |
+| Huella como clave | Una ejecución borrada y recreada con el mismo nombre es otra ejecución; la huella de `run.json` lo distingue. La caché supone que nada cambia los ficheros fuera de `simulate_run` |
+| Recuento frente a estadística | Un recuento de cero episodios es 0; una media o un porcentaje de cero episodios no existe y se muestra «—». Mostrar n explica la diferencia |
+| Dos denominadores | El porcentaje de pacientes que superan el máximo agrupa pacientes; los días fuera de objetivo cuentan días con pacientes. Promediar porcentajes diarios cambiaría la pregunta |
+| Máximo de un bloque | Necesita el valor vigente antes del primer evento del bloque: mirar solo los cambios interiores pierde picos aunque la media sea correcta |
+| Un caso imposible es un dato dañado | `simulate_run` ya analiza el log antes de publicar, así que una ventana sin episodios completados solo aparece si el log se modificó; se detecta con una comprobación propia, nunca capturando `ValueError` |
+| Invariantes guardados y recalculados | Desde el log no se pueden repetir la comparación con el ground truth ni los procesos vivos de SimPy; por eso se muestran los dos recuentos |
+| Nivel 1 y Manchester | Puerta-médico incluye la espera y la duración del triaje, así que el nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual: es el hallazgo del hito 3, pendiente del hito 4 |
+
+**Medidas** (centro y perfil base, semilla 2026, 2 días de calentamiento; medianas de tres procesos; WSL2, i7-1255U)
+
+| Medida | 14 días | 60 días |
+| --- | --- | --- |
+| Eventos y tamaño del log | 49.843 y 18,6 MB | 218.501 y 81,4 MB |
+| Lectura del log | 0,52 s | 2,88 s |
+| Análisis | 0,09 s | 0,82 s |
+| Servicio completo | 0,64 s | 3,90 s |
+| Primera entrada en la página | 1,01 s (objetivo < 3 s) | 3,93 s |
+| Recarga | 0,10 s (objetivo < 0,5 s) | 0,10 s |
+| Cambiar semana o curva | 0,10 s | 0,10 s |
+| Recalcular invariantes con 0 guardados | 0,07 s | 0,33 s |
+| Memoria del proceso (máximo) | 309 MiB | 498 MiB |
+
+Casi todo el coste de la primera entrada es leer el JSONL; el análisis es pequeño.
+
+**Versiones incorrectas temporales**
+
+| Mutación | Resultado |
+| --- | --- |
+| Caché solo por `run_id` | Una llamada al servicio en lugar de dos al recrear la ejecución |
+| Máximo sin el valor vigente al empezar | Máximos \[1, 0\] en lugar de \[7, 99\] |
+| Desalojos sobre toda la tabla | 4 episodios y 10 desalojos en lugar de 2 y 3 |
+| Fechas con zona en Altair | Falla la comprobación de ausencia de zona y la de `to_dict()` |
+| Recalcular invariantes también con 0 | El espía detecta una llamada |
+| Capturar `ValueError` alrededor del análisis | `app.exception` con 0 en lugar de 1 |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite completa del núcleo | 1.301 tests en 232 s |
+| App | 135 tests en 57 s |
+| Notebooks en modo rápido | 3 en 40 s |
+| Ruff, formato y `git diff --check` | Conformes (164 ficheros) |
+| Valores a mano | 4 llegadas en 2 días, 3 completados, área de censo 1.500 paciente-minuto, 2 episodios y 3 desalojos, ingreso 1/3; bloque \[15, 30) con media 3 y máximo 7 |
+
+**Lecciones aprendidas**
+
+- Elegir una caché exige mirar qué se guarda: un tipo que pickle no admite, y el coste de copiar en cada recarga, decidieron entre `cache_data` y `cache_resource`.
+- Un contrato protegido se respeta comprobando su precondición antes de llamarlo, no capturando su error.
+- Un dato correcto puede parecer un fallo: el 100 % del nivel 1 necesita su explicación en la página.
+- Una espera de 4 segundos sin aviso parece un cuelgue; la medida de rendimiento lo reveló antes que el navegador.
+- La suite de la app ha pasado de 24 a 57 s: cuando el hook de Codex lo note, los AppTest que simulan pueden marcarse `slow`.
+
+**Pendiente para la tarea A.5**
+
+- No existe lectura del ground truth de episodios: «Ver la verdad» necesita una función del núcleo que lea `ground_truth_episodios.csv`.
+- `RunResults` no guarda los eventos: la ficha de un episodio necesita leerlos sin releer el log entero.
