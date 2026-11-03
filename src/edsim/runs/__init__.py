@@ -12,6 +12,7 @@ from edsim.engine.center import (
 )
 from edsim.engine.invariants import Violation
 from edsim.engine.targets import Compliance
+from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
     LevelCompliance,
@@ -45,6 +46,8 @@ __all__ = [
     "CenterDifference",
     "CenterSummary",
     "Compliance",
+    "CurveBlocks",
+    "CurveSteps",
     "DurationSummary",
     "EpisodeRecord",
     "LevelCompliance",
@@ -66,6 +69,8 @@ __all__ = [
     "center_diff",
     "center_from_values",
     "config_fingerprint",
+    "curve_blocks",
+    "curve_steps",
     "list_variants",
     "load_center",
     "load_profile",
