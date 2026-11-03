@@ -6,6 +6,7 @@ import streamlit as st
 
 from edsim.runs import (
     MAX_VARIANT_NAME_LENGTH,
+    RunConfigurationError,
     center_diff,
     center_from_values,
     list_variants,
@@ -16,7 +17,7 @@ from edsim.runs import (
     write_variant,
 )
 from edsim_app import defaults
-from edsim_app.charts import duration_chart
+from edsim_app.charts import duration_chart, offered_chart
 from edsim_app.draft import (
     accept_source,
     cancel_pending,
@@ -26,6 +27,9 @@ from edsim_app.draft import (
     update_value,
     update_variant_name,
 )
+from edsim_app.frames import POOL_LABELS, offered_frame, style_utilization, utilization_frame
+from edsim_app.help import render_simulate_help
+from edsim_app.preview import preview_work
 
 SHIFTS = ("mañana", "tarde", "noche")
 LEVELS = tuple(f"nivel {i}" for i in range(1, 6))
@@ -217,3 +221,24 @@ def render_center():
 
 st.title("Simular")
 draft, blocked = render_center()
+
+st.header("2. La carga prevista")
+if not validate_center_values(draft.values):
+    try:
+        work = preview_work(draft.values, defaults.PROFILE_PATH)
+    except RunConfigurationError as error:
+        st.error(f"No se puede cargar el perfil de llegadas: {error}")
+        render_simulate_help()
+    else:
+        st.caption(
+            f"Perfil: {defaults.PROFILE_PATH}. Ventana prevista: 7 días; medias de 15 minutos."
+        )
+        pool = st.selectbox(
+            "Recurso", list(POOL_LABELS), format_func=POOL_LABELS.get, key="preview_pool"
+        )
+        st.altair_chart(offered_chart(offered_frame(work, pool)), width="stretch")
+        st.dataframe(style_utilization(utilization_frame(work)), hide_index=True, width="stretch")
+        render_simulate_help(work.prior_days)
+else:
+    st.info("Corrige los errores del centro para calcular la carga prevista.")
+    render_simulate_help()

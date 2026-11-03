@@ -158,3 +158,59 @@ def test_invalid_or_reserved_variant_name_blocks_save(name):
     assert app.error
     if name == "centro":
         assert "reservado al centro base" in app.error[0].value
+
+
+def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(monkeypatch):
+    import os
+    from unittest.mock import Mock
+
+    import edsim_app.preview as preview
+    from edsim.runs import center_from_values, load_profile
+    from edsim_app.frames import utilization_frame
+
+    calculate = Mock(wraps=preview.offered_work)
+    monkeypatch.setattr(preview, "offered_work", calculate)
+    app = open_simulation()
+    assert calculate.call_count == 1
+    args = calculate.call_args
+    assert args.kwargs == {"days": 7}
+    # Compute the expected table with the same small real core calculation.
+    work = calculate._mock_wraps(*args.args, **args.kwargs)
+    assert app.dataframe[0].value.equals(utilization_frame(work))
+    app.selectbox(key="preview_pool").select("boxes").run()
+    assert not app.exception
+    assert calculate.call_count == 1
+    edit(app, "recursos.medicos", 0, 13)
+    assert calculate.call_count == 2
+    assert not app.dataframe[0].value.equals(utilization_frame(work))
+    before = defaults.PROFILE_PATH.stat()
+    defaults.PROFILE_PATH.write_bytes(
+        defaults.PROFILE_PATH.read_bytes().replace(b"base_diaria = 300", b"base_diaria = 600")
+    )
+    os.utime(defaults.PROFILE_PATH, ns=(before.st_atime_ns, before.st_mtime_ns))
+    app.run()
+    assert not app.exception
+    assert calculate.call_count == 3
+    values = read_center_values(defaults.CENTER_PATH)
+    values["recursos.medicos"][0] = 13
+    changed = calculate._mock_wraps(
+        center_from_values(values), load_profile(defaults.PROFILE_PATH), 7
+    )
+    assert app.dataframe[0].value.equals(utilization_frame(changed))
+
+
+def test_preview_explains_multiple_prior_days(monkeypatch):
+    from dataclasses import replace
+
+    from edsim.runs import load_center, load_profile
+    from edsim_app import preview
+
+    small = preview.offered_work(
+        load_center(defaults.CENTER_PATH), load_profile(defaults.PROFILE_PATH), 7
+    )
+    monkeypatch.setattr(
+        preview, "offered_work", lambda *args, **kwargs: replace(small, prior_days=3)
+    )
+    app = open_simulation()
+    assert any("3 días previos" in x.value for x in app.markdown)
+    assert any("empieza vacía" in x.value for x in app.markdown)

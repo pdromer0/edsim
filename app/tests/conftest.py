@@ -66,7 +66,8 @@ def simulation_files(tmp_path, monkeypatch):
     """Isolate center edits and every data-cache entry from other page tests."""
     import streamlit as st
 
-    from edsim_app import defaults
+    from edsim.runs import offered_work
+    from edsim_app import defaults, preview
 
     st.cache_data.clear()
     config = tmp_path / "simulation-config"
@@ -78,5 +79,10 @@ def simulation_files(tmp_path, monkeypatch):
     monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")
     monkeypatch.setattr(defaults, "PROFILE_PATH", config / "llegadas.toml")
     monkeypatch.setattr(defaults, "VARIANTS_DIR", tmp_path / "variants")
+    monkeypatch.setattr(
+        preview,
+        "offered_work",
+        lambda center, profile, days: offered_work(center, profile, days, sample_size=32),
+    )
     yield config
     st.cache_data.clear()

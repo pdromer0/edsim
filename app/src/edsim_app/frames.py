@@ -7,7 +7,7 @@ import pandas as pd
 from pandas.io.formats.style import Styler
 
 from edsim.engine.events import TIMEZONE
-from edsim.runs import RunInfo
+from edsim.runs import OfferedWork, RunInfo
 
 COLUMNS = (
     "Ejecución",
@@ -52,3 +52,49 @@ def runs_frame(runs: Sequence[RunInfo]) -> pd.DataFrame:
 def style_runs(frame: pd.DataFrame) -> Styler:
     """Use a decimal comma while keeping numeric columns sortable as numbers."""
     return frame.style.format({"Llegadas por día": "{:.1f}"}, decimal=",")
+
+
+POOL_LABELS = {"medicos": "Médicos", "boxes": "Boxes", "enfermeria_triaje": "Enfermería de triaje"}
+SHIFT_LABELS = ("Mañana", "Tarde", "Noche")
+
+
+def offered_frame(work: OfferedWork, pool: str) -> pd.DataFrame:
+    """Average minute trapezoids and step capacities in 15-minute blocks."""
+    per_minute = (work.load[pool][:-1] + work.load[pool][1:]) / 2
+    return pd.DataFrame(
+        {
+            "Fecha y hora": pd.Timestamp(work.start_date, tz=TIMEZONE)
+            + pd.to_timedelta(work.minutes[:-1:15], unit="min"),
+            "Carga ofrecida": per_minute.reshape(-1, 15).mean(axis=1),
+            "Capacidad": work.capacity[pool][:-1].reshape(-1, 15).mean(axis=1),
+        }
+    )
+
+
+def utilization_frame(work: OfferedWork) -> pd.DataFrame:
+    """Present core utilization values without recomputing them from the chart."""
+    return pd.DataFrame(
+        [
+            {
+                "Recurso": label,
+                "Turno": shift,
+                "Utilización": value,
+                "Estado": "Por encima de 1"
+                if value > 1
+                else "Por encima de 0,85"
+                if value > 0.85
+                else "Hasta 0,85",
+            }
+            for pool, label in POOL_LABELS.items()
+            for shift, value in zip(SHIFT_LABELS, work.utilization[pool], strict=True)
+        ]
+    )
+
+
+def style_utilization(frame: pd.DataFrame) -> Styler:
+    """Highlight thresholds with text and color, preserving numeric values."""
+    colors = {"Por encima de 1": "#ffdddd", "Por encima de 0,85": "#fff0cc"}
+    return frame.style.format({"Utilización": "{:.1%}"}, decimal=",").map(
+        lambda value: f"background-color: {colors[value]}" if value in colors else "",
+        subset=["Estado"],
+    )
