@@ -131,3 +131,29 @@ def test_simular_configuration_types_and_loaders_are_public():
     ):
         assert name in runs.__all__
         assert getattr(runs, name) is not None
+
+
+@pytest.mark.parametrize("key", ["recursos.medicos", "destino.probabilidad_ingreso"])
+def test_literal_dotted_root_key_cannot_shadow_a_table_field(tmp_path, key):
+    path = tmp_path / "literal.toml"
+    path.write_bytes(f'"{key}" = [99, 99, 99]\n'.encode() + BASE.read_bytes())
+    values = read_center_values(path)
+    assert values[key] == read_center_values(BASE)[key]
+    assert values[f'"{key}"'] == [99, 99, 99]
+    assert validate_center_values(values) == {f'"{key}"': f'unknown keys: "{key}"'}
+    with pytest.raises(ValueError) as caught:
+        load_center(path)
+    assert str(caught.value) == f"{path}: unknown keys: {key}"
+
+
+def test_literal_root_key_does_not_supply_a_missing_table(tmp_path):
+    path = tmp_path / "literal.toml"
+    content = BASE.read_bytes().split(b"[destino]")[0]
+    path.write_bytes(b'"destino.probabilidad_ingreso" = [0, 0, 0, 0, 0]\n' + content)
+    errors = validate_center_values(read_center_values(path))
+    assert set(errors) == {"destino.probabilidad_ingreso", '"destino.probabilidad_ingreso"'}
+    with pytest.raises(ValueError) as caught:
+        load_center(path)
+    assert str(caught.value) == (
+        f"{path}: missing keys: destino; unknown keys: destino.probabilidad_ingreso"
+    )

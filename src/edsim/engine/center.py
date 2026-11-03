@@ -13,6 +13,7 @@ them into the parameters of the distribution.
 
 from __future__ import annotations
 
+import json
 import math
 import tomllib
 from collections.abc import Mapping
@@ -163,7 +164,9 @@ def _flatten_center_data(data: Mapping[str, object]) -> dict[str, object]:
         if section in _SECTIONS and isinstance(contents, dict):
             values.update((f"{section}.{name}", value) for name, value in contents.items())
         else:
-            values[section] = contents
+            # A literal root key "recursos.medicos" is not medicos in [recursos].
+            key = json.dumps(section, ensure_ascii=False) if "." in section else section
+            values[key] = contents
     return values
 
 
@@ -172,7 +175,9 @@ def read_center_values(path: str | Path) -> dict[str, object]:
 
     Known tables are flattened to full keys, such as ``recursos.medicos``.
     Unknown sections and malformed tables retain their section name so that
-    ``validate_center_values`` can report them. Syntax and read errors propagate.
+    ``validate_center_values`` can report them. Literal dotted root keys are
+    quoted to distinguish them from flattened table keys. Syntax and read
+    errors propagate.
     """
     return _flatten_center_data(_read_center_data(path))
 
@@ -303,6 +308,8 @@ def load_center(path: str | Path) -> CenterConfig:
     # Preserve the loader's historical grouped diagnostics; field validation
     # still reports every missing full key for an editor.
     missing = sorted({key if key.split(".")[0] in data else key.split(".")[0] for key in missing})
+    root_labels = {json.dumps(key, ensure_ascii=False): key for key in data if "." in key}
+    unknown = sorted({root_labels.get(key, key) for key in unknown})
     if missing or unknown:
         problems = []
         if missing:
