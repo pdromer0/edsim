@@ -32,6 +32,10 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+src = ["src", "app/src"]
+
+[tool.uv.workspace]
+members = ["app"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

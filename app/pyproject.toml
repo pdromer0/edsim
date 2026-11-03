@@ -1,0 +1,26 @@
+[project]
+name = "edsim-app"
+version = "0.1.0"
+description = "Interfaz local de EDsim para explorar simulaciones de urgencias"
+requires-python = ">=3.13"
+dependencies = [
+    "edsim",
+    "streamlit>=1.66.1",
+]
+
+[project.scripts]
+edsim-app = "edsim_app.launcher:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+edsim = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "slow: tests largos de la app; el hook de Codex los excluye",
+]
