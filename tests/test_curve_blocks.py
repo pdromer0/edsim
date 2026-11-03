@@ -74,3 +74,14 @@ def test_public_exports():
 
     for name in ("CurveBlocks", "CurveSteps", "curve_blocks", "curve_steps"):
         assert name in runs.__all__
+
+
+def test_steps_drop_redundant_values_without_moving_changes():
+    curves = StepCurves(
+        np.array([0.0, 1.0, 2.0, 3.0]),
+        MappingProxyType({"nurses_staff": np.array([4, 4, 8, 8])}),
+        4.0,
+    )
+    steps = curve_steps(curves, "nurses_staff", 0.5, 3.5)
+    np.testing.assert_array_equal(steps.edges, [0.5, 2, 3.5])
+    np.testing.assert_array_equal(steps.values, [4, 8])

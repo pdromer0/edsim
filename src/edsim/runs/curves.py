@@ -39,7 +39,9 @@ def curve_steps(curves: StepCurves, name: str, start: float, end: float) -> Curv
     first = int(np.searchsorted(curves.times, start, side="right")) - 1
     stop = int(np.searchsorted(curves.times, end, side="left"))
     edges = np.concatenate(([float(start)], curves.times[first + 1 : stop], [float(end)]))
-    return CurveSteps(edges, curves[name][first:stop].copy())
+    values = curves[name][first:stop]
+    changed = np.concatenate(([True], np.diff(values) != 0))
+    return CurveSteps(np.append(edges[:-1][changed], float(end)), values[changed].copy())
 
 
 def curve_blocks(

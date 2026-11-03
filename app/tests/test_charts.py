@@ -81,3 +81,64 @@ def test_waits_chart_keeps_supplied_door_waits_and_manchester(catalog):
     assert [row["Minutos"] for row in rows if row["Serie"] == "p90"] == [
         level.p90["door_to_doctor"] for level in result.analysis.metrics.by_level
     ]
+
+
+def test_weekly_charts_serialize_wall_time_capacity_and_warmup(catalog):
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.charts import curve_chart
+    from edsim_app.frames import CURVE_LABELS, curve_frame, wall_times
+
+    result = read_run_results(RunStore(catalog), "older")
+    warmup = wall_times(result, [1440])[0]
+    for name in CURVE_LABELS:
+        frame = curve_frame(result, name, 0)
+        assert frame["Fecha y hora"].dt.tz is None
+        spec = curve_chart(frame, warmup).to_dict()
+        lines = spec["layer"][-1]
+        rows = spec["datasets"][lines["data"]["name"]]
+        assert rows[0]["Fecha y hora"] == "2026-01-05T00:00:00"
+        assert rows[1]["Fecha y hora"] == "2026-01-05T00:15:00"
+        assert rows[-1]["Fecha y hora"] == "2026-01-08T00:00:00"
+        assert lines["mark"]["interpolate"] == "step-after"
+        names = {row["Serie"] for row in rows}
+        expected = {"Media", "Máximo"}
+        if name in ("nurses_busy", "doctors_busy"):
+            expected.add("Plantilla vigente")
+        elif name == "boxes_busy":
+            expected.add("Boxes")
+        assert names == expected
+        assert set(lines["encoding"]["color"]["scale"]["domain"]) == expected
+        shade = spec["datasets"][spec["layer"][0]["data"]["name"]]
+        assert shade == [{"Inicio": "2026-01-05T00:00:00", "Fin": "2026-01-06T00:00:00"}]
+
+
+def test_weekly_frame_short_last_week_and_no_warmup_shading(weekly_catalog):
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.charts import curve_chart
+    from edsim_app.frames import curve_frame, wall_times
+
+    result = read_run_results(RunStore(weekly_catalog), "weekly")
+    frame = curve_frame(result, "doctors_busy", 1)
+    means = frame.loc[frame["Serie"] == "Media"]
+    assert len(means) == 97  # 96 blocks and the final drawing endpoint
+    assert means.iloc[0]["Fecha y hora"].isoformat() == "2026-01-12T00:00:00"
+    assert means.iloc[-1]["Fecha y hora"].isoformat() == "2026-01-13T00:00:00"
+    spec = curve_chart(frame, wall_times(result, [1440])[0]).to_dict()
+    assert len(spec["layer"]) == 1
+
+
+def test_occupancy_and_hourly_charts_preserve_core_values(catalog):
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.charts import hourly_census_chart, occupancy_chart
+    from edsim_app.frames import hourly_census_frame, occupancy_frame
+
+    result = read_run_results(RunStore(catalog), "older")
+    frame = occupancy_frame(result)
+    frame.loc[0, "Ocupación"] = 1.2
+    spec = occupancy_chart(frame).to_dict()
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert len(rows) == 9 and rows[0]["Ocupación"] == 1.2
+    assert "domainMax" not in spec["layer"][0]["encoding"]["color"]["scale"]
+    spec = hourly_census_chart(hourly_census_frame(result)).to_dict()
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert [row["Censo medio"] for row in rows] == result.hourly_census.tolist()

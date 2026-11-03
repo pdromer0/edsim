@@ -2,10 +2,13 @@
 
 import dataclasses
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import edsim_app
@@ -88,6 +91,35 @@ def test_empty_completed_window_keeps_header_and_explains_modified_log(catalog):
     assert "no tiene episodios completados" in app.error[0].value
     assert "modificado fuera de la app" in app.error[0].value
     assert not app.metric
+
+
+def test_empty_level_is_normal_and_keeps_other_results(catalog):
+    import pandas as pd
+
+    from edsim.runs import read_center_values, write_variant
+
+    source = "tests/data/centro_ejemplo.toml"
+    values = read_center_values(source)
+    values["triaje.reparto_niveles"][0] = 0
+    center = catalog.parent / "no-level-one.toml"
+    write_variant(source, values, center)
+    simulate_run(
+        str(center),
+        "tests/data/llegadas_ejemplo.toml",
+        2,
+        7,
+        output_dir=catalog / "empty-level",
+        run_id="empty-level",
+        warmup_days=1,
+        origin="app",
+    )
+    app = open_results("empty-level")
+    assert not app.exception and not app.error
+    assert app.dataframe[0].value.loc[0, "n"] == 0
+    assert pd.isna(app.dataframe[0].value.loc[0, "Puerta-médico media (min)"])
+    assert pd.isna(app.dataframe[0].value.loc[0, "Superan el máximo"])
+    assert app.dataframe[0].value["n"].sum() > 0
+    assert app.metric and len(app.dataframe[2].value) == 3
 
 
 @pytest.mark.parametrize("error_type", [ValueError, RuntimeError, OSError])
@@ -189,3 +221,116 @@ def test_invariants_limit_counts_and_mismatch(catalog, monkeypatch, saved, recal
     assert bool(app.warning) == (saved != recalculated)
     if saved != recalculated:
         assert f"recalculado ({recalculated})" in app.warning[0].value
+
+
+def test_occupancy_and_little_equal_independent_analysis_and_cli(catalog):
+    from edsim.engine.analysis import analyze_run
+    from edsim.runs import load_center
+
+    app = open_results()
+    assert not app.exception
+    path = catalog / "older"
+    analysis = analyze_run(
+        list(read_events(path / "eventos.jsonl")), load_center(path / "centro.toml"), 3, 1
+    )
+    summary = format_run_summary(analysis, ())
+    occupancy = app.dataframe[1].value
+    assert len(occupancy) == 9
+    assert occupancy["Ocupación"].tolist() == [value.ratio for value in analysis.metrics.occupancy]
+    for value in occupancy["Ocupación"]:
+        assert f"{100 * value:.1f} %" in summary
+    little = app.dataframe[2].value
+    assert len(little) == 3
+    for row, law in zip(little.to_dict("records"), analysis.little, strict=True):
+        assert row["L"] == law.l
+        assert row["λ·W"] == law.lam * law.w
+        assert row["Error relativo"] == law.relative_error
+        assert f"{row['L']:.4f}" in summary
+        assert f"{row['λ·W']:.4f}" in summary
+        assert f"{100 * row['Error relativo']:.2f} %" in summary
+    assert len(app.get("vega_lite_chart")) == 4
+
+
+def test_downloads_defer_all_five_reads_and_keep_exact_names(catalog, monkeypatch):
+    download = Mock(wraps=st.download_button)
+    original = RunStore.read_file
+    read = Mock(wraps=original)
+
+    def record(self, run_id, filename):
+        return read(self, run_id, filename)
+
+    monkeypatch.setattr(st, "download_button", download)
+    monkeypatch.setattr(RunStore, "read_file", record)
+    app = open_results()
+    app.run()
+    assert not app.exception
+    assert all(call.args[2] == "run.json" for call in read.call_args_list)
+    calls = [
+        call.kwargs
+        for call in download.call_args_list
+        if call.kwargs["key"].startswith("download_result_")
+    ][-5:]
+    assert {call["file_name"] for call in calls} == {
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+        "centro.toml",
+        "llegadas.toml",
+    }
+    assert len(app.get("download_button")) == 5
+    for call in calls:
+        assert call["on_click"] == "ignore" and callable(call["data"])
+        assert call["data"]() == (catalog / "older" / call["file_name"]).read_bytes()
+
+
+def assert_same_result(actual, expected):
+    """Compare nested dataclasses, maps and arrays including NaNs and every field."""
+    assert type(actual) is type(expected)
+    if dataclasses.is_dataclass(actual):
+        for field in dataclasses.fields(actual):
+            assert_same_result(getattr(actual, field.name), getattr(expected, field.name))
+    elif isinstance(actual, np.ndarray):
+        np.testing.assert_array_equal(actual, expected)
+    elif isinstance(actual, Mapping):
+        assert actual.keys() == expected.keys()
+        for key in actual:
+            assert_same_result(actual[key], expected[key])
+    elif isinstance(actual, tuple):
+        assert len(actual) == len(expected)
+        for first, second in zip(actual, expected, strict=True):
+            assert_same_result(first, second)
+    else:
+        assert actual == expected
+
+
+def test_plot_choices_survive_navigation_clamp_and_never_mutate_cached_result(weekly_catalog):
+    store = RunStore(weekly_catalog)
+    _, fingerprint = read_run_header(store, "weekly")
+    shared = results.cached_run_results(str(store.root), "weekly", fingerprint)
+    app = open_results("weekly")
+    assert not app.exception
+    for curve in (
+        "census",
+        "waiting_triage",
+        "waiting_box",
+        "nurses_busy",
+        "doctors_busy",
+        "boxes_busy",
+    ):
+        app.selectbox(key="results_curve_widget").select(curve).run()
+        app.selectbox(key="results_week_widget").select(1).run()
+        assert not app.exception
+        app.run()
+    app.switch_page("views/runs.py").run()
+    app.switch_page("views/results.py").run()
+    assert not app.exception
+    assert app.selectbox(key="results_week_widget").value == 1
+    assert app.selectbox(key="results_curve_widget").value == "boxes_busy"
+    assert results.cached_run_results(str(store.root), "weekly", fingerprint) is shared
+    assert_same_result(shared, read_run_results(store, "weekly"))
+    app.switch_page("views/runs.py").run()
+    app.selectbox(key="run_choice").select("older").run()
+    app.switch_page("views/results.py").run()
+    assert not app.exception
+    assert app.selectbox(key="results_week_widget").value == 0
+    assert app.selectbox(key="results_curve_widget").value == "boxes_busy"

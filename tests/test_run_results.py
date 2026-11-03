@@ -160,8 +160,9 @@ def test_zero_invariants_skip_check_positive_count_rechecks_only_log(saved, monk
     store, path = saved
     check = Mock(wraps=module.check_invariants)
     monkeypatch.setattr(module, "check_invariants", check)
-    assert read_run_results(store, "sample").violations is None
+    clean = read_run_results(store, "sample")
     check.assert_not_called()
+    assert clean.violations is None
     dataclasses.replace(store.open("sample"), invariant_violations=17).write(path / "run.json")
     result = read_run_results(store, "sample")
     assert result.violations == ()

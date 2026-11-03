@@ -71,3 +71,68 @@ def waits_chart(frame: pd.DataFrame) -> alt.Chart:
         )
         .properties(height=260)
     )
+
+
+def occupancy_chart(frame: pd.DataFrame) -> alt.LayerChart:
+    """Render nine occupancy ratios without clipping the color scale at one."""
+    base = alt.Chart(frame).encode(
+        x=alt.X("Turno:N", sort=["Mañana", "Tarde", "Noche"]),
+        y=alt.Y("Recurso:N", sort=["Enfermería de triaje", "Médicos", "Boxes"]),
+        tooltip=["Recurso:N", "Turno:N", "Etiqueta:N"],
+    )
+    cells = base.mark_rect().encode(color=alt.Color("Ocupación:Q", scale=alt.Scale(domainMin=0)))
+    text = base.mark_text(color="black").encode(text="Etiqueta:N")
+    return (cells + text).properties(height=180)
+
+
+def curve_chart(frame: pd.DataFrame, warmup_end: pd.Timestamp) -> alt.LayerChart:
+    """Draw block means/maxima and exact resource steps with clipped warmup shading."""
+    names = frame["Serie"].drop_duplicates().tolist()
+    palette = {
+        "Media": "#2a78d6",
+        "Máximo": "#eb6834",
+        "Plantilla vigente": "#1baf7a",
+        "Boxes": "#1baf7a",
+    }
+    lines = (
+        alt.Chart(frame)
+        .mark_line(interpolate="step-after")
+        .encode(
+            x=alt.X("Fecha y hora:T", title="Fecha y hora (UTC+1)"),
+            y=alt.Y("Valor:Q", title="Pacientes / recursos"),
+            color=alt.Color(
+                "Serie:N", scale=alt.Scale(domain=names, range=[palette[name] for name in names])
+            ),
+            tooltip=[
+                alt.Tooltip("Fecha y hora:T", format="%d/%m %H:%M"),
+                "Serie:N",
+                alt.Tooltip("Valor:Q", format=".2f"),
+            ],
+        )
+    )
+    start, end = frame["Fecha y hora"].min(), frame["Fecha y hora"].max()
+    layers = []
+    if warmup_end > start:
+        shade = pd.DataFrame({"Inicio": [start], "Fin": [min(warmup_end, end)]})
+        layers.append(
+            alt.Chart(shade)
+            .mark_rect(color="#888888", opacity=0.15)
+            .encode(x="Inicio:T", x2="Fin:T")
+        )
+    return alt.layer(*layers, lines).properties(height=280).interactive()
+
+
+def hourly_census_chart(frame: pd.DataFrame) -> alt.Chart:
+    """Plot the core's mean census by clock hour within the observation window."""
+    return (
+        alt.Chart(frame)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(
+                "Hora del día:Q", scale=alt.Scale(domain=[0, 23]), axis=alt.Axis(tickMinStep=1)
+            ),
+            y=alt.Y("Censo medio:Q"),
+            tooltip=["Hora del día:Q", "Censo medio:Q"],
+        )
+        .properties(height=230)
+    )

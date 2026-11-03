@@ -10,7 +10,8 @@ def render_results_help() -> None:
             "Las llegadas y el censo usan toda la ventana sin calentamiento, incluidos "
             "los pacientes que siguen dentro al final. Las esperas, estancias, desalojos "
             "e ingresos usan solo episodios que llegan en la ventana y salen. «—» indica "
-            "una estadística sin pacientes. Manchester mide puerta-médico: exactamente "
+            "una estadística sin pacientes. El nivel 1 exige atención inmediata (0 minutos). "
+            "Manchester mide puerta-médico: exactamente "
             "en el máximo cumple; los días fuera de objetivo tienen menos del 90 % de "
             "pacientes dentro del máximo y se cuentan solo días con pacientes del nivel."
         )
@@ -19,6 +20,11 @@ def render_results_help() -> None:
             "llegadas frente al ground truth y procesos vivos en SimPy (inside). Al "
             "recalcular desde el log no se pueden repetir; el recuento puede diferir "
             "del guardado. El cero guardado conserva la comprobación completa original."
+        )
+        st.write(
+            "La ley de Little compara L (pacientes medios) con λ·W (llegadas por minuto "
+            "por tiempo medio en minutos). Una ventana finita puede dar diferencias "
+            "porque sus bordes cortan episodios."
         )
 
 

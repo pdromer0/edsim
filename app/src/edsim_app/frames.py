@@ -7,7 +7,16 @@ from datetime import datetime
 import pandas as pd
 from pandas.io.formats.style import Styler
 
-from edsim.runs import SUMMARY_MEASURES, TIMEZONE, OfferedWork, RunInfo, RunResults, WindowKPIs
+from edsim.runs import (
+    SUMMARY_MEASURES,
+    TIMEZONE,
+    OfferedWork,
+    RunInfo,
+    RunResults,
+    WindowKPIs,
+    curve_blocks,
+    curve_steps,
+)
 
 COLUMNS = (
     "Ejecución",
@@ -155,3 +164,104 @@ def style_waits(frame: pd.DataFrame) -> Styler:
     formats = {column: "{:.1f}" for column in frame if column.endswith("(min)")}
     formats.update({"Superan el máximo": "{:.1%}", "Días fuera de objetivo": "{:.1%}"})
     return frame.style.format(formats, decimal=",", na_rep="—")
+
+
+CURVE_LABELS = {
+    "census": "Censo",
+    "waiting_triage": "Cola de triaje",
+    "waiting_box": "Cola de box",
+    "nurses_busy": "Enfermería de triaje ocupada",
+    "doctors_busy": "Médicos ocupados",
+    "boxes_busy": "Boxes ocupados",
+}
+
+
+def wall_times(result: RunResults, minutes: object) -> pd.DatetimeIndex:
+    """Convert simulation minutes to UTC+1 clock time without a timezone offset."""
+    return (
+        pd.Timestamp(result.start_date, tz=TIMEZONE) + pd.to_timedelta(minutes, unit="min")
+    ).tz_localize(None)
+
+
+def curve_frame(result: RunResults, name: str, week: int) -> pd.DataFrame:
+    """Present one week's supplied exact blocks and capacity steps without mutation."""
+    start = week * 7 * 1440
+    end = min(start + 7 * 1440, result.analysis.curves.horizon)
+    blocks = curve_blocks(result.analysis.curves, name, start, end)
+    rows = []
+    for label, values in (("Media", blocks.mean), ("Máximo", blocks.maximum)):
+        # Repeat the last value only to draw the final block all the way to its end.
+        rows.extend(
+            {"Fecha y hora": time, "Serie": label, "Valor": float(value)}
+            for time, value in zip(
+                wall_times(result, blocks.edges), [*values, values[-1]], strict=True
+            )
+        )
+    staff_name = {"nurses_busy": "nurses_staff", "doctors_busy": "doctors_staff"}.get(name)
+    if staff_name is not None:
+        steps = curve_steps(result.analysis.curves, staff_name, start, end)
+        rows.extend(
+            {"Fecha y hora": time, "Serie": "Plantilla vigente", "Valor": int(value)}
+            for time, value in zip(
+                wall_times(result, steps.edges), [*steps.values, steps.values[-1]], strict=True
+            )
+        )
+    elif name == "boxes_busy":
+        rows.extend(
+            {"Fecha y hora": time, "Serie": "Boxes", "Valor": result.center.boxes}
+            for time in wall_times(result, [start, end])
+        )
+    return pd.DataFrame(rows)
+
+
+def occupancy_frame(result: RunResults) -> pd.DataFrame:
+    """Keep all nine core ratios, including values above one, with Spanish labels."""
+    shifts = dict(zip(("morning", "afternoon", "night"), SHIFT_LABELS, strict=True))
+    return pd.DataFrame(
+        [
+            {
+                "Recurso": POOL_LABELS[value.pool],
+                "Turno": shifts[value.shift],
+                "Ocupación": value.ratio,
+                "Etiqueta": format_number(value.ratio, percentage=True),
+            }
+            for value in result.analysis.metrics.occupancy
+        ]
+    )
+
+
+def hourly_census_frame(result: RunResults) -> pd.DataFrame:
+    """Expose the core's 24 hour-of-day means as a fresh presentation table."""
+    return pd.DataFrame({"Hora del día": range(24), "Censo medio": result.hourly_census.copy()})
+
+
+def little_frame(result: RunResults) -> pd.DataFrame:
+    """Present operational laws with their original units and the CLI's product."""
+    labels = {"system": "Sistema", "triage_queue": "Cola de triaje", "box_queue": "Cola de box"}
+    return pd.DataFrame(
+        [
+            {
+                "Ámbito": labels[law.name],
+                "L": law.l,
+                "λ (pacientes/min)": law.lam,
+                "W (min)": law.w,
+                "λ·W": law.lam * law.w,
+                "Error relativo": law.relative_error,
+            }
+            for law in result.analysis.little
+        ]
+    )
+
+
+def style_little(frame: pd.DataFrame) -> Styler:
+    """Preserve numbers while matching CLI precision for L, product and error."""
+    return frame.style.format(
+        {
+            "L": "{:.4f}",
+            "λ (pacientes/min)": "{:.6f}",
+            "W (min)": "{:.4f}",
+            "λ·W": "{:.4f}",
+            "Error relativo": "{:.2%}",
+        },
+        decimal=",",
+    )
