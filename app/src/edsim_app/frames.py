@@ -59,12 +59,14 @@ SHIFT_LABELS = ("Mañana", "Tarde", "Noche")
 
 
 def offered_frame(work: OfferedWork, pool: str) -> pd.DataFrame:
-    """Average minute trapezoids and step capacities in 15-minute blocks."""
+    """Average 15-minute blocks with UTC+1 wall times immune to browser timezone shifts."""
     per_minute = (work.load[pool][:-1] + work.load[pool][1:]) / 2
     return pd.DataFrame(
         {
-            "Fecha y hora": pd.Timestamp(work.start_date, tz=TIMEZONE)
-            + pd.to_timedelta(work.minutes[:-1:15], unit="min"),
+            "Fecha y hora": (
+                pd.Timestamp(work.start_date, tz=TIMEZONE)
+                + pd.to_timedelta(work.minutes[:-1:15], unit="min")
+            ).tz_localize(None),
             "Carga ofrecida": per_minute.reshape(-1, 15).mean(axis=1),
             "Capacidad": work.capacity[pool][:-1].reshape(-1, 15).mean(axis=1),
         }

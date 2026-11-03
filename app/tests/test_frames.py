@@ -83,8 +83,8 @@ def test_offered_blocks_integrate_linear_load_and_exclude_final_endpoint():
     assert frame["Carga ofrecida"].iloc[0] == 7.5
     assert frame["Carga ofrecida"].iloc[-1] == 1432.5
     assert frame["Capacidad"].iloc[31:33].tolist() == [2, 4]
-    assert frame["Fecha y hora"].iloc[0].isoformat() == "2026-01-05T00:00:00+01:00"
-    assert frame["Fecha y hora"].iloc[-1].isoformat() == "2026-01-05T23:45:00+01:00"
+    assert frame["Fecha y hora"].iloc[0].isoformat() == "2026-01-05T00:00:00"
+    assert frame["Fecha y hora"].iloc[-1].isoformat() == "2026-01-05T23:45:00"
     work.load["medicos"][:] = 3.25
     assert (offered_frame(work, "medicos")["Carga ofrecida"] == 3.25).all()
 

@@ -44,6 +44,7 @@ def accept_source(source: str | Path) -> None:
     try:
         load_source(source)
     except (OSError, ValueError) as error:
+        cancel_pending("pending_source")
         st.session_state.source_notice = f"No se puede leer el origen: {error}"
 
 
