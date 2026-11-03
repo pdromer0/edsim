@@ -80,8 +80,16 @@ def occupancy_chart(frame: pd.DataFrame) -> alt.LayerChart:
         y=alt.Y("Recurso:N", sort=["Enfermería de triaje", "Médicos", "Boxes"]),
         tooltip=["Recurso:N", "Turno:N", "Etiqueta:N"],
     )
-    cells = base.mark_rect().encode(color=alt.Color("Ocupación:Q", scale=alt.Scale(domainMin=0)))
-    text = base.mark_text(color="black").encode(text="Etiqueta:N")
+    upper = max(1.0, float(frame["Ocupación"].max()))
+    cells = base.mark_rect().encode(
+        color=alt.Color("Ocupación:Q", scale=alt.Scale(domain=[0, upper], scheme="blues"))
+    )
+    text = base.mark_text().encode(
+        text="Etiqueta:N",
+        color=alt.condition(
+            alt.datum["Ocupación"] > 0.6 * upper, alt.value("white"), alt.value("black")
+        ),
+    )
     return (cells + text).properties(height=180)
 
 

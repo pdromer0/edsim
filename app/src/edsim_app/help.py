@@ -16,6 +16,13 @@ def render_results_help() -> None:
             "pacientes dentro del máximo y se cuentan solo días con pacientes del nivel."
         )
         st.write(
+            "Puerta-médico incluye la espera de triaje y el propio triaje. Por eso el "
+            "nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual: sus "
+            "pacientes superan el máximo y sus días con pacientes salen al 100 % fuera "
+            "de objetivo. Es el hallazgo del hito 3 sobre el nivel 1 sin prioridad en "
+            "el triaje, pendiente de resolver en el hito 4."
+        )
+        st.write(
             "Dos subcomprobaciones de conservación solo existen durante la simulación: "
             "llegadas frente al ground truth y procesos vivos en SimPy (inside). Al "
             "recalcular desde el log no se pueden repetir; el recuento puede diferir "

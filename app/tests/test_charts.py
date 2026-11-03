@@ -142,3 +142,27 @@ def test_occupancy_and_hourly_charts_preserve_core_values(catalog):
     spec = hourly_census_chart(hourly_census_frame(result)).to_dict()
     rows = spec["datasets"][spec["data"]["name"]]
     assert [row["Censo medio"] for row in rows] == result.hourly_census.tolist()
+
+
+def test_occupancy_labels_contrast_with_the_shared_color_domain():
+    import pandas as pd
+
+    from edsim_app.charts import occupancy_chart
+
+    for ratios, upper in (([0.1, 0.8], 1.0), ([0.2, 1.2], 1.2)):
+        frame = pd.DataFrame(
+            {
+                "Recurso": ["Médicos", "Boxes"],
+                "Turno": ["Mañana", "Noche"],
+                "Ocupación": ratios,
+                "Etiqueta": ["baja", "alta"],
+            }
+        )
+        spec = occupancy_chart(frame).to_dict()
+        cells, labels = spec["layer"]
+        assert cells["encoding"]["color"]["scale"] == {"domain": [0, upper], "scheme": "blues"}
+        color = labels["encoding"]["color"]
+        assert color["condition"]["test"] == f"(datum['Ocupación'] > {0.6 * upper})"
+        assert color["condition"]["value"] == "white"
+        assert color["value"] == "black"
+        assert ratios[0] <= 0.6 * upper < ratios[1]

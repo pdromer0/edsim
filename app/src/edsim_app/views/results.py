@@ -122,7 +122,7 @@ def render_analysis(result: RunResults) -> None:
             "Semana",
             weeks,
             lambda week: (
-                f"Semana {week + 1} · días {week * 7} a {min((week + 1) * 7, result.info.days)}"
+                f"Semana {week + 1} · [día {week * 7}, día {min((week + 1) * 7, result.info.days)})"
             ),
         ),
         ("results_curve", "Curva", list(CURVE_LABELS), CURVE_LABELS.get),

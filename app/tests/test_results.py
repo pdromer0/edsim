@@ -71,6 +71,26 @@ def test_no_selection_asks_for_catalog(catalog_root):
     assert not app.metric
 
 
+def test_results_help_explains_immediate_level_model_limit(catalog):
+    app = open_results()
+    assert not app.exception
+    help_box = next(box for box in app.expander if box.label == "¿Qué estoy viendo?")
+    text = " ".join(item.value for item in help_box.markdown)
+    assert "Puerta-médico incluye la espera de triaje y el propio triaje" in text
+    assert "nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual" in text
+    assert "días con pacientes salen al 100 % fuera de objetivo" in text
+    assert "hito 3" in text and "sin prioridad en el triaje" in text and "hito 4" in text
+
+
+def test_week_labels_show_half_open_intervals(weekly_catalog):
+    app = open_results("weekly")
+    assert not app.exception
+    assert app.selectbox(key="results_week_widget").options == [
+        "Semana 1 · [día 0, día 7)",
+        "Semana 2 · [día 7, día 8)",
+    ]
+
+
 @pytest.mark.parametrize("filename", ["centro.toml", "llegadas.toml", "eventos.jsonl"])
 def test_input_error_shows_filename_with_header(catalog, filename):
     (catalog / "older" / filename).write_text("[broken")
