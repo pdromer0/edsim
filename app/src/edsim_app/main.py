@@ -2,18 +2,23 @@
 
 import streamlit as st
 
+from edsim_app.state import catalog_store, initialize_state, render_sidebar
+
+initialize_state(catalog_store())
+
 page = st.navigation(
     {
         "Ejecutar": [
-            st.Page("pages/runs.py", title="Ejecuciones", url_path="ejecuciones", default=True),
-            st.Page("pages/simulate.py", title="Simular", url_path="simular"),
+            st.Page("views/runs.py", title="Ejecuciones", url_path="ejecuciones", default=True),
+            st.Page("views/simulate.py", title="Simular", url_path="simular"),
         ],
         "Analizar": [
-            st.Page("pages/results.py", title="Resultados", url_path="resultados"),
-            st.Page("pages/episodes.py", title="Episodios", url_path="episodios"),
-            st.Page("pages/compare.py", title="Comparar", url_path="comparar"),
-            st.Page("pages/replay.py", title="Replay", url_path="replay"),
+            st.Page("views/results.py", title="Resultados", url_path="resultados"),
+            st.Page("views/episodes.py", title="Episodios", url_path="episodios"),
+            st.Page("views/compare.py", title="Comparar", url_path="comparar"),
+            st.Page("views/replay.py", title="Replay", url_path="replay"),
         ],
     }
 )
+render_sidebar()
 page.run()

@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import stat
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Literal, Self
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from edsim.runs.identifiers import validate_run_id
 
@@ -33,6 +36,11 @@ class RunInfo:
     invariant_violations: int
     window_arrivals: int
     simulation_seconds: float
+
+    @property
+    def arrivals_per_day(self) -> float:
+        """Observed arrivals per day, excluding the warmup period."""
+        return self.window_arrivals / (self.days - self.warmup_days)
 
     def __post_init__(self) -> None:
         if type(self.format_version) is not int or self.format_version != 1:
@@ -141,3 +149,26 @@ class RunStore:
     def delete(self, run_id: str) -> None:
         """Delete an occupied directory only after validating its containment."""
         shutil.rmtree(self._path(run_id))
+
+    def archive(self, run_id: str) -> bytes:
+        """Zip the six persisted files, rejecting symlinks and non-regular entries."""
+        directory = self._path(run_id)
+        files = [
+            directory / name
+            for name in (
+                "run.json",
+                "centro.toml",
+                "llegadas.toml",
+                "eventos.jsonl",
+                "ground_truth_episodios.csv",
+                "ground_truth_dias.csv",
+            )
+        ]
+        for path in files:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError(f"archive requires regular files: {path}")
+        buffer = BytesIO()
+        with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+            for path in files:
+                archive.write(path, arcname=path.name)
+        return buffer.getvalue()
