@@ -755,3 +755,66 @@ def test_cli_rejects_long_automatic_run_id(tmp_path, monkeypatch, capsys):
     assert error.value.code == 2
     assert "--run-id explícito" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
+
+
+def test_simulate_analysis_value_error_propagates(tmp_path, monkeypatch):
+    def fail(*args, **kwargs):
+        raise ValueError("injected analysis failure")
+
+    monkeypatch.setattr("edsim.runs.service.analyze_run", fail)
+    with pytest.raises(ValueError, match="injected analysis failure"):
+        main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("option", ["--centro", "--llegadas"])
+def test_simulate_invalid_config_names_exact_option(option, tmp_path, capsys):
+    invalid = tmp_path / "invalid.toml"
+    invalid.write_text("invalid = [\n")
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "motor",
+                "simular",
+                *SIMULATE_ARGS,
+                option,
+                str(invalid),
+                "--salida",
+                str(tmp_path / "salida"),
+            ]
+        )
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert f"{option} {invalid}: " in captured.err
+    assert captured.out == ""
+
+
+def test_simulate_prints_validated_header_before_service(tmp_path, monkeypatch, capsys):
+    from edsim.runs import simulate_run
+
+    calls = []
+
+    def simulate_after_header(*args, **kwargs):
+        captured = capsys.readouterr()
+        assert (
+            f"centro {ENGINE_CENTER} (huella {config_fingerprint(ENGINE_CENTER)})" in captured.out
+        )
+        assert f"llegadas {EXAMPLE} (huella {config_fingerprint(EXAMPLE)})" in captured.out
+        assert "2 días (1 de calentamiento) · semilla 7 · run_id r7" in captured.out
+        calls.append(True)
+        return simulate_run(*args, **kwargs)
+
+    monkeypatch.setattr("edsim.cli.simulate_run", simulate_after_header)
+    assert main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")]) == 0
+    assert calls == [True]
+
+
+def test_simulate_destination_race_is_usage_error(tmp_path, monkeypatch, capsys):
+    def race(*args, **kwargs):
+        raise FileExistsError("destination occupied after validation")
+
+    monkeypatch.setattr("edsim.cli.simulate_run", race)
+    with pytest.raises(SystemExit) as error:
+        main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
+    assert error.value.code == 2
+    assert "ya existe" in capsys.readouterr().err

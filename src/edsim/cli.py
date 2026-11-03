@@ -32,7 +32,7 @@ from edsim.arrivals.report import (
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
 from edsim.engine.center import load_center
-from edsim.engine.engine import default_run_id
+from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
     format_engine_validation,
     format_run_summary,
@@ -280,6 +280,18 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     if args.salida is None:
         args.salida = str(Path("resultados/ejecuciones") / run_id)
     out_dir = _output_dir(args, parser)
+    if out_dir.exists() or out_dir.is_symlink():
+        parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
+    _load_engine_configs(args, parser)
+    try:
+        check_horizon(args.dias, args.calentamiento)
+    except ValueError as error:
+        parser.error(str(error))
+    print(
+        f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
+        f" · semilla {args.semilla} · run_id {run_id}\n",
+        flush=True,
+    )
     try:
         result = simulate_run(
             args.centro,
@@ -293,16 +305,6 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         )
     except FileExistsError:
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
-    except (OSError, ValueError) as error:
-        parser.error(
-            f"--centro {args.centro}; --llegadas {args.llegadas}; --salida {out_dir}: {error}"
-        )
-    args.huella_centro = result.info.center_fingerprint
-    args.huella_llegadas = result.info.profile_fingerprint
-    print(
-        f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
-        f" · semilla {args.semilla} · run_id {run_id}\n"
-    )
     print(format_run_summary(result.analysis, result.violations))
     print(
         f"\nLog: {out_dir / EVENTS_FILE}\nCSV: {out_dir / EPISODES_CSV}"
