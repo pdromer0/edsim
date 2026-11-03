@@ -12,7 +12,7 @@ from edsim.runs import RunInfo
 COLUMNS = (
     "Ejecución",
     "Variante del centro",
-    "Fecha de creación",
+    "Fecha de creación (UTC+1)",
     "Días",
     "Calentamiento (días)",
     "Semilla",

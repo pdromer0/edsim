@@ -13,7 +13,7 @@ def test_run_table_columns_values_and_fixed_timezone(run_info):
         {
             "Ejecución": "example",
             "Variante del centro": "base",
-            "Fecha de creación": "04/07/2026 00:30:00",
+            "Fecha de creación (UTC+1)": "04/07/2026 00:30:00",
             "Días": 4,
             "Calentamiento (días)": 2,
             "Semilla": 2026,
@@ -39,7 +39,7 @@ def test_empty_table_keeps_all_headers():
     assert list(frame.columns) == [
         "Ejecución",
         "Variante del centro",
-        "Fecha de creación",
+        "Fecha de creación (UTC+1)",
         "Días",
         "Calentamiento (días)",
         "Semilla",
