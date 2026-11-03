@@ -456,12 +456,16 @@ version = "0.1.0"
 source = { editable = "app" }
 dependencies = [
     { name = "edsim" },
+    { name = "jinja2" },
+    { name = "pandas" },
     { name = "streamlit" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "edsim", editable = "." },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "pandas", specifier = ">=3.1.0" },
     { name = "streamlit", specifier = ">=1.66.1" },
 ]
 

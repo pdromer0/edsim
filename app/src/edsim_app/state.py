@@ -1,0 +1,78 @@
+"""Share catalog choices across pages and mirror the selection in the URL."""
+
+import os
+from pathlib import Path
+
+import streamlit as st
+
+from edsim.runs import RunStore
+
+RUN_KEYS = ("selected_run_id", "compare_a", "compare_b")
+
+
+def catalog_store() -> RunStore:
+    """Resolve the catalog relative to the directory that launched the app."""
+    return RunStore(Path(os.environ.get("EDSIM_EJECUCIONES", "resultados/ejecuciones")).resolve())
+
+
+def forget_run(run_id: str) -> None:
+    """Clear references to one run without selecting a replacement."""
+    for key in RUN_KEYS:
+        if st.session_state.get(key) == run_id:
+            st.session_state[key] = None
+    for key in ("run_choice", "pending_delete"):
+        if st.session_state.get(key) == run_id:
+            st.session_state.pop(key, None)
+
+
+def sync_run_query() -> None:
+    """Restore the selected run after navigation clears query parameters."""
+    selected = st.session_state.selected_run_id
+    if selected is None:
+        st.query_params.pop("run", None)
+    else:
+        st.query_params["run"] = selected
+
+
+def initialize_state(store: RunStore) -> None:
+    """Read an initial link and drop references removed outside this session."""
+    for key in RUN_KEYS:
+        st.session_state.setdefault(key, None)
+    if not st.session_state.get("catalog_initialized"):
+        requested = st.query_params.get("run")
+        if requested is not None:
+            if requested in {info.run_id for info in store.list()}:
+                st.session_state.selected_run_id = requested
+            else:
+                st.warning(
+                    f"La ejecución «{requested}» no está en el catálogo. Se limpia el enlace."
+                )
+        st.session_state.catalog_initialized = True
+
+    missing = {
+        run_id
+        for key in RUN_KEYS
+        if (run_id := st.session_state[key]) is not None and not store.exists(run_id)
+    }
+    for run_id in sorted(missing):
+        forget_run(run_id)
+        st.warning(
+            f"La ejecución «{run_id}» ya no está en el catálogo. "
+            "Se han limpiado su selección y sus marcas."
+        )
+    sync_run_query()
+
+
+def choose_run() -> None:
+    """Copy the page widget value into session state that survives navigation."""
+    st.session_state.selected_run_id = st.session_state.run_choice
+    st.session_state.pop("pending_delete", None)
+
+
+def render_sidebar() -> None:
+    """Show the current selection and comparison marks on every page."""
+    with st.sidebar:
+        st.subheader("Ejecución elegida")
+        st.write(st.session_state.selected_run_id or "Ninguna")
+        st.write(f"Marca A: {st.session_state.compare_a or 'Ninguna'}")
+        st.write(f"Marca B: {st.session_state.compare_b or 'Ninguna'}")

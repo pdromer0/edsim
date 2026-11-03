@@ -2,6 +2,10 @@
 
 import streamlit as st
 
+from edsim_app.state import catalog_store, initialize_state, render_sidebar
+
+initialize_state(catalog_store())
+
 page = st.navigation(
     {
         "Ejecutar": [
@@ -16,4 +20,5 @@ page = st.navigation(
         ],
     }
 )
+render_sidebar()
 page.run()
