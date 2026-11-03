@@ -22,3 +22,11 @@ jobs:
         run: uv run pytest --nbmake notebooks/
         env:
           EDSIM_NB_RAPIDO: "1"
+
+  tests-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --locked --all-packages
+      - run: uv run --package edsim-app pytest app/tests

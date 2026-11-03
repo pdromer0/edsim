@@ -50,4 +50,10 @@ if ! output=$(uv run pytest -q -x -m "not slow" 2>&1); then
 fi
 printf '%s\n' "$output" | tail -n 50 >&2
 
+if ! output=$(uv run --package edsim-app pytest app/tests -q -x -m "not slow" 2>&1); then
+  printf '%s\n' "$output" | tail -n 50 >&2
+  exit 2
+fi
+printf '%s\n' "$output" | tail -n 50 >&2
+
 printf '{}\n'
