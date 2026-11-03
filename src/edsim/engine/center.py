@@ -11,8 +11,12 @@ minutes: two numbers a clinician can estimate. ``edsim.engine.clinical`` turns
 them into the parameters of the distribution.
 """
 
+from __future__ import annotations
+
+import json
 import math
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -39,9 +43,7 @@ _KEYS = {
     "pruebas.probabilidad": "test_probability",
     "destino.probabilidad_ingreso": "admission_probability",
 }
-_DURATION_FIELDS = ("triage_time", "assessment_time", "reassessment_time", "test_turnaround")
-_PROBABILITY_FIELDS = ("test_probability", "admission_probability")
-_TOML_KEY = {field: key for key, field in _KEYS.items()}
+_SECTIONS = {key.split(".")[0] for key in _KEYS}
 
 
 def _check_integer(key: str, value: object) -> int:
@@ -129,6 +131,99 @@ def _check_probabilities(key: str, values: object) -> tuple[float, ...]:
     return tuple(probabilities)
 
 
+_VALIDATORS = dict(
+    zip(
+        _KEYS,
+        (
+            _check_shift_starts,
+            _check_shift_staff,
+            _check_shift_staff,
+            _check_staff,
+            _check_shares,
+            _check_duration,
+            _check_duration,
+            _check_duration,
+            _check_duration,
+            _check_probabilities,
+            _check_probabilities,
+        ),
+        strict=True,
+    )
+)
+
+
+def _read_center_data(path: str | Path) -> dict:
+    with Path(path).open("rb") as file:
+        return tomllib.load(file)
+
+
+def _flatten_center_data(data: Mapping[str, object]) -> dict[str, object]:
+    """Keep unknown sections and malformed tables available for diagnostics."""
+    values = {}
+    for section, contents in data.items():
+        if section in _SECTIONS and isinstance(contents, dict):
+            values.update((f"{section}.{name}", value) for name, value in contents.items())
+        else:
+            # A literal root key "recursos.medicos" is not medicos in [recursos].
+            key = json.dumps(section, ensure_ascii=False) if "." in section else section
+            values[key] = contents
+    return values
+
+
+def read_center_values(path: str | Path) -> dict[str, object]:
+    """Read raw TOML values without normalization or semantic validation.
+
+    Known tables are flattened to full keys, such as ``recursos.medicos``.
+    Unknown sections and malformed tables retain their section name so that
+    ``validate_center_values`` can report them. Literal dotted root keys are
+    quoted to distinguish them from flattened table keys. Syntax and read
+    errors propagate.
+    """
+    return _flatten_center_data(_read_center_data(path))
+
+
+def _structure_errors(values: Mapping[str, object]) -> tuple[list[str], list[str], list[str]]:
+    malformed = sorted(_SECTIONS & values.keys())
+    missing = [key for key in _KEYS if key not in values]
+    unknown = sorted(values.keys() - _KEYS.keys() - _SECTIONS)
+    return malformed, missing, unknown
+
+
+def validate_center_values(values: Mapping[str, object]) -> dict[str, str]:
+    """Return every field error, keyed by full TOML key, without changing values.
+
+    Each field reports its first error, using the same checks and messages as
+    ``CenterConfig``. Unknown sections use their section name as the error key.
+    """
+    malformed, missing, unknown = _structure_errors(values)
+    errors = {}
+    for key, validator in _VALIDATORS.items():
+        section = key.split(".")[0]
+        if section in malformed:
+            errors[key] = f"{section} must be a table, got {values[section]!r}"
+        elif key in missing:
+            errors[key] = f"missing keys: {key}"
+        else:
+            try:
+                validator(key, values[key])
+            except ValueError as error:
+                errors[key] = str(error)
+    errors.update((key, f"unknown keys: {key}") for key in unknown)
+    return errors
+
+
+def center_from_values(values: Mapping[str, object]) -> CenterConfig:
+    """Validate raw values and construct an immutable, normalized center.
+
+    Invalid input raises ``ValueError`` containing all field errors. Use
+    ``validate_center_values`` when the individual error keys are needed.
+    """
+    errors = validate_center_values(values)
+    if errors:
+        raise ValueError("; ".join(errors.values()))
+    return CenterConfig(**{field: values[key] for key, field in _KEYS.items()})
+
+
 @dataclass(frozen=True, slots=True)
 class CenterConfig:
     """Validated and normalized configuration of the center.
@@ -179,20 +274,8 @@ class CenterConfig:
     admission_probability: tuple[float, ...]
 
     def __post_init__(self) -> None:
-        def check(field: str, function) -> None:
-            # The dataclass is frozen: object.__setattr__ is the standard way to
-            # set fields during construction.
-            object.__setattr__(self, field, function(_TOML_KEY[field], getattr(self, field)))
-
-        check("shift_starts", _check_shift_starts)
-        for field in ("triage_nurses", "doctors"):
-            check(field, _check_shift_staff)
-        check("boxes", _check_staff)
-        check("level_shares", _check_shares)
-        for field in _DURATION_FIELDS:
-            check(field, _check_duration)
-        for field in _PROBABILITY_FIELDS:
-            check(field, _check_probabilities)
+        for key, field in _KEYS.items():
+            object.__setattr__(self, field, _VALIDATORS[key](key, getattr(self, field)))
 
 
 def load_center(path: str | Path) -> CenterConfig:
@@ -215,22 +298,18 @@ def load_center(path: str | Path) -> CenterConfig:
         tomllib.TOMLDecodeError: If the file is not valid TOML.
     """
     path = Path(path)
-    with path.open("rb") as f:
-        data = tomllib.load(f)
+    data = _read_center_data(path)
+    values = _flatten_center_data(data)
+    malformed, missing, unknown = _structure_errors(values)
+    if malformed:
+        section = malformed[0]
+        raise ValueError(f"{path}: {section} must be a table, got {values[section]!r}")
 
-    sections = {key.split(".")[0] for key in _KEYS}
-    for section in sorted(sections & data.keys()):
-        if not isinstance(data[section], dict):
-            raise ValueError(f"{path}: {section} must be a table, got {data[section]!r}")
-
-    # Flatten to "table.key"; a missing or unknown table is reported by its name.
-    found = {s for s in data if s not in sections}
-    found |= {f"{s}.{k}" for s in sections & data.keys() for k in data[s]}
-    expected = {key for key in _KEYS if key.split(".")[0] in data}
-    expected |= sections - data.keys()
-
-    missing = sorted(expected - found)
-    unknown = sorted(found - expected)
+    # Preserve the loader's historical grouped diagnostics; field validation
+    # still reports every missing full key for an editor.
+    missing = sorted({key if key.split(".")[0] in data else key.split(".")[0] for key in missing})
+    root_labels = {json.dumps(key, ensure_ascii=False): key for key in data if "." in key}
+    unknown = sorted({root_labels.get(key, key) for key in unknown})
     if missing or unknown:
         problems = []
         if missing:
@@ -239,8 +318,7 @@ def load_center(path: str | Path) -> CenterConfig:
             problems.append(f"unknown keys: {', '.join(unknown)}")
         raise ValueError(f"{path}: {'; '.join(problems)}")
 
-    values = {}
-    for key, field in _KEYS.items():
-        section, name = key.split(".")
-        values[field] = data[section][name]
-    return CenterConfig(**values)
+    errors = validate_center_values(values)
+    if errors:
+        raise ValueError(next(iter(errors.values())))
+    return center_from_values(values)
