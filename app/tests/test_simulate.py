@@ -44,7 +44,7 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible():
             "warmup_widget",
         )
         assert type(widget.value) is (int if integer else float)
-        assert widget.proto.format == ("%d" if integer else "%.17g")
+        assert widget.proto.format == ("%d" if integer else "%.15g")
     visible = " ".join(item.value for item in app.markdown)
     assert "Suma del reparto: 100,0" in visible
     assert {metric.label: metric.value for metric in app.metric} == {
@@ -72,7 +72,10 @@ def test_change_list_and_save_preserve_only_edited_bytes_from_source():
     app = open_simulation()
     app.selectbox(key="source_widget").select(str(source)).run()
     edit(app, "recursos.medicos", 1, 15)
-    assert any("recursos.medicos: (12, 12, 7) → (12, 15, 7)" in x.value for x in app.markdown)
+    assert any(
+        "**Médicos** · `recursos.medicos`: [12; 12; 7] → [12; 15; 7]" in x.value
+        for x in app.markdown
+    )
     app.text_input(key="variant_name_widget").set_value("edited").run()
     app.button(key="save_variant").click().run()
     assert not app.exception
@@ -465,3 +468,62 @@ def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_ty
     assert len(app.exception) == 1
     assert app.exception[0].message == "injected offered failure"
     assert not app.error
+
+
+@pytest.mark.parametrize(
+    "original,replacement,error",
+    [
+        (b"boxes = 30", b'boxes = "treinta"', "recursos.boxes must be an integer, got 'treinta'"),
+        (b"boxes = 30", b"boxes = 30.5", "recursos.boxes must be an integer, got 30.5"),
+        (b"boxes = 30", b"boxes = true", "recursos.boxes must be an integer, got True"),
+        (b"boxes = 30", b"boxes = 30.0", "recursos.boxes must be an integer, got 30.0"),
+        (b"inicio = [8,", b"inicio = [8.5,", "turnos.inicio[0] must be an integer"),
+        (b"medicos = [12,", b"medicos = [true,", "recursos.medicos[0] must be an integer"),
+        (b"triaje = [5, 10]", b'triaje = ["cinco", 10]', "duraciones.triaje[0]"),
+        (b"probabilidad = [0.95,", b"probabilidad = [true,", "pruebas.probabilidad[0]"),
+    ],
+)
+def test_unrepresentable_raw_values_stop_before_widgets(original, replacement, error):
+    source = defaults.CENTER_PATH.read_bytes()
+    assert source.count(original) == 1
+    changed = source.replace(original, replacement)
+    defaults.CENTER_PATH.write_bytes(changed)
+    app = open_simulation()
+    assert any(error in item.value for item in app.error)
+    assert any("fichero fuera de la app" in item.value for item in app.info)
+    assert not app.number_input
+    assert not any(button.key in ("save_variant", "simulate_run") for button in app.button)
+    assert defaults.CENTER_PATH.read_bytes() == changed
+
+
+def test_change_list_names_fields_and_formats_staff_and_normalized_shares():
+    app = open_simulation()
+    edit(app, "recursos.medicos", 1, 15)
+    edit(app, "triaje.reparto_niveles", 0, 0.4)
+    edit(app, "triaje.reparto_niveles", 2, 33.5)
+    visible = [item.value for item in app.markdown]
+    assert "**Médicos** · `recursos.medicos`: [12; 12; 7] → [12; 15; 7]" in visible
+    assert (
+        "**Reparto de triaje (pesos)** · `triaje.reparto_niveles`: "
+        "[0,003; 0,121; 0,336; 0,526; 0,014] → [0,004; 0,121; 0,335; 0,526; 0,014]"
+    ) in visible
+
+
+@pytest.mark.parametrize("failure", ["missing", "toml"])
+def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(failure):
+    destination = named_variant()
+    app = open_simulation()
+    edit(app, "recursos.boxes", None, 31)
+    app.selectbox(key="source_widget").select(str(destination)).run()
+    assert app.button(key="confirm_source")
+    if failure == "missing":
+        destination.unlink()
+    else:
+        destination.write_text("[broken", encoding="utf-8")
+    app.button(key="confirm_source").click().run()
+    assert not app.exception
+    assert any("No se puede leer el origen" in item.value for item in app.error)
+    assert not any(button.key == "confirm_source" for button in app.button)
+    assert not any("Descartarlos" in item.value for item in app.warning)
+    assert app.selectbox(key="source_widget").value == str(defaults.CENTER_PATH)
+    assert app.number_input(key="edit_recursos.boxes_None").value == 31

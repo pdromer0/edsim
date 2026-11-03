@@ -39,3 +39,23 @@ def test_offered_chart_has_both_series_shared_scale_and_step_means():
     rows = spec["datasets"][spec["data"]["name"]]
     assert [r["Recursos"] for r in rows] == [2, 3, 4, 4]
     assert [r["Serie"] for r in rows] == ["Carga ofrecida"] * 2 + ["Capacidad"] * 2
+
+
+def test_offered_chart_serializes_utc_plus_one_wall_time_without_offset():
+    from edsim.runs import load_center, load_profile, offered_work
+    from edsim_app.charts import offered_chart
+    from edsim_app.frames import offered_frame
+
+    work = offered_work(
+        load_center("tests/data/centro_ejemplo.toml"),
+        load_profile("tests/data/llegadas_ejemplo.toml"),
+        days=1,
+        sample_size=2,
+    )
+    frame = offered_frame(work, "medicos")
+    assert frame["Fecha y hora"].dt.tz is None
+    spec = offered_chart(frame).to_dict()
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert rows[0]["Fecha y hora"] == "2026-01-05T00:00:00"
+    assert rows[1]["Fecha y hora"] == "2026-01-05T00:15:00"
+    assert spec["encoding"]["x"]["title"] == "Fecha y hora (UTC+1)"

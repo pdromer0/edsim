@@ -61,6 +61,31 @@ def decimal(value: float, digits: int = 1) -> str:
     return f"{value:.{digits}f}".replace(".", ",")
 
 
+def format_change_value(value: int | float | tuple[int | float, ...]) -> str:
+    """Present normalized differences with decimal commas and unambiguous separators."""
+    if isinstance(value, tuple):
+        return "[" + "; ".join(format_change_value(item) for item in value) + "]"
+    return (str(value) if isinstance(value, int) else f"{value:.15g}").replace(".", ",")
+
+
+def has_editable_values(values: dict[str, object]) -> bool:
+    """Check widget representations; semantic validation stays in the core."""
+    for key, _, integer, labels in FIELDS:
+        if key not in values:
+            return False
+        value = values[key]
+        if labels:
+            if not isinstance(value, list | tuple) or len(value) != len(labels):
+                return False
+            items = value
+        else:
+            items = (value,)
+        allowed_types = (int,) if integer else (int, float)
+        if any(type(item) not in allowed_types for item in items):
+            return False
+    return True
+
+
 def render_number(
     draft: CenterDraft, key: str, label: str, integer: bool, index: int | None
 ) -> None:
@@ -72,7 +97,7 @@ def render_number(
         label,
         key=widget,
         step=1 if integer else (0.01 if "probabilidad" in key else 0.1),
-        format="%d" if integer else "%.17g",
+        format="%d" if integer else "%.15g",
         on_change=update_value,
         args=(key, index, widget),
     )
@@ -172,21 +197,14 @@ def render_center() -> tuple[CenterDraft, bool]:
     st.caption(f"Fichero de origen: {draft.source}")
     st.caption("Cambios sin guardar" if draft.dirty else "Todos los cambios están guardados")
     errors = validate_center_values(draft.values)
-    # A malformed external TOML cannot be represented by the fixed editor.
-    if any(
-        key not in draft.values
-        or (
-            labels
-            and (
-                not isinstance(draft.values[key], list | tuple)
-                or len(draft.values[key]) != len(labels)
-            )
-        )
-        for key, _, _, labels in FIELDS
-    ):
+    # Reject incompatible types before any int()/float() widget conversion.
+    if not has_editable_values(draft.values):
         for message in errors.values():
             st.error(message)
-        st.info("Corrige la estructura del fichero fuera de la app y vuelve a cargar su origen.")
+        st.info(
+            "Corrige los valores o la estructura del fichero fuera de la app "
+            "y vuelve a cargar su origen."
+        )
         st.stop()
     summary = summarize_center(draft.values) if not errors else None
     duration_summaries = {d.key: d for d in summary.durations} if summary else {}
@@ -232,8 +250,13 @@ def render_center() -> tuple[CenterDraft, bool]:
         else:
             differences = center_diff(base, center_from_values(draft.values))
             if differences:
+                field_labels = {key: label for key, label, _, _ in FIELDS}
                 for change in differences:
-                    st.write(f"{change.key}: {change.before} → {change.after}")
+                    st.write(
+                        f"**{field_labels[change.key]}** · `{change.key}`: "
+                        f"{format_change_value(change.before)} → "
+                        f"{format_change_value(change.after)}"
+                    )
             else:
                 st.info("No hay diferencias frente al centro base.")
     else:
