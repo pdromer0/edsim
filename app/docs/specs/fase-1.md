@@ -1,5 +1,7 @@
 # App web — fase 1
 
+Nov 2, 2026 · @Pedro
+
 La app web de EDsim crece por fases: una app local en Streamlit al cerrar el hito 3, un paso pequeño en cada hito y una aplicación completa, con API y frontend propio, después de la v0. Esta pestaña recoge esa decisión y especifica la fase 1.
 
 ## Decisión y estrategia
@@ -144,6 +146,24 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Ley de Little:** L, λ y W del sistema y de las dos colas, con el error relativo.
 - **Descargas:** el log JSONL, los dos CSV de ground truth y la configuración usada.
 
+**Detalles de la A.4** (decididos el 3 de noviembre de 2026, con lo aprendido en la A.3b):
+
+- **Abrir la ejecución:** la página muestra la ejecución elegida (la de `?run=` o la selección compartida de la A.2b) y la abre con `RunStore.open`. Sin ejecución elegida, pide elegir una en Ejecuciones; si no se puede abrir, da un mensaje claro con el motivo.
+- **Un servicio del núcleo:** una función de `edsim.runs` lee el log y la copia del centro de la carpeta de la ejecución y devuelve todo lo que la página muestra: `RunInfo`, `analyze_run`, los KPIs y el cumplimiento de Manchester. La app no lee los ficheros de la ejecución por su cuenta.
+- **Caché:** el análisis se guarda en `st.cache_data` por `run_id` y la huella de `run.json`, porque una ejecución borrada y recreada con el mismo nombre cambia su fecha de creación. Pocas entradas (4, pensando en Comparar). Se miden la lectura y el análisis de 14 y 60 días.
+- **KPIs de la ventana** (`window_kpis`, en el núcleo): llegadas por día, censo medio, estancia media y p90, puerta-médico media y p90, episodios desalojados al menos una vez y desalojos totales, y porcentaje de ingreso. Esperas, estancia, desalojos e ingreso usan los episodios que llegan en la ventana y salen (`completed_in_window`), como el resumen de la CLI. Tests con valores calculados a mano.
+- **Manchester:** reutiliza `manchester_compliance` de `engine/targets.py` sobre la ventana. Por nivel: n, porcentaje que supera el máximo (exactamente en el máximo cumple; el nivel 1, «inmediato», es 0 minutos) y días fuera de objetivo (menos del 90 % dentro del máximo), porque una media semanal esconde los días malos.
+- **Invariantes:** verde si `run.json` dice 0 violaciones. Si hay alguna, se recalculan con `check_invariants` desde el log y se muestran las 10 primeras, como en la CLI. La página explica que dos subcomprobaciones de conservación (llegadas frente al ground truth y procesos vivos en SimPy) solo existen durante la simulación; si el recuento recalculado no coincide con el guardado, lo dice. No cambia el formato en disco.
+- **Ocupación:** mapa de calor de 3 pools × 3 turnos con `ShiftOccupancy.ratio`, que puede superar 1 cuando baja la plantilla, porque nadie se interrumpe.
+- **Curvas:** una semana elegida (bloques de 7 días desde el día 0; la última puede ser más corta) de la curva que se escoja, con la media y el máximo de cada bloque de 15 minutos. Ambos los calcula el núcleo: la media es exacta con el área acumulada, como `hourly_means_by_day`. La plantilla vigente se dibuja como escalón y el calentamiento, sombreado.
+- **Perfil diario:** censo medio por hora del día en la ventana, con `hourly_means_by_day`.
+- **Little:** L, λ, W y error relativo del sistema y de las dos colas, de `RunAnalysis.little`.
+- **Descargas:** un botón por fichero (log JSONL, los dos CSV de ground truth, `centro.toml` y `llegadas.toml`), con la lectura diferida como el zip de la A.2b. Una función del núcleo devuelve los bytes y solo admite los nombres del formato de ejecución.
+- **Fechas en las gráficas:** hora del log (UTC+1) como hora de reloj sin zona, para que el navegador no la desplace (lección de la A.3b).
+- **Igual que la CLI:** un test compara los KPIs, las ocupaciones y los errores de Little de la página con `analyze_run` y `format_run_summary` de la misma ejecución.
+- **Correcciones de la A.3b:** un commit `fix(app)` después del de la especificación, con los cuatro hallazgos de la revisión del PR #33 (anexo).
+- **No es crítica:** añade funciones al núcleo sin cambiar contratos ni el formato en disco; sin `@codex review`.
+
 ### Episodios
 
 - **Filtros:** nivel, destino, desalojado o no, día, tramo (calentamiento, ventana o sin terminar), puerta-médico y estancia por encima de un valor.
@@ -182,28 +202,7 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 
 ## Arquitectura
 
-```text
-edsim-app (paquete aparte, Streamlit)        CLI
-  Ejecuciones · Simular · Resultados          edsim motor simular
-  Episodios · Comparar · Replay
-  frames, charts, plan (SVG) y help
-        │ usa                                   │ usa
-        ▼                                       ▼
-edsim.runs (núcleo, servicios nuevos sin Streamlit)
-  Ejecuciones: RunStore, simulate_run
-  Centro y carga: write_variant, offered_work
-  Métricas: window_kpis, episode_segments
-  Replay y comparar: ReplayIndex, compare_runs
-        │ usa
-        ▼
-Motor y análisis del hito 3, sin cambios
-  simulate_ed · analyze_run · step_curves · check_invariants
-        │ escribe el log; los servicios lo leen
-        ▼
-resultados/ejecuciones/<run_id>/  (los ficheros son la verdad)
-  eventos.jsonl · ground_truth_episodios.csv · ground_truth_dias.csv
-  centro.toml y llegadas.toml (copias exactas) · run.json (metadatos)
-```
+&#91;embedded content: arquitectura de la fase 1 · 4 capas\]
 
 Las páginas solo llaman a `edsim.runs`, que usa el motor del hito 3 sin cambiarlo y guarda cada ejecución en su carpeta; la CLI pasa por los mismos servicios, así que las dos producen lo mismo.
 
@@ -784,3 +783,86 @@ Un test falló por 1,8 × 10⁻¹⁵ porque `ArrivalProfile` renormaliza sus fac
 
 - Cabecera «Fecha de creación (UTC+1)» en Ejecuciones (de la A.2b).
 - `offered_work` tarda 0,4 s: la página lo guarda en caché para no recalcular en cada cambio.
+
+### Tarea A.3b: página Simular
+
+PR #33 (rama `feat/app-simular`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 3 de noviembre de 2026 (c7046af). Siete commits: especificación, variantes y propuestas de `run_id`, números derivados, cabecera UTC+1, borrador y editor, carga prevista y ejecución. Tarea no crítica: sin `@codex review`; plan y PR revisados en el chat. Se fusionó antes de la ronda de correcciones de la revisión del PR, que queda pendiente (al final de este apartado).
+
+**Qué se hizo**
+
+- Núcleo (`edsim.runs`): `list_variants` (ficheros `.toml` regulares, nombre válido de hasta 42 caracteres, sin enlaces y sin leer el contenido); `RunStore.suggest_run_id` (original, `-2`, `-3`…; `None` si el sufijo no cabe en 64 caracteres; cuentan como ocupados las carpetas no válidas, los ficheros y los enlaces rotos); `summarize_center`, que devuelve `CenterSummary` y `DurationSummary` (suma del reparto, reparto normalizado, media exp(μ + σ²/2), curva de 122 puntos y porcentajes globales), y la reexportación de `config_fingerprint`.
+- `draft.py`: el borrador vive en claves propias (valores, copia guardada y origen); los widgets se rellenan desde él en cada recarga y sus callbacks copian solo el campo editado. Los ajustes de ejecución y el modo del `run_id` tienen sus propias claves.
+- Página Simular en tres pasos: editor por bloques con errores por campo y tipos fijos (enteros en turnos y recursos); cambios frente a la base; números derivados y curvas; «Guardar como variante» desde el origen, con confirmación de sobrescritura y de cambio de origen; carga prevista con gráfica Altair de medias de 15 minutos y tabla de utilización; ejecución con semilla de texto, `run_id` automático o manual y un solo `st.status`.
+- `preview.py` (`st.cache_data`, 3 entradas; clave: valores en bruto, ruta y huella del perfil), `charts.py`, `frames.py` (`offered_frame` y `utilization_frame`) y `help.py`.
+- Cabecera «Fecha de creación (UTC+1)» en Ejecuciones. Altair 6.3.0 pasa a dependencia directa de la app con `uv lock --offline`; ninguna versión cambia.
+
+**Cambios respecto al plan**
+
+- Diez ajustes de la revisión del plan: semilla `[0-9]{1,20}`; tipos de widget fijos por clave; origen releído en cada recarga; argumentos exactos de `simulate_run` (rutas sin resolver, `output_dir` y sin `variant`); nombre «centro» reservado al centro base; pruebas añadidas; editar cancela la confirmación de sobrescritura; contrato de `summarize_center` (lanza `ValueError`); commit UTC+1 aparte, y `uv.lock` sin red.
+- La fixture de configuración usaba `tmp_path/config` y rompía tres tests de errores de Ejecuciones; pasó a `simulation-config`.
+- Casos añadidos: perfil ausente o no válido y errores internos de la carga prevista, que no se ocultan.
+- Los tests de la app calculan la carga con una muestra de 32 pacientes, para ir rápido; las medidas usan la muestra real de 50.000.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Estado persistente y estado de widgets | Streamlit borra las claves de los widgets de una página que no se pinta. El borrador vive en claves propias y los widgets se rellenan desde él en cada recarga |
+| Caché por contenido | `st.cache_data` guarda por argumentos. La huella del perfil entra en la clave porque la ruta y la fecha de modificación no garantizan el contenido |
+| Una confirmación autoriza una operación concreta | Confirmar la sobrescritura vale para unos valores, un nombre y un origen; cambiar cualquiera la cancela |
+| Modo automático o manual | El `run_id` propuesto sigue a la semilla y al origen hasta que se edita; el modo es estado del formulario y sobrevive a la navegación |
+| Validar texto como número | `int()` acepta espacios, guiones bajos y cifras Unicode. La semilla se valida con `[0-9]{1,20}`, y así el `run_id` cabe en 64 caracteres con nombres de hasta 42 |
+| Media y mediana de una lognormal | La mediana es exp(μ) y la media exp(μ + σ²/2), siempre mayor: la cola de casos lentos sube la media. La curva usa puntos equiespaciados en escala logarítmica entre μ − 3σ y μ + 3σ |
+| Medias para ver y cifra oficial | Las medias de 15 minutos solo dibujan; la utilización sale del núcleo, y un test comprueba que ambas coinciden por turno |
+
+**Medidas** (centro y perfil base, 7 días, muestra de 50.000 pacientes, dos días previos; medianas de tres medidas con AppTest, sin pintado del navegador)
+
+| Operación | Tiempo |
+| --- | --- |
+| `offered_work` sin caché | 0,462 s |
+| Primera entrada en Simular, caché vacía | 0,975 s |
+| Recarga con caché | 0,067 s |
+| Cambiar el recurso de la gráfica | 0,063 s |
+| Cambiar la semilla de ejecución | 0,067 s |
+
+**Versiones incorrectas temporales**
+
+| Mutación | Resultado |
+| --- | --- |
+| Borrador ligado a las claves de los widgets | Se pierde al navegar: médicos de mañana vuelve a 12 en lugar de 13 |
+| Simular con cambios sin guardar | El test encuentra «Simular» activado |
+| Clave constante en lugar de la huella del perfil | Dos cálculos en lugar de tres al cambiar el perfil en la misma ruta |
+| Regenerar siempre el identificador | Sale `centro-r7` en lugar de `custom` |
+| Guardar siempre desde el centro base | Falta «Comentario propio» en los bytes de la variante |
+| No cancelar la sobrescritura al editar | «Confirmar sobrescritura» sigue visible |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Ruff y formato | 156 ficheros conformes |
+| Suite rápida del núcleo | 1.224 tests (18 slow excluidos) en 46,9 s |
+| Suite completa del núcleo | 1.242 tests en 230,9 s |
+| App | 96 tests en 24,4 s |
+| Notebooks en modo rápido | 3 en 27,6 s |
+
+**Revisión del PR: hallazgos sin corregir al fusionar**
+
+- Los campos decimales usan el formato `%.17g`, y el navegador muestra 0.29999999999999999 en lugar de 0.3. Con `%.15g` se ve igual que en el TOML.
+- Una variante editada a mano con valores que su widget no representa rompe o falsea la página: `boxes = "treinta"` lanza un error, `30.5` se ve como 30 y `true` como 1.
+- La lista de cambios muestra la clave sin etiqueta en español y los números con punto decimal.
+- La gráfica de carga recibe fechas con zona horaria, y Vega-Lite las pinta en la hora del navegador. Coincide con UTC+1 por casualidad: perfil de enero y navegador en Madrid.
+- Menores: el aviso de cambio de origen sigue tras un fallo de lectura; `preview.py` reutiliza `RunConfigurationError` del núcleo; un `centro.toml` creado a mano en `resultados/variantes/` aparecería en el selector.
+
+**Lecciones aprendidas**
+
+- AppTest comprueba valores, no lo que se pinta: un formato que ensucia cada campo pasa los 96 tests. Lo que solo se ve en el navegador lo cubre la prueba en el navegador.
+- Un ajuste de revisión puede pasarse de largo: «no redondear lo que se ve» llevó a 17 cifras. La regla buena es la mínima que cumple el objetivo (15).
+- El mismo problema vuelve por otro camino: la cabecera UTC+1 se corrigió y la gráfica lo repite en el navegador.
+- Las fixtures también tienen contratos: invadir la carpeta que controla otro test convierte un test de error en otra cosa.
+- El estado de un formulario incluye su modo (automático o manual), no solo sus valores.
+
+**Pendiente para la tarea A.4**
+
+- Las correcciones de la revisión del PR #33, en un commit `fix(app)` propio.
+- Resultados abre la ejecución con `RunStore.open` y da un mensaje claro si falla (de la A.2b).
