@@ -72,5 +72,5 @@ En las revisiones de pull requests, trata como P1:
 - Que el paquete `edsim` importe `streamlit`, `pandas` o `edsim_app`.
 - Lógica en la CLI, en los notebooks o en la app que debería vivir en el paquete, con tests.
 - Tests que pasan de forma vacía, sin comprobar que la situación que prueban ocurre de verdad.
-- Código nuevo sin tests.
+- Código nuevo sin tests en el paquete `edsim` o en la app. Los scripts de herramientas de desarrollo (hooks de `.claude/` y `.codex/`) se verifican a mano y se documenta la comprobación en el PR.
 - Romper la convención de idiomas: código, nombres y docstrings en inglés; documentación, commits y textos de la interfaz en español.
