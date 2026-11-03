@@ -4,8 +4,10 @@ from functools import partial
 
 import streamlit as st
 
-from edsim.runs import RunStore, validate_run_id
+from edsim.runs import RunConfigurationError, RunStore, simulate_run, validate_run_id
+from edsim_app import defaults
 from edsim_app.frames import runs_frame, style_runs
+from edsim_app.help import render_runs_help
 from edsim_app.state import catalog_store, choose_run, forget_run
 
 
@@ -62,6 +64,7 @@ def render_invalid(store: RunStore) -> None:
 st.title("Ejecuciones")
 store = catalog_store()
 st.caption(f"Carpeta del catálogo: {store.root}")
+render_runs_help()
 if notice := st.session_state.pop("catalog_notice", None):
     st.success(notice)
 
@@ -99,6 +102,38 @@ if runs:
         st.button("Borrar ejecución", key="delete_run", on_click=request_delete, args=(selected,))
 else:
     st.info("No hay ejecuciones válidas en este catálogo.")
+    if st.button(
+        f"Simular el centro base ({defaults.BASE_DAYS} días, semilla 2026)",
+        key="simulate_base",
+        type="primary",
+    ):
+        with st.status("Simulando y guardando el centro base…", expanded=True) as status:
+            try:
+                result = simulate_run(
+                    "config/centro.toml",
+                    "config/llegadas.toml",
+                    defaults.BASE_DAYS,
+                    2026,
+                    output_dir=store.root / "r2026",
+                    warmup_days=defaults.BASE_WARMUP_DAYS,
+                    run_id="r2026",
+                    origin="app",
+                )
+            except FileExistsError:
+                st.error(
+                    "No se ha creado la ejecución: el nombre «r2026» ya existe en el catálogo."
+                )
+                status.update(label="No se ha creado la ejecución", state="error")
+            except RunConfigurationError as error:
+                st.error(f"No se ha podido cargar la configuración: {error}")
+                status.update(label="Configuración no válida", state="error")
+            else:
+                status.update(label="Ejecución creada", state="complete", expanded=False)
+                st.session_state.selected_run_id = result.info.run_id
+                st.session_state.catalog_notice = (
+                    f"Se ha creado la ejecución «{result.info.run_id}»."
+                )
+                st.rerun()
 
 render_invalid(store)
 if pending := st.session_state.get("pending_delete"):

@@ -12,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 import edsim_app
 from edsim.runs import RunStore
+from edsim_app import defaults
 
 MAIN = Path(edsim_app.__file__).resolve().with_name("main.py")
 
@@ -211,3 +212,94 @@ def test_invalid_folders_show_reasons_and_safe_deletion(catalog, tmp_path):
     assert (catalog / "-bad").is_dir()
     assert (catalog / "linked").is_symlink()
     assert (outside / "protected.txt").read_text() == "untouched"
+
+
+def test_empty_catalog_offers_base_simulation_and_explanation(catalog_root):
+    app = AppTest.from_file(MAIN).run()
+    assert not app.exception
+    assert "No hay ejecuciones válidas" in app.info[0].value
+    assert app.button(key="simulate_base").label == (
+        "Simular el centro base (14 días, semilla 2026)"
+    )
+    assert not app.selectbox and not app.dataframe
+    assert not catalog_root.exists()
+    assert "¿Qué estoy viendo?" in [item.label for item in app.expander]
+    explanation = " ".join(item.value for item in app.markdown)
+    assert "copia exacta de la configuración" in explanation
+    assert "carpeta no válida" in explanation
+
+
+def test_base_simulation_creates_real_run_and_selects_it(catalog_root, monkeypatch):
+    monkeypatch.setattr(defaults, "BASE_DAYS", 1)
+    monkeypatch.setattr(defaults, "BASE_WARMUP_DAYS", 0)
+    app = AppTest.from_file(MAIN).run()
+    app.button(key="simulate_base").click().run(timeout=15)
+    assert not app.exception
+    assert not app.error
+    store = RunStore(catalog_root)
+    info = store.open("r2026")
+    assert (info.days, info.warmup_days, info.seed, info.origin) == (1, 0, 2026, "app")
+    assert info.window_arrivals > 0
+    assert info.invariant_violations == 0
+    assert {path.name for path in (catalog_root / "r2026").iterdir()} == {
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+        "centro.toml",
+        "llegadas.toml",
+        "run.json",
+    }
+    for name in ("centro.toml", "llegadas.toml"):
+        assert (catalog_root / "r2026" / name).read_bytes() == (Path("config") / name).read_bytes()
+    assert app.dataframe[0].value["Ejecución"].tolist() == ["r2026"]
+    assert app.selectbox[0].value == "r2026"
+    assert app.query_params["run"] == "r2026"
+    assert "r2026" in [item.value for item in app.sidebar.markdown]
+    assert "creado" in app.success[0].value
+    assert not any(button.key == "simulate_base" for button in app.button)
+
+
+def test_base_simulation_reports_occupied_name_without_overwriting(catalog_root):
+    occupied = catalog_root / "r2026"
+    occupied.mkdir(parents=True)
+    (occupied / "protected.txt").write_text("untouched")
+    app = AppTest.from_file(MAIN).run()
+    app.button(key="simulate_base").click().run()
+    assert not app.exception
+    assert "r2026" in app.error[0].value and "ya existe" in app.error[0].value
+    assert app.status[0].state == "error"
+    assert (occupied / "protected.txt").read_text() == "untouched"
+    assert not (occupied / "run.json").exists()
+    assert "run" not in app.query_params
+
+
+@pytest.mark.parametrize("kind", ["missing", "toml", "validation"])
+def test_base_simulation_reports_configuration_errors(catalog_root, monkeypatch, tmp_path, kind):
+    if kind != "missing":
+        configuration = tmp_path / "config"
+        configuration.mkdir()
+        (configuration / "centro.toml").write_text("[broken" if kind == "toml" else "unknown = 1\n")
+        (configuration / "llegadas.toml").write_bytes(Path("config/llegadas.toml").read_bytes())
+    monkeypatch.chdir(tmp_path)
+    app = AppTest.from_file(MAIN).run()
+    app.button(key="simulate_base").click().run()
+    assert not app.exception
+    assert "No se ha podido cargar la configuración" in app.error[0].value
+    assert app.status[0].state == "error"
+    assert RunStore(catalog_root).list() == []
+    assert list(catalog_root.iterdir()) == []
+    assert "run" not in app.query_params
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError, OSError])
+def test_base_simulation_does_not_hide_internal_errors(catalog_root, monkeypatch, error_type):
+    def fail(*args, **kwargs):
+        raise error_type("injected internal failure")
+
+    monkeypatch.setattr("edsim.runs.simulate_run", fail)
+    app = AppTest.from_file(MAIN).run()
+    app.button(key="simulate_base").click().run()
+    assert len(app.exception) == 1
+    assert app.exception[0].message == "injected internal failure"
+    assert not app.error
+    assert not catalog_root.exists()
