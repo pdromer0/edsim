@@ -1,5 +1,6 @@
 """Edit raw center variants and inspect their derived clinical parameters."""
 
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -11,6 +12,7 @@ from edsim.runs import (
     center_from_values,
     list_variants,
     load_center,
+    simulate_run,
     summarize_center,
     validate_center_values,
     validate_run_id,
@@ -19,17 +21,23 @@ from edsim.runs import (
 from edsim_app import defaults
 from edsim_app.charts import duration_chart, offered_chart
 from edsim_app.draft import (
+    CenterDraft,
     accept_source,
     cancel_pending,
     choose_source,
+    edit_run_id,
+    execution_settings,
     load_source,
     source_is_current,
+    update_setting,
     update_value,
     update_variant_name,
+    use_run_suggestion,
 )
 from edsim_app.frames import POOL_LABELS, offered_frame, style_utilization, utilization_frame
 from edsim_app.help import render_simulate_help
 from edsim_app.preview import preview_work
+from edsim_app.state import catalog_store, sync_run_query
 
 SHIFTS = ("mañana", "tarde", "noche")
 LEVELS = tuple(f"nivel {i}" for i in range(1, 6))
@@ -53,6 +61,44 @@ def decimal(value: float, digits: int = 1) -> str:
     return f"{value:.{digits}f}".replace(".", ",")
 
 
+def render_number(
+    draft: CenterDraft, key: str, label: str, integer: bool, index: int | None
+) -> None:
+    """Hydrate one widget with its fixed numeric type, without a value argument."""
+    widget = f"edit_{key}_{index}"
+    raw = draft.values[key] if index is None else draft.values[key][index]
+    st.session_state[widget] = int(raw) if integer else float(raw)
+    st.number_input(
+        label,
+        key=widget,
+        step=1 if integer else (0.01 if "probabilidad" in key else 0.1),
+        format="%d" if integer else "%.17g",
+        on_change=update_value,
+        args=(key, index, widget),
+    )
+
+
+def render_staff(draft: CenterDraft, errors: dict[str, str]) -> None:
+    """Display three shift rows and the two staff columns."""
+    st.subheader("Plantilla por turno")
+    staff = (
+        ("recursos.enfermeria_triaje", "Enfermería de triaje"),
+        ("recursos.medicos", "Médicos"),
+    )
+    for column, label in zip(st.columns((1, 2, 2)), ("Turno", *(s[1] for s in staff)), strict=True):
+        column.write(label)
+    for index, shift in enumerate(SHIFTS):
+        label_column, *columns = st.columns((1, 2, 2))
+        label_column.write(shift.capitalize())
+        for column, (key, label) in zip(columns, staff, strict=True):
+            with column:
+                render_number(draft, key, f"{label} · {shift}", True, index)
+    _, *columns = st.columns((1, 2, 2))
+    for column, (key, _) in zip(columns, staff, strict=True):
+        if key in errors:
+            column.error(errors[key])
+
+
 def variant_error(name: str) -> str | None:
     """Adapt public filename rules and reserve the base center's name."""
     if name == "centro":
@@ -66,7 +112,7 @@ def variant_error(name: str) -> str | None:
     return None
 
 
-def save_draft(draft, destination: Path, overwrite: bool = False) -> None:
+def save_draft(draft: CenterDraft, destination: Path, overwrite: bool = False) -> None:
     """Publish from the source text and adopt the saved destination as source."""
     try:
         write_variant(draft.source, draft.values, destination, overwrite=overwrite)
@@ -78,7 +124,7 @@ def save_draft(draft, destination: Path, overwrite: bool = False) -> None:
     st.rerun()
 
 
-def render_center():
+def render_center() -> tuple[CenterDraft, bool]:
     """Render the durable raw draft and return its current blocking state."""
     st.header("1. El centro")
     if "center_draft" not in st.session_state:
@@ -145,22 +191,22 @@ def render_center():
     summary = summarize_center(draft.values) if not errors else None
     duration_summaries = {d.key: d for d in summary.durations} if summary else {}
     for key, label, integer, labels in FIELDS:
+        if key == "recursos.enfermeria_triaje":
+            render_staff(draft, errors)
+            continue
+        if key == "recursos.medicos":
+            continue
         st.subheader(label)
         indices = range(len(labels)) if labels else (None,)
         columns = st.columns(len(labels)) if labels else (st.container(),)
         for column, index in zip(columns, indices, strict=True):
             with column:
-                widget = f"edit_{key}_{index}"
-                raw = draft.values[key] if index is None else draft.values[key][index]
-                st.session_state[widget] = int(raw) if integer else float(raw)
-                step = 1 if integer else (0.01 if "probabilidad" in key else 0.1)
-                st.number_input(
+                render_number(
+                    draft,
+                    key,
                     label if index is None else f"{label} · {labels[index]}",
-                    key=widget,
-                    step=step,
-                    format="%d" if integer else "%.17g",
-                    on_change=update_value,
-                    args=(key, index, widget),
+                    integer,
+                    index,
                 )
         if key in errors:
             st.error(errors[key])
@@ -219,10 +265,123 @@ def render_center():
     return draft, blocked
 
 
+def render_execution(draft: CenterDraft, blocked: bool, profile_valid: bool) -> None:
+    """Simulate only a valid, current and saved on-disk configuration."""
+    st.header("3. La ejecución")
+    st.caption(f"Perfil de llegadas: {defaults.PROFILE_PATH}")
+    settings = execution_settings()
+    for field, label, widget, maximum in (
+        ("days", "Días", "days_widget", 60),
+        ("warmup_days", "Calentamiento (días)", "warmup_widget", settings["days"] - 1),
+    ):
+        st.session_state[widget] = settings[field]
+        st.number_input(
+            label,
+            min_value=1 if field == "days" else 0,
+            max_value=maximum,
+            step=1,
+            format="%d",
+            key=widget,
+            on_change=update_setting,
+            args=(field, widget),
+        )
+    st.session_state.seed_widget = settings["seed"]
+    seed_text = st.text_input(
+        "Semilla", key="seed_widget", on_change=update_setting, args=("seed", "seed_widget")
+    )
+    seed_valid = re.fullmatch(r"[0-9]{1,20}", seed_text) is not None
+    if not seed_valid:
+        st.error(
+            "La semilla debe contener entre 1 y 20 cifras ASCII (0–9), sin espacios ni signos."
+        )
+    store = catalog_store()
+    suggestion = None
+    if seed_valid:
+        preferred = f"{draft.source.stem}-r{int(seed_text)}"
+        suggestion = store.suggest_run_id(preferred)
+        if suggestion is None:
+            st.warning(
+                "El identificador propuesto ya existe y no cabe un sufijo; escribe uno más corto."
+            )
+        elif suggestion != preferred:
+            st.info(f"El identificador «{preferred}» ya existe. Se propone «{suggestion}».")
+        if settings["run_id_mode"] == "automatic":
+            settings["run_id"] = suggestion if suggestion is not None else preferred
+    st.session_state.run_id_widget = settings["run_id"]
+    run_id = st.text_input("Identificador de ejecución", key="run_id_widget", on_change=edit_run_id)
+    st.caption(
+        "Identificador automático"
+        if settings["run_id_mode"] == "automatic"
+        else "Identificador manual"
+    )
+    if settings["run_id_mode"] == "manual" and suggestion is not None and run_id != suggestion:
+        st.caption(f"Propuesta actual: {suggestion}")
+    st.button(
+        "Usar propuesta",
+        key="use_run_suggestion",
+        disabled=suggestion is None,
+        on_click=use_run_suggestion,
+        args=(suggestion,),
+    )
+    try:
+        validate_run_id(run_id)
+    except ValueError as error:
+        id_error = str(error)
+    else:
+        id_error = (
+            f"El identificador «{run_id}» ya existe en el catálogo."
+            if store.exists(run_id)
+            else None
+        )
+    if id_error:
+        st.error(id_error)
+    if draft.dirty:
+        st.info("Hay cambios sin guardar. Guarda una variante antes de simular.")
+    if st.button(
+        "Simular",
+        key="simulate_run",
+        type="primary",
+        disabled=blocked or draft.dirty or not seed_valid or bool(id_error) or not profile_valid,
+    ):
+        with st.status("Simulando, guardando y comprobando la ejecución…", expanded=True) as status:
+            try:
+                result = simulate_run(
+                    draft.source,
+                    defaults.PROFILE_PATH,
+                    settings["days"],
+                    int(seed_text),
+                    output_dir=store.root / run_id,
+                    warmup_days=settings["warmup_days"],
+                    run_id=run_id,
+                    origin="app",
+                )
+            except FileExistsError:
+                st.error(f"No se ha creado la ejecución: el identificador «{run_id}» ya existe.")
+                status.update(label="No se ha creado la ejecución", state="error")
+            except RunConfigurationError as error:
+                st.error(f"No se ha podido cargar la configuración: {error}")
+                status.update(label="Configuración no válida", state="error")
+            else:
+                status.update(label="Ejecución creada", state="complete", expanded=False)
+                st.session_state.simulation_summary = result.info
+                st.session_state.selected_run_id = result.info.run_id
+                sync_run_query()
+                st.rerun()
+    if info := st.session_state.get("simulation_summary"):
+        st.success(f"Ejecución creada: {info.run_id}")
+        st.metric("Llegadas de la ventana", str(info.window_arrivals))
+        st.metric("Violaciones", str(info.invariant_violations))
+        st.metric("Segundos de simulación", decimal(info.simulation_seconds, 3))
+        if st.button("Ver resultados", key="view_results"):
+            st.session_state.selected_run_id = info.run_id
+            st.switch_page("views/results.py", query_params={"run": info.run_id})
+
+
 st.title("Simular")
 draft, blocked = render_center()
 
 st.header("2. La carga prevista")
+profile_valid = False
 if not validate_center_values(draft.values):
     try:
         work = preview_work(draft.values, defaults.PROFILE_PATH)
@@ -230,6 +389,7 @@ if not validate_center_values(draft.values):
         st.error(f"No se puede cargar el perfil de llegadas: {error}")
         render_simulate_help()
     else:
+        profile_valid = True
         st.caption(
             f"Perfil: {defaults.PROFILE_PATH}. Ventana prevista: 7 días; medias de 15 minutos."
         )
@@ -242,3 +402,5 @@ if not validate_center_values(draft.values):
 else:
     st.info("Corrige los errores del centro para calcular la carga prevista.")
     render_simulate_help()
+
+render_execution(draft, blocked, profile_valid)

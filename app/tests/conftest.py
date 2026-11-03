@@ -2,6 +2,7 @@
 
 import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -72,8 +73,6 @@ def simulation_files(tmp_path, monkeypatch):
     st.cache_data.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
-    from pathlib import Path
-
     for name in ("centro.toml", "llegadas.toml"):
         (config / name).write_bytes((Path("config") / name).read_bytes())
     monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")

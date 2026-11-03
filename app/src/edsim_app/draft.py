@@ -82,3 +82,39 @@ def source_is_current(draft: CenterDraft) -> bool:
         return read_center_values(draft.source) == draft.saved_values
     except (OSError, ValueError):
         return False
+
+
+def execution_settings() -> dict[str, object]:
+    """Initialize durable settings separately from the execution widgets."""
+    return st.session_state.setdefault(
+        "simulation_settings",
+        {
+            "days": defaults.SIMULATION_DAYS,
+            "warmup_days": min(defaults.SIMULATION_WARMUP_DAYS, defaults.SIMULATION_DAYS - 1),
+            "seed": "2026",
+            "run_id": "",
+            "run_id_mode": "automatic",
+        },
+    )
+
+
+def update_setting(field: str, widget: str) -> None:
+    """Remember inputs and keep warmup inside the newly selected horizon."""
+    settings = execution_settings()
+    settings[field] = st.session_state[widget]
+    if field == "days":
+        settings["warmup_days"] = min(settings["warmup_days"], settings["days"] - 1)
+
+
+def edit_run_id() -> None:
+    """An explicit identifier edit enters manual mode until reset by the user."""
+    settings = execution_settings()
+    settings["run_id"] = st.session_state.run_id_widget
+    settings["run_id_mode"] = "manual"
+
+
+def use_run_suggestion(suggestion: str) -> None:
+    """Return to automatic mode and adopt the currently available suggestion."""
+    settings = execution_settings()
+    settings["run_id"] = suggestion
+    settings["run_id_mode"] = "automatic"
