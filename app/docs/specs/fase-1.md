@@ -113,6 +113,15 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 
 **3. La ejecución.** Perfil de llegadas (`config/llegadas.toml`), días (de 1 a 60, 14 por defecto), calentamiento (2), semilla (2026) y `run_id`, propuesto como `<variante>-r<semilla>` y editable. Si el `run_id` ya existe, la app lo dice y propone otro. Al pulsar «Simular», un panel de estado muestra los pasos (simular, escribir, comprobar invariantes, analizar) y termina con un resumen y el botón «Ver resultados».
 
+**Detalles de la A.3** (decididos el 3 de noviembre de 2026):
+
+- **Valores en bruto, no el centro normalizado:** el editor y las variantes trabajan con los valores tal como se escriben en el TOML, por ejemplo `triaje.reparto_niveles` en porcentajes. `CenterConfig` normaliza el reparto para que sume 1: escribir el centro normalizado cambiaría los números y contradiría el comentario «% de pacientes». El centro normalizado sirve para validar, comparar con la base y calcular la carga.
+- **Todos los errores a la vez:** una función del núcleo valida cada clave por separado, con las mismas comprobaciones y mensajes que `CenterConfig`, y devuelve un error por clave; `load_center` y el editor comparten esa validación. Los mensajes del núcleo siguen en inglés, como en la CLI; la app los muestra junto a su campo, con la etiqueta en español.
+- **Variantes:** `write_variant` parte del texto de la base con tomlkit, cambia solo los valores y conserva comentarios y formato; la base sin cambios se escribe byte a byte igual. El nombre sigue la regla del `run_id`. Guardar con un nombre existente pide confirmación: una variante es un borrador, y las ejecuciones que la usaron no cambian porque guardan su propia copia.
+- **Diferencias:** `center_diff` compara los centros normalizados clave a clave, así que escribir el reparto en porcentajes o en fracciones no cuenta como cambio.
+- **Carga ofrecida:** `offered_work` reutiliza `offered_load_by_pool` del hito 3 con una muestra de pacientes de semilla fija, independiente de la ejecución. m(t) empieza vacía, así que se calcula un día más y se descarta el primero: la gráfica muestra 7 días. Comprobación: la media de m(t) en días completos es λ̄ × tiempo medio de ocupación de la muestra (identidad exacta) y se acerca a λ̄ × E\[tiempo\] calculado a mano con las lognormales (con tolerancia estadística).
+- **Tarea crítica:** tomlkit entra como dependencia del núcleo. La A.3 se divide en A.3a (núcleo, con `@codex review`) y A.3b (página).
+
 ### Resultados
 
 - **Cabecera:** `run_id`, variante y huella del centro, días, calentamiento, semilla, fecha y versión de EDsim.
@@ -218,7 +227,7 @@ edsim/                        # repositorio
     runs/                     # sin Streamlit; también lo usa la CLI
       store.py                # RunStore: listar, abrir, crear y borrar ejecuciones; run.json
       service.py              # simulate_run: simular, escribir, comprobar y resumir
-      variants.py             # CenterConfig a TOML con tomlkit; diferencias entre dos centros
+      variants.py             # valores en bruto y errores por campo; variantes con tomlkit; diferencias
       offered.py              # carga ofrecida de médicos y boxes por minuto y por turno
       kpis.py                 # KPIs de la ventana y cumplimiento de los máximos de Manchester
       timeline.py             # tramos de estado de cada episodio
@@ -231,7 +240,7 @@ edsim/                        # repositorio
     AGENTS.md                 # reglas de la app para los agentes
     src/edsim_app/
       main.py                 # st.navigation, estado compartido y ?run=
-      pages/                  # ejecuciones, simular, resultados, episodios, comparar, replay
+      views/                  # las seis páginas; nunca pages/ (activa la navegación antigua)
       frames.py               # dataclasses del núcleo a DataFrames
       charts.py               # gráficas de Altair
       plan.py                 # SVG del plano del servicio (función pura)
@@ -266,7 +275,7 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 | --- | --- | --- |
 | `simulate_run(...) -> SimulationResult` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros, y volver a simular desde la carpeta también |
 | `RunStore(root)` | `list`, `open`, `exists`, invalid y `delete` de ejecuciones | Ida y vuelta de `run.json`; ignora carpetas temporales |
-| `center_to_toml(center, base)` y `center_diff(a, b)` | Escribe un centro como TOML y lista las claves que cambian | `load_center(center_to_toml(c)) == c` con centros aleatorios válidos |
+| `write_variant(base, values, path)` y `center_diff(a, b)` | Escribe los valores en bruto de un centro sobre el TOML base, conservando sus comentarios, y lista las claves que cambian comparando centros normalizados | `Una variante escrita y leída da los mismos valores con centros aleatorios válidos; la base sin cambios se escribe byte a byte igual` |
 | `offered_work(center, profile, days)` | Minutos de médico y de box ofrecidos por minuto y utilización prevista por turno, con `offered_load` del hito 3 | Con plantilla constante, la media coincide con λ × E\[tiempo\] calculado a mano |
 | `window_kpis(analysis)` y `manchester_compliance(table, start, end)` | KPIs de la ventana y porcentaje por encima del máximo de cada nivel (el nivel 1, inmediato, solo muestra el tiempo) | Valores calculados a mano en un log pequeño |
 | `episode_segments(events)` | Tramos de estado de cada episodio, con su box | Los tramos de cada episodio son contiguos y suman su estancia |
@@ -309,7 +318,7 @@ La fase 1 se implementa con Codex, el agente de OpenAI, en lugar de Claude Code 
 - **Seguridad:** `.codex/config.toml` fija `sandbox_mode = "workspace-write"` y `approval_policy = "on-request"`: edita y ejecuta dentro del repositorio, sin red, y pide permiso para lo demás. Nunca `--yolo` ni `danger-full-access`.
 - **Plan:** cada tarea empieza con `/plan`; el plan se revisa y se aprueba como hasta ahora.
 - **Hooks:** `.codex/hooks.json` con un hook `Stop` que ejecuta `ruff format` y `pytest -m "not slow"`, con la ruta del repositorio sacada de `git rev-parse --show-toplevel`. Desde la A.1 ejecuta también los tests rápidos de la app, porque Codex es quien la toca; el hook de Claude Code sigue solo con el núcleo y el CI cubre el resto.
-- **Revisión:** la revisión en el chat, en todas las tareas. `@codex review` en el PR, como segunda opinión guiada por las *Review guidelines* de `AGENTS.md`, solo en las tareas críticas: las que cambian un contrato que comparten el núcleo, la CLI y la app (el formato de una ejecución en disco, la CLI o las dependencias del núcleo), es decir, la A.2a y la A.3, y las que Pedro marque (decidido el 3 de noviembre de 2026).
+- **Revisión:** la revisión en el chat, en todas las tareas. `@codex review` en el PR, como segunda opinión guiada por las *Review guidelines* de `AGENTS.md`, solo en las tareas críticas: las que cambian un contrato que comparten el núcleo, la CLI y la app (el formato de una ejecución en disco, la CLI o las dependencias del núcleo), es decir, la A.2a y la A.3a, y las que Pedro marque (decidido el 3 de noviembre de 2026).
 - **Diario:** al cerrar cada tarea, unas notas sobre el plan, los permisos pedidos, los errores y el consumo, para comparar con Claude Code al final de la fase.
 
 **Convivencia con Claude Code.** Claude Code sigue trabajando en el repositorio (hitos del núcleo). Nunca trabajan dos agentes a la vez en la misma carpeta: se hacen turnos o se usa `git worktree` para tener una segunda copia de trabajo en otra carpeta y otra rama. Cuando una rama se fusiona, la otra se actualiza con `git pull --rebase origin main` antes de su PR. Una sesión de Codex por tarea, igual que con Claude Code.
@@ -365,9 +374,10 @@ Las tareas A.1 a A.8 empiezan cuando exista la etiqueta `v0.3-hito3`; la A.0 pue
 | --- | --- | --- | --- |
 | A.0 | Preparar Codex: instalación en WSL e inicio de sesión; `AGENTS.md` en la raíz a partir de `CLAUDE.md`, y `CLAUDE.md` con `@AGENTS.md`; `.codex/config.toml`, reglas y hooks; Codex conectado al repositorio para `@codex review`; prueba de extremo a extremo con el propio PR de la tarea | `chore/app-codex` | Codex trabaja en el repositorio con los permisos justos y Claude Code sigue funcionando igual |
 | A.1 | Especificación en `app/docs/specs/fase-1.md`; workspace de uv con el paquete `edsim-app` (pyproject, script `edsim-app`, `app/AGENTS.md` y carpetas de documentación); seis páginas vacías con `st.navigation`; test de la frontera; `AppTest` de humo y job `tests-app` en el CI y en el ruleset | `feat/app-esqueleto` | La app arranca con `uv run --package edsim-app edsim-app` y el CI la prueba |
-| A.2a | `RunStore`, `simulate_run` y `run.json`; `edsim motor simular` pasa a usarlos y guarda por defecto en el catálogo; regla del run\_id; medida de tiempo y memoria; retoques de la A.1 | `feat/app-ejecuciones`-nucleo | La CLI escribe ejecuciones atómicas y reproducibles en resultados/ejecuciones/ |
+| A.2a | `RunStore`, `simulate_run` y `run.json`; `edsim motor simular` pasa a usarlos y guarda por defecto en el catálogo; regla del run\_id; medida de tiempo y memoria; retoques de la A.1 | `feat/app-ejecuciones-nucleo` | La CLI escribe ejecuciones atómicas y reproducibles en resultados/ejecuciones/ |
 | A.2b | Página Ejecuciones: catálogo, acciones, zip, borrado con confirmación y botón del centro base; estado compartido y `?run=` | `feat/app-ejecuciones` | La CLI y la app escriben la misma ejecución y el catálogo la muestra |
-| A.3 | `center_to_toml`, `center_diff` y `offered_work`; página Simular | `feat/app-simular` | Una variante editada, guardada y simulada desde la app |
+| A.3a | Valores en bruto y errores por campo del centro; `write_variant` y `center_diff` con tomlkit; `offered_work` | `feat/app-simular-nucleo` | Una variante se guarda conservando los comentarios y su carga prevista se calcula |
+| A.3b | Página Simular: editor por bloques con errores por campo, variantes, carga prevista y ejecución; cabecera UTC+1 en Ejecuciones | `feat/app-simular` | Una variante editada, guardada y simulada desde la app |
 | A.4 | `window_kpis` y `manchester_compliance`; página Resultados | `feat/app-resultados` | KPIs, esperas, ocupación, curvas, Little e invariantes de una ejecución |
 | A.5 | `episode_segments`; página Episodios con ficha y «ver la verdad» | `feat/app-episodios` | La línea temporal de cualquier episodio, desalojos incluidos |
 | A.6 | `compare_runs`; página Comparar | `feat/app-comparar` | Base frente a un médico más de noche, paciente a paciente |
@@ -618,3 +628,69 @@ La primera ejecución de la mutación de escritura directa falló antes de tiemp
 - Las páginas vacías de la A.1 siguen diciendo «La tarea A.2 añadirá…» en Ejecuciones: la A.2b la sustituye por la página real.
 - `invalid()` incluye nombres fuera de la regla y enlaces simbólicos que `delete` no puede borrar: la página los muestra con su motivo y explica que se borran a mano.
 - pandas pasa a ser dependencia directa de `edsim-app` en cuanto la app lo importe.
+
+### Tarea A.2b: página Ejecuciones y estado compartido
+
+PR #31 (rama `feat/app-ejecuciones`), implementado con Codex (codex-cli 0.166.0), revisado en el chat y probado por Pedro en el navegador; fusionado con *squash and merge* el 3 de noviembre de 2026 (`3c48833`). Seis commits: especificación, núcleo, cambio de `pages/` a `views/`, estado compartido, página y botón del centro base. Sin `@codex review`: no es tarea crítica.
+
+**Qué se hizo**
+
+- Núcleo: `RunInfo.arrivals_per_day`, `RunStore.archive(run_id) -> bytes` (los seis ficheros en la raíz del zip, solo ficheros regulares) y `RunConfigurationError(ValueError)`, que envuelve solo la lectura del original y la validación de la copia.
+- App: `state.py` (carpeta del catálogo con `EDSIM_EJECUCIONES`, selección y marcas A y B con claves propias, `?run=` reescrito en cada recarga, limpieza de lo que ya no está en disco), `frames.py` (tabla con cabeceras en español y coma decimal con `Styler`), `help.py`, `defaults.py` y `views/runs.py`.
+- Barra lateral con la ejecución elegida y las marcas en las seis páginas.
+- pandas y Jinja2 pasan a ser dependencias directas de `edsim-app`.
+
+**Cambios respecto al plan**
+
+- Aprobados antes de implementar: `RunConfigurationError`, Jinja2 explícito y la comprobación en cada recarga de que la selección y las marcas siguen en disco.
+- Durante la implementación: la carpeta `pages/` activaba la navegación antigua de Streamlit y Replay se ejecutaba sin pasar por `main.py`. Codex paró y preguntó; se renombró a `views/` con un test de guarda.
+- `st.dialog` no persistía en `AppTest`: el borrado se confirma en dos pasos, y cambiar la selección cancela el borrado pendiente.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| URL y estado de sesión | Streamlit borra los parámetros de la URL al cambiar de página. Durante la sesión manda `st.session_state`; `main.py` vuelve a escribir `?run=` en cada recarga y `st.switch_page` lo pasa con `query_params` |
+| Estado de un widget | Cuando una página deja de mostrarse, Streamlit borra el estado de sus widgets. Lo que debe sobrevivir a la navegación va en claves propias, no en la `key` del widget |
+| Comportamiento implícito | Una carpeta `pages/` junto al script principal activa la navegación antigua. Un nombre de carpeta puede cambiar lo que hace una biblioteca |
+| Límites de `AppTest` | No puede pulsar filas de `st.dataframe` (por eso el selectbox) y su `switch_page` conserva los parámetros que el navegador borra: los tests limpian la URL a mano para reproducir el navegador |
+| Descarga diferida | `st.download_button` con una función: el zip se crea al pulsar, en otro hilo, no en cada recarga |
+| Los ficheros son la verdad | La sesión puede quedarse vieja si algo cambia fuera de la app; cada recarga comprueba en disco lo que recuerda |
+| Clasificar errores | La app muestra como mensaje solo lo que es culpa de la entrada (`RunConfigurationError`, `FileExistsError`) y deja ver el resto. Leer el original y escribir la copia se clasifican por separado |
+| Formato sin perder el dato | `Styler.format(decimal=",")` muestra la coma sin convertir los números en texto, así que la tabla sigue ordenándose bien |
+
+**Versiones incorrectas temporales**
+
+| Mutación | Predicción | Resultado |
+| --- | --- | --- |
+| No reescribir `?run=` en `main.py` | Se pierde el parámetro al navegar por la barra lateral | Falla la restauración en Replay (`KeyError: 'run'`) |
+| No limpiar las marcas al borrar | Las marcas apuntan a la ejecución borrada | Falla el borrado confirmado: la barra lateral sigue mostrando A y B |
+| Dividir las llegadas entre todos los días | El calentamiento entra en el denominador | Falla el caso calculado a mano (180 en lugar de 300) |
+| Quitar la comprobación con `exists` | Un borrado desde la terminal no se limpia ni avisa | Fallan los dos tests de borrado externo |
+| Volver a llamar `pages/` a la carpeta | Fallan la guarda y la restauración en Replay | Fallan exactamente esos dos |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite rápida del núcleo | 1.130 tests (18 `slow` excluidos) en 36 s |
+| Suite completa del núcleo | 1.148 tests en 203 s |
+| App | 48 tests en 7,9 s |
+| Navegador (Pedro) | Centro base desde el catálogo vacío, selección que sobrevive a la navegación, enlace directo a `/replay?run=r2026`, marcas, zip, borrado desde fuera y desde la app |
+
+**Revisión del PR**
+
+Revisión en el chat del diff completo, sin hallazgos que bloquearan. Dos detalles quedan para más adelante (ver «Pendiente»).
+
+**Lecciones aprendidas**
+
+- Compartir una selección entre páginas exige separar la clave de la sesión de la del widget.
+- Un test de navegación debe comprobar la página, el contenido compartido y la URL: el test superficial de la A.1 no vio que Replay se saltaba `main.py`.
+- Cuando una biblioteca no se comporta como se esperaba, parar y preguntar fue lo correcto: ni se parcheó Streamlit ni se rebajó el test.
+- Una herramienta de test puede comportarse distinto que el navegador; el test tiene que reproducir el navegador, no la herramienta.
+- La clasificación de un error depende de dónde se captura: separar leer el original de escribir la copia evita llamar «configuración no válida» a un disco lleno.
+
+**Pendiente**
+
+- A.3b: la cabecera de la tabla debe decir «Fecha de creación (UTC+1)»; en verano España está en UTC+2 y la hora mostrada no coincidiría con el reloj.
+- A.4: la comprobación de cada recarga usa `exists`, que da verdadero también para una carpeta rota. Resultados abrirá la ejecución con `open` y mostrará un mensaje claro si falla.
