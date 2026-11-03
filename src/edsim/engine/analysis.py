@@ -45,6 +45,7 @@ from edsim.engine.center import N_LEVELS, CenterConfig
 from edsim.engine.events import Event
 from edsim.engine.shifts import MINUTES_PER_HOUR, shift_at
 from edsim.queueing.analysis import sample_step, step_time_average
+from edsim.queueing.mm1 import time_in_window
 
 # --- Episode table ------------------------------------------------------------------
 
@@ -656,14 +657,6 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
     return out
 
 
-def _time_in_window(start: float, end: float, window_start: float, window_end: float) -> float:
-    """Length of ``[start, end]`` inside the window: the rule of ``mm1_metrics``.
-
-    Written again because the one in ``queueing.mm1`` is private.
-    """
-    return max(0.0, min(end, window_end) - max(start, window_start))
-
-
 def utilization_identities(
     events: Sequence[Event], curves: StepCurves, start: float, end: float
 ) -> tuple[UtilizationIdentity, ...]:
@@ -678,7 +671,7 @@ def utilization_identities(
     out = []
     for pool, (busy, _) in POOLS.items():
         curve_area = curves.area(busy, start, end)
-        interval_area = math.fsum(_time_in_window(a, b, start, end) for a, b in intervals[pool])
+        interval_area = math.fsum(time_in_window(a, b, start, end) for a, b in intervals[pool])
         out.append(
             UtilizationIdentity(
                 pool, curve_area, interval_area, _relative_error(curve_area, interval_area)

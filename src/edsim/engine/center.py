@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 
+from edsim.checks import check_number
+
 N_SHIFTS = 3
 """Shifts per day: morning, afternoon and night."""
 
@@ -40,16 +42,6 @@ _KEYS = {
 _DURATION_FIELDS = ("triage_time", "assessment_time", "reassessment_time", "test_turnaround")
 _PROBABILITY_FIELDS = ("test_probability", "admission_probability")
 _TOML_KEY = {field: key for key, field in _KEYS.items()}
-
-
-def _check_number(key: str, value: object) -> float:
-    """Return ``value`` as a float if it is a finite real number."""
-    # bool is a subclass of int in Python: `true` must not pass as 1.
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError(f"{key} must be a number, got {value!r}")
-    if not math.isfinite(value):
-        raise ValueError(f"{key} must be a finite number, got {value!r}")
-    return float(value)
 
 
 def _check_integer(key: str, value: object) -> int:
@@ -102,7 +94,7 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
     bit, and ``dataclasses.replace`` would not give back the same center.
     """
     shares = [
-        _check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
+        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
     ]
     for i, x in enumerate(shares):
         if x < 0:
@@ -118,7 +110,7 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
 def _check_duration(key: str, values: object) -> tuple[float, float]:
     """``[median, p90]`` of a lognormal: median > 0 and p90 > median."""
     median, p90 = (
-        _check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, 2))
+        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, 2))
     )
     if median <= 0:
         raise ValueError(f"{key}[0] (median) must be positive, got {values[0]!r}")
@@ -129,7 +121,7 @@ def _check_duration(key: str, values: object) -> tuple[float, float]:
 
 def _check_probabilities(key: str, values: object) -> tuple[float, ...]:
     probabilities = [
-        _check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
+        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
     ]
     for i, p in enumerate(probabilities):
         if not 0 <= p <= 1:
