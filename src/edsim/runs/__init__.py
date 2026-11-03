@@ -10,6 +10,8 @@ from edsim.engine.center import (
     read_center_values,
     validate_center_values,
 )
+from edsim.engine.invariants import Violation
+from edsim.engine.targets import Compliance
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
     LevelCompliance,
@@ -19,6 +21,13 @@ from edsim.runs.metrics import (
     window_kpis,
 )
 from edsim.runs.offered import OfferedWork, offered_work
+from edsim.runs.results import (
+    RunAnalysisError,
+    RunReadError,
+    RunResults,
+    read_run_header,
+    read_run_results,
+)
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
 from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
@@ -35,6 +44,7 @@ __all__ = [
     "CenterConfig",
     "CenterDifference",
     "CenterSummary",
+    "Compliance",
     "DurationSummary",
     "EpisodeRecord",
     "LevelCompliance",
@@ -42,6 +52,9 @@ __all__ = [
     "OfferedWork",
     "RunConfigurationError",
     "RunAnalysis",
+    "RunAnalysisError",
+    "RunReadError",
+    "RunResults",
     "RunInfo",
     "RunStore",
     "SimulationResult",
@@ -49,6 +62,7 @@ __all__ = [
     "WindowCompliance",
     "WindowKPIs",
     "WindowMetrics",
+    "Violation",
     "center_diff",
     "center_from_values",
     "config_fingerprint",
@@ -57,6 +71,8 @@ __all__ = [
     "load_profile",
     "offered_work",
     "read_center_values",
+    "read_run_header",
+    "read_run_results",
     "simulate_run",
     "summarize_center",
     "validate_center_values",
