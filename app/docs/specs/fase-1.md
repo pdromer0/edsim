@@ -77,7 +77,7 @@ La app tiene seis páginas en dos grupos de la barra lateral: **Ejecutar** (Ejec
 - Tabla con una fila por ejecución, la más reciente arriba: `run_id`, variante del centro, fecha de creación, días y calentamiento, semilla, huella del centro (8 caracteres), llegadas por día, invariantes (correctas o número de violaciones) y origen (app o CLI).
 - Acciones sobre la fila elegida: abrir en Resultados, Episodios o Replay; marcar como A o B para Comparar; descargar la carpeta en un zip; borrar, con confirmación.
 - Sin ejecuciones, la página ofrece un botón: «Simular el centro base (14 días, semilla 2026)».
-- También aparecen las ejecuciones de la CLI guardadas con `--salida resultados/ejecuciones/<run_id>`.
+- También aparecen las ejecuciones de la CLI, que guarda por defecto en `resultados/ejecuciones/<run_id>`.
 
 ### Simular
 
@@ -243,15 +243,17 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 | `centro.toml`, `llegadas.toml` | Copia byte a byte de la configuración usada |
 | `run.json` | Metadatos: versión del formato, `run_id`, fecha de creación, origen (app o CLI), versión de EDsim, semilla, días, calentamiento, variante y huellas del centro y del perfil, violaciones de invariantes, llegadas en la ventana y duración de la simulación |
 
-- La ejecución se escribe en una carpeta temporal y se renombra al terminar: una ejecución a medias nunca aparece en el catálogo.
-- El `run_id` se valida con la misma regla que `--run-id` de la CLI, así que no puede salirse de `resultados/ejecuciones/`.
+- `simulate_run` copia primero los dos TOML en la carpeta y simula desde esas copias, así que lo simulado y lo guardado son los mismos bytes; las huellas se calculan sobre las copias y los CSV conservan la ruta original como procedencia. Volver a simular desde la carpeta da el mismo log.
+- La ejecución se escribe en una carpeta temporal junto al destino, con `run.json` en último lugar, y se renombra al terminar: una ejecución a medias nunca aparece en el catálogo. Si algo falla, la carpeta temporal se borra.
+- El `run_id` se valida con una regla nueva del núcleo, común a la CLI y a la app: letras, cifras, `.`, `-` y `_`, empezando por letra o cifra, hasta 64 caracteres. Así no puede salirse de `resultados/ejecuciones/`. La regla anterior de `--run-id` aceptaba cualquier texto no vacío, también `../algo` (decidido el 3 de noviembre de 2026).
+- `edsim motor simular` guarda por defecto en `resultados/ejecuciones/<run_id>`, así que sus ejecuciones aparecen en el catálogo, y se niega a sobrescribir una ejecución existente: una ejecución es un hecho. `--salida` sigue permitiendo otra carpeta, que no debe existir.
 - Las variantes del centro se guardan en `resultados/variantes/<nombre>.toml`; una variante que merezca conservarse se copia a `config/` y se versiona a mano.
 
 ### Funciones nuevas del paquete
 
 | Función | Qué hace | Comprobación clave |
 | --- | --- | --- |
-| `simulate_run(...) -> RunInfo` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros |
+| `simulate_run(...) -> RunInfo` | Simula con `simulate_ed`, escribe la carpeta, comprueba las invariantes y guarda `run.json` | La CLI y la app dan el mismo log para los mismos parámetros, y volver a simular desde la carpeta también |
 | `RunStore(root)` | `list`, `open`, `exists` y `delete` de ejecuciones | Ida y vuelta de `run.json`; ignora carpetas temporales |
 | `center_to_toml(center, base)` y `center_diff(a, b)` | Escribe un centro como TOML y lista las claves que cambian | `load_center(center_to_toml(c)) == c` con centros aleatorios válidos |
 | `offered_work(center, profile, days)` | Minutos de médico y de box ofrecidos por minuto y utilización prevista por turno, con `offered_load` del hito 3 | Con plantilla constante, la media coincide con λ × E\[tiempo\] calculado a mano |
@@ -266,7 +268,7 @@ Cada ejecución es una carpeta `resultados/ejecuciones/<run_id>/` (`resultados/`
 
 - **Estado de sesión:** la ejecución elegida (sincronizada con `?run=`), las marcas A y B y el borrador del centro en edición.
 - **Caché:** `st.cache_data` para leer y analizar una ejecución, con la clave `run_id` y la fecha de modificación del log; `st.cache_resource` para el `ReplayIndex`. Como mucho tres ejecuciones en caché.
-- **Simulación:** síncrona dentro de la sesión, con un panel de estado. La app limita el horizonte a 60 días; la tarea A.2 mide tiempo y memoria y ajusta el límite (el hito 3 dejó pendiente medir el peso del log).
+- **Simulación:** síncrona dentro de la sesión, con un panel de estado. La app limita el horizonte a 60 días; la tarea A.2a mide tiempo y memoria y ajusta el límite (el hito 3 dejó pendiente medir el peso del log).
 - **Reproducción:** un `st.fragment` con `run_every` avanza el minuto según la velocidad y solo vuelve a dibujar el plano y la barra de estado.
 - **Objetivos:** abrir una ejecución de 14 días en menos de 3 s la primera vez y de 0,5 s desde la caché; cada fotograma del replay, en menos de 200 ms.
 - **Borrar:** solo dentro de `resultados/ejecuciones/`, con confirmación.
@@ -296,7 +298,7 @@ La fase 1 se implementa con Codex, el agente de OpenAI, en lugar de Claude Code 
 - **Seguridad:** `.codex/config.toml` fija `sandbox_mode = "workspace-write"` y `approval_policy = "on-request"`: edita y ejecuta dentro del repositorio, sin red, y pide permiso para lo demás. Nunca `--yolo` ni `danger-full-access`.
 - **Plan:** cada tarea empieza con `/plan`; el plan se revisa y se aprueba como hasta ahora.
 - **Hooks:** `.codex/hooks.json` con un hook `Stop` que ejecuta `ruff format` y `pytest -m "not slow"`, con la ruta del repositorio sacada de `git rev-parse --show-toplevel`. Desde la A.1 ejecuta también los tests rápidos de la app, porque Codex es quien la toca; el hook de Claude Code sigue solo con el núcleo y el CI cubre el resto.
-- **Revisión:** además de la revisión en el chat, `@codex review` en el PR como segunda opinión, guiada por las *Review guidelines* de `AGENTS.md`.
+- **Revisión:** la revisión en el chat, en todas las tareas. `@codex review` en el PR, como segunda opinión guiada por las *Review guidelines* de `AGENTS.md`, solo en las tareas críticas: las que cambian un contrato que comparten el núcleo, la CLI y la app (el formato de una ejecución en disco, la CLI o las dependencias del núcleo), es decir, la A.2a y la A.3, y las que Pedro marque (decidido el 3 de noviembre de 2026).
 - **Diario:** al cerrar cada tarea, unas notas sobre el plan, los permisos pedidos, los errores y el consumo, para comparar con Claude Code al final de la fase.
 
 **Convivencia con Claude Code.** Claude Code sigue trabajando en el repositorio (hitos del núcleo). Nunca trabajan dos agentes a la vez en la misma carpeta: se hacen turnos o se usa `git worktree` para tener una segunda copia de trabajo en otra carpeta y otra rama. Cuando una rama se fusiona, la otra se actualiza con `git pull --rebase origin main` antes de su PR. Una sesión de Codex por tarea, igual que con Claude Code.
@@ -323,6 +325,7 @@ La lógica nueva se prueba como el resto del paquete; la app solo necesita prueb
 
 - **Núcleo (`edsim.runs`, en `tests/`):** tests primero y valores calculados a mano, como en los hitos anteriores. Las comprobaciones cruzadas son las de la tabla de funciones: el replay frente a `step_curves`, los tramos frente a la estancia, el TOML de ida y vuelta y una ejecución comparada consigo misma.
 - **Formato común:** un test simula el mismo centro con `simulate_run` y con `edsim motor simular` y comprueba que los logs son idénticos.
+- **Caracterización antes del refactor:** antes de que la CLI pase a usar `simulate_run`, un test fija el SHA-256 del log y de los dos CSV que produce hoy con parámetros fijos; después del cambio deben salir idénticos.
 - **Frontera:** un test lanza un intérprete nuevo, importa todos los módulos de `edsim` y comprueba que `sys.modules` no contiene `streamlit`, `pandas` ni `edsim_app`; un intérprete nuevo evita que otro test haya cargado pandas antes. Lo completa una pasada estática con `ast` sobre `src/edsim`, que también ve los imports dentro de funciones. Se valida con una versión incorrecta temporal (un `import pandas` en el núcleo).
 - **Plano (en `app/tests/`):** `plan.py` se prueba sin Streamlit: dado un estado escrito a mano, el SVG tiene una casilla por box y los colores de cada nivel.
 - **Páginas (en `app/tests/`):** un test de `AppTest` por página, con una ejecución de 3 días creada en una carpeta temporal: la página se ejecuta sin excepciones y muestra sus elementos clave. Simular desde la app se prueba con 1 día.
@@ -345,13 +348,14 @@ Seis decisiones candidatas en dos series. Las que obligan al núcleo siguen su n
 
 ## Tareas, ramas y orden de ejecución
 
-Las tareas A.1 a A.8 empiezan cuando exista la etiqueta `v0.3-hito3`; la A.0 puede hacerse antes, porque solo prepara la herramienta. Siguen el ciclo de los hitos: explicación breve del concepto en el chat, plan con `/plan` en una sesión nueva de Codex, implementación completa tras aprobar el plan, PR revisado por Pedro (y por `@codex review`) y *squash and merge*. Al cerrar cada tarea se actualiza el anexo de esta pestaña.
+Las tareas A.1 a A.8 empiezan cuando exista la etiqueta `v0.3-hito3`; la A.0 puede hacerse antes, porque solo prepara la herramienta. Siguen el ciclo de los hitos: explicación breve del concepto en el chat, plan con `/plan` en una sesión nueva de Codex, implementación completa tras aprobar el plan, PR revisado por Pedro (y por `@codex review` en las tareas críticas) y *squash and merge*. Al cerrar cada tarea se actualiza el anexo de esta pestaña.
 
 | # | Tarea | Rama | Resultado |
 | --- | --- | --- | --- |
 | A.0 | Preparar Codex: instalación en WSL e inicio de sesión; `AGENTS.md` en la raíz a partir de `CLAUDE.md`, y `CLAUDE.md` con `@AGENTS.md`; `.codex/config.toml`, reglas y hooks; Codex conectado al repositorio para `@codex review`; prueba de extremo a extremo con el propio PR de la tarea | `chore/app-codex` | Codex trabaja en el repositorio con los permisos justos y Claude Code sigue funcionando igual |
 | A.1 | Especificación en `app/docs/specs/fase-1.md`; workspace de uv con el paquete `edsim-app` (pyproject, script `edsim-app`, `app/AGENTS.md` y carpetas de documentación); seis páginas vacías con `st.navigation`; test de la frontera; `AppTest` de humo y job `tests-app` en el CI y en el ruleset | `feat/app-esqueleto` | La app arranca con `uv run --package edsim-app edsim-app` y el CI la prueba |
-| A.2 | `RunStore`, `simulate_run` y `run.json`; `edsim motor simular` pasa a usarlos; página Ejecuciones; medida de tiempo y memoria | `feat/app-ejecuciones` | La CLI y la app escriben la misma ejecución y el catálogo la muestra |
+| A.2a | `RunStore`, `simulate_run` y `run.json`; `edsim motor simular` pasa a usarlos y guarda por defecto en el catálogo; regla del run\_id; medida de tiempo y memoria; retoques de la A.1 | `feat/app-ejecuciones`-nucleo | La CLI escribe ejecuciones atómicas y reproducibles en resultados/ejecuciones/ |
+| A.2b | Página Ejecuciones: catálogo, acciones, zip, borrado con confirmación y botón del centro base; estado compartido y `?run=` | `feat/app-ejecuciones` | La CLI y la app escriben la misma ejecución y el catálogo la muestra |
 | A.3 | `center_to_toml`, `center_diff` y `offered_work`; página Simular | `feat/app-simular` | Una variante editada, guardada y simulada desde la app |
 | A.4 | `window_kpis` y `manchester_compliance`; página Resultados | `feat/app-resultados` | KPIs, esperas, ocupación, curvas, Little e invariantes de una ejecución |
 | A.5 | `episode_segments`; página Episodios con ficha y «ver la verdad» | `feat/app-episodios` | La línea temporal de cualquier episodio, desalojos incluidos |
@@ -359,7 +363,7 @@ Las tareas A.1 a A.8 empiezan cuando exista la etiqueta `v0.3-hito3`; la A.0 pue
 | A.7 | `ReplayIndex`, `plan.py` y reproducción; página Replay | `feat/app-replay` | El servicio minuto a minuto, coherente con las curvas |
 | A.8 | Cierre: ADR 0031 a 0033 y APP-0001 a APP-0003, entrada del diario de la app con la comparación entre Codex y Claude Code, anexo, exportación de esta pestaña, README de la app y etiqueta `app-v0.1.0` | `docs/app-cierre` | Fase 1 cerrada |
 
-Orden: A.1 y A.2 primero, porque todo lo demás lee ejecuciones del catálogo. A.3, A.4 y A.5 pueden ir en cualquier orden. A.6 usa los KPIs de A.4, y A.7 va al final por ser la más grande.
+Orden: A.1, A.2a y A.2b primero, porque todo lo demás lee ejecuciones del catálogo. A.3, A.4 y A.5 pueden ir en cualquier orden. A.6 usa los KPIs de A.4, y A.7 va al final por ser la más grande.
 
 ## Criterios de aceptación
 
@@ -370,14 +374,14 @@ Orden: A.1 y A.2 primero, porque todo lo demás lee ejecuciones del catálogo. A
 - [ ] Cualquier episodio tiene su línea temporal, con tramos contiguos que suman su estancia.
 - [ ] Comparar detecta el emparejamiento y, con una ejecución consigo misma, da cero en todo.
 - [ ] Los contadores del replay coinciden con `step_curves` en todos los minutos de una ejecución de prueba.
-- [ ] Se cumplen los objetivos de rendimiento, o la tarea A.2 deja medido y justificado otro límite.
+- [ ] Se cumplen los objetivos de rendimiento, o la tarea A.2a deja medido y justificado otro límite.
 - [ ] El núcleo no importa Streamlit, pandas ni `edsim_app`, y un test lo comprueba.
 - [ ] CI en verde con los jobs `tests` y `tests-app`.
 
 ## Preguntas abiertas
 
 - ¿Nombre de la app en la interfaz: «EDsim» a secas o algo como «EDsim Lab»?
-- ¿Límite de 60 días por ejecución, o lo fija la medida de la tarea A.2?
+- ¿Límite de 60 días por ejecución, o lo fija la medida de la tarea A.2a?
 - ¿La página Resultados reutiliza las gráficas de matplotlib de la CLI o se rehacen todas en Altair? La propuesta es Altair, por la interactividad.
 
 ## Anexo: guía de referencia de la fase 1
@@ -448,3 +452,74 @@ Decisión sobre el P1: sin tests para el hook (es una herramienta de desarrollo 
 - Crear `app/AGENTS.md` y `app/CLAUDE.md` con `@AGENTS.md`, para que Claude Code también vea las reglas de la app.
 - Comprobar que «Automatic reviews» está desactivado en los ajustes de Codex.
 - Si no se hizo antes de fusionar: `/memory` en Claude Code debe mostrar `CLAUDE.md` y, importado, `AGENTS.md`.
+
+### Tarea A.1: esqueleto de la app y workspace de uv
+
+PR #29 (rama `feat/app-esqueleto`), implementado con Codex (codex-cli 0.166.0) y revisado en el chat el 3 de noviembre de 2026; se fusiona con *squash and merge* tras la prueba de Pedro en el navegador. Seis commits: especificación, workspace y navegación con tests, frontera, CI y hook, documentación y una aclaración sobre git fuera del sandbox.
+
+**Qué se hizo**
+
+- Workspace de uv: la raíz declara `members = ["app"]` y `app/pyproject.toml` define `edsim-app` 0.1.0 con `edsim` (fuente `workspace`) y `streamlit>=1.66.1`. pandas 3.1.0 y Altair 6.3.0 llegan con Streamlit, sin declararse. Un solo `uv.lock`.
+- Seis páginas vacías con `st.navigation` en dos grupos (Ejecutar: Ejecuciones y Simular; Analizar: Resultados, Episodios, Comparar y Replay) y `url_path` en español; Ejecuciones abre en `/`.
+- Lanzador `edsim-app`: `python -m streamlit run main.py` en `localhost:8501`, sin navegador ni aviso de email (`headless`) y sin estadísticas de uso; Ctrl+C sale con código 130 sin traza.
+- Frontera con dos tests en el núcleo (al importar, en un intérprete nuevo, y estático con `ast`) y el job `tests` en un entorno sin la app.
+- CI con un job nuevo, `tests-app` (`--all-packages`); el hook `Stop` de Codex ejecuta también los tests rápidos de la app.
+- `app/AGENTS.md`, `app/CLAUDE.md`, los README de decisiones y diario, y los comandos nuevos en el `AGENTS.md` raíz.
+
+**Cambios respecto al plan**
+
+- Orden de los commits: el código antes que la documentación, y la frontera después del workspace, para ejecutar las versiones incorrectas con pandas instalado.
+- El lanzador fija `--server.headless true` y `--browser.gatherUsageStats false`, y sale limpio con Ctrl+C.
+- `url_path` en español; Streamlit ignora el de la página por defecto, que abre en `/`.
+- El diario de la app solo tiene su README: las notas de cada tarea van en el PR y la entrada de la fase se escribe en la A.8.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Workspace de uv | Varios paquetes, cada uno con su `pyproject.toml` y sus dependencias, con un solo `uv.lock` y un solo `.venv`; `{ workspace = true }` hace que `edsim` sea el del repositorio, instalado en modo editable |
+| Sincronización exacta | `uv sync` deja el entorno exactamente como el paquete raíz y retira lo demás (24 paquetes, la app incluida); `uv run` no retira nada. Por eso el comando estándar es `uv sync --all-packages` |
+| `--package` | Elige el miembro del workspace para `uv run` o `uv sync`; dentro de `app/` se elige solo |
+| Frontera declarada y comprobada | Las dependencias del `pyproject.toml` son una promesa: Python no las lee al importar y el entorno es compartido. La comprueban el test y el job `tests`, cuyo entorno no tiene Streamlit ni pandas |
+| Comprobación dinámica y estática | Importar y mirar `sys.modules` ve lo que se carga de verdad, también a través de otras bibliotecas; `ast` ve los imports dentro de funciones que no se ejecutan al importar. Se complementan |
+| `AppTest` con `st.navigation` | Se arranca desde `main.py`, se llama a `run()` antes de `switch_page` y se comprueba el título de destino: «sin excepciones» pasaría aunque no cambiara de página |
+| Aviso de email de Streamlit | La primera ejecución pide un email en la terminal y se bloquea; `--server.headless true` lo evita. El `config.toml` del proyecto se busca en la carpeta desde la que se lanza, así que las opciones van en el lanzador |
+| Configuración por paquete | pytest elige `rootdir` y `configfile` a partir de la ruta de los tests: `app/tests` usa `app/pyproject.toml`. Ruff usa el de la raíz; `src = ["src", "app/src"]` clasifica los dos paquetes como propios |
+
+**Comprobaciones y resultados**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Workspace de prueba en el chat (uv 0.11) | `uv sync` retira la app; `uv run edsim-app` falla desde la raíz sin ella; `--package` y `--all-packages` funcionan. Confirmado por Codex con uv 0.13.6 |
+| Ayuda de `streamlit run` | Existen `--server.address`, `--server.port`, `--server.headless` y `--browser.gatherUsageStats` |
+| Núcleo sin la app | 1.043 tests en 176 s y 3 notebooks en 29 s, sin Streamlit, pandas ni `edsim_app` instalados |
+| Tests rápidos | 1.025 del núcleo (18 `slow` excluidos) y 9 de la app, en un segundo aproximadamente |
+| Hook | Ejecución real con `{}` por stdout; con `stop_hook_active=true` no ejecuta nada; un fallo en cualquier comando da código 2 y las últimas 50 líneas por stderr |
+| Especificación | Mismo SHA-256 que la exportación del chat, antes y después de pre-commit |
+
+**Versiones incorrectas temporales**
+
+| Mutación | Entorno | Predicción y resultado |
+| --- | --- | --- |
+| `import pandas` de nivel superior | Con pandas | Fallan las dos comprobaciones. Confirmado |
+| `import pandas` dentro de una función | Con pandas | Pasa la dinámica y falla la estática. Confirmado |
+| `import pandas` de nivel superior | Solo el núcleo | La dinámica falla con `ModuleNotFoundError` y la estática por el import. Confirmado |
+
+**Revisión del PR**
+
+Revisión en el chat del diff completo, sin `@codex review`: desde esta tarea, la segunda opinión de Codex queda para las tareas críticas. Dos retoques menores se aplazan a la A.2a (ver «Pendiente»). Interrumpir una simulación a medias ya lo cubre la especificación de la A.2a: la ejecución se escribe en una carpeta temporal y se renombra al terminar.
+
+**Lecciones aprendidas**
+
+- Probar un comportamiento en un entorno de juguete antes de especificarlo: el criterio «arranca con `uv run edsim-app`» era falso desde la raíz.
+- Una versión incorrecta solo valida si falla por la razón prevista: sin pandas instalado, la comprobación dinámica habría fallado por `ImportError`, no por detectar pandas.
+- Las dependencias declaradas son una promesa; un entorno de CI sin la app las convierte en una barrera.
+- Cada commit documenta solo lo que ya existe: el orden de los commits también se revisa.
+- Los valores por defecto dependen del entorno (`headless` según `DISPLAY`): lo que se ejecuta en WSL se fija de forma explícita.
+- Que un comando de git falle dentro del sandbox es el diseño de la A.0, no un error: las reglas actúan cuando se pide salir del sandbox.
+
+**Pendiente para la tarea A.2a**
+
+- `AGENTS.md` raíz: «Hito en curso» sigue apuntando al hito 3, ya cerrado; cambiarlo por «Último hito cerrado: hito 3 (el hito 4 aún no tiene especificación)».
+- `tests/test_dependency_boundary.py`: generar el conjunto prohibido del script del subproceso a partir de `FORBIDDEN_PACKAGES`, para que haya una sola fuente.
+- Antes de fusionar el PR #29, Pedro añade `tests-app` al ruleset.
