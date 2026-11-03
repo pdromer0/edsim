@@ -101,11 +101,10 @@ def test_selection_and_marks_survive_navigation_and_restore_url(catalog, page):
 
 
 def test_external_deletion_clears_selection_and_marks_with_one_warning(catalog):
-    app = AppTest.from_file(MAIN)
-    app.query_params["run"] = "older"
-    app.session_state["compare_a"] = "older"
-    app.session_state["compare_b"] = "older"
-    app.run()
+    app = AppTest.from_file(MAIN).run()
+    app.selectbox(key="run_choice").select("older").run()
+    app.button(key="mark_a").click().run()
+    app.button(key="mark_b").click().run()
     assert "older" in [item.value for item in app.sidebar.markdown]
     shutil.rmtree(catalog / "older")
     app.run()
