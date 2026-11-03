@@ -37,3 +37,37 @@ def offered_chart(frame: pd.DataFrame) -> alt.Chart:
         .properties(height=260)
         .interactive()
     )
+
+
+def waits_chart(frame: pd.DataFrame) -> alt.Chart:
+    """Compare door-to-doctor means and p90 with each level's Manchester maximum."""
+    tidy = (
+        frame[
+            [
+                "Nivel",
+                "Puerta-médico media (min)",
+                "Puerta-médico p90 (min)",
+                "Máximo Manchester (min)",
+            ]
+        ]
+        .rename(
+            columns={
+                "Puerta-médico media (min)": "Media",
+                "Puerta-médico p90 (min)": "p90",
+                "Máximo Manchester (min)": "Máximo Manchester",
+            }
+        )
+        .melt("Nivel", var_name="Serie", value_name="Minutos")
+    )
+    return (
+        alt.Chart(tidy)
+        .mark_point(size=85)
+        .encode(
+            x=alt.X("Nivel:O"),
+            y=alt.Y("Minutos:Q"),
+            color="Serie:N",
+            shape="Serie:N",
+            tooltip=["Nivel:O", "Serie:N", alt.Tooltip("Minutos:Q", format=".1f")],
+        )
+        .properties(height=260)
+    )

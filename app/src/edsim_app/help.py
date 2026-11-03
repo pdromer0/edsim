@@ -3,6 +3,25 @@
 import streamlit as st
 
 
+def render_results_help() -> None:
+    """Explain the two populations and the limitations of replaying invariants."""
+    with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "Las llegadas y el censo usan toda la ventana sin calentamiento, incluidos "
+            "los pacientes que siguen dentro al final. Las esperas, estancias, desalojos "
+            "e ingresos usan solo episodios que llegan en la ventana y salen. «—» indica "
+            "una estadística sin pacientes. Manchester mide puerta-médico: exactamente "
+            "en el máximo cumple; los días fuera de objetivo tienen menos del 90 % de "
+            "pacientes dentro del máximo y se cuentan solo días con pacientes del nivel."
+        )
+        st.write(
+            "Dos subcomprobaciones de conservación solo existen durante la simulación: "
+            "llegadas frente al ground truth y procesos vivos en SimPy (inside). Al "
+            "recalcular desde el log no se pueden repetir; el recuento puede diferir "
+            "del guardado. El cero guardado conserva la comprobación completa original."
+        )
+
+
 def render_runs_help() -> None:
     """Explain persisted runs, reproducibility, and invalid catalog entries."""
     with st.expander("¿Qué estoy viendo?"):

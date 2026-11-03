@@ -5,7 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from edsim.runs import RunStore
+from edsim.runs import RunReadError, RunStore, read_run_header
 
 RUN_KEYS = ("selected_run_id", "compare_a", "compare_b")
 
@@ -41,13 +41,26 @@ def initialize_state(store: RunStore) -> None:
     if not st.session_state.get("catalog_initialized"):
         requested = st.query_params.get("run")
         if requested is not None:
-            if requested in {info.run_id for info in store.list()}:
-                st.session_state.selected_run_id = requested
-            else:
+            try:
+                read_run_header(store, requested)
+            except RunReadError as error:
                 st.warning(
-                    f"La ejecución «{requested}» no está en el catálogo. Se limpia el enlace."
+                    f"La ejecución «{requested}» no está en el catálogo. Se limpia el enlace. "
+                    f"Motivo: {error}"
                 )
+            else:
+                st.session_state.selected_run_id = requested
         st.session_state.catalog_initialized = True
+
+    if selected := st.session_state.selected_run_id:
+        try:
+            read_run_header(store, selected)
+        except RunReadError as error:
+            forget_run(selected)
+            st.warning(
+                f"La ejecución «{selected}» ya no está en el catálogo o no se puede abrir. "
+                f"Se han limpiado su selección y sus marcas. Motivo: {error}"
+            )
 
     missing = {
         run_id

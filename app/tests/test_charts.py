@@ -59,3 +59,25 @@ def test_offered_chart_serializes_utc_plus_one_wall_time_without_offset():
     assert rows[0]["Fecha y hora"] == "2026-01-05T00:00:00"
     assert rows[1]["Fecha y hora"] == "2026-01-05T00:15:00"
     assert spec["encoding"]["x"]["title"] == "Fecha y hora (UTC+1)"
+
+
+def test_waits_chart_keeps_supplied_door_waits_and_manchester(catalog):
+    from edsim.runs import RunStore, read_run_results
+    from edsim_app.charts import waits_chart
+    from edsim_app.frames import waits_frame
+
+    result = read_run_results(RunStore(catalog), "older")
+    spec = waits_chart(waits_frame(result)).to_dict()
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert len(rows) == 15
+    assert {row["Serie"] for row in rows} == {"Media", "p90", "Máximo Manchester"}
+    assert [row["Minutos"] for row in rows if row["Serie"] == "Máximo Manchester"] == [
+        0,
+        10,
+        60,
+        120,
+        240,
+    ]
+    assert [row["Minutos"] for row in rows if row["Serie"] == "p90"] == [
+        level.p90["door_to_doctor"] for level in result.analysis.metrics.by_level
+    ]

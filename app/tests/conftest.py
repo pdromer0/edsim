@@ -71,6 +71,7 @@ def simulation_files(tmp_path, monkeypatch):
     from edsim_app import defaults, preview
 
     st.cache_data.clear()
+    st.cache_resource.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
     for name in ("centro.toml", "llegadas.toml"):
@@ -85,3 +86,4 @@ def simulation_files(tmp_path, monkeypatch):
     )
     yield config
     st.cache_data.clear()
+    st.cache_resource.clear()
