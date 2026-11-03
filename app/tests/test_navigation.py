@@ -12,6 +12,12 @@ import edsim_app
 MAIN = Path(edsim_app.__file__).resolve().with_name("main.py")
 
 
+def test_no_legacy_pages_directory_next_to_entrypoint():
+    # A pages/ directory activates legacy navigation, which can skip main.py
+    # on direct entry and in AppTest (notably for the matching Replay URL).
+    assert not MAIN.with_name("pages").exists()
+
+
 def test_default_page_and_registered_url_paths(monkeypatch):
     page_factory = Mock(wraps=st.Page)
     monkeypatch.setattr(st, "Page", page_factory)
@@ -44,7 +50,7 @@ def test_switch_page_after_initial_run(filename, title):
     assert not app.exception
     assert [heading.value for heading in app.title] == ["Ejecuciones"]
 
-    app.switch_page(f"pages/{filename}.py").run()
+    app.switch_page(f"views/{filename}.py").run()
 
     assert not app.exception
     assert [heading.value for heading in app.title] == [title]
