@@ -432,3 +432,87 @@ def test_service_rejects_arguments_before_simulation(
     with pytest.raises(ValueError, match=message):
         simulate(**overrides)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_and_service_share_artifact_format(simulate, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from edsim.cli import main
+
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    result = simulate()
+    cli_output = tmp_path / "cli"
+    assert (
+        main(
+            [
+                "motor",
+                "simular",
+                "--centro",
+                "tests/data/centro_ejemplo.toml",
+                "--llegadas",
+                "tests/data/llegadas_ejemplo.toml",
+                "--dias",
+                "2",
+                "--calentamiento",
+                "1",
+                "--semilla",
+                "7",
+                "--run-id",
+                "test-run",
+                "--salida",
+                str(cli_output),
+            ]
+        )
+        == 0
+    )
+    for name in (
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+        "centro.toml",
+        "llegadas.toml",
+    ):
+        assert (cli_output / name).read_bytes() == (tmp_path / "run" / name).read_bytes()
+    cli_info = RunInfo.read(cli_output / "run.json")
+    equal_fields = (
+        "format_version",
+        "run_id",
+        "edsim_version",
+        "seed",
+        "days",
+        "warmup_days",
+        "variant",
+        "center_fingerprint",
+        "profile_fingerprint",
+        "center_path",
+        "profile_path",
+        "invariant_violations",
+        "window_arrivals",
+    )
+    assert {field.name for field in dataclasses.fields(RunInfo)} == set(equal_fields) | {
+        "origin",
+        "created_at",
+        "simulation_seconds",
+    }
+    for name in equal_fields:
+        assert getattr(cli_info, name) == getattr(result.info, name), name
+    assert cli_info.origin == "cli"
+    assert result.info.origin == "app"
+    for info in (cli_info, result.info):
+        assert isinstance(info.created_at, str)
+        assert datetime.fromisoformat(info.created_at).utcoffset() is not None
+        assert isinstance(info.simulation_seconds, float)
+        assert info.simulation_seconds >= 0
+    assert result.info.invariant_violations == len(result.violations)
+
+
+def test_service_uses_default_id_and_custom_variant(simulate):
+    result = simulate(run_id=None, variant="base-noche")
+    assert result.info.run_id == "r7"
+    assert result.info.variant == "base-noche"
+
+
+def test_service_missing_input_cleans_temporary(simulate, tmp_path):
+    with pytest.raises(FileNotFoundError):
+        simulate(center=tmp_path / "missing.toml")
+    assert list(tmp_path.iterdir()) == []

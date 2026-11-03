@@ -501,22 +501,30 @@ def test_simular_escribe_log_y_ground_truth(tmp_path, capsys):
 
 def test_simular_con_run_id(tmp_path):
     code = main(
-        ["motor", "simular", *SIMULATE_ARGS, "--run-id", "prueba", "--salida", str(tmp_path)]
+        [
+            "motor",
+            "simular",
+            *SIMULATE_ARGS,
+            "--run-id",
+            "prueba",
+            "--salida",
+            str(tmp_path / "salida"),
+        ]
     )
 
     assert code == 0
-    first = next(read_events(tmp_path / "eventos.jsonl"))
+    first = next(read_events(tmp_path / "salida" / "eventos.jsonl"))
     assert first.run_id == "prueba"
     assert first.event_id == "prueba-000000000"
-    (row, *_) = read_rows(tmp_path / "ground_truth_dias.csv")
+    (row, *_) = read_rows(tmp_path / "salida" / "ground_truth_dias.csv")
     assert row["run_id"] == "prueba"
 
 
 def test_simular_devuelve_1_si_falla_una_invariante(tmp_path, monkeypatch, capsys):
     broken = Violation("capacity", "box 3 ocupado dos veces", "r7-000000042", "EP-000007", 99.5)
-    monkeypatch.setattr("edsim.cli.check_invariants", lambda *args, **kwargs: [broken])
+    monkeypatch.setattr("edsim.runs.service.check_invariants", lambda *args, **kwargs: [broken])
 
-    code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path)])
+    code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
     out = capsys.readouterr().out
 
     assert code == 1
@@ -524,7 +532,7 @@ def test_simular_devuelve_1_si_falla_una_invariante(tmp_path, monkeypatch, capsy
     assert "box 3 ocupado dos veces" in out
     # Los ficheros se escriben igualmente, para diagnosticar.
     for name in ENGINE_FILES:
-        assert (tmp_path / name).is_file()
+        assert (tmp_path / "salida" / name).is_file()
 
 
 def test_simular_comprueba_las_invariantes_con_el_ground_truth(tmp_path, monkeypatch):
@@ -534,9 +542,9 @@ def test_simular_comprueba_las_invariantes_con_el_ground_truth(tmp_path, monkeyp
         calls.append((list(events), center, kwargs))
         return []
 
-    monkeypatch.setattr("edsim.cli.check_invariants", spy)
+    monkeypatch.setattr("edsim.runs.service.check_invariants", spy)
 
-    main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path)])
+    main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
 
     center, events, result = simulate_in_memory()
     ((checked, checked_center, kwargs),) = calls
@@ -688,3 +696,62 @@ def test_validar_motor_de_verdad(tmp_path, monkeypatch, capsys, engine_validatio
     assert "Resultado: pasan las 11 comprobaciones" in out
     for name in ENGINE_PLOTS:
         assert (tmp_path / name).read_bytes().startswith(b"\x89PNG")
+
+
+def test_simulate_default_output_is_catalog(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["motor", "simular", *SIMULATE_ARGS]) == 0
+    output = tmp_path / "resultados" / "ejecuciones" / "r7"
+    assert (output / "run.json").is_file()
+    assert "resultados/ejecuciones/r7/eventos.jsonl" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("kind", ["valid", "incomplete"])
+def test_simulate_occupied_output_is_usage_error(tmp_path, monkeypatch, capsys, kind):
+    output = tmp_path / "salida"
+    if kind == "valid":
+        assert main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(output)]) == 0
+        capsys.readouterr()
+    else:
+        output.mkdir()
+    original = {p.name: p.read_bytes() for p in output.iterdir()}
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **kw: pytest.fail("simulated"))
+    with pytest.raises(SystemExit) as error:
+        main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(output)])
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert "--run-id" in captured.err
+    assert "ya existe" in captured.err
+    assert captured.out == ""
+    assert {p.name: p.read_bytes() for p in output.iterdir()} == original
+
+
+@pytest.mark.parametrize(
+    "run_id", [".", "..", "../x", "a/b", "a\\b", "-x", ".x", "a" * 65, "ñ", "a b"]
+)
+def test_cli_rejects_invalid_directory_run_id(run_id, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **kw: pytest.fail("simulated"))
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "motor",
+                "simular",
+                *SIMULATE_ARGS,
+                f"--run-id={run_id}",
+                "--salida",
+                str(tmp_path / "salida"),
+            ]
+        )
+    assert error.value.code == 2
+    assert "--run-id" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_rejects_long_automatic_run_id(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **kw: pytest.fail("simulated"))
+    with pytest.raises(SystemExit) as error:
+        main(["motor", "simular", *SIMULATE_ARGS, "--semilla", str(10**70)])
+    assert error.value.code == 2
+    assert "--run-id explícito" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
