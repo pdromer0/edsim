@@ -1,4 +1,4 @@
-Si la tarea toca `app/`, lee también `app/AGENTS.md` (se creará en la tarea A.1).
+Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 
 # EDsim
 
@@ -6,6 +6,7 @@ Simulador de urgencias hospitalarias que genera datos sintéticos para un labora
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
 - Hito en curso: [docs/specs/hito-3.md](docs/specs/hito-3.md)
+- App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
 ## Modo de trabajo
 
@@ -26,15 +27,26 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
 ## Comandos
 
 ```bash
-uv sync                  # entorno y dependencias (uv.lock)
-uv run pytest            # todos los tests (incluidos los slow, como el CI)
-uv run pytest -m "not slow"  # solo los rápidos
+uv sync --all-packages    # entorno completo del workspace (uv.lock)
+uv run pytest            # tests del núcleo, incluidos los slow (como el CI)
+uv run pytest -m "not slow"  # tests rápidos del núcleo
+uv run --package edsim-app pytest app/tests  # tests de la app
+uv run --package edsim-app pytest app/tests -m "not slow"  # tests rápidos de la app
 uv run ruff check .      # lint
 uv run ruff format .     # formato
 uv run edsim             # CLI
+uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
 ```
+
+Un `uv sync` simple sincroniza solo el núcleo y desinstala la app y sus dependencias
+exclusivas. Usa `uv sync --all-packages` para el trabajo habitual. El arranque con
+`--package edsim-app` instala lo que falte. El CI del núcleo usa `uv sync --locked`
+para comprobarlo sin Streamlit ni pandas; el de la app añade `--all-packages`.
+
+El hook Stop de Codex formatea y ejecuta los tests rápidos del núcleo y de la app.
+El de Claude Code sigue ejecutando solo los del núcleo.
 
 Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
