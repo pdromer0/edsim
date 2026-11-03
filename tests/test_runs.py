@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -200,3 +201,234 @@ def test_store_rejects_symlinks(info, tmp_path):
     assert store.exists(info.run_id)
     with pytest.raises(ValueError):
         store.delete(info.run_id)
+
+
+# --- Simulation service ---------------------------------------------------------------
+
+
+@pytest.fixture
+def simulate(tmp_path):
+    from edsim.runs import simulate_run
+
+    def run(**overrides):
+        arguments = dict(
+            center="tests/data/centro_ejemplo.toml",
+            profile="tests/data/llegadas_ejemplo.toml",
+            days=2,
+            seed=7,
+            warmup_days=1,
+            run_id="test-run",
+            origin="app",
+            output_dir=tmp_path / "run",
+            clock=lambda: datetime(2026, 11, 3, tzinfo=UTC),
+        )
+        arguments.update(overrides)
+        return simulate_run(**arguments)
+
+    return run
+
+
+def test_simulation_metadata_and_copies(simulate, tmp_path):
+    from pathlib import Path
+
+    from edsim.arrivals.report import config_fingerprint
+    from edsim.engine.events import read_events
+
+    ticks = iter([10.0, 10.25])
+    result = simulate(timer=lambda: next(ticks))
+    output = tmp_path / "run"
+    assert RunInfo.read(output / "run.json") == result.info
+    assert result.info.simulation_seconds == 0.25
+    assert result.info.created_at == "2026-11-03T00:00:00+00:00"
+    assert result.info.variant == "centro_ejemplo"
+    assert result.info.invariant_violations == len(result.violations) == 0
+    events = list(read_events(output / "eventos.jsonl"))
+    assert result.info.window_arrivals == sum(
+        e.event_type == "patient_arrived" and 1440 <= e.sim_time < 2880 for e in events
+    )
+    assert result.info.window_arrivals == result.analysis.metrics.arrivals == 307
+    for name, original, fingerprint in (
+        ("centro.toml", result.info.center_path, result.info.center_fingerprint),
+        ("llegadas.toml", result.info.profile_path, result.info.profile_fingerprint),
+    ):
+        assert (output / name).read_bytes() == Path(original).read_bytes()
+        assert config_fingerprint(output / name) == fingerprint
+    assert {p.name for p in output.iterdir()} == {
+        "run.json",
+        "centro.toml",
+        "llegadas.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())
+
+
+def test_reproduce_from_saved_copies(simulate, tmp_path):
+    simulate()
+    saved = tmp_path / "run"
+    simulate(
+        center=saved / "centro.toml",
+        profile=saved / "llegadas.toml",
+        output_dir=tmp_path / "reproduced",
+    )
+    assert (saved / "eventos.jsonl").read_bytes() == (
+        tmp_path / "reproduced" / "eventos.jsonl"
+    ).read_bytes()
+
+
+def test_loads_copies_even_if_original_changes_after_copy(simulate, tmp_path, monkeypatch):
+    import shutil
+    from pathlib import Path
+
+    original = tmp_path / "original.toml"
+    original.write_bytes(Path("tests/data/centro_ejemplo.toml").read_bytes())
+    baseline = tmp_path / "baseline"
+    simulate(output_dir=baseline)
+    copyfile = shutil.copyfile
+    copied = []
+
+    def copy_then_modify(source, destination):
+        result = copyfile(source, destination)
+        copied.append(Path(destination).name)
+        if Path(source) == original:
+            original.write_text(original.read_text().replace("boxes = 30", "boxes = 1"))
+        return result
+
+    monkeypatch.setattr("edsim.runs.service.shutil.copyfile", copy_then_modify)
+    simulate(center=original)
+    assert copied == ["centro.toml", "llegadas.toml"]
+    assert "boxes = 1\n" in original.read_text()
+    assert "boxes = 30\n" in (tmp_path / "run" / "centro.toml").read_text()
+    assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == (
+        baseline / "eventos.jsonl"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_simulation_failure_cleans_destination_and_temporary(
+    simulate, tmp_path, monkeypatch, failure
+):
+    from edsim.runs import service
+
+    real = service.simulate_ed
+    calls = []
+
+    def fail_after_events(*args, **kwargs):
+        real(*args, **kwargs)
+        calls.append(True)
+        assert list(tmp_path.rglob("eventos.jsonl"))
+        raise failure("injected interruption")
+
+    monkeypatch.setattr(service, "simulate_ed", fail_after_events)
+    with pytest.raises(failure, match="injected"):
+        simulate()
+    assert calls == [True]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("stage", ["write_episodes_csv", "check_invariants", "analyze_run"])
+def test_late_failure_cleans_run(simulate, tmp_path, monkeypatch, stage):
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected late failure")
+
+    monkeypatch.setattr(f"edsim.runs.service.{stage}", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        simulate()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["directory", "file", "broken_symlink"])
+def test_service_refuses_occupied_destination_before_simulation(
+    simulate,
+    tmp_path,
+    monkeypatch,
+    kind,
+):
+    output = tmp_path / "run"
+    if kind == "directory":
+        output.mkdir()
+    elif kind == "file":
+        output.write_text("untouched")
+    else:
+        output.symlink_to(tmp_path / "missing")
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **kw: pytest.fail("simulated"))
+    with pytest.raises(FileExistsError):
+        simulate()
+    assert RunStore(tmp_path).exists("run")
+    if kind == "file":
+        assert output.read_text() == "untouched"
+
+
+def test_service_saves_violations_and_checks_ground_truth(simulate, tmp_path, monkeypatch):
+    from edsim.engine.events import read_events
+    from edsim.engine.invariants import Violation
+    from edsim.runs import service
+
+    real = service.simulate_ed
+    engine_results, calls = [], []
+    violation = Violation("capacity", "injected", None, None, None)
+
+    def engine(*args, **kwargs):
+        result = real(*args, **kwargs)
+        engine_results.append(result)
+        return result
+
+    def check(events, center, **kwargs):
+        calls.append((events, kwargs))
+        return [violation]
+
+    monkeypatch.setattr(service, "simulate_ed", engine)
+    monkeypatch.setattr(service, "check_invariants", check)
+    result = simulate()
+    assert result.violations == (violation,)
+    assert result.info.invariant_violations == 1
+    assert RunInfo.read(tmp_path / "run" / "run.json").invariant_violations == 1
+    assert len(calls) == len(engine_results) == 1
+    assert calls[0][0] == list(read_events(tmp_path / "run" / "eventos.jsonl"))
+    assert calls[0][1] == {
+        "ground_truth": engine_results[0].ground_truth,
+        "inside": engine_results[0].inside,
+    }
+
+
+def test_metadata_written_last_before_publish(simulate, tmp_path, monkeypatch):
+    real = RunInfo.write
+    calls = []
+
+    def write(info, path):
+        calls.append(path)
+        assert not (tmp_path / "run").exists()
+        assert {p.name for p in path.parent.iterdir()} == {
+            "eventos.jsonl",
+            "ground_truth_episodios.csv",
+            "ground_truth_dias.csv",
+            "centro.toml",
+            "llegadas.toml",
+        }
+        real(info, path)
+
+    monkeypatch.setattr(RunInfo, "write", write)
+    simulate()
+    assert len(calls) == 1
+    assert (tmp_path / "run" / "run.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"run_id": "../outside"}, "run_id"),
+        ({"run_id": None, "seed": 10**70}, "explicit run_id"),
+        ({"days": 1, "warmup_days": 1}, "warmup_days"),
+        ({"seed": -1}, "seed"),
+        ({"origin": "other"}, "origin"),
+        ({"clock": lambda: datetime(2026, 11, 3)}, "timezone"),
+    ],
+)
+def test_service_rejects_arguments_before_simulation(
+    simulate, tmp_path, monkeypatch, overrides, message
+):
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **kw: pytest.fail("simulated"))
+    with pytest.raises(ValueError, match=message):
+        simulate(**overrides)
+    assert list(tmp_path.iterdir()) == []
