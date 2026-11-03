@@ -30,6 +30,8 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 
 ## Comandos desde la raíz del repositorio
 
+Los comandos de git que escriben en `.git` se piden directamente fuera del sandbox.
+
 ```bash
 uv sync --all-packages
 uv run --package edsim-app pytest app/tests
