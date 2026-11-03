@@ -23,6 +23,27 @@ from edsim.runs.identifiers import validate_run_id
 from edsim.runs.store import RunInfo
 
 
+class RunConfigurationError(ValueError):
+    """An original configuration cannot be read or its saved copy is invalid."""
+
+
+def _copy_configuration(source: str | Path, destination: Path) -> None:
+    """Classify original read failures without concealing destination write errors."""
+    try:
+        data = Path(source).read_bytes()
+    except OSError as error:
+        raise RunConfigurationError(f"{source}: {error}") from error
+    destination.write_bytes(data)
+
+
+def _load_configuration[T](loader: Callable[[Path], T], original: str | Path, copy: Path) -> T:
+    """Validate a saved configuration, keeping the original path in diagnostics."""
+    try:
+        return loader(copy)
+    except ValueError as error:
+        raise RunConfigurationError(f"{original}: {error}") from error
+
+
 @dataclass(frozen=True, slots=True)
 class SimulationResult:
     """Persisted metadata and the complete analysis of a newly simulated run."""
@@ -100,10 +121,10 @@ def simulate_run(
         temporary.chmod(stat.S_IMODE(mode_reference.stat().st_mode))
         mode_reference.rmdir()
         center_copy, profile_copy = temporary / "centro.toml", temporary / "llegadas.toml"
-        shutil.copyfile(center, center_copy)
-        shutil.copyfile(profile, profile_copy)
-        center_config = load_center(center_copy)
-        arrival_profile = load_profile(profile_copy)
+        _copy_configuration(center, center_copy)
+        _copy_configuration(profile, profile_copy)
+        center_config = _load_configuration(load_center, center, center_copy)
+        arrival_profile = _load_configuration(load_profile, profile, profile_copy)
         center_fingerprint = config_fingerprint(center_copy)
         profile_fingerprint = config_fingerprint(profile_copy)
         events_path = temporary / "eventos.jsonl"

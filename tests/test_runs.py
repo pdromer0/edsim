@@ -3,6 +3,9 @@
 import dataclasses
 import json
 from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile
 
 import numpy as np
 import pytest
@@ -75,6 +78,16 @@ def test_metadata_roundtrip(info, tmp_path):
     loaded.write(second)
     assert first.read_bytes() == second.read_bytes()
     assert json.loads(first.read_text()) == dataclasses.asdict(info)
+    assert "arrivals_per_day" not in json.loads(first.read_text())
+
+
+@pytest.mark.parametrize(
+    "days, warmup, arrivals, expected",
+    [(5, 2, 900, 300.0), (4, 0, 1001, 250.25), (2, 1, 0, 0.0)],
+)
+def test_arrivals_per_day_uses_observation_window(info, days, warmup, arrivals, expected):
+    info = dataclasses.replace(info, days=days, warmup_days=warmup, window_arrivals=arrivals)
+    assert info.arrivals_per_day == expected
 
 
 @pytest.mark.parametrize(
@@ -176,7 +189,7 @@ def test_store_rejects_invalid_ids(run_id, tmp_path):
     store = RunStore(tmp_path)
     protected = tmp_path / "-x"
     protected.mkdir()
-    for operation in (store.delete, store.open, store.exists):
+    for operation in (store.delete, store.open, store.exists, store.archive):
         with pytest.raises(ValueError, match="run_id"):
             operation(run_id)
     assert protected.is_dir()
@@ -192,7 +205,7 @@ def test_store_rejects_symlinks(info, tmp_path):
     assert store.exists(info.run_id)
     assert store.list() == []
     assert dict(store.invalid()).keys() == {info.run_id}
-    for operation in (store.open, store.delete):
+    for operation in (store.open, store.delete, store.archive):
         with pytest.raises(ValueError, match="inside"):
             operation(info.run_id)
     assert (outside / "run.json").is_file()
@@ -264,6 +277,51 @@ def test_simulation_metadata_and_copies(simulate, tmp_path):
     assert not any(p.name.startswith(".") for p in tmp_path.iterdir())
 
 
+def test_archive_has_exactly_the_six_original_files(simulate, tmp_path):
+    simulate()
+    directory = tmp_path / "run"
+    names = {
+        "run.json",
+        "centro.toml",
+        "llegadas.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    (directory / "extra.txt").write_text("not part of the run")
+    (directory / "nested").mkdir()
+    with ZipFile(BytesIO(RunStore(tmp_path).archive("run"))) as archive:
+        assert len(archive.namelist()) == 6
+        assert set(archive.namelist()) == names
+        for name in names:
+            assert archive.read(name) == (directory / name).read_bytes()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "fifo"])
+def test_archive_rejects_non_regular_files(simulate, tmp_path, kind):
+    import os
+
+    simulate()
+    file = tmp_path / "run" / "eventos.jsonl"
+    original = file.read_bytes()
+    file.unlink()
+    if kind == "symlink":
+        outside = tmp_path / "outside.jsonl"
+        outside.write_bytes(original)
+        file.symlink_to(outside)
+    elif kind == "directory":
+        file.mkdir()
+    else:
+        os.mkfifo(file)
+    with pytest.raises(ValueError, match="regular"):
+        RunStore(tmp_path).archive("run")
+
+
+def test_archive_missing_run(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        RunStore(tmp_path).archive("absent")
+
+
 def test_reproduce_from_saved_copies(simulate, tmp_path):
     simulate()
     saved = tmp_path / "run"
@@ -278,14 +336,13 @@ def test_reproduce_from_saved_copies(simulate, tmp_path):
 
 
 def test_loads_copies_even_if_original_changes_after_copy(simulate, tmp_path, monkeypatch):
-    import shutil
-    from pathlib import Path
+    from edsim.runs import service
 
     original = tmp_path / "original.toml"
     original.write_bytes(Path("tests/data/centro_ejemplo.toml").read_bytes())
     baseline = tmp_path / "baseline"
     simulate(output_dir=baseline)
-    copyfile = shutil.copyfile
+    copyfile = service._copy_configuration
     copied = []
 
     def copy_then_modify(source, destination):
@@ -295,7 +352,7 @@ def test_loads_copies_even_if_original_changes_after_copy(simulate, tmp_path, mo
             original.write_text(original.read_text().replace("boxes = 30", "boxes = 1"))
         return result
 
-    monkeypatch.setattr("edsim.runs.service.shutil.copyfile", copy_then_modify)
+    monkeypatch.setattr(service, "_copy_configuration", copy_then_modify)
     simulate(center=original)
     assert copied == ["centro.toml", "llegadas.toml"]
     assert "boxes = 1\n" in original.read_text()
@@ -513,8 +570,80 @@ def test_service_uses_default_id_and_custom_variant(simulate):
 
 
 def test_service_missing_input_cleans_temporary(simulate, tmp_path):
-    with pytest.raises(FileNotFoundError):
+    from edsim.runs import RunConfigurationError
+
+    with pytest.raises(RunConfigurationError) as caught:
         simulate(center=tmp_path / "missing.toml")
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("argument", ["center", "profile"])
+@pytest.mark.parametrize("kind", ["missing", "directory", "unreadable", "toml", "validation"])
+def test_configuration_failures_keep_their_cause(simulate, tmp_path, monkeypatch, argument, kind):
+    from edsim.runs import RunConfigurationError
+
+    path = tmp_path / "input.toml"
+    if kind == "directory":
+        path.mkdir()
+        expected = IsADirectoryError
+    elif kind == "missing":
+        expected = FileNotFoundError
+    elif kind == "unreadable":
+        path.write_text("")
+        real = Path.read_bytes
+
+        def unreadable(self):
+            if self == path:
+                raise PermissionError("injected permission failure")
+            return real(self)
+
+        monkeypatch.setattr(Path, "read_bytes", unreadable)
+        expected = PermissionError
+    else:
+        path.write_text("[broken" if kind == "toml" else "unknown = 1\n")
+        expected = ValueError
+    with pytest.raises(RunConfigurationError) as caught:
+        simulate(**{argument: path})
+    assert isinstance(caught.value.__cause__, expected)
+    assert str(path) in str(caught.value)
+    assert not (tmp_path / "run").exists()
+    assert not list(tmp_path.glob(".test-run-*"))
+
+
+@pytest.mark.parametrize("stage", ["simulate_ed", "config_fingerprint", "analyze_run"])
+def test_internal_value_errors_are_not_configuration_errors(simulate, tmp_path, monkeypatch, stage):
+    from edsim.runs import RunConfigurationError
+
+    error = ValueError("injected internal failure")
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(f"edsim.runs.service.{stage}", fail)
+    with pytest.raises(ValueError) as caught:
+        simulate()
+    assert caught.value is error
+    assert not isinstance(caught.value, RunConfigurationError)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_configuration_destination_write_error_is_not_wrapped(simulate, tmp_path, monkeypatch):
+    from edsim.runs import RunConfigurationError
+
+    error = PermissionError("injected destination failure")
+    real = Path.write_bytes
+
+    def fail(self, data):
+        if self.name == "centro.toml":
+            raise error
+        return real(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", fail)
+    with pytest.raises(PermissionError) as caught:
+        simulate()
+    assert caught.value is error
+    assert not isinstance(caught.value, RunConfigurationError)
     assert list(tmp_path.iterdir()) == []
 
 
