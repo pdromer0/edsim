@@ -25,6 +25,13 @@ from edsim.runs.episodes import (
     episode_segments,
 )
 from edsim.runs.events import EpisodeEventIndex, build_episode_event_index, read_episode_events
+from edsim.runs.filters import (
+    EpisodeFilters,
+    EpisodePeriod,
+    episode_observed_time,
+    episode_period,
+    filter_episodes,
+)
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
     LevelCompliance,
@@ -69,6 +76,11 @@ __all__ = [
     "CurveSteps",
     "DurationSummary",
     "EpisodeRecord",
+    "EpisodeFilters",
+    "EpisodePeriod",
+    "episode_observed_time",
+    "episode_period",
+    "filter_episodes",
     "EpisodeTruth",
     "TRUTH_ABS_TOL_MINUTES",
     "TruthComparison",

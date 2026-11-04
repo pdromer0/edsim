@@ -10,12 +10,14 @@ from pandas.io.formats.style import Styler
 from edsim.runs import (
     SUMMARY_MEASURES,
     TIMEZONE,
+    EpisodeRecord,
     OfferedWork,
     RunInfo,
     RunResults,
     WindowKPIs,
     curve_blocks,
     curve_steps,
+    episode_observed_time,
 )
 
 COLUMNS = (
@@ -181,6 +183,53 @@ def wall_times(result: RunResults, minutes: object) -> pd.DatetimeIndex:
     return (
         pd.Timestamp(result.start_date, tz=TIMEZONE) + pd.to_timedelta(minutes, unit="min")
     ).tz_localize(None)
+
+
+EPISODE_COLUMNS = {
+    "episode_id": "Episodio",
+    "arrival": "Llegada (UTC+1)",
+    "triage_start": "Inicio de triaje (min)",
+    "triage_end": "Fin de triaje (min)",
+    "level": "Nivel",
+    "first_box": "Primer box (min)",
+    "first_assessment": "Primera valoración (min)",
+    "decision": "Decisión (min)",
+    "departure": "Salida (min)",
+    "destination": "Destino",
+    "displacements": "Desalojos",
+    "triage_wait": "Espera de triaje (min)",
+    "box_wait": "Espera de box (min)",
+    "doctor_wait": "Espera de médico (min)",
+    "initial_doctor_wait": "Espera inicial de médico (min)",
+    "door_to_doctor": "Puerta-médico (min)",
+    "stay": "Estancia (min)",
+}
+
+
+def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.DataFrame:
+    """Present every record field, final stay and observed lower bound unchanged."""
+    frame = pd.DataFrame(
+        [
+            {label: getattr(record, field) for field, label in EPISODE_COLUMNS.items()}
+            | {
+                "Tiempo observado (min)": episode_observed_time(
+                    record, result.analysis.curves.horizon
+                )
+            }
+            for record in table
+        ],
+        columns=[*EPISODE_COLUMNS.values(), "Tiempo observado (min)"],
+    )
+    frame["Llegada (UTC+1)"] = wall_times(result, [record.arrival for record in table])
+    frame["Nivel"] = frame["Nivel"].astype("Int64")
+    return frame
+
+
+def style_episodes(frame: pd.DataFrame) -> Styler:
+    """Keep missing outcomes explicit and minutes numeric with Spanish display."""
+    formats = {column: "{:.1f}" for column in frame if column.endswith("(min)")}
+    formats.update({"Llegada (UTC+1)": lambda value: value.strftime("%d/%m/%Y %H:%M:%S")})
+    return frame.style.format(formats, decimal=",", na_rep="—")
 
 
 def curve_frame(result: RunResults, name: str, week: int) -> pd.DataFrame:

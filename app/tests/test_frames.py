@@ -58,6 +58,27 @@ def test_decimal_comma_does_not_turn_numbers_into_strings(run_info):
     assert styled.data.loc[0, "Llegadas por día"] == 307.5
 
 
+def test_episode_frame_preserves_missing_final_times_and_observed_bound(catalog):
+    import pandas as pd
+
+    from edsim.runs import RunStore, episode_observed_time, read_run_results
+    from edsim_app.frames import EPISODE_COLUMNS, episodes_frame, style_episodes
+
+    result = read_run_results(RunStore(catalog), "older")
+    frame = episodes_frame(result.analysis.table, result)
+    assert list(frame) == [*EPISODE_COLUMNS.values(), "Tiempo observado (min)"]
+    assert frame["Llegada (UTC+1)"].dt.tz is None
+    unfinished = next(record for record in result.analysis.table if record.departure is None)
+    row = frame.set_index("Episodio").loc[unfinished.episode_id]
+    assert pd.isna(row["Estancia (min)"])
+    assert row["Tiempo observado (min)"] == episode_observed_time(unfinished, 4320)
+    assert "—" in style_episodes(frame.tail(3)).to_html()
+    assert is_numeric_dtype(frame["Estancia (min)"])
+    assert episodes_frame((), result).empty
+    frame.loc[0, "Tiempo observado (min)"] = -1
+    assert result.analysis.table[0].arrival >= 0
+
+
 def test_offered_blocks_integrate_linear_load_and_exclude_final_endpoint():
     from datetime import date
 
