@@ -3,6 +3,32 @@
 import streamlit as st
 
 
+def render_episodes_help() -> None:
+    """Explain exclusive cohorts, right censoring and independent laboratory work."""
+    with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "La tabla incluye todos los episodios: sin terminar si no hay salida; "
+            "calentamiento si llegaron antes de su fin y salieron; ventana si llegaron "
+            "desde ese límite y salieron. Los filtros se combinan y se conservan entre ejecuciones."
+        )
+        st.write(
+            "Cuando estancia o puerta-médico aún no se conocen, el filtro usa el tiempo "
+            "hasta el horizonte como cota inferior: solo pasa si ya supera el umbral. "
+            "La tabla conserva «—» en el valor desconocido y muestra el tiempo observado."
+        )
+        st.write(
+            "Los tramos muestran dónde está el paciente y suman su estancia observada. "
+            "Las pruebas siguen aunque pierda el box: su banda es independiente y los "
+            "rombos marcan desalojos. Todas las horas son UTC+1 fijo, sin horario de verano."
+        )
+        st.write(
+            "«Ver la verdad» compara sorteos con observaciones: suma todas las partes de "
+            "una valoración interrumpida. Una etapa puede coincidir, discrepar, ser parcial, "
+            "estar pendiente o no usarse. Una etapa parcial no debe superar lo sorteado; "
+            "la tolerancia absoluta es 0,00000001 minutos, sin tolerancia relativa."
+        )
+
+
 def render_results_help() -> None:
     """Explain the two populations and the limitations of replaying invariants."""
     with st.expander("¿Qué estoy viendo?"):

@@ -19,6 +19,58 @@ def test_duration_chart_keeps_supplied_points_and_numeric_axes():
     }
 
 
+def test_episode_chart_has_independent_lab_lane_and_displacement_tooltip():
+    import pandas as pd
+
+    from edsim_app.charts import episode_chart
+
+    segments = pd.DataFrame(
+        {
+            "Inicio": [pd.Timestamp("2026-01-05T00:30:00")],
+            "Fin": [pd.Timestamp("2026-01-05T01:30:00")],
+            "Estado": ["Espera de box"],
+            "Box": [None],
+            "Duración (min)": [60.0],
+            "Carril": ["Recorrido"],
+        }
+    )
+    tests = pd.DataFrame(
+        {
+            "Inicio": [pd.Timestamp("2026-01-05T00:25:00")],
+            "Fin": [pd.Timestamp("2026-01-05T01:25:00")],
+            "Estado": ["Pruebas en curso"],
+            "Box": [None],
+            "Duración (min)": [60.0],
+            "Carril": ["Pruebas"],
+        }
+    )
+    marks = pd.DataFrame(
+        {
+            "Fecha y hora": [pd.Timestamp("2026-01-05T00:30:00")],
+            "Box": [1],
+            "Desalojado por": ["EP-000001"],
+            "Carril": ["Recorrido"],
+        }
+    )
+    original = segments.copy(deep=True)
+    spec = episode_chart(segments, tests, marks).to_dict()
+    bars, points = spec["layer"]
+    assert bars["mark"]["type"] == "bar"
+    assert bars["encoding"]["x"]["title"] == "Fecha y hora (UTC+1)"
+    assert bars["encoding"]["x2"]["field"] == "Fin"
+    assert points["mark"]["shape"] == "diamond"
+    assert {tip["field"] for tip in points["encoding"]["tooltip"]} == {
+        "Fecha y hora",
+        "Box",
+        "Desalojado por",
+    }
+    rows = spec["datasets"][bars["data"]["name"]]
+    assert rows[0]["Inicio"] == "2026-01-05T00:30:00"
+    assert rows[0]["Fin"] == "2026-01-05T01:30:00"
+    assert rows[1]["Carril"] == "Pruebas" and rows[1]["Fin"] == "2026-01-05T01:25:00"
+    pd.testing.assert_frame_equal(segments, original)
+
+
 def test_offered_chart_has_both_series_shared_scale_and_step_means():
     import pandas as pd
 

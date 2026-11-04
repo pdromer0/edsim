@@ -1,6 +1,222 @@
-"""Placeholder for the episode explorer."""
+"""Explore the selected run with pure core filters and persistent choices."""
 
+import pandas as pd
 import streamlit as st
 
+from edsim.runs import (
+    EpisodeFilters,
+    EpisodeRecord,
+    RunAnalysisError,
+    RunReadError,
+    RunResults,
+    compare_episode_truth,
+    episode_observed_time,
+    episode_segments,
+    filter_episodes,
+    read_run_header,
+)
+from edsim_app.charts import episode_chart
+from edsim_app.episodes import (
+    episode_filter_values,
+    episode_identity,
+    remember_episode,
+    remember_episode_filter,
+)
+from edsim_app.frames import (
+    episode_events_frame,
+    episode_timeline_frames,
+    episode_truth_frame,
+    episodes_frame,
+    format_number,
+    style_episodes,
+    wall_times,
+)
+from edsim_app.help import render_episodes_help
+from edsim_app.results import (
+    cached_episode_event_index,
+    cached_episode_events,
+    cached_episode_truth,
+    cached_run_results,
+)
+from edsim_app.state import catalog_store
+
+
+def render_filters(days: int) -> EpisodeFilters:
+    """Collect common filters independently of navigation-cleaned widget keys."""
+    values = episode_filter_values(days - 1)
+    with st.expander("Filtros", expanded=True):
+        for field, label, options, formatter in (
+            (
+                "level",
+                "Nivel",
+                [None, 1, 2, 3, 4, 5],
+                lambda value: "Todos" if value is None else str(value),
+            ),
+            (
+                "destination",
+                "Destino",
+                [None, "alta", "ingreso"],
+                lambda value: "Todos" if value is None else value.capitalize(),
+            ),
+            (
+                "displaced",
+                "Desalojado",
+                [None, True, False],
+                lambda value: "Todos" if value is None else "Sí" if value else "No",
+            ),
+            (
+                "arrival_day",
+                "Día de llegada",
+                [None, *range(days)],
+                lambda value: "Todos" if value is None else f"Día {value}",
+            ),
+            (
+                "period",
+                "Tramo",
+                [None, "warmup", "window", "unfinished"],
+                lambda value: {
+                    None: "Todos",
+                    "warmup": "Calentamiento",
+                    "window": "Ventana",
+                    "unfinished": "Sin terminar",
+                }[value],
+            ),
+        ):
+            widget = f"episode_filter_{field}_widget"
+            st.session_state[widget] = values[field]
+            st.selectbox(
+                label,
+                options,
+                format_func=formatter,
+                key=widget,
+                on_change=remember_episode_filter,
+                args=(field, widget),
+            )
+        for field, label in (
+            ("door_to_doctor_gt", "Puerta-médico mayor que (min)"),
+            ("stay_gt", "Estancia mayor que (min)"),
+        ):
+            widget = f"episode_filter_{field}_widget"
+            st.session_state[widget] = values[field]
+            st.number_input(
+                label,
+                min_value=0.0,
+                value=None,
+                step=5.0,
+                key=widget,
+                on_change=remember_episode_filter,
+                args=(field, widget),
+            )
+    return EpisodeFilters(**values)
+
+
+def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprint: str) -> None:
+    """Present a validated card and lazily compare its exact draws on request."""
+    try:
+        events = cached_episode_events(root, result.info.run_id, fingerprint, record.episode_id)
+    except RunReadError as error:
+        st.error(str(error))
+        return
+    timeline = episode_segments(events, result.analysis.curves.horizon)
+    st.subheader(f"Ficha del episodio {record.episode_id}")
+    columns = st.columns(4)
+    columns[0].metric(
+        "Llegada (UTC+1)", wall_times(result, [record.arrival])[0].strftime("%d/%m/%Y %H:%M:%S")
+    )
+    columns[1].metric("Nivel", format_number(record.level, 0))
+    columns[2].metric("Destino", record.destination.capitalize() if record.destination else "—")
+    columns[3].metric(
+        "Estancia", "—" if record.stay is None else f"{format_number(record.stay)} min"
+    )
+    if record.departure is None:
+        observed = episode_observed_time(record, result.analysis.curves.horizon)
+        st.caption(
+            f"Sin terminar. Tiempo observado: {format_number(observed)} min; "
+            "cota inferior de la estancia."
+        )
+    st.altair_chart(episode_chart(*episode_timeline_frames(timeline, result)), width="stretch")
+    st.caption(
+        "Recorrido: ubicación del paciente. Pruebas: trabajo del laboratorio. Rombos: desalojos."
+    )
+    with st.expander("Eventos del log"):
+        st.dataframe(episode_events_frame(events), hide_index=True, width="stretch")
+    if st.toggle("Ver la verdad", key="episode_truth_widget"):
+        try:
+            truth = cached_episode_truth(root, result.info.run_id, fingerprint)
+        except RunReadError as error:
+            st.error(str(error))
+            return
+        if record.episode_id not in truth:
+            st.error(f"ground_truth_episodios.csv: no contiene el episodio {record.episode_id}.")
+            return
+        rows = compare_episode_truth(events, timeline, truth[record.episode_id])
+        st.subheader("Lo sorteado frente a lo observado")
+        st.dataframe(episode_truth_frame(rows), hide_index=True, width="stretch")
+        if any(row.status == "mismatch" for row in rows):
+            st.warning("Hay discrepancias entre lo sorteado y lo observado.")
+
+
+@st.fragment(key="episode_card")
+def render_episode_browser(
+    result: RunResults,
+    filtered: tuple[EpisodeRecord, ...],
+    identity: tuple[str, str, str],
+) -> None:
+    """Rerun selection and card widgets without rebuilding the episode table."""
+    requested = st.session_state.episode_choices.get(identity)
+    identifiers = [record.episode_id for record in filtered]
+    st.session_state.episode_choice_widget = requested if requested in identifiers else None
+    st.selectbox(
+        "Episodio",
+        identifiers,
+        index=None,
+        key="episode_choice_widget",
+        placeholder="Elige un episodio",
+        on_change=remember_episode,
+        args=(identity,),
+    )
+    if requested is not None and requested not in identifiers:
+        exists = any(record.episode_id == requested for record in result.analysis.table)
+        st.warning(
+            f"El episodio «{requested}» "
+            + ("no pasa los filtros actuales." if exists else "no existe en esta ejecución.")
+        )
+        return
+    if requested is not None:
+        record = next(record for record in result.analysis.table if record.episode_id == requested)
+        render_card(record, result, identity[0], identity[2])
+
+
 st.title("Episodios")
-st.write("La tarea A.5 añadirá el explorador y la línea temporal de cada episodio.")
+selected = st.session_state.selected_run_id
+if selected is None:
+    st.info("Elige una ejecución en Ejecuciones para explorar sus episodios.")
+    st.stop()
+store = catalog_store()
+try:
+    info, fingerprint = read_run_header(store, selected)
+    st.header(info.run_id)
+    result = cached_run_results(str(store.root), selected, fingerprint)
+except (RunReadError, RunAnalysisError) as error:
+    st.error(str(error))
+    st.stop()
+render_episodes_help()
+try:
+    cached_episode_event_index(str(store.root), selected, fingerprint)
+except RunReadError as error:
+    st.error(str(error))
+    st.stop()
+filters = render_filters(info.days)
+filtered = filter_episodes(
+    result.analysis.table,
+    filters,
+    warmup_end=info.warmup_days * 1440,
+    horizon=result.analysis.curves.horizon,
+)
+st.caption(f"{len(filtered)} de {len(result.analysis.table)} episodios pasan los filtros.")
+frame = episodes_frame(filtered, result)
+# Styler's default cell limit is smaller than a valid 60-day table.
+with pd.option_context("styler.render.max_elements", max(262144, frame.size)):
+    st.dataframe(style_episodes(frame), hide_index=True, width="stretch")
+identity = episode_identity(str(store.root), selected, fingerprint)
+render_episode_browser(result, filtered, identity)

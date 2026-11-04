@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from edsim.runs import RunReadError, RunStore, read_run_header
+from edsim_app.episodes import sync_episode_query
 
 RUN_KEYS = ("selected_run_id", "compare_a", "compare_b")
 
@@ -23,6 +24,10 @@ def forget_run(run_id: str) -> None:
     for key in ("run_choice", "pending_delete"):
         if st.session_state.get(key) == run_id:
             st.session_state.pop(key, None)
+    choices = st.session_state.get("episode_choices", {})
+    for identity in list(choices):
+        if identity[1] == run_id:
+            del choices[identity]
 
 
 def sync_run_query() -> None:
@@ -40,6 +45,8 @@ def initialize_state(store: RunStore) -> None:
         st.session_state.setdefault(key, None)
     if not st.session_state.get("catalog_initialized"):
         requested = st.query_params.get("run")
+        if requested is not None and "episodio" in st.query_params:
+            st.session_state.episode_initial_link = (requested, st.query_params["episodio"])
         if requested is not None:
             try:
                 read_run_header(store, requested)
@@ -52,9 +59,10 @@ def initialize_state(store: RunStore) -> None:
                 st.session_state.selected_run_id = requested
         st.session_state.catalog_initialized = True
 
+    fingerprint = None
     if selected := st.session_state.selected_run_id:
         try:
-            read_run_header(store, selected)
+            _, fingerprint = read_run_header(store, selected)
         except RunReadError as error:
             forget_run(selected)
             st.warning(
@@ -74,6 +82,10 @@ def initialize_state(store: RunStore) -> None:
             "Se han limpiado su selección y sus marcas."
         )
     sync_run_query()
+    if st.session_state.selected_run_id is not None and fingerprint is not None:
+        sync_episode_query(str(store.root), st.session_state.selected_run_id, fingerprint)
+    else:
+        st.query_params.pop("episodio", None)
 
 
 def choose_run() -> None:
