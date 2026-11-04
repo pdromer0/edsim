@@ -207,3 +207,27 @@ def episode_chart(
         )
     )
     return (bars + points).properties(height=160).interactive()
+
+
+def difference_histogram_chart(frame: pd.DataFrame) -> alt.Chart:
+    """Draw core-supplied intervals and counts of patients with a nonzero change."""
+    return (
+        alt.Chart(frame)
+        .mark_bar(binSpacing=1)
+        .encode(
+            x=alt.X("Desde (min):Q", title="B − A (minutos)", bin="binned"),
+            x2="Hasta (min):Q",
+            y=alt.Y("Pacientes:Q", title="Pacientes que cambian"),
+            color=alt.Color(
+                "Efecto:N",
+                scale=alt.Scale(domain=["Mejoran", "Empeoran"], range=["#1baf7a", "#b00020"]),
+            ),
+            tooltip=[
+                alt.Tooltip("Desde (min):Q", format=".2f"),
+                alt.Tooltip("Hasta (min):Q", format=".2f"),
+                "Pacientes:Q",
+                "Efecto:N",
+            ],
+        )
+        .properties(height=240)
+    )

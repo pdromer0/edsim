@@ -25,6 +25,35 @@ from edsim.runs import (
     episode_observed_time,
 )
 
+SHIFTS = ("mañana", "tarde", "noche")
+LEVELS = tuple(f"nivel {i}" for i in range(1, 6))
+FIELDS = (
+    ("turnos.inicio", "Inicio de los turnos (horas)", True, SHIFTS),
+    ("recursos.enfermeria_triaje", "Enfermería de triaje", True, SHIFTS),
+    ("recursos.medicos", "Médicos", True, SHIFTS),
+    ("recursos.boxes", "Boxes", True, ()),
+    ("triaje.reparto_niveles", "Reparto de triaje (pesos)", False, LEVELS),
+    ("duraciones.triaje", "Duración de triaje (min)", False, ("mediana", "p90")),
+    ("duraciones.valoracion", "Duración de valoración (min)", False, ("mediana", "p90")),
+    ("duraciones.reevaluacion", "Duración de reevaluación (min)", False, ("mediana", "p90")),
+    ("duraciones.respuesta_pruebas", "Respuesta de pruebas (min)", False, ("mediana", "p90")),
+    ("pruebas.probabilidad", "Probabilidad de pruebas", False, LEVELS),
+    ("destino.probabilidad_ingreso", "Probabilidad de ingreso", False, LEVELS),
+)
+
+
+def format_change_value(value: int | float | tuple[int | float, ...]) -> str:
+    """Present normalized differences with decimal commas and unambiguous separators."""
+    if isinstance(value, tuple):
+        return "[" + "; ".join(format_change_value(item) for item in value) + "]"
+    return (str(value) if isinstance(value, int) else f"{value:.15g}").replace(".", ",")
+
+
+def format_created_at(value: str) -> str:
+    """Present an ISO creation timestamp as fixed UTC+1, to whole seconds."""
+    return datetime.fromisoformat(value).astimezone(TIMEZONE).strftime("%d/%m/%Y %H:%M:%S")
+
+
 COLUMNS = (
     "Ejecución",
     "Variante del centro",
@@ -46,9 +75,7 @@ def runs_frame(runs: Sequence[RunInfo]) -> pd.DataFrame:
             (
                 info.run_id,
                 info.variant,
-                datetime.fromisoformat(info.created_at)
-                .astimezone(TIMEZONE)
-                .strftime("%d/%m/%Y %H:%M:%S"),
+                format_created_at(info.created_at),
                 info.days,
                 info.warmup_days,
                 info.seed,

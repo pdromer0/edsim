@@ -195,6 +195,26 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Paciente a paciente** (solo emparejada): histograma de la diferencia de estancia y de puerta-médico, porcentaje de pacientes que mejoran, empeoran o quedan igual, y los 10 más afectados, con enlace a su ficha.
 - Un aviso fijo: es una sola réplica de cada lado; las comparaciones con intervalos de confianza llegan en el hito 9.
 
+**Detalles de la A.6** (decididos el 4 de noviembre de 2026, con lo aprendido en la A.5):
+
+- **Elegir A y B:** dos selectores en la página que leen y escriben las marcas A y B compartidas de la A.2b, así que marcar en Ejecuciones o elegir aquí es lo mismo. Cada lado se abre como Resultados (`read_run_header` y la caché de `RunResults`), con su error si no se puede.
+- **Un servicio del núcleo (`compare_runs`):** recibe los resultados de A y B (y su ground truth) y devuelve el tipo de emparejamiento, las diferencias de metadatos y del centro, los KPIs con la diferencia, las esperas por nivel y, si son emparejadas, las diferencias por episodio. La página no calcula.
+- **Emparejamiento, por configuración y comprobado con la verdad:**
+  - *No emparejada* si cambia la semilla, la huella del perfil, los días o el calentamiento; la página dice cuál. Solo se comparan KPIs y esperas por nivel.
+  - *Emparejada con los mismos sorteos* si solo cambian turnos, plantilla o boxes.
+  - *Emparejada con sorteos distintos* si cambia algún parámetro clínico. El motor usa cuatro flujos aleatorios separados (nivel, duraciones, pruebas y destino) con consumo fijo por paciente: cambiar una duración solo cambia esa duración, y cambiar el reparto puede cambiar niveles y, con ellos, pruebas y destino.
+  - La clasificación sale de `run.json` y `center_diff`, y se comprueba con los dos `ground_truth_episodios.csv`: misma llegada para todos los episodios y, por cada sorteo, cuántos pacientes difieren. Si la comprobación contradice la configuración, la página lo muestra como error.
+- **KPIs:** los nueve de la ventana de A y de B, la diferencia B − A y el cambio relativo; «—» si A es 0 o no existe.
+- **Esperas por nivel:** n, media y p90 de las cinco medidas y el porcentaje que supera el máximo de Manchester, de A y de B lado a lado.
+- **Paciente a paciente (solo emparejadas, también con sorteos distintos):** los episodios que llegan en la ventana y terminan en las dos ejecuciones, como `paired_waits`. Con sorteos distintos, un aviso dice qué sorteos cambian y en cuántos pacientes, porque la diferencia mezcla el efecto de la plantilla y el del parámetro clínico.
+- **Excluidos:** los episodios que terminan solo en A, solo en B o en ninguna se cuentan y se muestran siempre. Si hay alguno, la página explica el sesgo: los que siguen dentro en la ejecución más saturada son los peores, y quedan fuera de la diferencia.
+- **Diferencias:** histograma de B − A de la estancia y de puerta-médico, y porcentaje de pacientes que mejoran, empeoran o quedan igual. «Igual» es la misma historia: diferencia dentro de la tolerancia de la A.5 (1e-8 minutos).
+- **Los 10 más afectados:** por la diferencia absoluta de estancia, con su signo, nivel y estancias en A y B, y un botón para abrir su ficha en A o en B. El botón elige la ejecución y el episodio, quita los filtros de Episodios con un aviso para que la ficha se vea y abre la página con `?run=` y `?episodio=`.
+- **Una ejecución frente a sí misma:** emparejada con los mismos sorteos, cero en todas las diferencias y 100 % iguales (criterio de aceptación), con un test.
+- **Aviso fijo:** es una sola réplica de cada lado; las comparaciones con intervalos de confianza llegan en el hito 9.
+- **Rendimiento:** dos ejecuciones abiertas a la vez. Se miden la primera entrada, la recarga y la memoria con dos de 14 y dos de 60 días. Las tablas grandes no usan `Styler` (lección de la A.5), y los controles que no cambian A o B viven en fragmentos.
+- **No es crítica:** añade funciones al núcleo sin cambiar el formato en disco ni los contratos existentes; sin `@codex review`.
+
 ### Replay
 
 - **Controles:** ejecución, día, minuto (deslizador de 0:00 a 23:59), botones de paso (±1 y ±10 minutos), reproducir y pausar, y velocidad (1, 5, 15 o 60 minutos simulados por segundo).
@@ -966,3 +986,91 @@ Casi todo el coste de la primera entrada es leer el JSONL; el análisis es peque
 
 - No existe lectura del ground truth de episodios: «Ver la verdad» necesita una función del núcleo que lea `ground_truth_episodios.csv`.
 - `RunResults` no guarda los eventos: la ficha de un episodio necesita leerlos sin releer el log entero.
+
+### Tarea A.5: página Episodios
+
+PR #36 (rama `feat/app-episodios`), implementado con Codex (codex-cli 0.166.0) y fusionado por Pedro con *squash and merge* el 4 de noviembre de 2026 (8b54275). Siete commits: especificación, índice de eventos, tramos, verdad, tabla y filtros, ficha, y el fragmento de la ficha tras la revisión del PR. Tarea no crítica: sin `@codex review`.
+
+**Qué se hizo**
+
+- `runs/events.py`: `build_episode_event_index` recorre el JSONL en binario, saca con `json.loads` el episodio de cada línea y guarda su posición en bytes y su número de línea en arrays de solo lectura (`EpisodeEventIndex`). `read_episode_events` salta a esas líneas y las valida con `from_json`.
+- `runs/episodes.py`: `episode_segments` devuelve los tramos de un episodio (dónde está el paciente, con su box), la banda de pruebas (`TestBand`) y los desalojos (`Displacement`). Agrupa los eventos del mismo instante, elimina los tramos de duración cero y se contrasta con `engine/timeline.episode_timeline`.
+- `runs/truth.py`: `read_run_episode_truth` lee `ground_truth_episodios.csv` a `EpisodeTruth` con floats exactos y parámetros comprobados contra `run.json`. `compare_episode_truth` clasifica cada dato como coincide, discrepancia, parcial, pendiente o no usada, con tolerancia absoluta de 1e-8 minutos y `math.fsum`.
+- `runs/filters.py`: `EpisodeFilters`, `filter_episodes`, `episode_period` (sin terminar, calentamiento, ventana) y `episode_observed_time`.
+- Página Episodios: filtros comunes entre ejecuciones, tabla con «Tiempo observado (min)», selector con `?episodio=` por ejecución y una ficha en `st.fragment` con datos básicos, línea temporal de dos carriles (recorrido y pruebas, con rombos de desalojo), eventos del log y «Ver la verdad». Tres cachés de recursos: índice, eventos de cada ficha (128 entradas) y verdad.
+
+**Cambios respecto al plan y a la especificación**
+
+- El índice iba a construirse dentro de `read_run_results`. Con 60 días, la primera entrada de Resultados empeoró un 10,0011 % (4,21 s → 4,63 s), por encima del umbral del 10 % fijado antes de medir. Se paró, no se repitió la medida y el índice pasó a ser independiente; `RunResults` queda como en la A.4.
+- Decisiones durante el plan, no recogidas en la exportación: censura por la derecha en los filtros de estancia y puerta-médico; avance parcial en «Ver la verdad»; filtros comunes entre ejecuciones y episodio recordado por ejecución y huella.
+- La ejecución de prueba con 30 boxes no producía desalojos; la comprobación de que existan lo detectó, y los tests usan un centro con menos boxes, sin cambiar la semilla.
+- Corrección tras la revisión: el selector y la ficha viven en un `st.fragment`, y el callback de la selección actualiza `?episodio=`. Un adaptador de test (`app/tests/fragment_runner.py`) envía reejecuciones parciales reales a través de AppTest.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Índice de posiciones | Como el índice de un libro: anotar dónde empieza cada línea de cada episodio permite leer una ficha sin leer el log entero. Las posiciones son bytes, no caracteres: un acento ocupa dos |
+| Validar tarde | El índice solo necesita el episodio de cada línea; la validación completa se hace al abrir la ficha, sobre unas pocas líneas |
+| Dónde está frente a qué se espera | El paciente está en un solo sitio cada vez, pero el laboratorio sigue aunque pierda el box: por eso las pruebas son una banda aparte y los tramos suman la estancia |
+| Censura por la derecha | De un paciente que sigue dentro se sabe que lleva al menos horizonte − llegada; si esa cota supera un umbral, su estancia también, y si no, no se sabe |
+| Comparación parcial | Una etapa en curso al llegar el horizonte no coincide ni discrepa todavía, pero lo observado no puede superar lo sorteado: sigue siendo comprobable |
+| Un umbral se aplica | Un criterio fijado antes de medir se respeta aunque el exceso sea mínimo; repetir la medida hasta quedar por debajo sería ajustar la tolerancia al resultado |
+| Reejecución parcial | Streamlit vuelve a ejecutar la página entera en cada clic; un `st.fragment` reejecuta solo su parte, y así la ficha no vuelve a pintar la tabla |
+
+**Medidas** (centro y perfil base, semilla 2026, 2 días de calentamiento; medianas de tres procesos)
+
+| Medida | 14 días | 60 días |
+| --- | --- | --- |
+| Eventos y episodios | 49.843 y 4.439 | 218.501 y 19.499 |
+| Construir el índice | 0,21 s | 0,94 s |
+| Lectura validada completa, para comparar | 0,54 s | 2,47 s |
+| Memoria del índice | 2,2 MiB | 9,7 MiB |
+| Leer y reconstruir una ficha en el núcleo | 0,5 ms | 0,4 ms |
+| Leer el ground truth | 0,03 s | 0,16 s |
+| Primera entrada en Episodios, en frío | 1,9 s | 7,6 s |
+| Primera entrada con Resultados en caché | 0,84 s | 3,78 s |
+| Recarga con la tabla completa, antes del fragmento | 0,53 s | 2,22 s |
+| Elegir un episodio, con el fragmento | 0,04 s | 0,06 s |
+| Activar «Ver la verdad», con el fragmento | 0,04 s | 0,08 s |
+
+Con 60 días, el `Styler` se lleva 2,08 s de los 2,39 s de una recarga con la tabla completa; construir el DataFrame cuesta 0,09 s. Con el fragmento, la ficha cumple el objetivo de 0,5 s en todas las muestras. Cambiar un filtro sigue costando unos 2 s con 60 días.
+
+**Versiones incorrectas temporales**
+
+| Mutación | Resultado |
+| --- | --- |
+| Ignorar los desalojos | La espera de box tras el desalojo aparece como espera de médico en el box anterior |
+| Las pruebas mandan | El laboratorio sustituye la espera de box de 30 a 85 |
+| Conservar tramos de duración cero | Aparece un triaje de 0 a 0 |
+| Contar caracteres en lugar de bytes | Un acento desplaza las posiciones |
+| Comparar solo la primera valoración | Cuenta 7 de los 17 minutos |
+| Tramos no excluyentes | Seis grupos con cuatro episodios |
+| Mostrar la ficha de un episodio excluido | Aparece la ficha |
+| Excluir a todos los sin terminar | Falta el episodio con cota de 1.480 minutos sobre un umbral de 1.200 |
+| Comparar la etapa en curso como terminada | 14 de 17 minutos como discrepancia falsa |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite completa del núcleo | 1.371 tests en 292 s |
+| App | 164 tests en 106 s (en paralelo con otras suites) |
+| Notebooks en modo rápido | 3 en 51 s, fuera del sandbox porque necesitan sockets |
+| Ruff, formato y `git diff --check` | Conformes (174 ficheros) |
+| Motor, `RunResults` y tests de la A.4 | Sin diferencias frente a 4871075 |
+
+**Lecciones aprendidas**
+
+- Un umbral fijado antes de medir decidió la arquitectura: la medida descartada forma parte del resultado y queda en el PR.
+- Lo que cuesta no siempre es lo que parece: el núcleo lee una ficha en menos de un milisegundo, y el tiempo visible lo pone el `Styler` de una tabla grande.
+- Un test real no garantiza el caso que se quiere probar: la comprobación de que hubiera desalojos descubrió un centro de prueba sin ellos.
+- Las dos censuras (en filtros y en la verdad) son la misma idea: lo no observado da una cota, no un valor.
+- El adaptador de fragmentos para AppTest depende de detalles internos de Streamlit 1.66.1: hay que revisarlo si se actualiza Streamlit.
+
+**Pendiente para la tarea A.6 y siguientes**
+
+- Cambiar un filtro en Episodios cuesta unos 2 s con 60 días por el `Styler`. Propuesta de Codex, sin implementar: guardar en caché la tabla presentada por ejecución y filtros.
+- `runs/results.py`, `events.py` y `truth.py` usan `RunStore._file`: un método público dejaría la frontera más limpia.
+- La suite de la app crece (164 tests): marcar `slow` los AppTest que simulan si el hook de Codex se nota lento.
+- El botón «Ver en el replay» se añade en la A.7.

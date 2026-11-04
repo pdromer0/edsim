@@ -218,3 +218,43 @@ def test_occupancy_labels_contrast_with_the_shared_color_domain():
         assert color["condition"]["value"] == "white"
         assert color["value"] == "black"
         assert ratios[0] <= 0.6 * upper < ratios[1]
+
+
+def test_difference_histogram_preserves_precomputed_intervals_and_colors_each_sign():
+    import pandas as pd
+
+    from edsim.runs import DifferenceSummary, HistogramBin
+    from edsim_app.charts import difference_histogram_chart
+    from edsim_app.comparison_frames import difference_histogram_frame
+
+    summary = DifferenceSummary(
+        "stay",
+        12,
+        3,
+        7,
+        2,
+        3 / 12,
+        7 / 12,
+        2 / 12,
+        (HistogramBin(-10.0, 0.0, 3), HistogramBin(0.0, 20.0, 7)),
+    )
+    frame = difference_histogram_frame(summary)
+    original = frame.copy(deep=True)
+    spec = difference_histogram_chart(frame).to_dict()
+    assert spec["mark"]["type"] == "bar"
+    assert spec["encoding"]["x"]["bin"] == "binned"
+    assert spec["encoding"]["x2"]["field"] == "Hasta (min)"
+    color = spec["encoding"]["color"]
+    assert color["field"] == "Efecto"
+    assert color["scale"] == {
+        "domain": ["Mejoran", "Empeoran"],
+        "range": ["#1baf7a", "#b00020"],
+    }
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert rows == [
+        {"Desde (min)": -10.0, "Hasta (min)": 0.0, "Pacientes": 3, "Efecto": "Mejoran"},
+        {"Desde (min)": 0.0, "Hasta (min)": 20.0, "Pacientes": 7, "Efecto": "Empeoran"},
+    ]
+    assert "transform" not in spec
+    assert sum(row["Pacientes"] for row in rows) == summary.improved + summary.worsened
+    pd.testing.assert_frame_equal(frame, original)

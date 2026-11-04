@@ -201,6 +201,8 @@ except (RunReadError, RunAnalysisError) as error:
     st.error(str(error))
     st.stop()
 render_episodes_help()
+if notice := st.session_state.pop("episode_filter_notice", None):
+    st.info(notice)
 try:
     cached_episode_event_index(str(store.root), selected, fingerprint)
 except RunReadError as error:

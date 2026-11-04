@@ -89,3 +89,26 @@ def render_simulate_help(prior_days: int | None = None) -> None:
                 "pacientes llegados antes de la ventana: un solo día no bastaría para "
                 "las duraciones más largas de la muestra."
             )
+
+
+def render_compare_help() -> None:
+    """Explain common random numbers, conditional populations and signed changes."""
+    with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "A es la referencia y las diferencias son B − A. En tiempos, una diferencia "
+            "negativa mejora y una positiva empeora. El cambio relativo divide por A; "
+            "«—» indica base cero o dato desconocido. Ingreso cambia en puntos porcentuales."
+        )
+        st.write(
+            "Compartir semilla, perfil, días y calentamiento permite emparejar pacientes. "
+            "La verdad comprueba sus llegadas y sorteos: cambiar plantilla conserva los "
+            "números aleatorios comunes; cambiar clínica puede cambiar algunos sorteos, "
+            "aunque en una muestra pequeña no cambie ninguno."
+        )
+        st.write(
+            "Los KPIs de tiempo y Manchester usan completados de cada lado. La comparación "
+            "por paciente usa solo llegados en ventana que terminan en ambas; los excluidos "
+            "pueden sesgar el resultado. Igual significa diferencia absoluta de hasta "
+            "0,00000001 minutos. Los histogramas muestran solo a quienes mejoran o empeoran; "
+            "los iguales se cuentan aparte."
+        )

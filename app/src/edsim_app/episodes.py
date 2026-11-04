@@ -47,3 +47,14 @@ def episode_filter_values(last_day: int) -> dict:
 def remember_episode_filter(field: str, widget: str) -> None:
     """Copy one filter into persistent state before a page rerun."""
     st.session_state.episode_filters[field] = st.session_state[widget]
+
+
+def open_comparison_episode(identity: tuple[str, str, str], episode_id: str) -> None:
+    """Select an exact card and clear common filters before multipage navigation."""
+    st.session_state.selected_run_id = identity[1]
+    st.session_state.setdefault("episode_choices", {})[identity] = episode_id
+    st.session_state.episode_filters = asdict(EpisodeFilters())
+    st.session_state.episode_filter_notice = (
+        "Se han quitado los filtros de Episodios para mostrar la ficha desde Comparar."
+    )
+    st.switch_page("views/episodes.py", query_params={"run": identity[1], "episodio": episode_id})
