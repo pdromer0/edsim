@@ -15,6 +15,14 @@ from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.targets import Compliance
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
+from edsim.runs.episodes import (
+    Displacement,
+    EpisodeSegment,
+    EpisodeSegments,
+    EpisodeState,
+    TestBand,
+    episode_segments,
+)
 from edsim.runs.events import EpisodeEventIndex, build_episode_event_index, read_episode_events
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
@@ -53,6 +61,12 @@ __all__ = [
     "CurveSteps",
     "DurationSummary",
     "EpisodeRecord",
+    "Displacement",
+    "EpisodeSegment",
+    "EpisodeSegments",
+    "EpisodeState",
+    "TestBand",
+    "episode_segments",
     "EpisodeEventIndex",
     "Event",
     "LevelCompliance",
