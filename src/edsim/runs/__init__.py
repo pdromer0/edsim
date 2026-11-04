@@ -10,11 +10,12 @@ from edsim.engine.center import (
     read_center_values,
     validate_center_values,
 )
-from edsim.engine.events import TIMEZONE
+from edsim.engine.events import TIMEZONE, Event
 from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.targets import Compliance
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
+from edsim.runs.events import EpisodeEventIndex, build_episode_event_index, read_episode_events
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
     LevelCompliance,
@@ -52,6 +53,8 @@ __all__ = [
     "CurveSteps",
     "DurationSummary",
     "EpisodeRecord",
+    "EpisodeEventIndex",
+    "Event",
     "LevelCompliance",
     "MAX_VARIANT_NAME_LENGTH",
     "MAX_VIOLATIONS_SHOWN",
@@ -82,6 +85,8 @@ __all__ = [
     "offered_work",
     "read_center_values",
     "read_run_header",
+    "build_episode_event_index",
+    "read_episode_events",
     "read_run_results",
     "simulate_run",
     "summarize_center",
