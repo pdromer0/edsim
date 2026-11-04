@@ -79,6 +79,77 @@ def test_episode_frame_preserves_missing_final_times_and_observed_bound(catalog)
     assert result.analysis.table[0].arrival >= 0
 
 
+def test_episode_timeline_frames_separate_lab_and_preserve_wall_time(catalog):
+    from edsim.runs import (
+        Displacement,
+        EpisodeSegment,
+        EpisodeSegments,
+        RunStore,
+        TestBand,
+        read_run_results,
+    )
+    from edsim_app.frames import episode_timeline_frames
+
+    result = read_run_results(RunStore(catalog), "older")
+    timeline = EpisodeSegments(
+        "EP-000000",
+        (
+            EpisodeSegment("waiting_tests", 25, 30, 1),
+            EpisodeSegment("waiting_box", 30, 90, None),
+        ),
+        TestBand(25, 85, True),
+        (Displacement(30, 1, "EP-000001"),),
+    )
+    segments, tests, marks = episode_timeline_frames(timeline, result)
+    assert segments["Estado"].tolist() == ["En box esperando pruebas", "Espera de box"]
+    assert segments["Duración (min)"].tolist() == [5, 60]
+    assert tests["Duración (min)"].tolist() == [60]
+    assert tests["Carril"].tolist() == ["Pruebas"]
+    assert marks["Desalojado por"].tolist() == ["EP-000001"]
+    assert marks["Box"].tolist() == [1]
+    for frame in (segments, tests):
+        assert frame["Inicio"].dt.tz is None and frame["Fin"].dt.tz is None
+    assert segments["Inicio"].iloc[0].isoformat() == "2026-01-05T00:25:00"
+    assert marks["Fecha y hora"].dt.tz is None
+    empty = EpisodeSegments("EP-000000", (), None, ())
+    assert all(frame.empty for frame in episode_timeline_frames(empty, result))
+
+
+def test_episode_event_frame_keeps_log_values_and_payload(catalog):
+    import json
+
+    from edsim.runs import RunStore, build_episode_event_index, read_episode_events
+    from edsim_app.frames import episode_events_frame
+
+    store = RunStore(catalog)
+    index = build_episode_event_index(store, "older")
+    events = read_episode_events(store, "older", "EP-000000", index)
+    frame = episode_events_frame(events)
+    assert frame["event_id"].tolist() == [event.event_id for event in events]
+    assert frame["sim_time"].tolist() == [event.sim_time for event in events]
+    assert frame["event_time"].tolist() == [event.event_time for event in events]
+    assert [json.loads(value) for value in frame["payload"]] == [
+        dict(event.payload) for event in events
+    ]
+
+
+def test_truth_frame_shows_partial_pending_and_unused_without_changing_values():
+    from edsim.runs import TruthComparison
+    from edsim_app.frames import episode_truth_frame
+
+    comparisons = (
+        TruthComparison("level", 3, 3, "match"),
+        TruthComparison("assessment_time", 20.0, 3.2, "partial"),
+        TruthComparison("reassessment_time", 10.0, None, "unused"),
+        TruthComparison("destination", "alta", None, "pending"),
+    )
+    frame = episode_truth_frame(comparisons)
+    assert frame["Estado"].tolist() == ["Coincide", "Parcial", "No usada", "Pendiente"]
+    assert frame["Observado"].tolist() == ["3", "3,2 de 20,0 min", "—", "—"]
+    assert frame["Sorteado"].tolist() == ["3", "20,0 min", "10,0 min", "Alta"]
+    assert comparisons[1].observed == 3.2
+
+
 def test_offered_blocks_integrate_linear_load_and_exclude_final_endpoint():
     from datetime import date
 

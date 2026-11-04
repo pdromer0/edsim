@@ -1,7 +1,9 @@
 """Present public run metadata as Spanish tables without importing Streamlit."""
 
+import json
 import math
 from collections.abc import Sequence
+from dataclasses import fields
 from datetime import datetime
 
 import pandas as pd
@@ -11,9 +13,12 @@ from edsim.runs import (
     SUMMARY_MEASURES,
     TIMEZONE,
     EpisodeRecord,
+    EpisodeSegments,
+    Event,
     OfferedWork,
     RunInfo,
     RunResults,
+    TruthComparison,
     WindowKPIs,
     curve_blocks,
     curve_steps,
@@ -230,6 +235,129 @@ def style_episodes(frame: pd.DataFrame) -> Styler:
     formats = {column: "{:.1f}" for column in frame if column.endswith("(min)")}
     formats.update({"Llegada (UTC+1)": lambda value: value.strftime("%d/%m/%Y %H:%M:%S")})
     return frame.style.format(formats, decimal=",", na_rep="—")
+
+
+EPISODE_STATE_LABELS = {
+    "waiting_triage": "Espera de triaje",
+    "triage": "Triaje",
+    "waiting_box": "Espera de box",
+    "waiting_doctor": "En box esperando médico",
+    "assessment": "Valoración",
+    "waiting_tests": "En box esperando pruebas",
+    "reassessment": "Reevaluación",
+}
+
+
+def episode_timeline_frames(
+    episode: EpisodeSegments, result: RunResults
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Convert core intervals and markers to naive UTC+1 wall-clock tables."""
+    columns = ["Inicio", "Fin", "Estado", "Box", "Duración (min)", "Carril"]
+    rows = [
+        {
+            "Inicio": segment.start,
+            "Fin": segment.end,
+            "Estado": EPISODE_STATE_LABELS[segment.state],
+            "Box": segment.box,
+            "Duración (min)": segment.end - segment.start,
+            "Carril": "Recorrido",
+        }
+        for segment in episode.segments
+    ]
+    segments = pd.DataFrame(rows, columns=columns)
+    band = episode.tests
+    tests = pd.DataFrame(
+        []
+        if band is None
+        else [
+            {
+                "Inicio": band.start,
+                "Fin": band.end,
+                "Estado": "Pruebas en curso",
+                "Box": None,
+                "Duración (min)": band.end - band.start,
+                "Carril": "Pruebas",
+            }
+        ],
+        columns=columns,
+    )
+    for frame in (segments, tests):
+        frame["Inicio"] = wall_times(result, frame["Inicio"].tolist())
+        frame["Fin"] = wall_times(result, frame["Fin"].tolist())
+    displacements = pd.DataFrame(
+        [
+            {
+                "Fecha y hora": point.time,
+                "Box": point.box,
+                "Desalojado por": point.displaced_by,
+                "Carril": "Recorrido",
+            }
+            for point in episode.displacements
+        ],
+        columns=["Fecha y hora", "Box", "Desalojado por", "Carril"],
+    )
+    displacements["Fecha y hora"] = wall_times(result, displacements["Fecha y hora"].tolist())
+    return segments, tests, displacements
+
+
+def episode_events_frame(events: Sequence[Event]) -> pd.DataFrame:
+    """Keep log field names, timestamps, payload keys and emission order intact."""
+    names = [field.name for field in fields(Event)]
+    return pd.DataFrame(
+        [
+            {
+                name: json.dumps(dict(event.payload), ensure_ascii=False)
+                if name == "payload"
+                else getattr(event, name)
+                for name in names
+            }
+            for event in events
+        ],
+        columns=names,
+    )
+
+
+def episode_truth_frame(comparisons: Sequence[TruthComparison]) -> pd.DataFrame:
+    """Present supplied comparison statuses without recalculating clinical values."""
+    labels = {
+        "level": "Nivel",
+        "triage_time": "Triaje",
+        "assessment_time": "Valoración",
+        "reassessment_time": "Reevaluación",
+        "test_turnaround": "Respuesta de pruebas",
+        "destination": "Destino",
+    }
+    statuses = {
+        "match": "Coincide",
+        "mismatch": "Discrepancia",
+        "partial": "Parcial",
+        "pending": "Pendiente",
+        "unused": "No usada",
+    }
+    rows = []
+    for row in comparisons:
+
+        def display(value: object, field: str = row.field) -> str:
+            if value is None:
+                return "—"
+            if field == "destination":
+                return str(value).capitalize()
+            return format_number(value, 0 if field == "level" else 1) + (
+                "" if field == "level" else " min"
+            )
+
+        observed = display(row.observed)
+        if row.status == "partial":
+            observed = f"{format_number(row.observed)} de {display(row.drawn)}"
+        rows.append(
+            {
+                "Dato": labels[row.field],
+                "Sorteado": display(row.drawn),
+                "Observado": observed,
+                "Estado": statuses[row.status],
+            }
+        )
+    return pd.DataFrame(rows, columns=["Dato", "Sorteado", "Observado", "Estado"])
 
 
 def curve_frame(result: RunResults, name: str, week: int) -> pd.DataFrame:

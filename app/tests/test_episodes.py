@@ -129,6 +129,7 @@ def test_episode_excluded_by_filters_has_message_and_no_selection(catalog):
     assert not app.exception and "no pasa los filtros" in app.warning[0].value
     assert app.selectbox(key="episode_choice_widget").value is None
     assert app.query_params["episodio"] == "EP-000000"
+    assert not app.metric and not app.get("vega_lite_chart")
 
 
 def test_recreated_run_forgets_episode_but_keeps_filters(catalog):
@@ -163,3 +164,147 @@ def test_results_cache_is_shared_and_filters_do_not_reread_log(catalog, monkeypa
     app.switch_page("views/episodes.py").run()
     assert not app.exception and len(app.dataframe[0].value) > 0
     assert read.call_count == 1
+
+
+def test_card_has_basics_timeline_log_and_lazy_truth(catalog, monkeypatch):
+    import json
+
+    read = Mock(wraps=results.read_run_episode_truth)
+    monkeypatch.setattr(results, "read_run_episode_truth", read)
+    app = open_episodes("older", "EP-000000")
+    assert not app.exception and not app.error
+    assert any("Ficha del episodio EP-000000" == item.value for item in app.subheader)
+    assert {item.label for item in app.metric} == {
+        "Llegada (UTC+1)",
+        "Nivel",
+        "Destino",
+        "Estancia",
+    }
+    assert app.get("vega_lite_chart")
+    events = app.dataframe[1].value
+    assert events["event_type"].iloc[0] == "patient_arrived"
+    assert events["episode_id"].unique().tolist() == ["EP-000000"]
+    assert json.loads(events["payload"].iloc[0]) == {}
+    assert read.call_count == 0
+    app.toggle(key="episode_truth_widget").set_value(True).run()
+    assert not app.exception and not app.error
+    assert set(app.dataframe[2].value["Estado"]) <= {"Coincide", "No usada"}
+    assert len(app.dataframe[2].value) == 6
+    app.run()
+    app.selectbox(key="episode_filter_arrival_day_widget").select(0).run()
+    assert not app.exception and read.call_count == 1
+    assert not any("replay" in button.label.lower() for button in app.button)
+
+
+def test_unfinished_card_shows_censoring_and_partial_truth(catalog):
+    result = read_run_results(RunStore(catalog), "older")
+    record = next(record for record in result.analysis.table if record.departure is None)
+    app = open_episodes("older", record.episode_id)
+    assert not app.exception
+    assert next(item.value for item in app.metric if item.label == "Estancia") == "—"
+    assert any("cota inferior de la estancia" in item.value for item in app.caption)
+    app.toggle(key="episode_truth_widget").set_value(True).run()
+    assert not app.exception and not app.error
+    statuses = set(app.dataframe[2].value["Estado"])
+    assert "Discrepancia" not in statuses and "Pendiente" in statuses
+
+
+def test_missing_truth_is_lazy_error_and_keeps_card(catalog):
+    (catalog / "older" / "ground_truth_episodios.csv").unlink()
+    app = open_episodes("older", "EP-000000")
+    assert not app.exception and not app.error and app.metric
+    app.toggle(key="episode_truth_widget").set_value(True).run()
+    assert not app.exception and "ground_truth_episodios.csv" in app.error[0].value
+    assert app.metric and app.get("vega_lite_chart")
+
+
+def test_truth_missing_selected_episode_has_message_and_keeps_card(catalog):
+    path = catalog / "older" / "ground_truth_episodios.csv"
+    path.write_bytes(b"".join(path.read_bytes().splitlines(keepends=True)[:2]))
+    app = open_episodes("older", "EP-000001")
+    app.toggle(key="episode_truth_widget").set_value(True).run()
+    assert not app.exception and app.metric
+    assert "no contiene el episodio EP-000001" in app.error[0].value
+
+
+def test_no_completed_window_shows_analysis_error_with_header(catalog):
+    from edsim.engine.events import read_events, to_json
+
+    path = catalog / "older" / "eventos.jsonl"
+    events = [event for event in read_events(path) if event.sim_time < 1440]
+    path.write_text("".join(to_json(event) + "\n" for event in events))
+    app = open_episodes()
+    assert not app.exception and app.header[0].value == "older"
+    assert "no tiene episodios completados" in app.error[0].value
+    assert not app.dataframe and not app.metric
+
+
+def test_bad_indexed_event_is_read_error_with_file_line_and_no_card(catalog):
+    app = open_episodes()
+    from edsim.runs import read_run_header
+
+    store = RunStore(catalog)
+    _, fingerprint = read_run_header(store, "older")
+    index = results.cached_episode_event_index(str(catalog), "older", fingerprint)
+    offset, line = index.positions["EP-000000"][0]
+    path = catalog / "older" / "eventos.jsonl"
+    data = path.read_bytes()
+    offset = int(offset)
+    stop = data.index(b"\n", offset)
+    path.write_bytes(data[:offset] + b"{" + b" " * (stop - offset - 1) + data[stop:])
+    app.selectbox(key="episode_choice_widget").select("EP-000000").run()
+    assert not app.exception and not app.metric and not app.get("vega_lite_chart")
+    assert app.error[0].value.startswith(f"{path}:{int(line)}:")
+
+
+def test_index_and_card_reads_are_cached_and_results_does_not_build_index(catalog, monkeypatch):
+    index_read = Mock(wraps=results.build_episode_event_index)
+    event_read = Mock(wraps=results.read_episode_events)
+    monkeypatch.setattr(results, "build_episode_event_index", index_read)
+    monkeypatch.setattr(results, "read_episode_events", event_read)
+    app = AppTest.from_file(MAIN, default_timeout=20)
+    app.query_params["run"] = "older"
+    app.run().switch_page("views/results.py").run()
+    assert not app.exception and app.metric and index_read.call_count == 0
+    app.switch_page("views/episodes.py").run()
+    assert index_read.call_count == 1 and event_read.call_count == 0
+    app.selectbox(key="episode_choice_widget").select("EP-000000").run()
+    app.selectbox(key="episode_filter_arrival_day_widget").select(0).run()
+    app.run()
+    assert not app.exception and app.metric
+    assert index_read.call_count == event_read.call_count == 1
+
+
+@pytest.mark.parametrize("kind", ["index", "truth"])
+def test_episode_resource_caches_include_root_and_fingerprint_and_limit_four(
+    catalog, tmp_path, monkeypatch, kind
+):
+    import shutil
+
+    from edsim.runs import read_run_header
+
+    _, fingerprint = read_run_header(RunStore(catalog), "older")
+    cached = results.cached_episode_event_index if kind == "index" else results.cached_episode_truth
+    name = "build_episode_event_index" if kind == "index" else "read_run_episode_truth"
+    read = Mock(wraps=getattr(results, name))
+    monkeypatch.setattr(results, name, read)
+    first = cached(str(catalog), "older", fingerprint)
+    assert cached(str(catalog), "older", fingerprint) is first
+    assert read.call_count == 1
+    other = tmp_path / "other"
+    shutil.copytree(catalog, other)
+    assert cached(str(other), "older", fingerprint) is not first
+    cached.clear()
+    for key in range(5):
+        cached(str(catalog), "older", str(key))
+    assert read.call_count == 7
+    cached(str(catalog), "older", "0")
+    assert read.call_count == 8
+
+
+def test_episodes_help_explains_censoring_and_lab_work(catalog):
+    app = open_episodes()
+    box = next(item for item in app.expander if item.label == "¿Qué estoy viendo?")
+    text = " ".join(item.value for item in box.markdown)
+    assert "cota inferior" in text and "Las pruebas siguen aunque pierda el box" in text
+    assert "parcial" in text and "UTC+1 fijo" in text

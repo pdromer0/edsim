@@ -5,19 +5,39 @@ import streamlit as st
 
 from edsim.runs import (
     EpisodeFilters,
+    EpisodeRecord,
     RunAnalysisError,
     RunReadError,
+    RunResults,
+    compare_episode_truth,
+    episode_observed_time,
+    episode_segments,
     filter_episodes,
     read_run_header,
 )
+from edsim_app.charts import episode_chart
 from edsim_app.episodes import (
     episode_filter_values,
     episode_identity,
     remember_episode,
     remember_episode_filter,
 )
-from edsim_app.frames import episodes_frame, style_episodes
-from edsim_app.results import cached_run_results
+from edsim_app.frames import (
+    episode_events_frame,
+    episode_timeline_frames,
+    episode_truth_frame,
+    episodes_frame,
+    format_number,
+    style_episodes,
+    wall_times,
+)
+from edsim_app.help import render_episodes_help
+from edsim_app.results import (
+    cached_episode_event_index,
+    cached_episode_events,
+    cached_episode_truth,
+    cached_run_results,
+)
 from edsim_app.state import catalog_store
 
 
@@ -90,6 +110,52 @@ def render_filters(days: int) -> EpisodeFilters:
     return EpisodeFilters(**values)
 
 
+def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprint: str) -> None:
+    """Present a validated card and lazily compare its exact draws on request."""
+    try:
+        events = cached_episode_events(root, result.info.run_id, fingerprint, record.episode_id)
+    except RunReadError as error:
+        st.error(str(error))
+        return
+    timeline = episode_segments(events, result.analysis.curves.horizon)
+    st.subheader(f"Ficha del episodio {record.episode_id}")
+    columns = st.columns(4)
+    columns[0].metric(
+        "Llegada (UTC+1)", wall_times(result, [record.arrival])[0].strftime("%d/%m/%Y %H:%M:%S")
+    )
+    columns[1].metric("Nivel", format_number(record.level, 0))
+    columns[2].metric("Destino", record.destination.capitalize() if record.destination else "—")
+    columns[3].metric(
+        "Estancia", "—" if record.stay is None else f"{format_number(record.stay)} min"
+    )
+    if record.departure is None:
+        observed = episode_observed_time(record, result.analysis.curves.horizon)
+        st.caption(
+            f"Sin terminar. Tiempo observado: {format_number(observed)} min; "
+            "cota inferior de la estancia."
+        )
+    st.altair_chart(episode_chart(*episode_timeline_frames(timeline, result)), width="stretch")
+    st.caption(
+        "Recorrido: ubicación del paciente. Pruebas: trabajo del laboratorio. Rombos: desalojos."
+    )
+    with st.expander("Eventos del log"):
+        st.dataframe(episode_events_frame(events), hide_index=True, width="stretch")
+    if st.toggle("Ver la verdad", key="episode_truth_widget"):
+        try:
+            truth = cached_episode_truth(root, result.info.run_id, fingerprint)
+        except RunReadError as error:
+            st.error(str(error))
+            return
+        if record.episode_id not in truth:
+            st.error(f"ground_truth_episodios.csv: no contiene el episodio {record.episode_id}.")
+            return
+        rows = compare_episode_truth(events, timeline, truth[record.episode_id])
+        st.subheader("Lo sorteado frente a lo observado")
+        st.dataframe(episode_truth_frame(rows), hide_index=True, width="stretch")
+        if any(row.status == "mismatch" for row in rows):
+            st.warning("Hay discrepancias entre lo sorteado y lo observado.")
+
+
 st.title("Episodios")
 selected = st.session_state.selected_run_id
 if selected is None:
@@ -101,6 +167,12 @@ try:
     st.header(info.run_id)
     result = cached_run_results(str(store.root), selected, fingerprint)
 except (RunReadError, RunAnalysisError) as error:
+    st.error(str(error))
+    st.stop()
+render_episodes_help()
+try:
+    cached_episode_event_index(str(store.root), selected, fingerprint)
+except RunReadError as error:
     st.error(str(error))
     st.stop()
 filters = render_filters(info.days)
@@ -136,4 +208,5 @@ if requested is not None and requested not in identifiers:
     )
     st.stop()
 if requested is not None:
-    st.caption(f"Episodio elegido: {requested}")
+    record = next(record for record in result.analysis.table if record.episode_id == requested)
+    render_card(record, result, str(store.root), fingerprint)
