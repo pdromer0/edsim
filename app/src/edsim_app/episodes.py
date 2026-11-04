@@ -68,3 +68,15 @@ def open_comparison_episode(identity: tuple[str, str, str], episode_id: str) -> 
 def open_replay_episode(identity: tuple[str, str, str], episode_id: str) -> None:
     """Open an exact card from replay without preserving incompatible filters."""
     _open_episode(identity, episode_id, "Replay")
+
+
+def open_episode_replay(identity: tuple[str, str, str], episode_id: str, arrival: float) -> None:
+    """Open the exact observed arrival paused, even for sub-minute episodes."""
+    from edsim_app.replay import replay_position
+
+    position = replay_position(identity)
+    position.time = arrival
+    position.highlighted_episode = episode_id
+    position.playing = False
+    st.session_state.selected_run_id = identity[1]
+    st.switch_page("views/replay.py", query_params={"run": identity[1], "episodio": episode_id})

@@ -19,6 +19,7 @@ from edsim_app.charts import episode_chart
 from edsim_app.episodes import (
     episode_filter_values,
     episode_identity,
+    open_episode_replay,
     remember_episode,
     remember_episode_filter,
 )
@@ -140,6 +141,10 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
     )
     with st.expander("Eventos del log"):
         st.dataframe(episode_events_frame(events), hide_index=True, width="stretch")
+    if st.button("Ver en el replay", key="episode_open_replay"):
+        open_episode_replay(
+            (root, result.info.run_id, fingerprint), record.episode_id, record.arrival
+        )
     if st.toggle("Ver la verdad", key="episode_truth_widget"):
         try:
             truth = cached_episode_truth(root, result.info.run_id, fingerprint)
