@@ -2,6 +2,7 @@
 
 import streamlit as st
 
+from edsim_app.replay import pause_replays_except
 from edsim_app.state import catalog_store, initialize_state, render_sidebar
 
 initialize_state(catalog_store())
@@ -20,5 +21,6 @@ page = st.navigation(
         ],
     }
 )
+pause_replays_except(st.session_state.selected_run_id if page.url_path == "replay" else None)
 render_sidebar()
 page.run()

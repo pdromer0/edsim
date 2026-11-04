@@ -96,8 +96,8 @@ def render_plan(
         svg.append(f'<g data-role="{role}-queue">')
         for i, p in enumerate(patients[:30]):
             patient(p, x, 66 + i * 38)
-        if len(patients) > 30:
-            text(x, 80 + 30 * 38, f"+{len(patients) - 30} más")
+        if total > 30:
+            text(x, 80 + 30 * 38, f"+{total - 30} más")
         svg.append("</g>")
 
     def staff(x, title, busy, capacity, patients, role):

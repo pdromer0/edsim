@@ -235,3 +235,22 @@ def difference_histogram_chart(frame: pd.DataFrame) -> alt.Chart:
         )
         .properties(height=240)
     )
+
+
+def replay_census_chart(frame: pd.DataFrame, minute: pd.Timestamp) -> alt.LayerChart:
+    """Show exact daily census steps and a timezone-free selected instant."""
+    line = (
+        alt.Chart(frame)
+        .mark_line(interpolate="step-after")
+        .encode(
+            x=alt.X("Fecha y hora:T", title="Fecha y hora (UTC+1)"),
+            y=alt.Y("Censo:Q"),
+            tooltip=[alt.Tooltip("Fecha y hora:T", format="%d/%m %H:%M:%S"), "Censo:Q"],
+        )
+    )
+    marker = (
+        alt.Chart(pd.DataFrame({"Instante": [minute]}))
+        .mark_rule(color="#6a1b9a", strokeWidth=2)
+        .encode(x="Instante:T")
+    )
+    return (line + marker).properties(height=230)

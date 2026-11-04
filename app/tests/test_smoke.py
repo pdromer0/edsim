@@ -39,6 +39,6 @@ def test_page_with_short_run(catalog, page, title):
     elif page == "simulate":
         assert app.number_input(key="edit_recursos.boxes_None").value == 30
     else:
-        # Until A.7 replaces the placeholder, the restored catalog selection
-        # is the real shared behavior exercised on this page.
-        assert app.session_state["selected_run_id"] == "older"
+        assert app.header[0].value == "older"
+        assert app.get("html") and app.get("vega_lite_chart")
+        assert app.selectbox(key="replay_day_widget").value == 0

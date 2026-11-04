@@ -82,7 +82,8 @@ def test_queue_priority_arrival_cap_and_authoritative_totals():
         queue = elements(svg, role)[0]
         visible = elements(queue, "patient")
         assert [p.attrib["data-episode"] for p in visible] == [p.episode_id for p in expected[:30]]
-        assert "+10 más" in " ".join(queue.itertext())
+        overflow = 12 if role == "box-queue" else 11
+        assert f"+{overflow} más" in " ".join(queue.itertext())
     # The supplied values differ deliberately from the lists: drawing must not count.
     assert "Total: 41" in " ".join(svg.itertext())
     assert "Total: 42" in " ".join(svg.itertext())
