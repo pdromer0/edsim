@@ -4,6 +4,9 @@ import pandas as pd
 
 from edsim.runs import (
     SUMMARY_MEASURES,
+    DifferenceSummary,
+    PairingInfo,
+    RunComparison,
     RunSummaryComparison,
 )
 from edsim_app.frames import format_number
@@ -114,3 +117,41 @@ def comparison_configuration_frames(
         columns=["Clave del centro", "A", "B"],
     )
     return metadata, center
+
+
+def draw_differences_frame(pairing: PairingInfo) -> pd.DataFrame:
+    """Include zero changes, and draws that patients did not use."""
+    return pd.DataFrame(
+        [
+            {"Sorteo": DRAW_LABELS[d.field], "Pacientes distintos": d.changed, "Total": d.total}
+            for d in pairing.draw_differences
+        ]
+    )
+
+
+def difference_histogram_frame(summary: DifferenceSummary) -> pd.DataFrame:
+    """Expose the core's histogram; no binning or equal-patient counting in the app."""
+    return pd.DataFrame(
+        [
+            {"Desde (min)": bin.left, "Hasta (min)": bin.right, "Pacientes": bin.n}
+            for bin in summary.histogram
+        ],
+        columns=["Desde (min)", "Hasta (min)", "Pacientes"],
+    )
+
+
+def affected_episodes_frame(comparison: RunComparison) -> pd.DataFrame:
+    """Present the core's ordered top ten, preserving signed changes and both levels."""
+    return pd.DataFrame(
+        [
+            {
+                "Episodio": e.episode_id,
+                "Nivel A": e.level_a,
+                "Nivel B": e.level_b,
+                "Estancia A (min)": format_number(e.stay_a),
+                "Estancia B (min)": format_number(e.stay_b),
+                "B − A (min)": signed_number(e.stay_difference),
+            }
+            for e in comparison.most_affected
+        ]
+    )

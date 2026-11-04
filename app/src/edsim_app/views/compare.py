@@ -3,7 +3,9 @@
 import streamlit as st
 
 from edsim.runs import (
+    PairingCheckError,
     RunAnalysisError,
+    RunComparison,
     RunReadError,
     RunResults,
     RunStore,
@@ -12,13 +14,20 @@ from edsim.runs import (
     pairing_blockers,
     read_run_header,
 )
+from edsim_app.charts import difference_histogram_chart
+from edsim_app.comparison import cached_run_comparison
 from edsim_app.comparison_frames import (
+    DRAW_LABELS,
     METADATA_LABELS,
+    affected_episodes_frame,
     comparison_configuration_frames,
     comparison_kpis_frame,
     comparison_levels_frame,
+    difference_histogram_frame,
+    draw_differences_frame,
 )
-from edsim_app.frames import kpis_frame
+from edsim_app.episodes import open_comparison_episode
+from edsim_app.frames import format_number, kpis_frame
 from edsim_app.help import render_compare_help
 from edsim_app.results import cached_run_results
 from edsim_app.state import catalog_store
@@ -98,6 +107,57 @@ def render_summary(summary: RunSummaryComparison, a_id: str, b_id: str) -> None:
             st.dataframe(center, hide_index=True, width="stretch")
 
 
+@st.fragment(key="comparison_patients")
+def render_patients(
+    comparison: RunComparison,
+    identity_a: tuple[str, str, str],
+    identity_b: tuple[str, str, str],
+) -> None:
+    """Render supplied patient differences; links navigate without recomputing the pair."""
+    st.subheader("Paciente a paciente")
+    excluded = comparison.excluded
+    st.caption(
+        f"Terminan solo en A: {excluded.only_a} · "
+        f"Terminan solo en B: {excluded.only_b} · "
+        f"No terminan en ninguna: {excluded.neither}."
+    )
+    if excluded.only_a or excluded.only_b or excluded.neither:
+        st.warning(
+            "Los excluidos no entran en las diferencias. Quienes siguen dentro "
+            "en la ejecución más saturada suelen ser los peores: excluirlos sesga "
+            "la comparación de quienes sí terminaron."
+        )
+    if not comparison.episodes:
+        st.info("No hay episodios llegados en la ventana que terminen en ambas ejecuciones.")
+        return
+    for difference in comparison.differences:
+        label = "Estancia" if difference.measure == "stay" else "Puerta-médico"
+        st.subheader(f"Diferencia de {label.lower()}: B − A")
+        st.caption(f"{difference.n} pacientes completados en ambas.")
+        for column, title, count, share in zip(
+            st.columns(3),
+            ("Mejoran", "Empeoran", "Iguales"),
+            (difference.improved, difference.worsened, difference.unchanged),
+            (difference.improved_share, difference.worsened_share, difference.unchanged_share),
+            strict=True,
+        ):
+            column.metric(f"{label}: {title}", f"{count} ({format_number(share, percentage=True)})")
+        if difference.histogram:
+            st.altair_chart(
+                difference_histogram_chart(difference_histogram_frame(difference)), width="stretch"
+            )
+        else:
+            st.info(f"{label}: todos quedan iguales dentro de la tolerancia.")
+    st.subheader("Los 10 más afectados por estancia")
+    st.dataframe(affected_episodes_frame(comparison), hide_index=True, width="stretch")
+    for episode in comparison.most_affected:
+        label, left, right = st.columns([3, 1, 1])
+        label.write(episode.episode_id)
+        for side, column, identity in (("A", left, identity_a), ("B", right, identity_b)):
+            if column.button(f"Abrir en {side}", key=f"compare_open_{side}_{episode.episode_id}"):
+                open_comparison_episode(identity, episode.episode_id)
+
+
 st.title("Comparar")
 st.warning("Una sola réplica de cada lado. Los intervalos de confianza llegan en el hito 9.")
 render_compare_help()
@@ -127,5 +187,49 @@ if blockers:
         + "; ".join(f"{METADATA_LABELS[d.field]}: {d.a} → {d.b}" for d in blockers)
         + ". Solo se comparan agregados: los identificadores no representan al mismo paciente."
     )
-summary = compare_run_summary(a, b)
+comparison = None
+if blockers:
+    summary = compare_run_summary(a, b)
+else:
+    try:
+        comparison = cached_run_comparison(
+            str(store.root),
+            a.info.run_id,
+            fingerprint_a,
+            b.info.run_id,
+            fingerprint_b,
+        )
+    except (RunReadError, PairingCheckError) as error:
+        st.error(
+            f"No se ha podido comprobar el emparejamiento: {error}. "
+            "simulate_run siempre escribe el ground truth; "
+            "la carpeta se ha modificado fuera de la app. "
+            "Se conservan los agregados del log; la comparación por paciente queda bloqueada."
+        )
+        summary = compare_run_summary(a, b)
+    else:
+        summary = comparison.summary
+        if comparison.pairing.kind == "same_draws":
+            st.success("Emparejada con los mismos sorteos, comprobados con la verdad.")
+        else:
+            st.success("Emparejada con sorteos distintos, comprobados con la verdad.")
+            changed = [
+                f"{DRAW_LABELS[d.field]}: {d.changed} pacientes"
+                for d in comparison.pairing.draw_differences
+                if d.changed
+            ]
+            st.warning(
+                "La diferencia mezcla el efecto de los parámetros clínicos "
+                "y de la plantilla. Sorteos que cambian: "
+                + ("; ".join(changed) if changed else "ninguno en esta muestra (0 pacientes)")
+                + ". La categoría se conserva por los parámetros modificados."
+            )
 render_summary(summary, a.info.run_id, b.info.run_id)
+if comparison is not None:
+    st.subheader("Comprobación de los sorteos")
+    st.dataframe(draw_differences_frame(comparison.pairing), hide_index=True, width="stretch")
+    render_patients(
+        comparison,
+        (str(store.root), a.info.run_id, fingerprint_a),
+        (str(store.root), b.info.run_id, fingerprint_b),
+    )

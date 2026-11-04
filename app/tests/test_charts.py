@@ -218,3 +218,22 @@ def test_occupancy_labels_contrast_with_the_shared_color_domain():
         assert color["condition"]["value"] == "white"
         assert color["value"] == "black"
         assert ratios[0] <= 0.6 * upper < ratios[1]
+
+
+def test_difference_histogram_preserves_precomputed_intervals_and_counts():
+    import pandas as pd
+
+    from edsim_app.charts import difference_histogram_chart
+
+    frame = pd.DataFrame(
+        {"Desde (min)": [-20.0, 10.0], "Hasta (min)": [-10.0, 20.0], "Pacientes": [3, 7]}
+    )
+    original = frame.copy(deep=True)
+    spec = difference_histogram_chart(frame).to_dict()
+    assert spec["mark"]["type"] == "bar"
+    assert spec["encoding"]["x"]["bin"] == "binned"
+    assert spec["encoding"]["x2"]["field"] == "Hasta (min)"
+    rows = spec["datasets"][spec["data"]["name"]]
+    assert rows == frame.to_dict("records")
+    assert "transform" not in spec
+    pd.testing.assert_frame_equal(frame, original)

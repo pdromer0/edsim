@@ -165,3 +165,267 @@ def test_presentation_has_signed_pp_relative_percent_and_undefined_values(catalo
     assert rows.loc["Censo medio", "Cambio relativo"] == "—"
     assert rows.loc["Estancia media", "B − A"] == "—"
     assert summary.kpis[0].difference == 0.1
+
+
+@pytest.fixture(scope="session")
+def comparison_templates(tmp_path_factory):
+    from edsim.runs import read_center_values, write_variant
+
+    root = tmp_path_factory.mktemp("comparison-app-templates")
+    source = "tests/data/centro_ejemplo.toml"
+    for name in ("night", "assessment", "probability"):
+        values = read_center_values(source)
+        if name == "night":
+            values["recursos.medicos"][2] += 1
+        elif name == "assessment":
+            values["duraciones.valoracion"] = [
+                value * 1.2 for value in values["duraciones.valoracion"]
+            ]
+        else:
+            values["pruebas.probabilidad"][0] += 1e-12
+        path = root / f"{name}.toml"
+        write_variant(source, values, path)
+        simulate_run(
+            path,
+            "tests/data/llegadas_ejemplo.toml",
+            3,
+            7,
+            output_dir=root / name,
+            run_id=name,
+            warmup_days=1,
+            origin="app",
+        )
+    return root
+
+
+@pytest.fixture
+def paired_catalog(catalog, comparison_templates):
+    for name in ("night", "assessment", "probability"):
+        shutil.copytree(comparison_templates / name, catalog / name)
+    return catalog
+
+
+def test_self_comparison_has_zero_differences_and_all_equal(catalog):
+    app = open_compare("older", "older")
+    assert not app.exception and not app.error
+    assert any("mismos sorteos" in item.value for item in app.success)
+    assert len(app.metric) == 6
+    assert all("(100,0 %)" in item.value for item in app.metric if "Iguales" in item.label)
+    assert all("0 (0,0 %)" == item.value for item in app.metric if "Iguales" not in item.label)
+    assert not app.get("vega_lite_chart")
+    top = next(item.value for item in app.dataframe if "Episodio" in item.value)
+    assert len(top) == 10 and set(top["B − A (min)"]) == {"0,0"}
+    draws = next(item.value for item in app.dataframe if "Sorteo" in item.value)
+    assert len(draws) == 7 and draws["Pacientes distintos"].sum() == 0
+    assert any("Terminan solo en A: 0" in item.value for item in app.caption)
+
+
+def test_staffing_comparison_has_checked_draws_histograms_and_both_exclusions(paired_catalog):
+    from edsim.runs import compare_runs, read_run_episode_truth
+
+    store = RunStore(paired_catalog)
+    expected = compare_runs(
+        read_run_results(store, "older"),
+        read_run_results(store, "night"),
+        read_run_episode_truth(store, "older"),
+        read_run_episode_truth(store, "night"),
+    )
+    app = open_compare("older", "night")
+    assert not app.exception and not app.error
+    assert any("mismos sorteos" in item.value for item in app.success)
+    assert app.get("vega_lite_chart") and len(app.metric) == 6
+    captions = " ".join(item.value for item in app.caption)
+    assert f"Terminan solo en A: {expected.excluded.only_a}" in captions
+    assert f"Terminan solo en B: {expected.excluded.only_b}" in captions
+    assert f"No terminan en ninguna: {expected.excluded.neither}" in captions
+    assert f"sin terminar: {expected.summary.unfinished_a}" in captions
+    assert f"sin terminar: {expected.summary.unfinished_b}" in captions
+    top = next(item.value for item in app.dataframe if "Episodio" in item.value)
+    assert top["Episodio"].tolist() == [e.episode_id for e in expected.most_affected]
+    assert len([button for button in app.button if button.key.startswith("compare_open_")]) == 20
+    for difference in expected.differences:
+        label = "Estancia" if difference.measure == "stay" else "Puerta-médico"
+        metric = next(item for item in app.metric if item.label == f"{label}: Mejoran")
+        assert metric.value.startswith(f"{difference.improved} (")
+
+
+@pytest.mark.parametrize("run_id", ["assessment", "probability"])
+def test_clinical_category_and_observed_changes(paired_catalog, run_id):
+    app = open_compare("older", run_id)
+    assert not app.exception and not app.error
+    assert any("sorteos distintos" in item.value for item in app.success)
+    draws = next(item.value for item in app.dataframe if "Sorteo" in item.value)
+    if run_id == "assessment":
+        changed = draws.loc[draws["Pacientes distintos"] > 0]
+        assert changed["Sorteo"].tolist() == ["Valoración"]
+        assert changed.iloc[0]["Pacientes distintos"] == changed.iloc[0]["Total"]
+    else:
+        assert draws["Pacientes distintos"].sum() == 0
+        assert any("ninguno en esta muestra (0 pacientes)" in item.value for item in app.warning)
+    assert any(item.value == "Paciente a paciente" for item in app.subheader)
+
+
+@pytest.mark.parametrize("side,run_id", [("A", "older"), ("B", "night")])
+@pytest.mark.parametrize("kind", ["missing", "unreadable", "contradictory"])
+def test_truth_failure_keeps_summary_and_blocks_patients(paired_catalog, side, run_id, kind):
+    import csv
+    import io
+
+    path = paired_catalog / run_id / "ground_truth_episodios.csv"
+    if kind == "missing":
+        path.unlink()
+    elif kind == "unreadable":
+        path.write_text("invalid header\n")
+    else:
+        reader = csv.DictReader(io.StringIO(path.read_text()))
+        rows = list(reader)
+        rows[0]["nivel"] = str(int(rows[0]["nivel"]) % 5 + 1)
+        with path.open("w", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=reader.fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    app = open_compare("older", "night")
+    assert not app.exception and app.error
+    assert "ground_truth_episodios.csv" in app.error[0].value
+    assert "simulate_run" in app.error[0].value and "fuera de la app" in app.error[0].value
+    if kind == "contradictory":
+        assert "level, 1 pacientes" in app.error[0].value
+    kpis, levels = summary_frames(app)
+    assert len(kpis) == 9 and len(levels) == 5
+    assert not app.success and not app.metric
+    assert not any(item.value == "Paciente a paciente" for item in app.subheader)
+    assert not any(button.key.startswith("compare_open_") for button in app.button)
+
+
+@pytest.mark.parametrize("side,run_id", [("A", "older"), ("B", "night")])
+def test_link_partial_request_resets_every_filter_and_opens_correct_card(
+    paired_catalog,
+    side,
+    run_id,
+    monkeypatch,
+):
+    from dataclasses import asdict
+
+    from fragment_runner import FragmentRunner
+
+    from edsim.runs import EpisodeFilters, read_run_header
+    from edsim_app import comparison, state
+    from edsim_app.episodes import episode_identity
+
+    calculate = Mock(wraps=comparison.compare_runs)
+    initialize = Mock(wraps=state.initialize_state)
+    monkeypatch.setattr(comparison, "compare_runs", calculate)
+    monkeypatch.setattr(state, "initialize_state", initialize)
+    with FragmentRunner() as runner:
+        app = open_compare("older", "night")
+        top = next(item.value for item in app.dataframe if "Episodio" in item.value)
+        episode = top["Episodio"].iloc[0]
+        app.session_state["episode_filters"] = asdict(
+            EpisodeFilters(
+                level=1,
+                destination="ingreso",
+                displaced=True,
+                arrival_day=0,
+                period="warmup",
+                door_to_doctor_gt=999999,
+                stay_gt=999999,
+            )
+        )
+        before = initialize.call_count
+        runner.run_fragment(app, key="comparison_patients")
+        assert calculate.call_count == 1 and initialize.call_count == before
+        app.button(key=f"compare_open_{side}_{episode}").click()
+        runner.run_fragment(app, key="comparison_patients")
+        assert not app.exception
+        assert app.title[0].value == "Episodios"
+        assert app.session_state["selected_run_id"] == run_id
+        assert app.query_params["run"] == run_id and app.query_params["episodio"] == episode
+        _, fingerprint = read_run_header(RunStore(paired_catalog), run_id)
+        identity = episode_identity(str(paired_catalog), run_id, fingerprint)
+        assert app.session_state["episode_choices"][identity] == episode
+        assert app.session_state["episode_filters"] == asdict(EpisodeFilters())
+        assert any("Se han quitado los filtros" in item.value for item in app.info)
+        assert any(item.value == f"Ficha del episodio {episode}" for item in app.subheader)
+        assert not any("no pasa los filtros" in item.value for item in app.warning)
+        assert calculate.call_count == 1
+        assert (
+            app.session_state["compare_a"] == "older" and app.session_state["compare_b"] == "night"
+        )
+        assert app.selectbox(key="episode_filter_level_widget").value is None
+        assert app.number_input(key="episode_filter_stay_gt_widget").value is None
+
+
+def test_internal_comparison_value_error_remains_exception(paired_catalog, monkeypatch):
+    from edsim_app import comparison
+
+    def fail(*args, **kwargs):
+        raise ValueError("comparison programming error")
+
+    monkeypatch.setattr(comparison, "compare_runs", fail)
+    app = open_compare("older", "night")
+    assert app.exception[0].message == "comparison programming error"
+    assert not app.error
+
+
+def test_pair_cache_reloads_recreated_run(paired_catalog, monkeypatch):
+    from edsim_app import comparison
+
+    calculate = Mock(wraps=comparison.compare_runs)
+    monkeypatch.setattr(comparison, "compare_runs", calculate)
+    app = open_compare("older", "night")
+    app.run()
+    assert not app.exception and calculate.call_count == 1
+    shutil.rmtree(paired_catalog / "night")
+    simulate_run(
+        paired_catalog / "assessment" / "centro.toml",
+        "tests/data/llegadas_ejemplo.toml",
+        3,
+        7,
+        output_dir=paired_catalog / "night",
+        run_id="night",
+        warmup_days=1,
+        origin="app",
+    )
+    app.run()
+    assert not app.exception and calculate.call_count == 2
+    assert any("sorteos distintos" in item.value for item in app.success)
+
+
+def test_pair_cache_includes_both_ordered_identities_and_limits_four(catalog, monkeypatch):
+    from edsim.runs import compare_runs, read_run_episode_truth
+    from edsim_app import comparison
+
+    store = RunStore(catalog)
+    a, truth = read_run_results(store, "older"), read_run_episode_truth(store, "older")
+    expected = compare_runs(a, a, truth, truth)
+    monkeypatch.setattr(comparison, "cached_run_results", Mock(return_value=a))
+    monkeypatch.setattr(comparison, "cached_episode_truth", Mock(return_value=truth))
+    calculate = Mock(return_value=expected)
+    monkeypatch.setattr(comparison, "compare_runs", calculate)
+    cache = comparison.cached_run_comparison
+    first = (str(catalog), "a", "fa", "b", "fb")
+    assert cache(*first) is expected and cache(*first) is expected
+    assert calculate.call_count == 1
+    for args in (
+        (str(catalog), "b", "fb", "a", "fa"),
+        (str(catalog), "a", "fa2", "b", "fb"),
+        (str(catalog), "a", "fa", "b", "fb2"),
+        (str(catalog.parent / "other"), "a", "fa", "b", "fb"),
+    ):
+        cache(*args)
+    assert calculate.call_count == 5
+    cache(*first)
+    assert calculate.call_count == 6
+
+
+@pytest.mark.parametrize("run_id,side", [("older", "A"), ("newer", "B")])
+def test_no_completed_window_error_is_independent(catalog, run_id, side):
+    (catalog / run_id / "eventos.jsonl").write_text("")
+    app = open_compare()
+    assert not app.exception
+    assert any(
+        f"Lado {side}" in item.value and "no tiene episodios completados" in item.value
+        for item in app.error
+    )
+    other = "B" if side == "A" else "A"
+    assert any(item.value == f"Resultados disponibles de {other}" for item in app.subheader)
