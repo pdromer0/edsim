@@ -4,6 +4,7 @@ import altair as alt
 import pandas as pd
 
 from edsim.runs import DurationSummary
+from edsim_app.palette import LEVEL_COLORS
 
 
 def duration_chart(duration: DurationSummary) -> alt.Chart:
@@ -65,7 +66,10 @@ def waits_chart(frame: pd.DataFrame) -> alt.Chart:
         .encode(
             x=alt.X("Nivel:O"),
             y=alt.Y("Minutos:Q"),
-            color="Serie:N",
+            color=alt.Color(
+                "Nivel:O",
+                scale=alt.Scale(domain=list(LEVEL_COLORS), range=list(LEVEL_COLORS.values())),
+            ),
             shape="Serie:N",
             tooltip=["Nivel:O", "Serie:N", alt.Tooltip("Minutos:Q", format=".1f")],
         )
