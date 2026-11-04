@@ -17,12 +17,26 @@ from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.targets import Compliance
 from edsim.runs.compare import (
     DRAW_EFFECTS,
+    ChangeKind,
+    DifferenceSummary,
     DrawDifference,
     DrawField,
+    EpisodeDifference,
+    ExcludedEpisodes,
+    HistogramBin,
+    KPIComparison,
+    LevelComparison,
+    LevelRunSummary,
     MetadataDifference,
+    Number,
     PairingCheckError,
     PairingInfo,
     PairingKind,
+    RunComparison,
+    RunSummaryComparison,
+    WaitStatistics,
+    compare_run_summary,
+    compare_runs,
     pairing_blockers,
 )
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
@@ -77,6 +91,20 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "Number",
+    "ChangeKind",
+    "KPIComparison",
+    "WaitStatistics",
+    "LevelRunSummary",
+    "LevelComparison",
+    "RunSummaryComparison",
+    "ExcludedEpisodes",
+    "EpisodeDifference",
+    "HistogramBin",
+    "DifferenceSummary",
+    "RunComparison",
+    "compare_run_summary",
+    "compare_runs",
     "DRAW_EFFECTS",
     "DrawDifference",
     "DrawField",
