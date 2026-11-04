@@ -38,6 +38,7 @@ GitHub Flow: cada tarea en una rama corta que entra en `main` por pull request, 
 
 ## Documentación
 
+- [EDsim Lab: uso y tests de la app local](app/README.md)
 - [Documento de diseño](docs/diseno.md)
 - [Especificaciones por hito](docs/specs/)
 - [Registro de decisiones (ADR)](docs/decisiones/README.md)
