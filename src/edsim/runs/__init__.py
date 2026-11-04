@@ -11,6 +11,7 @@ from edsim.engine.center import (
     validate_center_values,
 )
 from edsim.engine.events import TIMEZONE, Event
+from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.targets import Compliance
@@ -43,6 +44,13 @@ from edsim.runs.results import (
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
 from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
+from edsim.runs.truth import (
+    TRUTH_ABS_TOL_MINUTES,
+    TruthComparison,
+    TruthStatus,
+    compare_episode_truth,
+    read_run_episode_truth,
+)
 from edsim.runs.variants import (
     MAX_VARIANT_NAME_LENGTH,
     CenterDifference,
@@ -61,6 +69,12 @@ __all__ = [
     "CurveSteps",
     "DurationSummary",
     "EpisodeRecord",
+    "EpisodeTruth",
+    "TRUTH_ABS_TOL_MINUTES",
+    "TruthComparison",
+    "TruthStatus",
+    "compare_episode_truth",
+    "read_run_episode_truth",
     "Displacement",
     "EpisodeSegment",
     "EpisodeSegments",
