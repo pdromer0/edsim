@@ -77,7 +77,7 @@ uv run ruff format --check .
 
 Las páginas se prueban con AppTest sin arrancar un servidor. Las comprobaciones
 de interfaz y las medidas con AppTest se completan con revisión en el navegador.
-La selección de tests `slow` se explica en [AGENTS.md](AGENTS.md#pruebas-y-convenciones).
+La selección de tests `slow` se explica en [AGENTS.md](AGENTS.md#selección-de-tests-slow).
 
 ## Frontera y documentación
 

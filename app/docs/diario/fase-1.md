@@ -268,7 +268,7 @@ los intervalos de confianza llegan con los experimentos del hito 9.
 
 **Qué se hizo:** reductor de ubicación compartido, índice por horas, plano SVG,
 reproducción y navegación desde la ficha. Se aligeró la suite rápida antes de
-añadir la página. El PR #38 ya está fusionado; su anexo aún describe la espera.
+añadir la página.
 
 **Qué aprendí:**
 
