@@ -24,6 +24,10 @@ def forget_run(run_id: str) -> None:
     for key in ("run_choice", "pending_delete"):
         if st.session_state.get(key) == run_id:
             st.session_state.pop(key, None)
+    positions = st.session_state.get("replay_positions", {})
+    for identity in list(positions):
+        if identity[1] == run_id:
+            del positions[identity]
     choices = st.session_state.get("episode_choices", {})
     for identity in list(choices):
         if identity[1] == run_id:

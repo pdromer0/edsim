@@ -49,12 +49,34 @@ def remember_episode_filter(field: str, widget: str) -> None:
     st.session_state.episode_filters[field] = st.session_state[widget]
 
 
-def open_comparison_episode(identity: tuple[str, str, str], episode_id: str) -> None:
+def _open_episode(identity: tuple[str, str, str], episode_id: str, source: str) -> None:
     """Select an exact card and clear common filters before multipage navigation."""
     st.session_state.selected_run_id = identity[1]
     st.session_state.setdefault("episode_choices", {})[identity] = episode_id
     st.session_state.episode_filters = asdict(EpisodeFilters())
     st.session_state.episode_filter_notice = (
-        "Se han quitado los filtros de Episodios para mostrar la ficha desde Comparar."
+        f"Se han quitado los filtros de Episodios para mostrar la ficha desde {source}."
     )
     st.switch_page("views/episodes.py", query_params={"run": identity[1], "episodio": episode_id})
+
+
+def open_comparison_episode(identity: tuple[str, str, str], episode_id: str) -> None:
+    """Open an exact card from the comparison without preserving incompatible filters."""
+    _open_episode(identity, episode_id, "Comparar")
+
+
+def open_replay_episode(identity: tuple[str, str, str], episode_id: str) -> None:
+    """Open an exact card from replay without preserving incompatible filters."""
+    _open_episode(identity, episode_id, "Replay")
+
+
+def open_episode_replay(identity: tuple[str, str, str], episode_id: str, arrival: float) -> None:
+    """Open the exact observed arrival paused, even for sub-minute episodes."""
+    from edsim_app.replay import replay_position
+
+    position = replay_position(identity)
+    position.time = arrival
+    position.highlighted_episode = episode_id
+    position.playing = False
+    st.session_state.selected_run_id = identity[1]
+    st.switch_page("views/replay.py", query_params={"run": identity[1], "episodio": episode_id})

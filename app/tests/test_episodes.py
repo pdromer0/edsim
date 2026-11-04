@@ -194,7 +194,15 @@ def test_card_has_basics_timeline_log_and_lazy_truth(catalog, monkeypatch):
     app.run()
     app.selectbox(key="episode_filter_arrival_day_widget").select(0).run()
     assert not app.exception and read.call_count == 1
-    assert not any("replay" in button.label.lower() for button in app.button)
+    app.button(key="episode_open_replay").click().run()
+    assert not app.exception and app.title[0].value == "Replay"
+    from edsim.runs import read_run_header
+
+    _, fingerprint = read_run_header(RunStore(catalog), "older")
+    position = app.session_state["replay_positions"][(str(catalog), "older", fingerprint)]
+    assert position.time == events["sim_time"].iloc[0]
+    assert not position.playing and position.highlighted_episode == "EP-000000"
+    assert any('data-mark="highlight"' in item.proto.body for item in app.get("html"))
 
 
 def test_unfinished_card_shows_censoring_and_partial_truth(catalog):

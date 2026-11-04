@@ -14,6 +14,7 @@ from edsim.engine.events import TIMEZONE, Event
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
+from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
 from edsim.runs.compare import (
     DRAW_EFFECTS,
@@ -65,6 +66,17 @@ from edsim.runs.metrics import (
     window_kpis,
 )
 from edsim.runs.offered import OfferedWork, offered_work
+from edsim.runs.replay import (
+    ReplayCounts,
+    ReplayDeparture,
+    ReplayDisplacement,
+    ReplayIndex,
+    ReplayPatient,
+    ReplayState,
+    build_replay_index,
+    read_replay_state,
+    replay_counts,
+)
 from edsim.runs.results import (
     RunAnalysisError,
     RunReadError,
@@ -91,6 +103,16 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "ReplayCounts",
+    "ReplayDeparture",
+    "ReplayDisplacement",
+    "ReplayIndex",
+    "ReplayPatient",
+    "ReplayState",
+    "build_replay_index",
+    "read_replay_state",
+    "replay_counts",
+    "shift_at",
     "Number",
     "ChangeKind",
     "KPIComparison",

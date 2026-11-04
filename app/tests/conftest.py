@@ -103,3 +103,34 @@ def simulation_files(tmp_path, monkeypatch):
     yield config
     st.cache_data.clear()
     st.cache_resource.clear()
+
+
+# Collection-time marks preserve the A.5 characterization files byte for byte.
+# Shared catalog fixtures simulate real runs; retain explicit page smoke checks
+# in the fast suite instead of repeatedly analyzing those runs in every AppTest.
+_SIMULATION_TESTS = frozenset(
+    {
+        "test_real_one_day_simulation_uses_saved_variant_and_opens_results",
+        "test_simulation_passes_relative_paths_output_and_no_variant",
+        "test_preview_displays_core_table_caches_edits_and_profile_fingerprint",
+        "test_preview_explains_multiple_prior_days",
+    }
+)
+
+
+def pytest_collection_modifyitems(items):
+    """Keep simulation-heavy integrations in CI and six catalog smoke checks fast."""
+    for item in items:
+        if item.path.name == "test_smoke.py":
+            continue
+        if item.path.name not in {
+            "test_compare.py",
+            "test_episodes.py",
+            "test_navigation.py",
+            "test_results.py",
+            "test_runs.py",
+            "test_simulate.py",
+        }:
+            continue
+        if "run_templates" in item.fixturenames or item.originalname in _SIMULATION_TESTS:
+            item.add_marker(pytest.mark.slow)

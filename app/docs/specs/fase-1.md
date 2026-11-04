@@ -229,6 +229,21 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 - **Debajo:** el censo del día con una línea vertical en el minuto, los últimos 15 eventos y la lista de pacientes dentro, con enlace a su ficha.
 - Los contadores del plano coinciden en cada minuto con las curvas escalonadas del hito 3: el replay no tiene lógica propia de conteo.
 
+**Detalles de la A.7** (decididos el 4 de noviembre de 2026, con lo aprendido en las A.4 a A.6):
+
+- **Antes de nada, acelerar los tests:** un commit `chore` mide las suites rápidas con `--durations` y marca `slow` los AppTest que simulan o miden. Las suites completas y el CI los siguen ejecutando todos. Se anotan los tiempos antes y después.
+- **`ReplayIndex` en el núcleo:** al abrir la ejecución, una pasada por el log guarda una foto completa del estado cada 60 minutos simulados (quién está en cada cola y en cada box, con su nivel, estado y llegada; plantilla vigente; salidas y desalojos recientes) y la posición en bytes del primer evento de cada hora, como el índice de la A.5. `state_at(t)` parte de la foto anterior y lee y valida del JSONL como mucho una hora de eventos. Se guarda en `st.cache_resource` con la clave de siempre (raíz, `run_id` y huella de `run.json`).
+- **El minuto t:** el estado tras todos los eventos de los instantes ≤ t, la misma convención que `StepCurves.value`.
+- **Sin lógica propia de conteo:** los contadores del plano y de la barra de estado (censo, colas, ocupados y plantilla) salen de las curvas escalonadas de `RunResults`. Las fichas y las casillas salen del `ReplayIndex`, y un test comprueba en todos los minutos de una ejecución de prueba que lo que dibuja el `ReplayIndex` coincide con las curvas (criterio de aceptación).
+- **Plano (`plan.py`, función pura que devuelve SVG):** cola de triaje en orden de llegada; puestos de triaje con la plantilla vigente; cola de box por prioridad (nivel y llegada); rejilla con una casilla por box, color del nivel y estado del paciente; médicos ocupados frente a la plantilla; salidas de la última hora por destino. Cada cola dibuja hasta 30 fichas y «+N más», con el total siempre visible. Un desalojo de los últimos 60 minutos se marca con un borde, la misma ventana que las salidas.
+- **Colores por nivel en toda la app:** la paleta de Manchester (rojo, naranja, amarillo, verde y azul para los niveles 1 a 5), en un solo sitio y usada por el plano y por las gráficas existentes que distinguen niveles.
+- **Controles:** ejecución, día, minuto (deslizador de 0:00 a 23:59), pasos de ±1 y ±10 minutos, reproducir y pausar, y velocidad (1, 5, 15 o 60 minutos simulados por segundo). La reproducción es un `st.fragment` con `run_every` que solo vuelve a dibujar el plano y la barra de estado. Al pasar de las 23:59 sigue en el día siguiente, y al llegar al horizonte se pausa. La posición y la velocidad se recuerdan al navegar.
+- **Barra de estado:** fecha y hora (UTC+1), turno, censo y si el minuto cae en el calentamiento.
+- **Debajo del plano:** el censo del día con una línea vertical en el minuto (fechas sin zona en Altair), los últimos 15 eventos tal como están en el log y los pacientes dentro, con un selector y un botón para abrir su ficha (como en Comparar).
+- **«Ver en el replay»:** la ficha de Episodios añade el botón, que abre el Replay de esa ejecución en el día y el minuto de llegada del paciente, con su ficha resaltada en el plano.
+- **Rendimiento:** cada fotograma en menos de 200 ms con 14 y con 60 días (objetivo de la especificación), medido como en la A.5. Se miden también la construcción del `ReplayIndex` y su memoria.
+- **No es crítica:** añade funciones al núcleo sin cambiar el formato en disco ni los contratos existentes; sin `@codex review`.
+
 ### En todas las páginas
 
 - Un desplegable «¿Qué estoy viendo?» con dos o tres frases y el concepto que hay detrás (ventana y calentamiento, ley de Little, números aleatorios comunes, prioridad y desalojo).
@@ -1074,3 +1089,89 @@ Con 60 días, el `Styler` se lleva 2,08 s de los 2,39 s de una recarga con la ta
 - `runs/results.py`, `events.py` y `truth.py` usan `RunStore._file`: un método público dejaría la frontera más limpia.
 - La suite de la app crece (164 tests): marcar `slow` los AppTest que simulan si el hook de Codex se nota lento.
 - El botón «Ver en el replay» se añade en la A.7.
+
+### Tarea A.6: página Comparar
+
+PR #37 (rama `feat/app-comparar`), implementado con Codex (codex-cli 0.166.0), revisado el 4 de noviembre de 2026 y pendiente de que Pedro lo fusione con *squash and merge*. Seis commits: especificación, emparejamiento comprobado, comparación de indicadores y episodios, selección y resumen, paciente a paciente con enlace a la ficha, y una corrección de formatos e histogramas tras la revisión (1dc0081). Tarea no crítica: sin `@codex review`.
+
+**Qué se hizo**
+
+- `runs/compare.py`: `pairing_blockers` (semilla, huella del perfil, días y calentamiento), `compare_run_summary` (`RunSummaryComparison`: metadatos, `center_diff`, nueve KPIs con B − A y cambio relativo, cinco niveles y sin terminar por lado, sin nada de pacientes) y `compare_runs` (`RunComparison`, sin campos opcionales: emparejamiento comprobado, excluidos, diferencias por episodio, histogramas y los 10 más afectados).
+- `DRAW_EFFECTS`: tabla única e inmutable que dice qué sorteos puede cambiar cada clave del centro, con un test que obliga a cubrir todas las claves.
+- Comprobación con el ground truth: mismos pacientes en log y verdad, llegadas iguales (exactas entre verdades, con 1e-8 entre verdad y log) y recuento de pacientes con cada sorteo distinto. Un sorteo que cambia fuera de lo permitido, o una llegada distinta, lanza `PairingCheckError`.
+- Página Comparar: selectores sobre las marcas A y B, aviso fijo de una réplica, resumen siempre visible, comprobación de sorteos, paciente a paciente en un `st.fragment` y botones para abrir la ficha en A o en B, que quitan los filtros de Episodios con un aviso. Caché de comparaciones de 4 pares ordenados.
+- Corrección tras la revisión: formatos compartidos en `frames.py` (diferencias del centro como en Simular, fecha de creación en UTC+1) y histograma con el 0 como borde exacto, coloreado por mejora o empeoramiento.
+
+**Cambios respecto al plan y a la especificación**
+
+- Decisiones durante el plan, no recogidas en la exportación (8815214a…): un parámetro clínico cambiado conserva «sorteos distintos» aunque ningún paciente cambie; los sin terminar por lado se muestran siempre junto a los KPIs; un ground truth ausente, ilegible o contradictorio bloquea solo el emparejamiento validado y la sección paciente a paciente; y dos funciones públicas, para que el tipo del resumen no pueda contener pacientes.
+- Ajustes de la revisión del plan: `RunComparison` sin campos opcionales (`compare_runs` lanza `ValueError` con un par no emparejable), `pairing_blockers` en lugar de un booleano, histograma sin los iguales y test de simetría.
+- El test de simetría añade un oráculo explícito de B − A, porque A − B también es simétrico.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Números aleatorios comunes | Con la misma semilla, el paciente k llega igual y sortea igual en las dos ejecuciones; cualquier diferencia en él se debe al cambio de configuración |
+| Flujos separados con consumo fijo | Nivel, duraciones, pruebas y destino tienen cada uno su flujo, y cada paciente consume siempre lo mismo: cambiar una duración solo cambia esa duración |
+| Diseño frente a observación | La categoría sale de lo que cambió en la configuración; los recuentos, de lo que pasó. Un sorteo de umbral puede no cambiar a nadie en una muestra pequeña |
+| Comprobar, no suponer | El ground truth verifica lo que la configuración promete; una contradicción significa que la carpeta se modificó fuera de la app |
+| Censura en los promedios | La estancia media de cada lado solo cuenta a quienes terminaron; el lado más saturado deja fuera a sus peores pacientes |
+| Estados imposibles | Un resumen sin campos de pacientes y una comparación sin campos opcionales impiden por el tipo mostrar como validado lo que no se comprobó |
+| Simetría y signo | Intercambiar A y B invierte todo, pero la simetría no fija el signo: hace falta un caso con resultado conocido |
+
+**Medidas** (base frente a un médico más de noche, semilla 2026, 2 días de calentamiento; medianas de tres procesos)
+
+| Medida | 14 días | 60 días |
+| --- | --- | --- |
+| Primera entrada (dos ejecuciones) | 2,14 s | 9,88 s |
+| Recarga | 0,05 s | 0,06 s |
+| Reejecución parcial del fragmento | 0,03 s | 0,04 s |
+| Leer los dos ground truth | 0,10 s | 0,39 s |
+| `compare_run_summary` | 0,001 s | 0,006 s |
+| `compare_runs` | 0,02 s | 0,13 s |
+| Memoria retenida (resultados, verdades y comparación) | 10,4 MiB | 45,6 MiB |
+| Memoria del proceso con los dos lados en caché | 329 MiB | 575 MiB |
+
+La primera entrada con 60 días es casi toda leer dos logs; no se fijó un límite nuevo ni se repitió la medida.
+
+**Versiones incorrectas temporales**
+
+| Mutación | Resultado |
+| --- | --- |
+| Clasificar solo por configuración | No detecta un nivel alterado en una comparación de plantilla |
+| Exigir cambios observados | `PairingCheckError` falso con cero cambios |
+| Imputar excluidos como cero | 11 pares en lugar de 7 |
+| Tolerancia de 1 minuto | 1 mejora, 1 empeora y 5 iguales en lugar de 2, 2 y 3 |
+| Dividir el cambio relativo por B | 0,333… en lugar de 0,5 |
+| Mantener los filtros al abrir la ficha | Siete filtros incompatibles se conservan |
+| Unir episodios por posición | Cambia la comparación al invertir las filas de B |
+| Ocultar los sin terminar en no emparejadas | Falta el recuento de 27 pacientes |
+| Ocultar los KPIs ante un error de verdad | No existe la tabla de KPIs |
+| Pintar pacientes desde el resumen | `RunSummaryComparison` no tiene `excluded` |
+| Diferencia A − B | −10 en lugar de +10; fallan los dos oráculos de signo |
+| Histograma con los iguales | 682 en lugar de 116 + 33 |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite completa del núcleo | 1.401 tests en 311 s |
+| App | 199 tests en 150 s (rápida, 130 s) |
+| Notebooks en modo rápido | 3 en 50 s, fuera del sandbox por los sockets del kernel |
+| Casos reales cortos (3 días) | 1.101 llegadas y 4 pacientes de nivel 1; un médico más de noche no cambia ningún sorteo; la valoración un 20 % más larga solo cambia la valoración; 1e-12 más de probabilidad de pruebas no cambia a nadie y no da error |
+
+**Lecciones aprendidas**
+
+- Compartir semilla no basta: la configuración dice qué debería conservarse y el ground truth comprueba qué pasó.
+- El tipo de un resultado puede proteger mejor que la disciplina de quien lo usa: es la ventaja de separar resumen y comparación.
+- Un control cruzado (la simetría) no sustituye a un valor conocido: los dos se complementan.
+- Una barra enorme de iguales esconde la forma de la distribución; un intervalo que cruza el 0 mezcla mejoras y empeoramientos.
+- El formato de las diferencias del centro falló por tercera vez en otra página: los formatos compartidos viven en un solo sitio (`frames.py`).
+- La suite rápida ya tarda unos 4 minutos en cada parada del hook de Codex.
+
+**Pendiente para la tarea A.7**
+
+- Marcar `slow` los AppTest que simulan o miden, para aligerar las suites rápidas.
+- Paleta fija de colores por nivel, que la especificación pide y aún no existe.
+- Botón «Ver en el replay» en la ficha de Episodios.
