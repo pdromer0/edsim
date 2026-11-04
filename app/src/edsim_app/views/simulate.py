@@ -34,38 +34,23 @@ from edsim_app.draft import (
     update_variant_name,
     use_run_suggestion,
 )
-from edsim_app.frames import POOL_LABELS, offered_frame, style_utilization, utilization_frame
+from edsim_app.frames import (
+    FIELDS,
+    POOL_LABELS,
+    SHIFTS,
+    format_change_value,
+    offered_frame,
+    style_utilization,
+    utilization_frame,
+)
 from edsim_app.help import render_simulate_help
 from edsim_app.preview import preview_work
 from edsim_app.state import catalog_store, sync_run_query
-
-SHIFTS = ("mañana", "tarde", "noche")
-LEVELS = tuple(f"nivel {i}" for i in range(1, 6))
-FIELDS = (
-    ("turnos.inicio", "Inicio de los turnos (horas)", True, SHIFTS),
-    ("recursos.enfermeria_triaje", "Enfermería de triaje", True, SHIFTS),
-    ("recursos.medicos", "Médicos", True, SHIFTS),
-    ("recursos.boxes", "Boxes", True, ()),
-    ("triaje.reparto_niveles", "Reparto de triaje (pesos)", False, LEVELS),
-    ("duraciones.triaje", "Duración de triaje (min)", False, ("mediana", "p90")),
-    ("duraciones.valoracion", "Duración de valoración (min)", False, ("mediana", "p90")),
-    ("duraciones.reevaluacion", "Duración de reevaluación (min)", False, ("mediana", "p90")),
-    ("duraciones.respuesta_pruebas", "Respuesta de pruebas (min)", False, ("mediana", "p90")),
-    ("pruebas.probabilidad", "Probabilidad de pruebas", False, LEVELS),
-    ("destino.probabilidad_ingreso", "Probabilidad de ingreso", False, LEVELS),
-)
 
 
 def decimal(value: float, digits: int = 1) -> str:
     """Format presentation numbers with a decimal comma."""
     return f"{value:.{digits}f}".replace(".", ",")
-
-
-def format_change_value(value: int | float | tuple[int | float, ...]) -> str:
-    """Present normalized differences with decimal commas and unambiguous separators."""
-    if isinstance(value, tuple):
-        return "[" + "; ".join(format_change_value(item) for item in value) + "]"
-    return (str(value) if isinstance(value, int) else f"{value:.15g}").replace(".", ",")
 
 
 def has_editable_values(values: dict[str, object]) -> bool:

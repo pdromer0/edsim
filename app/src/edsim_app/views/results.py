@@ -1,14 +1,12 @@
 """Present one selected run using public core results and read-only caching."""
 
 from collections import Counter
-from datetime import datetime
 from functools import partial
 
 import streamlit as st
 
 from edsim.runs import (
     MAX_VIOLATIONS_SHOWN,
-    TIMEZONE,
     RunAnalysisError,
     RunInfo,
     RunReadError,
@@ -20,6 +18,7 @@ from edsim_app.charts import curve_chart, hourly_census_chart, occupancy_chart, 
 from edsim_app.frames import (
     CURVE_LABELS,
     curve_frame,
+    format_created_at,
     format_number,
     hourly_census_frame,
     kpis_frame,
@@ -38,9 +37,7 @@ from edsim_app.state import catalog_store
 def render_header(info: RunInfo) -> None:
     """Keep metadata visible even when the event log cannot be analyzed."""
     st.header(info.run_id)
-    created = (
-        datetime.fromisoformat(info.created_at).astimezone(TIMEZONE).strftime("%d/%m/%Y %H:%M:%S")
-    )
+    created = format_created_at(info.created_at)
     st.write(f"Variante: **{info.variant}** · Huella del centro: `{info.center_fingerprint}`")
     st.caption(f"Días: {info.days} · Calentamiento: {info.warmup_days} días · Semilla: {info.seed}")
     st.caption(f"Fecha de creación (UTC+1): {created} · Versión de EDsim: {info.edsim_version}")

@@ -9,12 +9,12 @@ from edsim.runs import (
     RunComparison,
     RunSummaryComparison,
 )
-from edsim_app.frames import format_number
+from edsim_app.frames import FIELDS, format_change_value, format_created_at, format_number
 
 METADATA_LABELS = {
     "format_version": "Versión del formato",
     "run_id": "Ejecución",
-    "created_at": "Fecha de creación",
+    "created_at": "Fecha de creación (UTC+1)",
     "origin": "Origen",
     "edsim_version": "Versión de EDsim",
     "variant": "Variante",
@@ -104,17 +104,27 @@ def comparison_configuration_frames(
     """Preserve metadata values and normalized TOML differences."""
     metadata = pd.DataFrame(
         [
-            {"Campo": METADATA_LABELS.get(d.field, d.field), "A": str(d.a), "B": str(d.b)}
+            {
+                "Campo": METADATA_LABELS.get(d.field, d.field),
+                "A": format_created_at(d.a) if d.field == "created_at" else str(d.a),
+                "B": format_created_at(d.b) if d.field == "created_at" else str(d.b),
+            }
             for d in summary.metadata_differences
         ],
         columns=["Campo", "A", "B"],
     )
+    field_labels = {key: label for key, label, _, _ in FIELDS}
     center = pd.DataFrame(
         [
-            {"Clave del centro": d.key, "A": str(d.before), "B": str(d.after)}
+            {
+                "Parámetro": field_labels[d.key],
+                "Clave del centro": d.key,
+                "A": format_change_value(d.before),
+                "B": format_change_value(d.after),
+            }
             for d in summary.center_differences
         ],
-        columns=["Clave del centro", "A", "B"],
+        columns=["Parámetro", "Clave del centro", "A", "B"],
     )
     return metadata, center
 
@@ -133,10 +143,15 @@ def difference_histogram_frame(summary: DifferenceSummary) -> pd.DataFrame:
     """Expose the core's histogram; no binning or equal-patient counting in the app."""
     return pd.DataFrame(
         [
-            {"Desde (min)": bin.left, "Hasta (min)": bin.right, "Pacientes": bin.n}
+            {
+                "Desde (min)": bin.left,
+                "Hasta (min)": bin.right,
+                "Pacientes": bin.n,
+                "Efecto": "Mejoran" if bin.right <= 0 else "Empeoran",
+            }
             for bin in summary.histogram
         ],
-        columns=["Desde (min)", "Hasta (min)", "Pacientes"],
+        columns=["Desde (min)", "Hasta (min)", "Pacientes", "Efecto"],
     )
 
 

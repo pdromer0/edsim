@@ -173,7 +173,7 @@ def comparison_templates(tmp_path_factory):
 
     root = tmp_path_factory.mktemp("comparison-app-templates")
     source = "tests/data/centro_ejemplo.toml"
-    for name in ("night", "assessment", "probability"):
+    for name in ("night", "assessment", "probability", "fractions", "shares"):
         values = read_center_values(source)
         if name == "night":
             values["recursos.medicos"][2] += 1
@@ -181,8 +181,15 @@ def comparison_templates(tmp_path_factory):
             values["duraciones.valoracion"] = [
                 value * 1.2 for value in values["duraciones.valoracion"]
             ]
-        else:
+        elif name == "probability":
             values["pruebas.probabilidad"][0] += 1e-12
+        elif name == "fractions":
+            values["triaje.reparto_niveles"] = [
+                value / 100 for value in values["triaje.reparto_niveles"]
+            ]
+        else:
+            values["triaje.reparto_niveles"][0] = 0.4
+            values["triaje.reparto_niveles"][2] = 33.5
         path = root / f"{name}.toml"
         write_variant(source, values, path)
         simulate_run(
@@ -200,7 +207,7 @@ def comparison_templates(tmp_path_factory):
 
 @pytest.fixture
 def paired_catalog(catalog, comparison_templates):
-    for name in ("night", "assessment", "probability"):
+    for name in ("night", "assessment", "probability", "fractions", "shares"):
         shutil.copytree(comparison_templates / name, catalog / name)
     return catalog
 
@@ -429,3 +436,53 @@ def test_no_completed_window_error_is_independent(catalog, run_id, side):
     )
     other = "B" if side == "A" else "A"
     assert any(item.value == f"Resultados disponibles de {other}" for item in app.subheader)
+
+
+def test_center_difference_uses_shared_spanish_staff_format(paired_catalog):
+    app = open_compare("older", "night")
+    assert not app.exception and not app.error
+    center = next(item.value for item in app.dataframe if "Clave del centro" in item.value)
+    assert center.to_dict("records") == [
+        {
+            "Parámetro": "Médicos",
+            "Clave del centro": "recursos.medicos",
+            "A": "[12; 12; 7]",
+            "B": "[12; 12; 8]",
+        }
+    ]
+
+
+@pytest.mark.parametrize("run_id", ["fractions", "shares"])
+def test_normalized_shares_have_no_false_changes_or_decimal_noise(paired_catalog, run_id):
+    app = open_compare("older", run_id)
+    assert not app.exception and not app.error
+    if run_id == "fractions":
+        assert any("Centro idéntico" in item.value for item in app.caption)
+        assert not any("Clave del centro" in item.value for item in app.dataframe)
+        assert any("mismos sorteos" in item.value for item in app.success)
+    else:
+        center = next(item.value for item in app.dataframe if "Clave del centro" in item.value)
+        assert center.to_dict("records") == [
+            {
+                "Parámetro": "Reparto de triaje (pesos)",
+                "Clave del centro": "triaje.reparto_niveles",
+                "A": "[0,003; 0,121; 0,336; 0,526; 0,014]",
+                "B": "[0,004; 0,121; 0,335; 0,526; 0,014]",
+            }
+        ]
+
+
+def test_metadata_creation_dates_use_fixed_utc_plus_one_and_whole_seconds(catalog):
+    from dataclasses import replace
+
+    store = RunStore(catalog)
+    for run_id, timestamp in (
+        ("older", "2026-07-03T23:30:00.123456+00:00"),
+        ("newer", "2026-01-03T23:45:59.987654+00:00"),
+    ):
+        replace(store.open(run_id), created_at=timestamp).write(catalog / run_id / "run.json")
+    app = open_compare()
+    assert not app.exception and not app.error
+    metadata = next(item.value for item in app.dataframe if "Campo" in item.value)
+    created = metadata.set_index("Campo").loc["Fecha de creación (UTC+1)"]
+    assert created.to_dict() == {"A": "04/07/2026 00:30:00", "B": "04/01/2026 00:45:59"}

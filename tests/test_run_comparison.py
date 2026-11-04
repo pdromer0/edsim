@@ -452,3 +452,40 @@ def test_ranking_ties_stable_and_limited_to_ten(hand_comparison):
     b = replace(b, analysis=replace(b.analysis, table=tuple(tb)))
     comparison = compare_runs(a, b, draws, draws)
     assert [row.episode_id for row in comparison.most_affected] == [f"EP-{i:06}" for i in range(10)]
+
+
+@pytest.mark.parametrize(
+    "deltas",
+    [
+        (-2.0, -0.05, 0.0, 0.02, 7.0),
+        (0.02, 0.04, 7.0),
+        (-2.0, -0.04, -0.02),
+        (2.0, 2.0, 2.0),
+    ],
+)
+def test_histogram_zero_is_exact_edge_and_no_bin_mixes_signs(hand_comparison, deltas):
+    a, b, truth = hand_comparison
+    tables = [[], []]
+    draws = {}
+    for index, delta in enumerate(deltas):
+        key = f"EP-{index:06}"
+        for table, stay in zip(tables, (max(0, -delta), max(0, delta)), strict=True):
+            table.append(
+                replace(a.analysis.table[0], episode_id=key, departure=stay, door_to_doctor=stay)
+            )
+        draws[key] = replace(next(iter(truth.values())), episode_id=key, arrival_id=index)
+    a = replace(a, analysis=replace(a.analysis, table=tuple(tables[0])))
+    b = replace(b, analysis=replace(b.analysis, table=tuple(tables[1])))
+    comparison = compare_runs(a, b, draws, draws)
+    for difference in comparison.differences:
+        histogram = difference.histogram
+        assert 1 <= len(histogram) <= 30
+        assert any(bin.left == 0.0 or bin.right == 0.0 for bin in histogram)
+        assert all(bin.left < bin.right for bin in histogram)
+        assert all(bin.right <= 0.0 or bin.left >= 0.0 for bin in histogram)
+        assert sum(bin.n for bin in histogram) == difference.improved + difference.worsened
+        assert sum(bin.n for bin in histogram if bin.right <= 0.0) == sum(d < 0 for d in deltas)
+        assert sum(bin.n for bin in histogram if bin.left >= 0.0) == sum(d > 0 for d in deltas)
+        assert difference.unchanged == deltas.count(0.0)
+        widths = [bin.right - bin.left for bin in histogram]
+        assert widths == pytest.approx([widths[0]] * len(widths))

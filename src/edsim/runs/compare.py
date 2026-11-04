@@ -293,7 +293,10 @@ class HistogramBin:
 
 @dataclass(frozen=True, slots=True)
 class DifferenceSummary:
-    """Patient changes as counts and fractions; histogram excludes unchanged patients."""
+    """Counts and fractions; up to 30 equal-width bins excluding unchanged patients.
+
+    Zero is an exact edge: no bin mixes improvements and worsenings.
+    """
 
     measure: Literal["stay", "door_to_doctor"]
     n: int
@@ -385,7 +388,14 @@ def _difference_summary(
     changing = [value for value in values if _change(value) != "unchanged"]
     histogram = ()
     if changing:
-        counts, edges = np.histogram(changing, bins=30)
+        if improved and worsened:
+            # A symmetric range keeps equal widths on both sides of zero.
+            extent = max(abs(value) for value in changing)
+            edges = np.linspace(-extent, extent, 31)
+            edges[15] = 0.0
+        else:
+            edges = np.linspace(min(0.0, min(changing)), max(0.0, max(changing)), 31)
+        counts, edges = np.histogram(changing, bins=edges)
         histogram = tuple(
             HistogramBin(float(left), float(right), int(count))
             for left, right, count in zip(edges[:-1], edges[1:], counts, strict=True)
