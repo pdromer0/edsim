@@ -5,6 +5,8 @@ import streamlit as st
 from edsim_app.replay import pause_replays_except
 from edsim_app.state import catalog_store, initialize_state, render_sidebar
 
+st.set_page_config(page_title="EDsim Lab")
+
 initialize_state(catalog_store())
 
 page = st.navigation(

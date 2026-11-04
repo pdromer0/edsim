@@ -31,6 +31,34 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
   a la app; si obligan al núcleo, van en la serie del núcleo. Las ADR de la fase 1
   y la entrada de su diario se escriben en A.8; las notas de cada tarea van en el PR.
 
+### Selección de tests `slow`
+
+El hook Stop excluye `slow`; el CI y la suite completa ejecutan todas las marcas.
+La selección de los AppTest que simulan se hace durante la colección en
+`tests/conftest.py`, sin editar los tests de caracterización de la A.5:
+
+- `pytest_collection_modifyitems` solo examina `test_compare.py`,
+  `test_episodes.py`, `test_navigation.py`, `test_results.py`, `test_runs.py` y
+  `test_simulate.py`. Dentro de esos ficheros, marca `slow` si `run_templates`
+  está en `item.fixturenames` (también por dependencias transitivas, como
+  `catalog`) o si `item.originalname` pertenece a `_SIMULATION_TESTS`, que recoge
+  los casos de simulación o carga prevista que no usan esa fixture.
+- `test_smoke.py` se excluye expresamente de esa selección, aunque use el
+  catálogo: conserva un humo con datos reales por cada una de las seis páginas
+  en la suite rápida. `test_replay.py` y `test_replay_links.py` usan una marca
+  explícita de módulo, `pytestmark = pytest.mark.slow`.
+- Un fichero nuevo que simule no queda marcado automáticamente por usar
+  `run_templates`. Añádelo a la selección de `conftest.py` si corresponde al
+  mismo criterio, o marca sus tests explícitamente con `@pytest.mark.slow`
+  (o `pytestmark` si todo el fichero es lento). Si simula sin esa fixture,
+  necesita una marca explícita o incorporarse también a `_SIMULATION_TESTS`
+  dentro de un fichero examinado. No basta con añadirlo solo a la lista de
+  ficheros.
+- Comprueba ambos conjuntos con `pytest --collect-only -m "not slow"` y
+  `pytest --collect-only -m slow`, usando el comando de la app desde la raíz.
+  Los seis humos deben seguir en el conjunto rápido y las integraciones largas,
+  en el lento.
+
 ## Comandos desde la raíz del repositorio
 
 Los comandos de git que escriben en `.git` se piden directamente fuera del sandbox.
