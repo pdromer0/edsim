@@ -15,6 +15,16 @@ from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.targets import Compliance
+from edsim.runs.compare import (
+    DRAW_EFFECTS,
+    DrawDifference,
+    DrawField,
+    MetadataDifference,
+    PairingCheckError,
+    PairingInfo,
+    PairingKind,
+    pairing_blockers,
+)
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
 from edsim.runs.episodes import (
     Displacement,
@@ -67,6 +77,14 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "DRAW_EFFECTS",
+    "DrawDifference",
+    "DrawField",
+    "MetadataDifference",
+    "PairingCheckError",
+    "PairingInfo",
+    "PairingKind",
+    "pairing_blockers",
     "ArrivalProfile",
     "CenterConfig",
     "CenterDifference",
