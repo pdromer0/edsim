@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from fragment_runner import FragmentRunner
 from streamlit.testing.v1 import AppTest
 
 import edsim_app
@@ -308,3 +309,93 @@ def test_episodes_help_explains_censoring_and_lab_work(catalog):
     text = " ".join(item.value for item in box.markdown)
     assert "cota inferior" in text and "Las pruebas siguen aunque pierda el box" in text
     assert "parcial" in text and "UTC+1 fijo" in text
+
+
+def test_fragment_selection_and_truth_do_not_rebuild_table_or_initialize_state(
+    catalog, monkeypatch
+):
+    import edsim_app.frames as frames
+    import edsim_app.state as state
+
+    frame = Mock(wraps=frames.episodes_frame)
+    initialize = Mock(wraps=state.initialize_state)
+    monkeypatch.setattr(frames, "episodes_frame", frame)
+    monkeypatch.setattr(state, "initialize_state", initialize)
+    with FragmentRunner() as runner:
+        app = open_episodes()
+        assert frame.call_count == 1
+        before_initializations = initialize.call_count
+        before_table = app.dataframe[0].value.copy(deep=True)
+        table_bytes = app.dataframe[0].proto.arrow_data.data
+        app.selectbox(key="episode_choice_widget").select("EP-000000")
+        runner.run_fragment(app)
+        assert not app.exception and app.metric and app.get("vega_lite_chart")
+        assert app.query_params["run"] == "older" and app.query_params["episodio"] == "EP-000000"
+        assert frame.call_count == 1 and initialize.call_count == before_initializations
+        assert app.dataframe[0].value.equals(before_table)
+        assert app.dataframe[1].value["event_type"].iloc[0] == "patient_arrived"
+        sent_frames = [
+            message.delta.new_element.dataframe
+            for message in runner.new_messages
+            if message.HasField("delta") and message.delta.new_element.HasField("dataframe")
+        ]
+        assert len(sent_frames) == 1
+        assert all(frame.arrow_data.data != table_bytes for frame in sent_frames)
+        assert len(app.expander) >= 3
+        app.toggle(key="episode_truth_widget").set_value(True)
+        runner.run_fragment(app)
+        assert not app.exception and len(app.dataframe[2].value) == 6
+        assert "Discrepancia" not in app.dataframe[2].value["Estado"].tolist()
+        sent_frames = [
+            message.delta.new_element.dataframe
+            for message in runner.new_messages
+            if message.HasField("delta") and message.delta.new_element.HasField("dataframe")
+        ]
+        assert len(sent_frames) == 2
+        assert all(frame.arrow_data.data != table_bytes for frame in sent_frames)
+        assert frame.call_count == 1 and initialize.call_count == before_initializations
+        assert runner.partial_runs == 2
+        app.selectbox(key="episode_choice_widget").select(None)
+        runner.run_fragment(app)
+        assert not app.exception and not app.metric and not app.get("vega_lite_chart")
+        assert "episodio" not in app.query_params and app.query_params["run"] == "older"
+        assert frame.call_count == 1
+
+
+def test_filter_after_partial_run_rebuilds_table_and_hides_excluded_card(catalog, monkeypatch):
+    import edsim_app.frames as frames
+
+    frame = Mock(wraps=frames.episodes_frame)
+    monkeypatch.setattr(frames, "episodes_frame", frame)
+    with FragmentRunner() as runner:
+        app = open_episodes()
+        level = int(app.dataframe[0].value["Nivel"].iloc[0])
+        app.selectbox(key="episode_choice_widget").select("EP-000000")
+        runner.run_fragment(app)
+        assert not app.exception and app.metric and frame.call_count == 1
+        app.selectbox(key="episode_filter_level_widget").select(level % 5 + 1).run()
+        assert not app.exception and frame.call_count == 2
+        assert "no pasa los filtros" in app.warning[0].value
+        assert not app.metric and not app.get("vega_lite_chart")
+        assert app.query_params["episodio"] == "EP-000000"
+
+
+def test_partial_selection_survives_navigation_and_stays_per_run(catalog):
+    with FragmentRunner() as runner:
+        app = open_episodes()
+        app.selectbox(key="episode_choice_widget").select("EP-000000")
+        runner.run_fragment(app)
+        assert not app.exception and app.query_params["episodio"] == "EP-000000"
+        change_run(app, "newer")
+        assert not app.metric and app.selectbox(key="episode_choice_widget").value is None
+        app.selectbox(key="episode_choice_widget").select("EP-000001")
+        runner.run_fragment(app)
+        assert app.query_params["episodio"] == "EP-000001" and not app.exception
+        change_run(app, "older")
+        assert app.selectbox(key="episode_choice_widget").value == "EP-000000"
+        assert app.metric and app.query_params["episodio"] == "EP-000000"
+        app.query_params.clear()
+        app.switch_page("views/results.py").run()
+        app.switch_page("views/episodes.py").run()
+        assert not app.exception and app.metric
+        assert app.query_params["episodio"] == "EP-000000"

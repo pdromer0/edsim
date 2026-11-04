@@ -27,8 +27,9 @@ def sync_episode_query(root: str, run_id: str, fingerprint: str) -> None:
 
 
 def remember_episode(identity: tuple[str, str, str]) -> None:
-    """Copy widget selection into the persistent per-run map."""
+    """Persist selection and update its URL even during a fragment-only rerun."""
     st.session_state.episode_choices[identity] = st.session_state.episode_choice_widget
+    sync_episode_query(*identity)
 
 
 def episode_filter_values(last_day: int) -> dict:

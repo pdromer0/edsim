@@ -156,6 +156,37 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
             st.warning("Hay discrepancias entre lo sorteado y lo observado.")
 
 
+@st.fragment(key="episode_card")
+def render_episode_browser(
+    result: RunResults,
+    filtered: tuple[EpisodeRecord, ...],
+    identity: tuple[str, str, str],
+) -> None:
+    """Rerun selection and card widgets without rebuilding the episode table."""
+    requested = st.session_state.episode_choices.get(identity)
+    identifiers = [record.episode_id for record in filtered]
+    st.session_state.episode_choice_widget = requested if requested in identifiers else None
+    st.selectbox(
+        "Episodio",
+        identifiers,
+        index=None,
+        key="episode_choice_widget",
+        placeholder="Elige un episodio",
+        on_change=remember_episode,
+        args=(identity,),
+    )
+    if requested is not None and requested not in identifiers:
+        exists = any(record.episode_id == requested for record in result.analysis.table)
+        st.warning(
+            f"El episodio «{requested}» "
+            + ("no pasa los filtros actuales." if exists else "no existe en esta ejecución.")
+        )
+        return
+    if requested is not None:
+        record = next(record for record in result.analysis.table if record.episode_id == requested)
+        render_card(record, result, identity[0], identity[2])
+
+
 st.title("Episodios")
 selected = st.session_state.selected_run_id
 if selected is None:
@@ -188,25 +219,4 @@ frame = episodes_frame(filtered, result)
 with pd.option_context("styler.render.max_elements", max(262144, frame.size)):
     st.dataframe(style_episodes(frame), hide_index=True, width="stretch")
 identity = episode_identity(str(store.root), selected, fingerprint)
-requested = st.session_state.episode_choices.get(identity)
-identifiers = [record.episode_id for record in filtered]
-st.session_state.episode_choice_widget = requested if requested in identifiers else None
-st.selectbox(
-    "Episodio",
-    identifiers,
-    index=None,
-    key="episode_choice_widget",
-    placeholder="Elige un episodio",
-    on_change=remember_episode,
-    args=(identity,),
-)
-if requested is not None and requested not in identifiers:
-    exists = any(record.episode_id == requested for record in result.analysis.table)
-    st.warning(
-        f"El episodio «{requested}» "
-        + ("no pasa los filtros actuales." if exists else "no existe en esta ejecución.")
-    )
-    st.stop()
-if requested is not None:
-    record = next(record for record in result.analysis.table if record.episode_id == requested)
-    render_card(record, result, str(store.root), fingerprint)
+render_episode_browser(result, filtered, identity)
