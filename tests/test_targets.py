@@ -18,27 +18,41 @@ from edsim.engine.targets import (
 DAY = 1440.0
 
 
-def record(n: int, arrival: float, level: int, door: float, *, departed: bool = True, box=0.0):
-    """Un episodio que llega en ``arrival`` y ve al médico ``door`` minutos después."""
+def record(
+    n: int,
+    arrival: float,
+    level: int,
+    door: float,
+    *,
+    departed: bool = True,
+    box=0.0,
+    triage: float = 0.0,
+    pretriage: float = 0.0,
+):
+    """Un episodio que llega en ``arrival`` y ve al médico ``door`` minutos después.
+
+    Espera ``pretriage`` a la enfermera y su triaje dura ``triage``. Sin ellos los tres
+    relojes valen ``door``; con ellos, B = door − pretriaje y C = door − pretriaje − triaje.
+    """
     return EpisodeRecord(
         episode_id=f"EP-{n:06d}",
         arrival=arrival,
-        triage_start=arrival,
-        triage_end=arrival + 5,
+        triage_start=arrival + pretriage,
+        triage_end=arrival + pretriage + triage,
         level=level,
-        first_box=arrival + 5,
+        first_box=arrival + pretriage + triage,
         first_assessment=arrival + door,
         decision=arrival + door + 20 if departed else None,
         departure=arrival + door + 20 if departed else None,
         destination="alta" if departed else None,
         displacements=0,
-        triage_wait=0.0,
+        triage_wait=pretriage,
         box_wait=box if departed else None,
         doctor_wait=0.0 if departed else None,
         initial_doctor_wait=0.0,
         door_to_doctor=door,
-        triage_start_to_doctor=door,  # triaje desde la llegada
-        classified_to_doctor=door - 5,  # clasificado 5 minutos después
+        triage_start_to_doctor=door - pretriage,
+        classified_to_doctor=door - pretriage - triage,
     )
 
 
@@ -112,6 +126,31 @@ def test_otro_objetivo_y_otros_maximos():
     table = [record(i, 10 + i, 3, 70.0 if i < 2 else 20.0) for i in range(10)]
     assert not manchester_compliance(table, 0, 1, target=0.8).out[0, 2]
     assert not manchester_compliance(table, 0, 1, max_wait=(0, 10, 80, 120, 240)).out[0, 2]
+
+
+def test_cumplimiento_usa_el_reloj_c_por_defecto():
+    # Nivel 2 (máximo 10): llega en 100, espera enfermera 2, triaje 5 y médico 5 minutos
+    # después de clasificarse. A = 12 (no cumple), B = 10 (cumple justo), C = 5 (cumple).
+    table = (record(0, 100, 2, 12.0, pretriage=2.0, triage=5.0),)
+
+    c = manchester_compliance(table, 0, 1)
+    assert c.measure == "classified_to_doctor"
+    assert c.within[0, 1] == 1.0 and not c.out[0, 1]
+
+    a = manchester_compliance(table, 0, 1, measure="door_to_doctor")
+    assert a.measure == "door_to_doctor"
+    assert a.within[0, 1] == 0.0 and a.out[0, 1]
+
+    b = manchester_compliance(table, 0, 1, measure="triage_start_to_doctor")
+    assert b.within[0, 1] == 1.0
+    # Sigue devolviendo los cinco niveles.
+    assert c.n.shape == (1, 5) and len(c.max_wait) == 5
+
+
+@pytest.mark.parametrize("measure", ["stay", "triage_wait", "reloj"])
+def test_cumplimiento_solo_con_un_reloj(measure):
+    with pytest.raises(ValueError, match="measure"):
+        manchester_compliance(TABLE, 1, 3, measure=measure)
 
 
 @pytest.mark.parametrize(

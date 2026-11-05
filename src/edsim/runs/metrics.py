@@ -70,18 +70,26 @@ class WindowCompliance:
     by_level: tuple[LevelCompliance, ...]
 
 
+APP_COMPLIANCE_MEASURE = "door_to_doctor"
+"""Clock the app shows for Manchester: A, until task 4.8a moves it to C."""
+
+
 def window_compliance(
     table: Sequence[EpisodeRecord], first_day: int, end_day: int
 ) -> WindowCompliance:
-    """Use Manchester's daily targets in [first_day, end_day), pooling patients."""
-    daily = manchester_compliance(table, first_day, end_day)
+    """Use Manchester's daily targets in [first_day, end_day), pooling patients.
+
+    Measured with ``APP_COMPLIANCE_MEASURE``, passed explicitly so that the
+    default of ``manchester_compliance`` (clock C) does not change the app.
+    """
+    daily = manchester_compliance(table, first_day, end_day, measure=APP_COMPLIANCE_MEASURE)
     done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
     shares = daily.share_out
     levels = []
     for index, maximum in enumerate(daily.max_wait):
         patients = [e for e in done if e.level == index + 1]
         n = len(patients)
-        exceeded = sum(e.door_to_doctor > maximum for e in patients)
+        exceeded = sum(getattr(e, daily.measure) > maximum for e in patients)
         levels.append(
             LevelCompliance(
                 index + 1,

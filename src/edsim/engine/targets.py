@@ -30,6 +30,15 @@ al.), as in the table of calibration targets of docs/diseno.md ("Manual del
 sistema Manchester"). "Immediate" is 0: any wait misses it.
 """
 
+CLOCKS = ("door_to_doctor", "triage_start_to_doctor", "classified_to_doctor")
+"""The three clocks to the first doctor (docs/specs/hito-4.md, "Relojes y
+cumplimiento"): from the arrival (A), from the start of the triage (B) and
+from the classification (C)."""
+
+COMPLIANCE_MEASURE = "classified_to_doctor"
+"""Clock of the Manchester compliance: C. Before the triage there is no level,
+and a maximum not assigned yet cannot be missed (ADR candidate 40)."""
+
 COMPLIANCE_TARGET = 0.90
 """Share of the patients of a level and day that must see a doctor within the
 maximum time; a day below it is out of target for that level."""
@@ -102,9 +111,10 @@ def daily_waits(
 
 @dataclass(frozen=True)
 class Compliance:
-    """Door to doctor against the Manchester maximum times, by day and level.
+    """A clock to the doctor against the Manchester maximum times, by day and level.
 
     Attributes:
+        measure: The clock, a name of ``CLOCKS``.
         days: Day of each row, counted from day 0 of the run.
         n: Episodes of each day and level, shape ``(days, 5)``.
         within: Share of them that saw a doctor within the maximum time;
@@ -115,6 +125,7 @@ class Compliance:
         target: The share required.
     """
 
+    measure: str
     days: np.ndarray
     n: np.ndarray
     within: np.ndarray
@@ -140,13 +151,16 @@ def manchester_compliance(
     first_day: int,
     end_day: int,
     *,
+    measure: str = COMPLIANCE_MEASURE,
     max_wait: Sequence[float] = MANCHESTER_MAX_WAIT,
     target: float = COMPLIANCE_TARGET,
 ) -> Compliance:
-    """Share of patients within the maximum door-to-doctor time, by day and level.
+    """Share of patients within the maximum time to the doctor, by day and level.
 
-    A patient complies if its ``door_to_doctor`` is at most the maximum of its
-    level (exactly at the maximum complies). A day is out of target for a
+    A patient complies if its ``measure`` is at most the maximum of its level
+    (exactly at the maximum complies). The default is clock C, from the
+    classification; the app and notebook 03 pass ``door_to_doctor`` (clock A)
+    until task 4.8a. A day is out of target for a
     level if the share of its patients that comply is below ``target``; a day
     without patients of the level is not counted.
 
@@ -154,12 +168,16 @@ def manchester_compliance(
         table: The episodes of the log, from ``episode_table``.
         first_day: First day, such as the warm-up days.
         end_day: Day after the last, such as the horizon in days.
+        measure: The clock, a name of ``CLOCKS``.
         max_wait: Maximum time of each level, 1 to 5.
         target: Share of the patients required, in (0, 1].
 
     Raises:
-        ValueError: If the days, ``max_wait`` or ``target`` are not valid.
+        ValueError: If the measure, the days, ``max_wait`` or ``target`` are
+            not valid.
     """
+    if measure not in CLOCKS:
+        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
     first_day, end_day = _check_days(first_day, end_day)
     max_wait = tuple(float(m) for m in max_wait)
     if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
@@ -167,7 +185,7 @@ def manchester_compliance(
     if not 0 < target <= 1:
         raise ValueError(f"target must be in (0, 1], got {target!r}")
 
-    values = _by_day_and_level(table, "door_to_doctor", first_day, end_day)
+    values = _by_day_and_level(table, measure, first_day, end_day)
     n = np.array([[len(v) for v in day] for day in values], dtype=np.int64)
     within = np.array(
         [
@@ -177,4 +195,6 @@ def manchester_compliance(
         dtype=float,
     )
     out = (n > 0) & ~(within >= target)
-    return Compliance(np.arange(first_day, end_day), n, within, out, max_wait, float(target))
+    return Compliance(
+        measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
+    )
