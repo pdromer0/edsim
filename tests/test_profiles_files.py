@@ -64,11 +64,11 @@ def test_valores_del_ejemplo(example):
     assert example.population.ambulance_pct == (6.0, 10.0, 21.0, 34.0)
     assert example.reason("disnea").base_weight == 7.388
     assert example.reason("disnea").age_factors == (0.4, 0.8, 1.8, 2.4)
-    assert example.reason("disnea").severity.mean == 0.95
+    assert example.reason("disnea").severity.mean == 0.94
     assert example.reason("parada").severity.age_shift == (0.0,) * 4
     # Derivados y calibrados escritos: cargar no los recalcula.
-    assert example.triage.thresholds == (3.088, 1.149, -0.044, -2.178)
-    assert (example.triage.noise, example.triage.bias) == (0.335, -0.082)
+    assert example.triage.thresholds == (3.260, 1.140, -0.044, -2.163)
+    assert (example.triage.noise, example.triage.bias) == (0.333, -0.081)
     # Motivos sin factores: todos valen 1.
     for key in ("dolor_abdominal", "digestivo", "otros"):
         r = example.reason(key)
@@ -159,7 +159,7 @@ def test_reparto_asignado_con_los_umbrales_recalculados(path):
 
 @FILES
 def test_reparto_asignado_con_los_umbrales_escritos(path):
-    # Redondeados a 3 decimales: a menos de 0,05 puntos del objetivo (0,007 en la 4.3).
+    # Redondeados a 3 decimales: a menos de 0,05 puntos del objetivo (0,015 en la 4.3).
     t = load_profiles(path).triage
     shares = assigned_shares(mixture_of(path), t.thresholds, t.noise, t.bias)
 
@@ -168,7 +168,7 @@ def test_reparto_asignado_con_los_umbrales_escritos(path):
 
 @FILES
 def test_infra_y_sobretriaje_en_su_objetivo(path):
-    # Con los valores escritos: 10,11 % y 6,30 % en la 4.3.
+    # Con los valores escritos: 10,10 % y 6,28 % en la 4.3.
     t = load_profiles(path).triage
     under, over = triage_error_rates(triage_matrix(mixture_of(path), t.thresholds, t.noise, t.bias))
 
@@ -217,7 +217,7 @@ def test_los_variables_tienen_mas_desviacion(path):
 def test_shock_con_los_umbrales_escritos(tmp_path):
     # Protege la decisión de escribir los umbrales: un escenario con la disnea
     # ×1,5 (peso base 7,388 → 11,082) se carga con los umbrales del perfil base,
-    # y la proporción asignada de nivel 2 sube del 12,09 % al 13,09 %. Si los
+    # y la proporción asignada de nivel 2 sube del 12,09 % al 13,10 %. Si los
     # umbrales se recalcularan al cargar, volvería al 12,09 % y el shock
     # desaparecería.
     text = EXAMPLE.read_text(encoding="utf-8")
@@ -231,6 +231,6 @@ def test_shock_con_los_umbrales_escritos(tmp_path):
     base = assigned_shares(mixture_of(EXAMPLE), t.thresholds, t.noise, t.bias)
     shock = assigned_shares(severity_mixture(profiles, arrivals), t.thresholds, t.noise, t.bias)
 
-    assert 100 * base[1] == pytest.approx(12.0947, abs=1e-4)
-    assert 100 * shock[1] == pytest.approx(13.0853, abs=1e-4)
-    assert 100 * shock[0] == pytest.approx(0.4270, abs=1e-4)  # también más niveles 1
+    assert 100 * base[1] == pytest.approx(12.0852, abs=1e-4)
+    assert 100 * shock[1] == pytest.approx(13.0953, abs=1e-4)
+    assert 100 * shock[0] == pytest.approx(0.4074, abs=1e-4)  # también más niveles 1

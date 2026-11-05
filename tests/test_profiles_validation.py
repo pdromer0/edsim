@@ -184,15 +184,15 @@ def test_detectable_share_crece_con_menos_pacientes():
 # Con los perfiles de ejemplo y una potencia del 80 %, el χ² detecta:
 #
 # - un año (109 542 pacientes): el nivel 1 asignado del 0,40 % al 0,49 %; el 2,
-#   del 12,09 % al 12,53 %; el 5, del 1,40 % al 1,56 %; la casilla real 1 →
-#   asignado 2, del 0,113 % al 0,160 %; la real 3 → asignado 2, del 2,14 % al 2,34 %;
+#   del 12,09 % al 12,52 %; el 5, del 1,40 % al 1,56 %; la casilla real 1 →
+#   asignado 2, del 0,117 % al 0,164 %; la real 3 → asignado 2, del 2,15 % al 2,35 %;
 # - 20 000 pacientes (el test rápido): el nivel 1 asignado del 0,40 % al 0,61 %;
-#   el 2, del 12,09 % al 13,12 %; la casilla real 1 → asignado 2, del 0,113 % al
-#   0,227 %; la real 3 → asignado 2, del 2,14 % al 2,60 %.
+#   el 2, del 12,09 % al 13,11 %; la casilla real 1 → asignado 2, del 0,117 % al
+#   0,232 %; la real 3 → asignado 2, del 2,15 % al 2,61 %.
 #
 # Las 12 casillas a dos niveles o más de la diagonal esperan menos de 5 pacientes
 # y usan la binomial exacta. Diez esperan menos de 1e-5 pacientes: fallan con
-# uno solo. En un año, la real 2 → asignado 4 (0,73 esperados) falla con 6 y la
+# uno solo. En un año, la real 2 → asignado 4 (0,75 esperados) falla con 6 y la
 # real 4 → asignado 2 (0,25), con 4.
 
 TRIAGE_N = 20_000
@@ -220,20 +220,20 @@ def test_potencia_del_triaje_escrita_en_el_test(profiles, arrivals, exact):
     assert N_TRIAGE_CATEGORIES == 30
     assert year == 109_542
     assigned = exact.sum(axis=0)
-    for n, level, p1 in [(year, 0, 0.00486), (year, 1, 0.12532), (year, 4, 0.01559)]:
+    for n, level, p1 in [(year, 0, 0.00486), (year, 1, 0.12523), (year, 4, 0.01557)]:
         assert detectable_share(assigned[level], n, alpha) == pytest.approx(p1, abs=1e-5)
-    for n, level, p1 in [(TRIAGE_N, 0, 0.00606), (TRIAGE_N, 1, 0.13123)]:
+    for n, level, p1 in [(TRIAGE_N, 0, 0.00606), (TRIAGE_N, 1, 0.13113)]:
         assert detectable_share(assigned[level], n, alpha) == pytest.approx(p1, abs=1e-5)
     for n, cell, p1 in [
-        (year, (0, 1), 0.00160),
-        (year, (2, 1), 0.02337),
-        (TRIAGE_N, (0, 1), 0.00227),
-        (TRIAGE_N, (2, 1), 0.02604),
+        (year, (0, 1), 0.00164),
+        (year, (2, 1), 0.02346),
+        (TRIAGE_N, (0, 1), 0.00232),
+        (TRIAGE_N, (2, 1), 0.02614),
     ]:
         assert detectable_share(exact[cell], n, alpha) == pytest.approx(p1, abs=1e-5)
     # Casillas con menos de 5 esperados: 12 en un año.
     assert np.sum(year * exact < MIN_EXPECTED) == 12
-    assert year * exact[1, 3] == pytest.approx(0.735, abs=1e-3)
+    assert year * exact[1, 3] == pytest.approx(0.747, abs=1e-3)
 
 
 def test_triaje_con_20000_pacientes(profiles, arrivals):
@@ -251,8 +251,8 @@ def test_triaje_con_20000_pacientes(profiles, arrivals):
 
 def test_detecta_mas_ruido_de_triaje(profiles, arrivals, exact):
     # El muestreador sortea con ruido 0,40 y los mismos umbrales; la hipótesis es
-    # el perfil (0,335). La casilla real 3 → asignado 2 pasa del 2,14 % al 2,80 %:
-    # potencia del 99,4 % con 20 000 pacientes.
+    # el perfil (0,333). La casilla real 3 → asignado 2 pasa del 2,15 % al 2,84 %:
+    # potencia del 99,6 % con 20 000 pacientes.
     sampled = with_noise(profiles, 0.40)
     t = profiles.triage
     wrong = triage_matrix(severity_mixture(profiles, arrivals), t.thresholds, 0.40, t.bias)
@@ -270,7 +270,7 @@ def test_detecta_mas_ruido_de_triaje(profiles, arrivals, exact):
 def test_detecta_un_salto_imposible(profiles, arrivals):
     # Con ruido 1,5 en el muestreador, aparecen pacientes a dos niveles de la
     # diagonal, en casillas que la hipótesis da por casi vacías (real 3 →
-    # asignado 1: 1,6e-7 esperados con 20 000): las prueba la binomial.
+    # asignado 1: 3,6e-9 esperados con 20 000): las prueba la binomial.
     t = profiles.triage
     sampled = dataclasses.replace(profiles, triage=dataclasses.replace(t, noise=1.5))
 

@@ -229,15 +229,15 @@ def _quad_matrix(mean, sd, thresholds, noise, bias):
     [
         (0.0, 1.0),
         (0.38, 1.14),  # ancha, como los motivos «variable»
-        (2.94, 0.47),  # estrecha y en la cola, como la parada
+        (3.38, 0.38),  # estrecha y en la cola, como la parada
         (-0.85, 0.57),  # estrecha y baja, como ORL
     ],
 )
 def test_matriz_contra_quad(mean, sd):
-    thresholds = (3.09, 1.15, -0.04, -2.18)
-    exact = triage_matrix(mixture([1.0], [mean], [sd]), thresholds, 0.335, -0.082)
+    thresholds = (3.26, 1.14, -0.04, -2.16)
+    exact = triage_matrix(mixture([1.0], [mean], [sd]), thresholds, 0.333, -0.081)
 
-    np.testing.assert_allclose(exact, _quad_matrix(mean, sd, thresholds, 0.335, -0.082), atol=1e-11)
+    np.testing.assert_allclose(exact, _quad_matrix(mean, sd, thresholds, 0.333, -0.081), atol=1e-11)
 
 
 def test_filas_y_columnas_de_la_matriz():

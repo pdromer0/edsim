@@ -46,9 +46,9 @@ ambulancia = [6, 10, 21, 34]
 # la columna «Gravedad típica» del catálogo (muy alta > media-alta > media >
 # baja-media > baja) y los motivos «variable» tienen más desviación.
 # Los valores de juicio clínico se escribieron en una escala libre y después se
-# desplazaron y escalaron igual en todos los motivos, x' = (x + 0,106) / 1,057
+# desplazaron y escalaron igual en todos los motivos, x' = (x + 0,104) / 1,065
 # (por_edad y desviacion solo se dividen), para que la mezcla de un año del perfil
-# de llegadas tenga media 0 y desviación 1. Al redondear quedan 0,0004 y 1,0003.
+# de llegadas tenga media 0 y desviación 1. Al redondear quedan 0,0014 y 1,0002.
 # Un desplazamiento y una escala comunes no cambian ningún nivel: los umbrales se
 # mueven con ellos.
 
@@ -64,13 +64,13 @@ gravedad = { media = -0.56, por_edad = [-0.09, 0.0, 0.09, 0.38], desviacion = 0.
 [motivos.dolor_abdominal]
 nombre = "Dolor abdominal"
 peso_base = 10.673                  # derivado; sin factores: todas las edades, sin patrón claro
-gravedad = { media = 0.29, por_edad = [-0.19, 0.0, 0.19, 0.47], desviacion = 0.76 }   # orientativo, media: gastroenteritis y cólicos frente a abdomen agudo; isquemia y perforación atenuadas en mayores
+gravedad = { media = 0.29, por_edad = [-0.19, 0.0, 0.19, 0.47], desviacion = 0.75 }   # orientativo, media: gastroenteritis y cólicos frente a abdomen agudo; isquemia y perforación atenuadas en mayores
 
 [motivos.fiebre]
 nombre = "Fiebre / infección"
 peso_base = 8.340                   # derivado
 estacion = [1.4, 1.0, 0.7, 1.0]     # orientativo: gripe y VRS en invierno
-gravedad = { media = -0.18, por_edad = [-0.19, 0.0, 0.28, 0.47], desviacion = 0.76 }   # orientativo, baja-media: viriasis en jóvenes; neumonía y sepsis en mayores
+gravedad = { media = -0.18, por_edad = [-0.19, 0.0, 0.28, 0.47], desviacion = 0.75 }   # orientativo, baja-media: viriasis en jóvenes; neumonía y sepsis en mayores
 
 [motivos.disnea]
 nombre = "Disnea / respiratorio"
@@ -78,33 +78,33 @@ peso_base = 7.388                   # derivado
 edad = [0.4, 0.8, 1.8, 2.4]         # orientativo: EPOC e insuficiencia cardiaca en mayores
 franja = [1.0, 1.0, 1.2]            # orientativo: disnea paroxística nocturna de la insuficiencia cardiaca
 estacion = [1.5, 1.0, 0.7, 1.0]     # orientativo: infecciones respiratorias de invierno
-gravedad = { media = 0.95, por_edad = [-0.38, 0.0, 0.19, 0.38], desviacion = 0.85 }   # orientativo, media-alta: asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores
+gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.38], desviacion = 0.85 }   # orientativo, media-alta: asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores
 
 [motivos.malestar]
 nombre = "Malestar general / debilidad"
 peso_base = 5.611                   # derivado
 edad = [0.5, 0.9, 1.8, 2.5]         # orientativo: fragilidad y pluripatología
-gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.28], desviacion = 0.76 }   # orientativo, media: inespecífico; en frágiles esconde sepsis o descompensación
+gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.28], desviacion = 0.75 }   # orientativo, media: inespecífico; en frágiles esconde sepsis o descompensación
 
 [motivos.dolor_toracico]
 nombre = "Dolor torácico"
 peso_base = 5.327                   # derivado
 edad = [0.6, 1.3, 1.4, 1.2]         # orientativo: cardiopatía isquémica de 45 a 79; en ≥80 se presenta atípica
 estacion = [1.1, 1.0, 0.9, 1.0]     # orientativo: más síndromes coronarios en invierno
-gravedad = { media = 0.95, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.76 }   # orientativo, media-alta: mecánico o ansiedad en jóvenes; síndrome coronario desde los 45
+gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media-alta: mecánico o ansiedad en jóvenes; síndrome coronario desde los 45
 
 [motivos.neurologico]
 nombre = "Neurológico"
 peso_base = 4.975                   # derivado
 edad = [0.7, 1.0, 1.5, 1.7]         # orientativo: el ictus aumenta con la edad
-gravedad = { media = 0.38, por_edad = [-0.28, 0.0, 0.28, 0.38], desviacion = 1.14 }   # orientativo, variable: cefalea y vértigo frente a ictus, que crece con la edad
+gravedad = { media = 0.38, por_edad = [-0.28, 0.0, 0.28, 0.38], desviacion = 1.13 }   # orientativo, variable: cefalea y vértigo frente a ictus, que crece con la edad
 
 [motivos.sincope]
 nombre = "Síncope / mareo"
 peso_base = 3.787                   # derivado
 edad = [0.7, 0.8, 1.5, 2.0]         # orientativo: ortostatismo, fármacos y arritmias en mayores
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: calor, deshidratación e hipotensión en verano
-gravedad = { media = 0.29, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.76 }   # orientativo, media: vasovagal en jóvenes; arritmia o hemorragia en mayores
+gravedad = { media = 0.29, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media: vasovagal en jóvenes; arritmia o hemorragia en mayores
 
 [motivos.urologico]
 nombre = "Urológico / renal"
@@ -119,7 +119,7 @@ peso_base = 4.136                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable, no se acude de madrugada
 dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [0.9, 1.2, 1.2, 0.9]     # orientativo: alergias estacionales, picaduras y quemaduras solares
-gravedad = { media = -0.75, desviacion = 0.57 }   # orientativo, baja: banal; la anafilaxia es la cola
+gravedad = { media = -0.75, desviacion = 0.56 }   # orientativo, baja: banal; la anafilaxia es la cola
 
 [motivos.orl]
 nombre = "ORL / oftalmológico"
@@ -127,19 +127,19 @@ peso_base = 4.247                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable
 dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [1.2, 1.0, 0.9, 1.0]     # orientativo: otitis y faringitis de invierno
-gravedad = { media = -0.85, desviacion = 0.57 }   # orientativo, baja: otitis, faringitis, cuerpo extraño ocular
+gravedad = { media = -0.84, desviacion = 0.56 }   # orientativo, baja: otitis, faringitis, cuerpo extraño ocular
 
 [motivos.digestivo]
 nombre = "Digestivo"
 peso_base = 4.269                   # derivado; sin factores: variable, sin patrón claro
-gravedad = { media = -0.09, por_edad = [-0.19, 0.0, 0.19, 0.38], desviacion = 1.04 }   # orientativo, variable: gastroenteritis frente a hemorragia digestiva
+gravedad = { media = -0.09, por_edad = [-0.19, 0.0, 0.19, 0.38], desviacion = 1.03 }   # orientativo, variable: gastroenteritis frente a hemorragia digestiva
 
 [motivos.psiquiatrico]
 nombre = "Psiquiátrico"
 peso_base = 3.040                   # derivado
 edad = [1.4, 1.0, 0.5, 0.4]         # orientativo: crisis de ansiedad y debuts en jóvenes
 franja = [1.0, 1.0, 1.3]            # orientativo: crisis y agitación nocturnas
-gravedad = { media = 0.20, desviacion = 0.76 }   # orientativo, media: ansiedad frente a agitación o ideación suicida; sin patrón por edad
+gravedad = { media = 0.19, desviacion = 0.75 }   # orientativo, media: ansiedad frente a agitación o ideación suicida; sin patrón por edad
 
 [motivos.palpitaciones]
 nombre = "Palpitaciones / arritmia"
@@ -153,18 +153,18 @@ peso_base = 1.342                   # derivado
 edad = [2.0, 0.8, 0.3, 0.2]         # orientativo: alcohol y drogas en jóvenes
 franja = [1.0, 1.0, 1.8]            # orientativo: ocio nocturno
 dia = [1.0, 1.7]                    # orientativo: fin de semana; noche × fin de semana = 3,06 (el «×3» de la especificación)
-gravedad = { media = 0.10, desviacion = 1.14 }   # orientativo, variable: embriaguez leve frente a sobredosis o coma
+gravedad = { media = 0.10, desviacion = 1.13 }   # orientativo, variable: embriaguez leve frente a sobredosis o coma
 
 [motivos.parada]
 nombre = "Parada / crítico"
 peso_base = 0.539                   # derivado
 edad = [0.2, 0.8, 1.8, 2.5]         # orientativo: muerte súbita y parada en mayores
-gravedad = { media = 2.94, desviacion = 0.47 }   # orientativo, muy alta: compromiso vital a cualquier edad
+gravedad = { media = 3.38, desviacion = 0.38 }   # orientativo, muy alta: compromiso vital a cualquier edad (3,5 y 0,4 antes de la transformación común)
 
 [motivos.otros]
 nombre = "Otros"
 peso_base = 10.673                  # derivado; sin factores: cajón de sastre
-gravedad = { media = -0.56, desviacion = 0.76 }   # orientativo, baja: cajón de sastre, en su mayoría banal
+gravedad = { media = -0.56, desviacion = 0.75 }   # orientativo, baja: cajón de sastre, en su mayoría banal
 
 [triaje]
 # Reparto de niveles asignados 1 a 5 en adultos (calibrado): Emergencias 2013,
@@ -180,12 +180,12 @@ sobretriaje = 6.3
 #   triage_error_for(load_profiles("config/perfiles.toml"), load_profile("config/llegadas.toml"))
 # (edsim.profiles.severity). Con G normal estándar, la especificación daba 0,32 y
 # -0,08; la mezcla de motivos y edades no es normal y pide algo más de ruido.
-ruido = 0.335                       # calibrado
-sesgo = -0.082                      # calibrado
+ruido = 0.333                       # calibrado
+sesgo = -0.081                      # calibrado
 # Umbrales c1 > c2 > c3 > c4 sobre G + ε (derivado): dan reparto_objetivo como
 # reparto asignado de un año con el ruido y el sesgo escritos, redondeados a 3
 # decimales: thresholds_for(perfiles, llegadas). No se recalculan al cargar: un
 # escenario con más gravedad (gripe, accidente múltiple) debe dar más niveles
 # urgentes, y no volver al reparto objetivo. Si cambia la gravedad, un factor o
 # el ruido, hay que volver a calcularlos (lo comprueba un test).
-umbrales = [3.088, 1.149, -0.044, -2.178]   # derivado
+umbrales = [3.260, 1.140, -0.044, -2.163]   # derivado
