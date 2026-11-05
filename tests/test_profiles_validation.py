@@ -1,4 +1,4 @@
-"""Validación estadística de la mezcla de bandas y motivos por contexto.
+"""Validación estadística de la mezcla de bandas y motivos por contexto, y del triaje.
 
 Potencia. Cada contexto sortea 20 000 pacientes. Cada categoría se compara con
 su probabilidad exacta con un chi² de 1 grado de libertad: 4 bandas, 17 motivos
@@ -28,18 +28,24 @@ import numpy as np
 import pytest
 from profiles_factory import START
 
+from edsim.arrivals.profile import load_profile
 from edsim.profiles.config import REASON_KEYS, load_profiles
 from edsim.profiles.context import ArrivalContext, all_contexts
 from edsim.profiles.mixing import band_probabilities, reason_probabilities
+from edsim.profiles.severity import severity_mixture, triage_matrix
 from edsim.profiles.validation import (
     MIN_EXPECTED,
     N_CATEGORIES,
+    N_TRIAGE_CATEGORIES,
     check_mixing,
+    check_triage,
     detectable_share,
     detection_power,
+    year_patients,
 )
 
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
+ARRIVALS = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 SEED = 2026
 N = 20_000
 OPPOSITE = (ArrivalContext(0, 0, 0), ArrivalContext(2, 1, 2))  # mañana laborable de invierno
@@ -169,3 +175,130 @@ def test_los_24_contextos(profiles):
 def test_detectable_share_crece_con_menos_pacientes():
     assert detectable_share(0.05, 2000, 2e-5) > detectable_share(0.05, 20_000, 2e-5)
     assert np.isclose(detectable_share(0.05, 10**9, 2e-5), 0.05, atol=1e-4)
+
+
+# --- Triaje ----------------------------------------------------------------------
+#
+# Potencia de check_triage. Se prueban 30 categorías (5 niveles asignados y las 25
+# casillas de la matriz real × asignado), cada una al nivel 0,01 / 30 = 3,3e-4.
+# Con los perfiles de ejemplo y una potencia del 80 %, el χ² detecta:
+#
+# - un año (109 542 pacientes): el nivel 1 asignado del 0,40 % al 0,49 %; el 2,
+#   del 12,09 % al 12,52 %; el 5, del 1,40 % al 1,56 %; la casilla real 1 →
+#   asignado 2, del 0,117 % al 0,164 %; la real 3 → asignado 2, del 2,15 % al 2,35 %;
+# - 20 000 pacientes (el test rápido): el nivel 1 asignado del 0,40 % al 0,61 %;
+#   el 2, del 12,09 % al 13,11 %; la casilla real 1 → asignado 2, del 0,117 % al
+#   0,232 %; la real 3 → asignado 2, del 2,15 % al 2,61 %.
+#
+# Las 12 casillas a dos niveles o más de la diagonal esperan menos de 5 pacientes
+# y usan la binomial exacta. Diez esperan menos de 1e-5 pacientes: fallan con
+# uno solo. En un año, la real 2 → asignado 4 (0,75 esperados) falla con 6 y la
+# real 4 → asignado 2 (0,25), con 4.
+
+TRIAGE_N = 20_000
+
+
+def with_noise(profiles, noise):
+    return dataclasses.replace(profiles, triage=dataclasses.replace(profiles.triage, noise=noise))
+
+
+@pytest.fixture(scope="module")
+def arrivals():
+    return load_profile(ARRIVALS)
+
+
+@pytest.fixture(scope="module")
+def exact(profiles, arrivals):
+    t = profiles.triage
+    return triage_matrix(severity_mixture(profiles, arrivals), t.thresholds, t.noise, t.bias)
+
+
+def test_potencia_del_triaje_escrita_en_el_test(profiles, arrivals, exact):
+    alpha = 0.01 / N_TRIAGE_CATEGORIES
+    year = year_patients(profiles, arrivals)
+
+    assert N_TRIAGE_CATEGORIES == 30
+    assert year == 109_542
+    assigned = exact.sum(axis=0)
+    for n, level, p1 in [(year, 0, 0.00486), (year, 1, 0.12523), (year, 4, 0.01557)]:
+        assert detectable_share(assigned[level], n, alpha) == pytest.approx(p1, abs=1e-5)
+    for n, level, p1 in [(TRIAGE_N, 0, 0.00606), (TRIAGE_N, 1, 0.13113)]:
+        assert detectable_share(assigned[level], n, alpha) == pytest.approx(p1, abs=1e-5)
+    for n, cell, p1 in [
+        (year, (0, 1), 0.00164),
+        (year, (2, 1), 0.02346),
+        (TRIAGE_N, (0, 1), 0.00232),
+        (TRIAGE_N, (2, 1), 0.02614),
+    ]:
+        assert detectable_share(exact[cell], n, alpha) == pytest.approx(p1, abs=1e-5)
+    # Casillas con menos de 5 esperados: 12 en un año.
+    assert np.sum(year * exact < MIN_EXPECTED) == 12
+    assert year * exact[1, 3] == pytest.approx(0.747, abs=1e-3)
+
+
+def test_triaje_con_20000_pacientes(profiles, arrivals):
+    result = check_triage(profiles, arrivals, seed=SEED, patients=TRIAGE_N)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    names = [d.name for d in result.details]
+    assert len(names) == N_TRIAGE_CATEGORIES
+    assert names[:6] == [*(f"asignado_{j}" for j in range(1, 6)), "real_1/asignado_1"]
+    assert names[-1] == "real_5/asignado_5"
+    criteria = {d.name: d.criterion.split()[0] for d in result.details}
+    assert criteria["real_1/asignado_2"] == "p"  # χ²
+    assert criteria["real_1/asignado_3"] == "binomial"
+
+
+def test_detecta_mas_ruido_de_triaje(profiles, arrivals, exact):
+    # El muestreador sortea con ruido 0,40 y los mismos umbrales; la hipótesis es
+    # el perfil (0,333). La casilla real 3 → asignado 2 pasa del 2,15 % al 2,84 %:
+    # potencia del 99,6 % con 20 000 pacientes.
+    sampled = with_noise(profiles, 0.40)
+    t = profiles.triage
+    wrong = triage_matrix(severity_mixture(profiles, arrivals), t.thresholds, 0.40, t.bias)
+    alpha = 0.01 / N_TRIAGE_CATEGORIES
+    assert detection_power(exact[2, 1], wrong[2, 1], TRIAGE_N, alpha) >= 0.99
+
+    result = check_triage(
+        profiles, arrivals, seed=SEED, patients=TRIAGE_N, sampled_profiles=sampled
+    )
+
+    assert not result.passed
+    assert "real_3/asignado_2" in {d.name for d in result.details if not d.passed}
+
+
+def test_detecta_un_salto_imposible(profiles, arrivals):
+    # Con ruido 1,5 en el muestreador, aparecen pacientes a dos niveles de la
+    # diagonal, en casillas que la hipótesis da por casi vacías (real 3 →
+    # asignado 1: 3,6e-9 esperados con 20 000): las prueba la binomial.
+    t = profiles.triage
+    sampled = dataclasses.replace(profiles, triage=dataclasses.replace(t, noise=1.5))
+
+    result = check_triage(
+        profiles, arrivals, seed=SEED, patients=TRIAGE_N, sampled_profiles=sampled
+    )
+
+    failed = {d.name: d for d in result.details if not d.passed}
+    assert "real_3/asignado_1" in failed
+    assert failed["real_3/asignado_1"].criterion.startswith("binomial")
+
+
+def test_triaje_con_pocos_pacientes_es_un_error(profiles, arrivals):
+    # El nivel 1 asignado (0,4 %) necesita al menos 5 esperados.
+    with pytest.raises(ValueError, match=f"expected .* < {MIN_EXPECTED}"):
+        check_triage(profiles, arrivals, seed=SEED, patients=1000)
+
+
+def test_triaje_misma_semilla_mismo_resultado(profiles, arrivals):
+    a = check_triage(profiles, arrivals, seed=SEED, patients=TRIAGE_N)
+    b = check_triage(profiles, arrivals, seed=SEED, patients=TRIAGE_N)
+
+    assert a == b
+
+
+@pytest.mark.slow
+def test_triaje_de_un_ano(profiles, arrivals):
+    result = check_triage(profiles, arrivals, seed=SEED)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    assert result.criterion.startswith("all 30 categories")

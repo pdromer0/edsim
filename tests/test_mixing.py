@@ -17,6 +17,7 @@ from edsim.profiles.mixing import (
     global_reason_shares,
     gumbel_max,
     probabilities,
+    reason_band_mass,
     reason_probabilities,
     reason_weights,
 )
@@ -273,3 +274,20 @@ def test_sin_converger_es_un_error(arrivals):
 def test_objetivos_no_validos(arrivals, targets, message):
     with pytest.raises(ValueError, match=message):
         base_weights_for(make_profiles(), arrivals, targets)
+
+
+# --- Masa de motivo y banda ----------------------------------------------------
+
+
+def test_masa_de_motivo_y_banda(arrivals):
+    profiles = make_profiles(INTOXICATION)
+    mass = reason_band_mass(profiles, arrivals)
+
+    assert mass.shape == (17, 4)
+    assert mass.sum() == pytest.approx(1, rel=1e-12)
+    np.testing.assert_allclose(
+        mass.sum(axis=1), global_reason_shares(profiles, arrivals), atol=1e-15
+    )
+    # Los factores de edad de la intoxicación la concentran en 15-44.
+    i = REASON_KEYS.index("intoxicacion")
+    assert mass[i, 0] > mass[i, 1:].sum()

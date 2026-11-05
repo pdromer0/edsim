@@ -11,6 +11,8 @@ from edsim.profiles.config import (
     ClinicalProfiles,
     Population,
     ReasonProfile,
+    Severity,
+    TriageProfile,
     load_profiles,
 )
 
@@ -27,12 +29,28 @@ DEFAULT = {
         "mujeres": [50, 50, 55, 62],
         "ambulancia": [6, 10, 21, 34],
     },
-    "motivos": {key: {"nombre": name, "peso_base": weight} for key, name, weight in REASONS},
+    "motivos": {
+        key: {"nombre": name, "peso_base": weight, "gravedad": {"media": 0.0, "desviacion": 1.0}}
+        for key, name, weight in REASONS
+    },
+    "triaje": {
+        "reparto_objetivo": [0.4, 12.1, 33.6, 52.6, 1.4],
+        "infratriaje": 10.1,
+        "sobretriaje": 6.3,
+        "ruido": 0.32,
+        "sesgo": -0.08,
+        "umbrales": [2.7, 1.13, 0.02, -2.42],
+    },
 }
 DEFAULT["motivos"]["disnea"].update(
     {"edad": [0.4, 0.8, 1.8, 2.4], "franja": [1, 1, 1.2], "estacion": [1.5, 1, 0.7, 1]}
 )
 DEFAULT["motivos"]["intoxicacion"].update({"franja": [1, 1, 1.8], "dia": [1, 1.7]})
+DEFAULT["motivos"]["disnea"]["gravedad"] = {
+    "media": 0.9,
+    "por_edad": [-0.4, 0.0, 0.2, 0.4],
+    "desviacion": 0.8,
+}
 
 FACTOR_KEYS = {"edad": 4, "franja": 3, "dia": 2, "estacion": 4}
 PERCENT_KEYS = ["reparto_edad", "mujeres", "ambulancia"]
@@ -250,18 +268,18 @@ def test_motivo_que_no_es_tabla(tmp_path):
         load(tmp_path, {"motivos.disnea": 8})
 
 
-@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos"])
+@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos", "triaje"])
 def test_falta_una_seccion(tmp_path, section):
     with pytest.raises(ValueError, match=rf"missing keys: {section}\b"):
         load(tmp_path, {section: None})
 
 
 def test_sobra_una_seccion(tmp_path):
-    with pytest.raises(ValueError, match=r"unknown keys: triaje\b"):
-        load(tmp_path, {"triaje": {"ruido": 0.32}})
+    with pytest.raises(ValueError, match=r"unknown keys: pruebas\b"):
+        load(tmp_path, {"pruebas": {"or_mayor": 2.2}})
 
 
-@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos"])
+@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos", "triaje"])
 def test_seccion_que_no_es_tabla(tmp_path, section):
     with pytest.raises(ValueError, match=rf"{section} must be a table"):
         load(tmp_path, {section: [1, 2, 3]})
@@ -455,7 +473,7 @@ def test_bandas_de_edad_no_validas(tmp_path, bands, message):
 
 def test_tipos_de_las_clases():
     # Las clases se pueden construir a mano, sin TOML, con los factores por defecto.
-    r = ReasonProfile(key="otros", name="Otros", base_weight=10)
+    r = ReasonProfile(key="otros", name="Otros", base_weight=10, severity=Severity(mean=0, sd=1))
     p = Population(
         band_starts=(15, 45, 65, 80),
         band_shares=(1, 1, 1, 1),
@@ -464,4 +482,211 @@ def test_tipos_de_las_clases():
     )
 
     assert r.age_factors == (1.0,) * 4
+    assert r.severity.age_shift == (0.0,) * 4
     assert p.band_day_factors == ((1.0, 1.0),) * 4
+
+
+# --- Gravedad por motivo -------------------------------------------------------
+
+
+def test_gravedad_leida(profiles):
+    disnea = profiles.reason("disnea").severity
+
+    assert disnea == Severity(mean=0.9, sd=0.8, age_shift=(-0.4, 0.0, 0.2, 0.4))
+    assert all(type(x) is float for x in (disnea.mean, disnea.sd, *disnea.age_shift))
+
+
+def test_por_edad_ausente_vale_cero(profiles):
+    assert profiles.reason("otros").severity.age_shift == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_falta_la_gravedad_de_un_motivo(tmp_path):
+    with pytest.raises(ValueError, match=r"missing keys: motivos\.fiebre\.gravedad\b"):
+        load(tmp_path, {"motivos.fiebre.gravedad": None})
+
+
+@pytest.mark.parametrize("key", ["media", "desviacion"])
+def test_falta_una_clave_de_la_gravedad(tmp_path, key):
+    with pytest.raises(ValueError, match=rf"missing keys: motivos\.fiebre\.gravedad\.{key}"):
+        load(tmp_path, {f"motivos.fiebre.gravedad.{key}": None})
+
+
+def test_clave_desconocida_en_la_gravedad(tmp_path):
+    with pytest.raises(ValueError, match=r"unknown keys: motivos\.disnea\.gravedad\.medias"):
+        load(tmp_path, {"motivos.disnea.gravedad.medias": 0.5})
+
+
+def test_gravedad_que_no_es_tabla(tmp_path):
+    with pytest.raises(ValueError, match=r"motivos\.disnea\.gravedad must be a table"):
+        load(tmp_path, {"motivos.disnea.gravedad": 0.5})
+
+
+@pytest.mark.parametrize("value", [0, -0.5, math.nan, True, "1"])
+def test_desviacion_no_valida(tmp_path, value):
+    with pytest.raises(ValueError, match=r"motivos\.disnea\.gravedad\.desviacion"):
+        load(tmp_path, {"motivos.disnea.gravedad.desviacion": value})
+
+
+@pytest.mark.parametrize("value", [0, -0.5])
+def test_desviacion_no_positiva_dice_por_que(tmp_path, value):
+    with pytest.raises(ValueError, match=r"motivos\.disnea\.gravedad\.desviacion must be positive"):
+        load(tmp_path, {"motivos.disnea.gravedad.desviacion": value})
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, True, "0.5"])
+def test_media_no_valida(tmp_path, value):
+    with pytest.raises(ValueError, match=r"motivos\.disnea\.gravedad\.media"):
+        load(tmp_path, {"motivos.disnea.gravedad.media": value})
+
+
+@pytest.mark.parametrize("n", [3, 5])
+def test_longitud_de_por_edad(tmp_path, n):
+    with pytest.raises(
+        ValueError, match=rf"motivos\.disnea\.gravedad\.por_edad must have 4 values, got {n}"
+    ):
+        load(tmp_path, {"motivos.disnea.gravedad.por_edad": [0.0] * n})
+
+
+def test_por_edad_admite_negativos_y_ceros(tmp_path):
+    s = load(tmp_path, {"motivos.otros.gravedad.por_edad": [-1, 0, 0.5, 2]}).reason("otros")
+
+    assert s.severity.age_shift == (-1.0, 0.0, 0.5, 2.0)
+
+
+# --- Triaje --------------------------------------------------------------------
+
+
+def test_triaje_leido(profiles):
+    t = profiles.triage
+
+    assert t == TriageProfile(
+        target_pct=(0.4, 12.1, 33.6, 52.6, 1.4),
+        under_pct=10.1,
+        over_pct=6.3,
+        noise=0.32,
+        bias=-0.08,
+        thresholds=(2.7, 1.13, 0.02, -2.42),
+    )
+
+
+def test_los_umbrales_se_leen_como_se_escriben(tmp_path):
+    # Los umbrales se derivan una vez y se escriben: cargar no los recalcula,
+    # aunque no den el reparto objetivo.
+    t = load(tmp_path, {"triaje.umbrales": [5.0, 4.0, 3.0, 2.0]}).triage
+
+    assert t.thresholds == (5.0, 4.0, 3.0, 2.0)
+
+
+def test_reparto_objetivo_normalizado(profiles):
+    # El reparto de Emergencias 2013 suma 100,1 por el redondeo de la fuente.
+    t = profiles.triage
+
+    assert sum(t.target_pct) == pytest.approx(100.1)
+    assert sum(t.target_shares) == pytest.approx(1, rel=1e-15)
+    assert t.target_shares[0] == pytest.approx(0.4 / 100.1, rel=1e-15)
+
+
+@pytest.mark.parametrize("values", [[0.4, 12.1, 33.6, 52.6, 1.4], [0, 0, 100, 0, 0]])
+def test_reparto_objetivo_valido(tmp_path, values):
+    assert load(tmp_path, {"triaje.reparto_objetivo": values}).triage.target_pct == tuple(
+        float(v) for v in values
+    )
+
+
+@pytest.mark.parametrize("values", [[0.4, 12.1, 33.6, 50, 1.4], [1, 13, 34, 53, 1.6]])
+def test_reparto_que_no_suma_100(tmp_path, values):
+    # 97,5 y 102,6: fuera del redondeo de ±0,5 puntos.
+    with pytest.raises(ValueError, match=r"triaje\.reparto_objetivo must add up to 100"):
+        load(tmp_path, {"triaje.reparto_objetivo": values})
+
+
+@pytest.mark.parametrize("n", [4, 6])
+def test_longitud_del_reparto_objetivo(tmp_path, n):
+    with pytest.raises(ValueError, match=rf"triaje\.reparto_objetivo must have 5 values, got {n}"):
+        load(tmp_path, {"triaje.reparto_objetivo": [100 / n] * n})
+
+
+def test_porcentaje_del_reparto_fuera_de_rango(tmp_path):
+    message = r"triaje\.reparto_objetivo\[0\] must be between 0 and 100"
+    with pytest.raises(ValueError, match=message):
+        load(tmp_path, {"triaje.reparto_objetivo": [-1, 13, 34.6, 52, 1.4]})
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [[2.7, 1.13, 1.13, -2.42], [2.7, 0.02, 1.13, -2.42], [-2.42, 0.02, 1.13, 2.7]],
+)
+def test_umbrales_no_decrecientes(tmp_path, thresholds):
+    with pytest.raises(ValueError, match=r"triaje\.umbrales must be strictly decreasing"):
+        load(tmp_path, {"triaje.umbrales": thresholds})
+
+
+@pytest.mark.parametrize("n", [3, 5])
+def test_longitud_de_los_umbrales(tmp_path, n):
+    with pytest.raises(ValueError, match=rf"triaje\.umbrales must have 4 values, got {n}"):
+        load(tmp_path, {"triaje.umbrales": list(range(n, 0, -1))})
+
+
+@pytest.mark.parametrize("value", [math.nan, True, "1"])
+def test_umbral_no_numerico(tmp_path, value):
+    with pytest.raises(ValueError, match=r"triaje\.umbrales\[1\]"):
+        load(tmp_path, {"triaje.umbrales": [2.7, value, 0.02, -2.42]})
+
+
+@pytest.mark.parametrize("value", [0, -0.32, math.nan, True])
+def test_ruido_no_valido(tmp_path, value):
+    with pytest.raises(ValueError, match=r"triaje\.ruido"):
+        load(tmp_path, {"triaje.ruido": value})
+
+
+@pytest.mark.parametrize("value", [0, 0.5, -0.08])
+def test_sesgo_valido(tmp_path, value):
+    assert load(tmp_path, {"triaje.sesgo": value}).triage.bias == value
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, True])
+def test_sesgo_no_valido(tmp_path, value):
+    with pytest.raises(ValueError, match=r"triaje\.sesgo"):
+        load(tmp_path, {"triaje.sesgo": value})
+
+
+@pytest.mark.parametrize("key", ["infratriaje", "sobretriaje"])
+@pytest.mark.parametrize("value", [0, 100, -1, math.nan, True])
+def test_objetivo_de_error_no_valido(tmp_path, key, value):
+    with pytest.raises(ValueError, match=rf"triaje\.{key}"):
+        load(tmp_path, {f"triaje.{key}": value})
+
+
+@pytest.mark.parametrize(
+    "key", ["reparto_objetivo", "infratriaje", "sobretriaje", "ruido", "sesgo", "umbrales"]
+)
+def test_falta_una_clave_del_triaje(tmp_path, key):
+    with pytest.raises(ValueError, match=rf"missing keys: triaje\.{key}\b"):
+        load(tmp_path, {f"triaje.{key}": None})
+
+
+@pytest.mark.parametrize("key", ["duracion", "umbral"])
+def test_clave_desconocida_en_el_triaje(tmp_path, key):
+    # La duración del triaje llega en la tarea 4.4.
+    with pytest.raises(ValueError, match=rf"unknown keys: triaje\.{key}\b"):
+        load(tmp_path, {f"triaje.{key}": [5, 10]})
+
+
+def test_triaje_construccion_directa_valida(profiles):
+    with pytest.raises(ValueError, match=r"triaje\.ruido must be positive"):
+        dataclasses.replace(profiles.triage, noise=0)
+    with pytest.raises(ValueError, match="TriageProfile"):
+        dataclasses.replace(profiles, triage={"ruido": 0.32})
+
+
+def test_gravedad_construccion_directa_valida(profiles):
+    with pytest.raises(ValueError, match=r"gravedad\.desviacion must be positive"):
+        Severity(mean=0, sd=0)
+    with pytest.raises(ValueError, match="Severity"):
+        dataclasses.replace(profiles.reason("disnea"), severity={"media": 0})
+
+
+def test_replace_idempotente_con_triaje(profiles):
+    again = dataclasses.replace(profiles, triage=dataclasses.replace(profiles.triage))
+
+    assert again == profiles

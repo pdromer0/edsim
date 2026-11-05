@@ -1,6 +1,6 @@
 """Clinical profiles from TOML: the context bands, the population and the reasons.
 
-The file ``config/perfiles.toml`` has three tables (see docs/specs/hito-4.md):
+The file ``config/perfiles.toml`` has four tables (see docs/specs/hito-4.md):
 
 - ``[contexto]``: ``franjas``, the starting hours of the morning, afternoon
   and night bands of the arrivals, independent of the shifts of the center;
@@ -8,8 +8,17 @@ The file ``config/perfiles.toml`` has three tables (see docs/specs/hito-4.md):
   context, optional factors per shift band and day type, and the
   percentages of women and of arrivals by ambulance;
 - ``[motivos.<clave>]``: one table per reason for consultation, with its
-  name, its base weight and optional factors per age band, shift band, day
-  type and season.
+  name, its base weight, optional factors per age band, shift band, day
+  type and season, and its latent severity (``gravedad``);
+- ``[triaje]``: the target mix of assigned levels, the targets of under- and
+  overtriage, the noise and bias of the nurse's error and the four
+  thresholds.
+
+The thresholds, the noise and the bias are written in the file, not computed
+on loading: ``edsim.profiles.severity`` derives them once and a test checks
+that the written values are still the derived ones. So a scenario with more
+severity gives more urgent levels instead of being renormalized back to the
+target.
 
 Keys are in Spanish (ADR 0015) and errors name them in full, such as
 ``motivos.disnea.edad[1]``, because that is what the user wrote. Unknown keys
@@ -78,6 +87,20 @@ MIN_AGE = 15
 MAX_AGE = 99
 """Oldest patient: the top of the last age band."""
 
+N_LEVELS = 5
+"""Triage levels, from 1 (most urgent) to 5."""
+
+N_THRESHOLDS = N_LEVELS - 1
+"""Thresholds between the triage levels."""
+
+TARGET_SUM_TOLERANCE = 0.5
+"""Largest distance from 100 of the sum of ``reparto_objetivo``, in points.
+
+Published shares are rounded: the adult mix of Emergencias 2013 adds up to
+100.1. Within the tolerance the shares are normalized; beyond it, the file
+has an error.
+"""
+
 # Optional factors of a reason: TOML key → (field, number of values).
 _REASON_FACTORS = {
     "edad": ("age_factors", N_BANDS),
@@ -85,7 +108,21 @@ _REASON_FACTORS = {
     "dia": ("day_factors", N_DAY_TYPES),
     "estacion": ("season_factors", N_SEASONS),
 }
-_REASON_REQUIRED = ("nombre", "peso_base")
+_REASON_REQUIRED = ("nombre", "peso_base", "gravedad")
+
+# Keys of the severity of a reason: TOML key → field.
+_SEVERITY_REQUIRED = {"media": "mean", "desviacion": "sd"}
+_SEVERITY_OPTIONAL = {"por_edad": "age_shift"}
+
+# Keys of [triaje]: TOML key → field. All are required.
+_TRIAGE_KEYS = {
+    "reparto_objetivo": "target_pct",
+    "infratriaje": "under_pct",
+    "sobretriaje": "over_pct",
+    "ruido": "noise",
+    "sesgo": "bias",
+    "umbrales": "thresholds",
+}
 
 # Keys of [poblacion]: TOML key → field.
 _POPULATION_REQUIRED = {
@@ -96,7 +133,7 @@ _POPULATION_REQUIRED = {
 }
 _POPULATION_OPTIONAL = {"franja": "band_shift_factors", "dia": "band_day_factors"}
 
-_SECTIONS = ("contexto", "poblacion", "motivos")
+_SECTIONS = ("contexto", "poblacion", "motivos", "triaje")
 
 
 def _check_hours(key: str, values: object) -> tuple[int, ...]:
@@ -155,6 +192,97 @@ def _check_band_factors(key: str, values: object, n: int) -> tuple[tuple[float, 
     )
 
 
+def _check_numbers(key: str, values: object, n: int) -> tuple[float, ...]:
+    """``n`` finite numbers."""
+    return tuple(check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, n)))
+
+
+@dataclass(frozen=True, slots=True)
+class Severity:
+    """Latent severity of the patients of one reason, from its ``gravedad`` table.
+
+    A patient of band ``b`` with a standard normal draw ``z`` has severity
+    ``G = mean + age_shift[b] + sd * z``, in standard deviations of the
+    reference population: 0 is the mean adult and more is more severe.
+
+    Attributes:
+        mean: Mean severity of the reason (``media``), in band 45-64 if the
+            shifts are written that way; any finite number.
+        sd: Standard deviation (``desviacion``); positive.
+        age_shift: Shift of the mean per age band (``por_edad``); 0 if absent.
+    """
+
+    mean: float
+    sd: float
+    age_shift: tuple[float, ...] = (0.0,) * N_BANDS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "mean", check_number("gravedad.media", self.mean))
+        object.__setattr__(self, "sd", _check_positive("gravedad.desviacion", self.sd))
+        object.__setattr__(
+            self, "age_shift", _check_numbers("gravedad.por_edad", self.age_shift, N_BANDS)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TriageProfile:
+    """The triage of the nurse, from ``[triaje]``.
+
+    The assigned level cuts ``G + bias + noise * z`` with the thresholds and
+    the true level cuts ``G``; see ``edsim.profiles.severity``.
+
+    Attributes:
+        target_pct: Target percentage of each assigned level, 1 to 5
+            (``reparto_objetivo``), as written; they add up to 100 within
+            ``TARGET_SUM_TOLERANCE``. Calibrated.
+        under_pct: Target percentage of undertriage (``infratriaje``), in
+            (0, 100). Calibrated.
+        over_pct: Target percentage of overtriage (``sobretriaje``).
+        noise: Standard deviation of the nurse's error (``ruido``), in units
+            of G; positive. Calibrated with ``triage_error_for``.
+        bias: Mean of the error (``sesgo``); negative tends to undertriage.
+            Calibrated with ``triage_error_for``.
+        thresholds: The four thresholds c1 > c2 > c3 > c4 (``umbrales``),
+            stored as written. Derived with ``thresholds_for``.
+    """
+
+    target_pct: tuple[float, ...]
+    under_pct: float
+    over_pct: float
+    noise: float
+    bias: float
+    thresholds: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        set_ = object.__setattr__
+        target = _check_percentages("triaje.reparto_objetivo", self.target_pct, N_LEVELS)
+        if abs(sum(target) - 100) > TARGET_SUM_TOLERANCE:
+            raise ValueError(
+                f"triaje.reparto_objetivo must add up to 100 (within "
+                f"{TARGET_SUM_TOLERANCE}), got {sum(target):g}"
+            )
+        set_(self, "target_pct", target)
+        for key, field in (("infratriaje", "under_pct"), ("sobretriaje", "over_pct")):
+            x = check_number(f"triaje.{key}", getattr(self, field))
+            if not 0 < x < 100:
+                raise ValueError(f"triaje.{key} must be between 0 and 100 (excluded), got {x!r}")
+            set_(self, field, x)
+        set_(self, "noise", _check_positive("triaje.ruido", self.noise))
+        set_(self, "bias", check_number("triaje.sesgo", self.bias))
+        thresholds = _check_numbers("triaje.umbrales", self.thresholds, N_THRESHOLDS)
+        if any(a <= b for a, b in pairwise(thresholds)):
+            raise ValueError(
+                f"triaje.umbrales must be strictly decreasing, got {list(thresholds)!r}"
+            )
+        set_(self, "thresholds", thresholds)
+
+    @property
+    def target_shares(self) -> tuple[float, ...]:
+        """The target mix of assigned levels, normalized to add up to 1."""
+        total = sum(self.target_pct)
+        return tuple(x / total for x in self.target_pct)
+
+
 @dataclass(frozen=True, slots=True)
 class ReasonProfile:
     """One reason for consultation, from its ``[motivos.<clave>]`` table.
@@ -168,6 +296,7 @@ class ReasonProfile:
         name: Name for people (``nombre``), such as ``"Disnea / respiratorio"``.
         base_weight: Base weight (``peso_base``), derived with
             ``base_weights_for``; positive.
+        severity: Latent severity of its patients (``gravedad``).
         age_factors: Factor per age band (``edad``); 1 if absent.
         shift_factors: Factor per shift band: morning, afternoon, night
             (``franja``).
@@ -179,6 +308,7 @@ class ReasonProfile:
     key: str
     name: str
     base_weight: float
+    severity: Severity
     age_factors: tuple[float, ...] = (1.0,) * N_BANDS
     shift_factors: tuple[float, ...] = (1.0,) * N_SHIFT_BANDS
     day_factors: tuple[float, ...] = (1.0,) * N_DAY_TYPES
@@ -193,6 +323,8 @@ class ReasonProfile:
         object.__setattr__(
             self, "base_weight", _check_positive(f"{prefix}.peso_base", self.base_weight)
         )
+        if not isinstance(self.severity, Severity):
+            raise ValueError(f"{prefix}.gravedad must be a Severity, got {self.severity!r}")
         for toml_key, (field, n) in _REASON_FACTORS.items():
             checked = _check_factors(f"{prefix}.{toml_key}", getattr(self, field), n)
             object.__setattr__(self, field, checked)
@@ -291,11 +423,13 @@ class ClinicalProfiles:
             moving a change of shift does not move the patients.
         population: The age mix, sex and arrival mode (``[poblacion]``).
         reasons: The 17 reasons for consultation (``[motivos.<clave>]``).
+        triage: The triage of the nurse (``[triaje]``).
     """
 
     shift_band_starts: tuple[int, ...]
     population: Population
     reasons: tuple[ReasonProfile, ...]
+    triage: TriageProfile
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -304,6 +438,8 @@ class ClinicalProfiles:
         if not isinstance(self.population, Population):
             raise ValueError(f"population must be a Population, got {self.population!r}")
         object.__setattr__(self, "reasons", _check_reasons(self.reasons))
+        if not isinstance(self.triage, TriageProfile):
+            raise ValueError(f"triage must be a TriageProfile, got {self.triage!r}")
 
     @property
     def reason_keys(self) -> tuple[str, ...]:
@@ -379,15 +515,27 @@ def _structure(data: dict) -> list[str]:
                 add(
                     _missing_and_unknown(f"motivos.{key}", table, _REASON_REQUIRED, _REASON_FACTORS)
                 )
+                if "gravedad" in table:
+                    prefix = f"motivos.{key}.gravedad"
+                    severity = _check_table(prefix, table["gravedad"])
+                    add(
+                        _missing_and_unknown(
+                            prefix, severity, _SEVERITY_REQUIRED, _SEVERITY_OPTIONAL
+                        )
+                    )
+    if "triaje" in data:
+        add(_missing_and_unknown("triaje", _check_table("triaje", data["triaje"]), _TRIAGE_KEYS))
     return _problems(missing, unknown)
 
 
 def load_profiles(path: str | Path) -> ClinicalProfiles:
     """Load the clinical profiles from a TOML file.
 
-    The file must have the tables ``[contexto]``, ``[poblacion]`` and one
-    ``[motivos.<clave>]`` for each of the 17 reasons of ``REASON_KEYS``. The
-    factors are optional and worth 1 when absent; any other key is an error.
+    The file must have the tables ``[contexto]``, ``[poblacion]``,
+    ``[triaje]`` and one ``[motivos.<clave>]`` for each of the 17 reasons of
+    ``REASON_KEYS``, each with its ``gravedad``. The factors are optional and
+    worth 1 when absent, as ``por_edad`` is worth 0; any other key is an
+    error. The thresholds are read as written, never recomputed.
 
     Args:
         path: Path of the TOML file, such as ``config/perfiles.toml``.
@@ -415,6 +563,15 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
 
     population = data["poblacion"]
     reasons = data["motivos"]
+
+    def severity(key: str) -> Severity:
+        table = reasons[key]["gravedad"]
+        fields = {**_SEVERITY_REQUIRED, **_SEVERITY_OPTIONAL}
+        try:
+            return Severity(**{field: table[k] for k, field in fields.items() if k in table})
+        except ValueError as error:
+            raise ValueError(f"{path}: motivos.{key}.{error}") from None
+
     return ClinicalProfiles(
         shift_band_starts=data["contexto"]["franjas"],
         population=Population(
@@ -430,6 +587,7 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
                 key=key,
                 name=reasons[key]["nombre"],
                 base_weight=reasons[key]["peso_base"],
+                severity=severity(key),
                 **{
                     field: reasons[key][toml_key]
                     for toml_key, (field, _) in _REASON_FACTORS.items()
@@ -438,4 +596,5 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
             )
             for key in REASON_KEYS
         ),
+        triage=TriageProfile(**{field: data["triaje"][k] for k, field in _TRIAGE_KEYS.items()}),
     )
