@@ -327,6 +327,13 @@ def test_los_k_no_cambian_la_carga_de_valoracion(path):
     load = physician_load(load_profiles(path), load_profile(ARRIVALS[path]))
 
     assert abs(load.k_ratio - 1) <= 0.05
-    # Valores escritos en el comentario de config/perfiles.toml.
+
+
+@FILES
+def test_razon_de_los_k_escrita_en_el_comentario(path):
+    # Valores escritos en el comentario de config/perfiles.toml. Va aparte de la regla:
+    # un cambio de los k puede mover el literal y seguir cumpliendo la regla.
+    load = physician_load(load_profiles(path), load_profile(ARRIVALS[path]))
+
     assert load.k_ratio == pytest.approx(1.0052, abs=5e-5)
     assert load.mean_k == pytest.approx(0.9905, abs=5e-5)
