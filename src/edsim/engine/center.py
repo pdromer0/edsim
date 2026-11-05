@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 
-from edsim.checks import check_number
+from edsim.checks import check_integer, check_list, check_number
 
 N_SHIFTS = 3
 """Shifts per day: morning, afternoon and night."""
@@ -46,25 +46,9 @@ _KEYS = {
 _SECTIONS = {key.split(".")[0] for key in _KEYS}
 
 
-def _check_integer(key: str, value: object) -> int:
-    """Return ``value`` if it is an integer; ``3.0`` and ``true`` are not."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{key} must be an integer, got {value!r}")
-    return value
-
-
-def _check_list(key: str, values: object, n: int) -> list:
-    """Check that ``values`` is a list (or tuple) of ``n`` values."""
-    if not isinstance(values, list | tuple):
-        raise ValueError(f"{key} must be a list of {n} values, got {values!r}")
-    if len(values) != n:
-        raise ValueError(f"{key} must have {n} values, got {len(values)}")
-    return list(values)
-
-
 def _check_staff(key: str, value: object) -> int:
     """A capacity: an integer of at least 1."""
-    n = _check_integer(key, value)
+    n = check_integer(key, value)
     if n < 1:
         raise ValueError(f"{key} must be at least 1, got {value!r}")
     return n
@@ -72,13 +56,13 @@ def _check_staff(key: str, value: object) -> int:
 
 def _check_shift_staff(key: str, values: object) -> tuple[int, ...]:
     """One capacity per shift."""
-    staff = _check_list(key, values, N_SHIFTS)
+    staff = check_list(key, values, N_SHIFTS)
     return tuple(_check_staff(f"{key}[{i}]", n) for i, n in enumerate(staff))
 
 
 def _check_shift_starts(key: str, values: object) -> tuple[int, ...]:
     hours = [
-        _check_integer(f"{key}[{i}]", h) for i, h in enumerate(_check_list(key, values, N_SHIFTS))
+        check_integer(f"{key}[{i}]", h) for i, h in enumerate(check_list(key, values, N_SHIFTS))
     ]
     for i, h in enumerate(hours):
         if not 0 <= h <= 23:
@@ -96,7 +80,7 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
     bit, and ``dataclasses.replace`` would not give back the same center.
     """
     shares = [
-        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
+        check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, N_LEVELS))
     ]
     for i, x in enumerate(shares):
         if x < 0:
@@ -111,9 +95,7 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
 
 def _check_duration(key: str, values: object) -> tuple[float, float]:
     """``[median, p90]`` of a lognormal: median > 0 and p90 > median."""
-    median, p90 = (
-        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, 2))
-    )
+    median, p90 = (check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, 2)))
     if median <= 0:
         raise ValueError(f"{key}[0] (median) must be positive, got {values[0]!r}")
     if p90 <= median:
@@ -123,7 +105,7 @@ def _check_duration(key: str, values: object) -> tuple[float, float]:
 
 def _check_probabilities(key: str, values: object) -> tuple[float, ...]:
     probabilities = [
-        check_number(f"{key}[{i}]", x) for i, x in enumerate(_check_list(key, values, N_LEVELS))
+        check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, N_LEVELS))
     ]
     for i, p in enumerate(probabilities):
         if not 0 <= p <= 1:
