@@ -9,6 +9,7 @@ import pytest
 
 from edsim.arrivals.profile import load_profile
 from edsim.profiles.config import REASON_KEYS, REASONS, ClinicalProfiles, load_profiles
+from edsim.profiles.durations import physician_load
 from edsim.profiles.mixing import base_weights_for, catalog_shares, global_reason_shares
 from edsim.profiles.population import global_band_shares, share_65_plus
 from edsim.profiles.severity import (
@@ -314,3 +315,18 @@ def test_comentarios_de_las_marginales_al_dia(path):
     for i, key in enumerate(REASON_KEYS):
         written = [float(x.replace(",", ".")) for x in found[key].split(" / ")]
         assert written == pytest.approx(exact[i], abs=0.05 + 1e-9), key
+
+
+# --- Duraciones: la regla de los k --------------------------------------------
+
+
+@FILES
+def test_los_k_no_cambian_la_carga_de_valoracion(path):
+    # Los k reparten la duración entre motivos sin cambiar la carga de valoración
+    # de un año: con los k, a 1 ± 0,05 de la carga sin ellos (regla de la tarea 4.4).
+    load = physician_load(load_profiles(path), load_profile(ARRIVALS[path]))
+
+    assert abs(load.k_ratio - 1) <= 0.05
+    # Valores escritos en el comentario de config/perfiles.toml.
+    assert load.k_ratio == pytest.approx(1.0052, abs=5e-5)
+    assert load.mean_k == pytest.approx(0.9905, abs=5e-5)
