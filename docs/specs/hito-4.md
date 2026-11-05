@@ -646,3 +646,111 @@ Al nivel 1 le queda la espera de médico: 10 de sus 26 pacientes esperan, hasta 
 - `.claude/settings.json`: permitir `git push` sin `-u` y `git push origin feat/*` y `docs/*`, y escribir los patrones de `-f` con espacios.
 - `docs/specs/hito-4.md`: el hito 2 no tiene calendario de festivos, así que el tipo de día es laborable o fin de semana; la especificación en línea ya está corregida y el fichero se corrige en la 4.2.
 - Para la 4.5: la política de versiones del catálogo de eventos.
+
+### Tarea 4.2: perfiles, contexto, población y motivo
+
+**Qué se hizo**
+
+PR #41 (rama `feat/h4-perfiles`), fusionado por Pedro con *squash and merge*: once commits del plan y cuatro de la revisión del PR. No toca el motor, la CLI ni la app. El subpaquete `src/edsim/profiles/` se construye y se valida suelto; el motor lo usará en la tarea 4.5.
+
+- **Autonomía.** `.claude/settings.json` permite `git push`, `git push origin feat/*` y `git push origin docs/*`. En `deny`, los patrones de `-f` se escriben con espacios (`git push * -f`, `git push * -f *`, `git push -f` y `git push -f *`) y se añade el refspec con `+` (`git push *+*`). El PR comprueba 20 comandos; `git push -u origin feat/x-f` ya no se deniega por error.
+- **Especificación.** La exportación local de la pestaña entró como base, por decisión de Pedro, en modo 100644 y sin la firma. Encima: sin festivos; flujo 5 con Gumbel-max (siete sorteos); «un año del perfil de llegadas» en los pesos base; el comentario del flujo 5 en `ClinicalSampler`; la ambulancia `[6, 10, 21, 34]`.
+- **Refactor.** `rate.split_days` y `rate.day_calendar` pasan a ser públicos (antes `_split` y el cuerpo de `_day_scale`). `check_integer` y `check_list` pasan de `engine/center.py` a `checks.py`, para que `profiles/` no importe el motor.
+- **`config.py`**: `ClinicalProfiles`, `Population` y `ReasonProfile`, inmutables y validados al construirse; `load_profiles`; el catálogo `REASONS` (clave, nombre y peso aproximado).
+- **`context.py`**: `context_indices` (vectorizada), `arrival_context`, `context_weights` (llegadas esperadas exactas de cada contexto, con Λ(t)) y `context_time`.
+- **`mixing.py`**: `gumbel_max`, las probabilidades exactas de banda y motivo, `global_reason_shares` y `base_weights_for`.
+- **`population.py`**: banda, edad, sexo y medio de llegada; `share_65_plus`.
+- **`sampler.py`**: `PersonReasonSampler`, con los flujos 5 y 6, que devuelve `PersonAndReason(context, person, reason)`.
+- **`validation.py`**: `check_mixing`, un χ² por categoría con Bonferroni (4 bandas, 17 motivos marginales y 68 motivos dentro de cada banda), más `detectable_share` y `detection_power`.
+- **Configuración.** `config/perfiles.toml` y su copia fija `tests/data/perfiles_ejemplo.toml`, con el estado de cada valor en un comentario.
+- 1.759 tests en la suite completa (6 min 36 s); 1.740 rápidos (2 min 16 s; 1.444 antes de la tarea); 241 de la app (3 min), sin cambios.
+
+**Conceptos**
+
+- **El contexto es una función pura de t.** Franja, tipo de día y estación salen de la misma aritmética de calendario que λ(t). Las franjas son del perfil, no de los turnos: mover un cambio de turno no mueve a los pacientes.
+- **Categórica log-lineal con Gumbel-max.** El peso es la base por los factores, y gana el mayor log w + g. No hace falta renormalizar (V4b): multiplicar todos los pesos no cambia el ganador.
+- **El peso base no es el reparto global.** `base_weights_for` resuelve un punto fijo multiplicativo, la idea del *raking* de las encuestas. Sin derivar los pesos, la intoxicación saldría en un 2,99 % en lugar del 2,01 % del catálogo.
+- **Números aleatorios comunes.** Con Gumbel-max, reforzar un motivo solo atrae pacientes hacia él. Con la disnea ×1,5 cambia el 3,28 % de los pacientes, todos hacia la disnea; con la CDF inversa cambiaría el 15,6 %, también entre motivos que nadie ha tocado.
+- **Consumo fijo.** Siete sorteos del flujo 5 y diecisiete del flujo 6 por paciente, salga lo que salga: el paciente k recibe siempre su bloque k.
+- **Marginal frente a condicionado.** Un χ² marginal no ve una relación conjunta rota: si el motivo se sorteara con otra banda, el reparto marginal sería el mismo (V8).
+- **La potencia, antes que el test.** Un test de detección sin potencia no demuestra nada. La disnea ×1,2 solo en 80–99 movía la disnea del contexto del 10,8 % al 11,3 %: con el χ² marginal, una potencia del 4 %.
+
+**Decisiones**
+
+- Claves de los motivos: el primer término del catálogo en snake\_case ASCII; el nombre completo va en `nombre`. El catálogo vive en `config.REASONS`; suma 99,5 y se normaliza como objetivo.
+- Porcentajes y pesos guardados como se escriben; las probabilidades las calcula `mixing`. Un factor ausente vale 1.
+- `profiles/` no carga SimPy ni el motor: `ArrivalRecord` solo se importa bajo `TYPE_CHECKING`, y un test lo comprueba en un subproceso.
+- Las probabilidades de banda viven en `mixing.py`, para que `base_weights_for` las use sin un ciclo de imports.
+- La validación prueba categoría a categoría (un grado de libertad), para que un fallo nombre la categoría y la potencia se diga como «p₀ que pasa a p₁». Da error si un esperado baja de 5, para no pasar en vacío.
+- El ejemplo a mano se construye en un perfil de test: la sesión no dejó escritos todos los factores que daban la suma de 126,74 (disnea en un 22,72 %).
+- Ambulancia `[6, 10, 21, 34]`: el 26,9 % de los mayores de 65 años llega en ambulancia, frente al 27 % de EDEN; `[20, 32]` daba un 25,4 %.
+- `reparto_edad` es el reparto del contexto de referencia (mañana laborable), calibrado en el total de mayores de 65 años.
+- Tolerancia de 1e-3 entre pesos escritos y recalculados: con tres decimales, la mayor diferencia es 0,000486.
+
+**Factores** (todos orientativos; lo que no aparece vale 1)
+
+| Motivo o banda | Factor | Valor | Razón clínica |
+| --- | --- | --- | --- |
+| Banda 15–44 | franja / día | \[1; 1; 1,3\] / \[1; 1,15\] | Ocio nocturno, consultas fuera del horario laboral y fin de semana |
+| traumatismo | edad / franja / día / estación | \[1,3; 1,0; 0,7; 0,8\] / \[1; 1,1; 0,8\] / \[1; 1,2\] / \[0,9; 1; 1,1; 1\] | Deporte, trabajo y tráfico en jóvenes; caídas en ≥80; actividad diurna; fin de semana; verano |
+| fiebre | estación | \[1,4; 1; 0,7; 1\] | Gripe y VRS |
+| disnea | edad / franja / estación | \[0,4; 0,8; 1,8; 2,4\] / \[1; 1; 1,2\] / \[1,5; 1; 0,7; 1\] | EPOC e insuficiencia cardiaca; disnea paroxística nocturna; invierno |
+| malestar | edad | \[0,5; 0,9; 1,8; 2,5\] | Fragilidad y pluripatología |
+| dolor\_toracico | edad / estación | \[0,6; 1,3; 1,4; 1,2\] / \[1,1; 1; 0,9; 1\] | Cardiopatía isquémica de 45 a 79, atípica en ≥80; más coronarios en invierno |
+| neurologico | edad | \[0,7; 1,0; 1,5; 1,7\] | Ictus |
+| sincope | edad / estación | \[0,7; 0,8; 1,5; 2,0\] / \[1; 1; 1,2; 1\] | Ortostatismo, fármacos y arritmias; calor |
+| urologico | edad / estación | \[1,0; 1,1; 1,0; 1,1\] / \[1; 1; 1,2; 1\] | Cólico renal en la edad media; retención de orina, sondas e ITU complicada en ≥80; deshidratación en verano |
+| cutaneo | franja / día / estación | \[1; 1; 0,7\] / \[1; 1,2\] / \[0,9; 1,2; 1,2; 0,9\] | Consulta demorable; centro de salud cerrado el fin de semana; alergias, picaduras y sol |
+| orl | franja / día / estación | \[1; 1; 0,7\] / \[1; 1,2\] / \[1,2; 1; 0,9; 1\] | Consulta demorable; centro de salud cerrado; otitis y faringitis |
+| psiquiatrico | edad / franja | \[1,4; 1,0; 0,5; 0,4\] / \[1; 1; 1,3\] | Crisis y debuts en jóvenes; crisis nocturnas |
+| palpitaciones | edad | \[0,7; 1,1; 1,5; 1,3\] | Fibrilación auricular |
+| intoxicacion | edad / franja / día | \[2,0; 0,8; 0,3; 0,2\] / \[1; 1; 1,8\] / \[1; 1,7\] | Alcohol y drogas; noche × fin de semana = 3,06, el «×3» sin interacciones |
+| parada | edad | \[0,2; 0,8; 1,8; 2,5\] | Parada en mayores |
+| dolor\_abdominal, digestivo, otros | — | — | Sin patrón claro |
+
+Población: `reparto_edad = [38, 22, 22, 18]` (calibrado en el total de ≥65), `mujeres = [50, 50, 55, 62]` (orientativo), `ambulancia = [6, 10, 21, 34]` (calibrado en ≥65). Pesos base derivados (suman 100): traumatismo 19,670; dolor abdominal 10,673; fiebre 8,340; disnea 7,388; malestar 5,611; dolor torácico 5,327; neurológico 4,975; síncope 3,787; urológico 3,919; cutáneo 4,136; ORL 4,247; digestivo 4,269; psiquiátrico 3,040; palpitaciones 2,060; intoxicación 1,342; parada 0,539; otros 10,673.
+
+**Resultados**
+
+| Comprobación | Valor |
+| --- | --- |
+| Llegadas esperadas en un año (`config/llegadas.toml`) | 109.542: 40,3 % de mañana, 38,4 % de tarde y 21,3 % de noche; 26,6 % en fin de semana |
+| `base_weights_for` | 9 vueltas; con los pesos escritos, a 0,00065 puntos del catálogo como máximo |
+| Mayores de 65 años | 38,6 % en el año (horquilla del 34–44 %); 40 % en la mañana laborable |
+| Ambulancia en ≥65 | 26,9 % (EDEN: 27 %) |
+| Disnea ×1,5 | La disnea pasa del 8,7 % al 12,0 %; cambia el 3,28 % de los pacientes (predicho: 3,36 %), todos hacia la disnea; con la CDF inversa, el 15,6 % |
+| Muestreador | Unos 120 µs por paciente |
+| Validación de los 24 contextos | 47 s (slow): 20.000 pacientes por contexto, 89 categorías, nivel 0,01/2136. La rápida, 2 contextos en 5 s |
+| Potencia marginal (80 %) | 0,5 → 0,78 %; 5 → 5,85 %; 8 → 9,05 %; 20 → 21,54 % |
+| Potencia dentro de 80–99 (unos 3.600 pacientes) | 5 → 7,02 %; 20 → 23,65 % |
+| Menor esperado dentro de una banda | 7,1 (intoxicación en 80–99, tarde laborable de invierno) |
+| Disnea ×1,5 solo en 80–99 | Del 19,9 % al 27,1 % en esa banda; potencia mayor del 99,99999 % |
+
+**Comprobación con versiones incorrectas** (temporales; primera ejecución del PR, más la V8 de la revisión)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Factores sumados | Fallan el ejemplo a mano, «escritos = recalculados» y el ±0,5; pasa el χ² | 10 fallos y el χ² pasa; falla además «sin derivar se saldría del catálogo» |
+| V2. `argmax(w + g)` | Fallan Gumbel a mano y el χ²; pasa el de números comunes | 12 fallos. El de números comunes falla por su guarda: el traumatismo gana casi siempre y nadie cambia |
+| V3. CDF inversa en el motivo | Solo falla el de números comunes | 5 fallos: también los tres «paciente k recibe su bloque», que detectan cualquier cambio de transformación |
+| V4a. Probabilidades sin dividir por la suma | Fallan el ejemplo, «suman 1» y el χ²; `base_weights_for` no converge | Exacta: 23 fallos, con `RuntimeError` y `ValueError` |
+| V4b. Renormalizar en `gumbel_max` | No falla nada | Exacta: 0 fallos |
+| V5a. Hora en UTC | Fallan los bordes; «probablemente» «escritos = recalculados» | 50 fallos: bordes, pesos de contexto, ±0,5, ≥65 y el χ² |
+| V5b. Franjas de `centro.toml` | Solo falla el test de franjas \[7, 14, 21\] | 4 fallos: \[7, 14, 21\] y \[0, 12, 23\] |
+| V6. `base_weights_for` con un día | Fallan el ±0,5 y «escritos = recalculados» | 4 fallos; el ±0,5 pasa, porque usa los pesos ya escritos |
+| V7. Edad sin el tope de la banda | Fallan los bordes, la cobertura y la uniforme de 80–99 | Exacta: 6 fallos |
+| V8. Motivo sorteado con otra banda | Pasan el χ² marginal y el de banda; falla el condicionado | Exacta: 30 y 26 categorías condicionadas en los dos contextos rápidos, ninguna marginal |
+
+**Lecciones aprendidas**
+
+- **Una predicción fallida dice qué test cubre qué.** Seis de nueve fallaron en la primera ronda. La guarda «el caso ocurre» atrapó la V2; el test de bloque, cualquier cambio de transformación (V3); y la derivación la protege «escritos = recalculados», no el ±0,5 (V6). Una hora de desfase contamina todo lo que depende del contexto (V5a).
+- **Calcular la potencia antes de escribir un test de detección.** Si no, el test puede pasar por suerte o fallar sin demostrar nada.
+- **Probar la relación conjunta, no solo los marginales.** El muestreador era correcto, pero ningún test lo habría dicho si dejara de serlo.
+- **Los ajustes de la aprobación volvieron a llegar a medias.** Entraron los bordes de febrero, la convención de los meses, el ejemplo con su perfil de llegadas y el comentario de `reparto_edad`, pero no el χ² condicionado, la V8, los factores ni el patrón `+`, y hizo falta una ronda de revisión del PR. Desde la 4.3, la descripción del PR lleva una sección «Ajustes de la aprobación» con cada punto y su estado.
+- **Un cambio local ajeno se pregunta, no se pisa.** El agente encontró la exportación sin commitear y preguntó antes de incluirla.
+
+**Pendiente**
+
+- Para la 4.3: el esquema crece con `gravedad` por motivo y con `[triaje]`. Los pesos base no cambian, porque la gravedad no altera el motivo.
+- Para la 4.5: `person_from_draws` recalcula los pesos de banda en cada paciente (unos 120 µs por paciente). Sobra con 300 pacientes al día, pero conviene precalcularlos, como los de motivo, si las réplicas crecen.
+- Para la 4.5: las categorías dentro de una banda se condicionan a los pacientes que salieron en ella, que son aleatorios. Con 20.000 pacientes el menor esperado es 7,1; con muchos menos, el error de `MIN_EXPECTED` dependería del sorteo.
