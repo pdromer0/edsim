@@ -282,7 +282,7 @@ franjas = [8, 15, 22]               # inicio de mañana, tarde y noche (independ
 bandas_edad = [15, 45, 65, 80]      # límite inferior de cada banda; tope 99
 reparto_edad = [38, 22, 22, 18]     # % en el contexto de referencia
 mujeres = [50, 50, 55, 62]          # % por banda
-ambulancia = [6, 10, 20, 32]        # % por banda
+ambulancia = [6, 10, 21, 34]        # % por banda; 26,9 % en ≥65 frente al 27 % de EDEN ([20, 32] daría un 25,4 %)
 
 [triaje]
 reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]   # % asignado; los umbrales salen del código
