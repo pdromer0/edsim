@@ -887,6 +887,55 @@ def test_espera_que_empieza_en_el_mismo_instante_no_cuenta(center):
     assert violations(events, small, "nobody_jumps_the_queue") == []
 
 
+def queued(arrival_id: int, arrival: float, start: float, circuito: str = "enfermeria"):
+    """Un episodio que llega en ``arrival`` y empieza el triaje en ``start``, cortado
+    por el horizonte al terminar el triaje (5 minutos de enfermería o 0 en la puerta)."""
+    end = start if circuito == "puerta" else start + 5
+    level = 1 if circuito == "puerta" else 3
+    rows = [
+        (arrival, "patient_arrived", {}),
+        (arrival, "patient_registered", {}),
+        (start, "triage_started", {"circuito": circuito}),
+        (end, "triage_completed", {"nivel": level}),
+    ]
+    return [(time, arrival_id, event_type, payload) for time, event_type, payload in rows]
+
+
+@pytest.mark.parametrize(
+    ("b_start", "c_start", "expected"),
+    [
+        (5.0, 10.0, []),  # FIFO: B (llega en 1) antes que C (llega en 2)
+        (10.0, 5.0, ["EP-000002"]),  # C empieza en 5 con B esperando desde 1
+    ],
+)
+def test_triaje_por_orden_de_llegada(center, b_start, c_start, expected):
+    # Una enfermera, ocupada por A de 0 a 5. B y C esperan desde 1 y 2.
+    events = build(queued(0, 0.0, 0.0), queued(1, 1.0, b_start), queued(2, 2.0, c_start))
+
+    found = violations(events, center, "nobody_jumps_the_queue")
+
+    assert [v.episode_id for v in found] == expected
+    if found:
+        assert "triage" in found[0].message and "EP-000001" in found[0].message
+        assert found[0].sim_time == 5.0
+
+
+def test_triaje_con_llegadas_del_mismo_instante(center):
+    # B y C llegan en 1: cualquiera de los dos puede empezar primero.
+    events = build(queued(0, 0.0, 0.0), queued(1, 1.0, 10.0), queued(2, 1.0, 5.0))
+    assert violations(events, center, "nobody_jumps_the_queue") == []
+
+
+def test_el_nivel_1_en_la_puerta_no_se_cuela(center):
+    # B espera enfermera desde 1; L (nivel 1) llega en 3 y se clasifica en la puerta:
+    # no ocupa enfermera ni hace cola, así que no adelanta a B en la cola de triaje.
+    events = build(queued(0, 0.0, 0.0), queued(1, 1.0, 5.0), queued(2, 3.0, 3.0, "puerta"))
+    assert violations(events, center, "nobody_jumps_the_queue") == []
+    # Y quien empieza tras él no se cuela respecto a él: L ya no espera.
+    events = build(queued(0, 0.0, 0.0), queued(2, 1.0, 1.0, "puerta"), queued(1, 2.0, 5.0))
+    assert violations(events, center, "nobody_jumps_the_queue") == []
+
+
 def test_quien_vuelve_tras_un_desalojo_espera_con_su_clave(roomy):
     # A (nivel 3, llegada 0) es desalojado en 12 y espera box desde ahí. B (nivel 3,
     # llegada 20) termina el triaje en 25. Cuando L sale en 32, el box es de A, que llegó
