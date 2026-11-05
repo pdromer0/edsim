@@ -5,7 +5,10 @@ están en test_engine.py y test_cli_characterization.py y no cambian.
 """
 
 import dataclasses
+import hashlib
+import json
 from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -21,7 +24,7 @@ from edsim.arrivals.thinning import ArrivalRecord, iter_arrivals
 from edsim.engine.center import load_center
 from edsim.engine.clinical_sampler import ClinicalSampler
 from edsim.engine.engine import N_CLINICAL_STREAMS, run_engine, simulate_ed
-from edsim.engine.events import CATALOG_V2, MemorySink
+from edsim.engine.events import CATALOG_V2, JsonlSink, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import check_invariants
 from edsim.engine.report import RunParameters, write_episodes_csv
@@ -433,3 +436,39 @@ def test_invariantes_sin_violaciones_con_el_clinico(
         )
         >= 10
     )
+
+
+# --- Huellas del modelo clínico --------------------------------------------------------
+
+# Huellas SHA-256 del modelo clínico con el centro, las llegadas y los perfiles de
+# ejemplo, semilla 2026 y 3 días: el log (eventos.jsonl) y el ground truth, una línea
+# JSON por episodio (abajo). Se regeneran solo a propósito, con un cambio de los
+# muestreadores o de ClinicalTruth explicado en el commit; nunca para que un test pase.
+# La representación del ground truth es la de este test: el formato estable será el CSV
+# clínico de la tarea 4.5b. Generadas en la tarea 4.5a.
+CLINICAL_LOG_FINGERPRINT = "1ee7e1ba39794236de15ae005f764a68ada92c40ec2f3dcea58c3520e8f03eb1"
+CLINICAL_TRUTH_FINGERPRINT = "c4f2c069cfabd4a4e4491c1b0db7abd986bec9558019f92579950fc3f61f3733"
+
+
+def truth_lines(episodes) -> str:
+    """El EpisodeTruth entero de cada episodio, en el orden de sus campos, una línea JSON."""
+    return "".join(
+        json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"
+        for e in episodes
+    )
+
+
+def test_huella_del_log_clinico(center, arrival_profile, profiles, tmp_path):
+    path = tmp_path / "eventos.jsonl"
+    with JsonlSink(path) as sink:
+        simulate_ed(center, arrival_profile, DAYS, SEED, sink=sink, profiles=profiles)
+
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == CLINICAL_LOG_FINGERPRINT
+
+
+def test_huella_del_ground_truth_clinico(clinical):
+    _, result = clinical
+    text = truth_lines(result.ground_truth.episodes)
+
+    assert text.count("\n") == len(result.ground_truth.episodes) == 1101
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == CLINICAL_TRUTH_FINGERPRINT
