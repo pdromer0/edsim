@@ -39,7 +39,7 @@ from numpy.typing import ArrayLike, NDArray
 from scipy import optimize, special
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.profiles.config import N_LEVELS, N_THRESHOLDS, ClinicalProfiles, Severity
+from edsim.profiles.config import N_THRESHOLDS, ClinicalProfiles, Severity
 from edsim.profiles.mixing import reason_band_mass
 
 CORRECT = "correcto"
@@ -209,6 +209,41 @@ def thresholds_for(
     )
 
 
+def interval_nodes(
+    mixture: SeverityMixture, edges: ArrayLike
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Gauss-Legendre nodes of G per component and interval, with their weights.
+
+    For component ``c`` and the interval ``(edges[i + 1], edges[i]]``, cut at
+    ``mean ± TAIL_SDS * sd``, it gives ``QUADRATURE_NODES`` nodes ``g`` and
+    weights such that ``sum(weights[c, i] * f(g[c, i]))`` is the integral of
+    ``f`` times the normal density of the component over the interval. An
+    interval outside the cut gets zero weights. So the share of the mixture in
+    the interval with some property of g is ``mixture weights @ sum(weights *
+    f(g))``: the one integrator of the exact values of the triage, the tests
+    and the durations.
+
+    Args:
+        mixture: The mixture of G.
+        edges: Decreasing edges of the intervals, from ``+inf`` to ``-inf``,
+            such as ``+inf``, the four thresholds and ``-inf``.
+
+    Returns:
+        ``g`` and ``weights``, both of shape (components, intervals, nodes),
+        with the components flattened in the order of ``mixture.weights.ravel()``.
+    """
+    edges = np.asarray(edges, dtype=float)
+    m, s = mixture.means.ravel()[:, None], mixture.sds.ravel()[:, None]
+    lo = np.maximum(edges[None, 1:], m - TAIL_SDS * s)  # (components, intervals)
+    hi = np.minimum(edges[None, :-1], m + TAIL_SDS * s)
+    half = (np.clip(hi - lo, 0, None) / 2)[..., None]
+    g = (lo[..., None] + half) + half * _NODES
+    density = np.exp(-0.5 * ((g - m[..., None]) / s[..., None]) ** 2) / (
+        s[..., None] * np.sqrt(2 * np.pi)
+    )
+    return g, density * half * _NODE_WEIGHTS
+
+
 def triage_matrix(
     mixture: SeverityMixture, thresholds: ArrayLike, noise: float, bias: float
 ) -> NDArray[np.float64]:
@@ -217,32 +252,18 @@ def triage_matrix(
     For each component and each interval ``(c_i, c_{i-1}]`` of true level i,
     the cell ``(i, j)`` is the integral over g of the normal density of the
     component times ``P(c_j < g + ε <= c_{j-1})``, a difference of two normal
-    CDFs. The integral is computed with Gauss-Legendre on the interval, cut at
-    ``mean ± TAIL_SDS * sd``.
+    CDFs. The integral is computed with ``interval_nodes`` (Gauss-Legendre on
+    the interval, cut at ``mean ± TAIL_SDS * sd``).
 
     Returns:
         A 5×5 array adding up to 1. Its row sums are ``real_shares`` and its
         column sums, ``assigned_shares``.
     """
     edges = _edges(thresholds)
-    w = mixture.weights.ravel()
-    m, s = mixture.means.ravel(), mixture.sds.ravel()
-    matrix = np.zeros((N_LEVELS, N_LEVELS))
-    for i in range(N_LEVELS):
-        lo = np.maximum(edges[i + 1], m - TAIL_SDS * s)
-        hi = np.minimum(edges[i], m + TAIL_SDS * s)
-        half = np.clip(hi - lo, 0, None) / 2
-        g = (lo + half)[:, None] + half[:, None] * _NODES[None, :]  # (components, nodes)
-        density = (
-            np.exp(-0.5 * ((g - m[:, None]) / s[:, None]) ** 2)
-            / (s[:, None] * np.sqrt(2 * np.pi))
-            * half[:, None]
-            * _NODE_WEIGHTS[None, :]
-        )
-        # P(G + ε above each edge | g), from +inf (0) to -inf (1).
-        above = special.ndtr(-(edges[:, None, None] - g[None] - bias) / noise)
-        matrix[i] = np.einsum("c,cn,jcn->j", w, density, np.diff(above, axis=0))
-    return matrix
+    g, weights = interval_nodes(mixture, edges)  # (components, levels, nodes)
+    # P(G + ε above each edge | g), from +inf (0) to -inf (1).
+    above = special.ndtr(-(edges[:, None, None, None] - g[None] - bias) / noise)
+    return np.einsum("c,cin,jcin->ij", mixture.weights.ravel(), weights, np.diff(above, axis=0))
 
 
 def triage_error_rates(matrix: ArrayLike) -> tuple[float, float]:
