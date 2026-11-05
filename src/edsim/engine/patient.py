@@ -21,7 +21,10 @@ The tests run in a process of their own (``_lab``), so a displacement does not
 stop them.
 
 Everything random was drawn on arrival (``PatientDraws``): the process only
-waits and emits.
+waits and emits. With the clinical model (``draws.clinical``), the events
+carry the clinical payloads of version 2 of the catalog, and the turnaround of
+the tests is computed when they are ordered, with the shift band of that
+instant; without it, the process is exactly the one of the provisional model.
 """
 
 import enum
@@ -43,6 +46,13 @@ from edsim.engine.resources import (
 )
 
 Emit = Callable[..., object]
+
+
+def _extra(draws: PatientDraws, event_type: str) -> dict[str, object]:
+    """Clinical keys of the payload of ``event_type``: none with the provisional model."""
+    if draws.clinical is None:
+        return {}
+    return draws.clinical.payload(event_type)
 
 
 class Stage(enum.Enum):
@@ -108,21 +118,33 @@ def patient(
     # Arrival and registration: no wait in milestone 3. env.now is the
     # sim_time of patient_arrived, so the key matches the log exactly.
     key = priority_key(draws.level, env.now)
-    emit("patient_arrived", env.now)
-    emit("patient_registered", env.now)
+    emit("patient_arrived", env.now, **_extra(draws, "patient_arrived"))
+    emit("patient_registered", env.now, **_extra(draws, "patient_registered"))
 
+    # draws.level is the assigned level: the door, like the priority, uses what
+    # the hospital knows.
     if classified_at_the_door(draws.level):
         # Classified at the door (ADR candidate 39): no nurse and no triage time;
         # the drawn triage_time is not used. Same events, in the same instant.
         emit("triage_started", env.now, circuito=DOOR)
-        emit("triage_completed", env.now, nivel=draws.level)
+        emit(
+            "triage_completed",
+            env.now,
+            nivel=draws.level,
+            **_extra(draws, "triage_completed"),
+        )
     else:
         # The same priority for every patient: FIFO (see TRIAGE_PRIORITY).
         with pools.nurses.request(priority=TRIAGE_PRIORITY) as nurse:
             yield nurse
             emit("triage_started", env.now, circuito=NURSE)
             yield env.timeout(draws.triage_time)
-            emit("triage_completed", env.now, nivel=draws.level)
+            emit(
+                "triage_completed",
+                env.now,
+                nivel=draws.level,
+                **_extra(draws, "triage_completed"),
+            )
 
     holder = Holder(me, arrival_id, draws.level)
     stay = _Stay(Stage.INITIAL, draws.assessment_time)
@@ -190,9 +212,15 @@ def _in_box(
             return cause
         if stay.stage is Stage.INITIAL and draws.needs_tests:
             # The box stays taken and the doctor is free while the tests run.
-            emit("test_ordered", env.now)
+            emit("test_ordered", env.now, **_extra(draws, "test_ordered"))
+            if draws.clinical is None:
+                # Provisional: the turnaround was drawn on arrival.
+                turnaround = draws.test_turnaround
+            else:
+                # Clinical: the slowest ordered test, with the shift band of the order.
+                turnaround = draws.clinical.round_turnaround(env.now)
             stay.results = env.event()
-            env.process(_lab(env, emit, draws.test_turnaround, stay.results))
+            env.process(_lab(env, emit, turnaround, stay.results, **_extra(draws, "test_resulted")))
             stay.stage = Stage.TESTS
         else:
             stay.stage = Stage.DONE
@@ -236,11 +264,19 @@ def _assessment(
 
 
 def _lab(
-    env: simpy.Environment, emit: Emit, turnaround: float, results: simpy.Event
+    env: simpy.Environment,
+    emit: Emit,
+    turnaround: float,
+    results: simpy.Event,
+    **payload: object,
 ) -> Generator[simpy.Event]:
-    """The tests of one patient: they run whatever happens to the patient."""
+    """The tests of one patient: they run whatever happens to the patient.
+
+    ``payload`` is the one of ``test_resulted``: empty with the provisional
+    model, the results of the ordered tests with the clinical one.
+    """
     yield env.timeout(turnaround)
-    emit("test_resulted", env.now)
+    emit("test_resulted", env.now, **payload)
     results.succeed()
 
 
