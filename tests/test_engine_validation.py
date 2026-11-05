@@ -160,7 +160,7 @@ def test_check_mg1_argumentos(center):
 
 @pytest.mark.slow
 def test_potencia_mg1_con_triaje_exponencial(center):
-    # Misma media, CV 1 en lugar de 0,57: Wq ≈ 19,6 min frente a 13,10. Con 5 réplicas
+    # Misma media, CV 1 en lugar de 0,57: Wq ≈ 19,3 min frente a 12,93. Con 5 réplicas
     # no basta: la t de 4 grados de libertad al 99,67 % vale 6,25 y el IC de Wq (medido,
     # 9,3-28,6) contiene la teoría. Con 10, t = 3,95 y el IC queda por encima.
     c = mg1_center(center)
@@ -404,7 +404,8 @@ def test_validate_engine_mg1(engine_validation_real):
     assert [d.name for d in mg1.details] == ["wq", "rho", "lq"]
     assert all(d.confidence == pytest.approx(1 - 0.01 / 3) for d in mg1.details)
     assert len(engine_validation_real.mg1.wq) == 20
-    assert engine_validation_real.mg1.theory.wq == pytest.approx(13.10, abs=5e-3)
+    # 12,93 con λ·(1 − p₁) desde la tarea 4.1 (13,10 en el hito 3, sin nivel 1 en la puerta).
+    assert engine_validation_real.mg1.theory.wq == pytest.approx(12.93, abs=5e-3)
     assert engine_validation_real.long_run.metrics.end == 28 * 1440
 
 
