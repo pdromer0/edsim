@@ -8,7 +8,7 @@ Dentro del alcance
 
 - Población de adultos (15 años o más): banda y edad, sexo y medio de llegada, condicionados al contexto (franja, tipo de día y estación).
 - Los 17 motivos de consulta del catálogo como perfiles, con una categórica log-lineal sorteada con Gumbel-max.
-- Gravedad latente G y triaje ordinal con ruido y sesgo (G + ε cortada por umbrales calculados); nivel real, calidad del triaje e infra y sobretriaje en el ground truth.
+- Gravedad latente G y triaje ordinal con ruido y sesgo (G + ε cortada por umbrales derivados y escritos); nivel real, calidad del triaje e infra y sobretriaje en el ground truth.
 - El nivel 1 asignado se clasifica en la puerta y va directo al box.
 - Pruebas de cuatro tipos con probabilidad logística, resultado y tiempo de respuesta; duraciones lognormales por nivel real y motivo.
 - Tres relojes hasta el médico con nombre propio; cumplimiento Manchester desde la clasificación; indicador de pretriaje.
@@ -38,8 +38,8 @@ Los conceptos se explicaron en la conversación de arranque del hito (3 y 5 de n
 | Peso base frente a reparto global | El reparto que sale es la media de los contextos ponderada por las llegadas; los pesos base se derivan para dar el reparto del catálogo |
 | Gumbel-max | Un sorteo por categoría y gana el mayor log w + g. Misma distribución, y al cambiar un peso solo cambian los pacientes que entran o salen de esa categoría (3,6 % frente a 17,3 % con la CDF inversa en el ejemplo de la gripe) |
 | Gravedad latente | G continua, oculta, en desviaciones de la población de referencia; depende del motivo y de la edad |
-| Triaje ordinal | Nivel asignado = umbrales(G + ε); nivel real = umbrales(G). Los umbrales se calculan para dar el reparto asignado objetivo |
-| Infra y sobretriaje | Asignado menos o más urgente que el real. Con ruido 0,32 y sesgo −0,08 salen un 10,1 % y un 6,3 %; el 31 % de los niveles 1 reales se asigna como 2 |
+| Triaje ordinal | Nivel asignado = umbrales(G + ε); nivel real = umbrales(G). Los umbrales se derivan una vez para dar el reparto asignado objetivo y se escriben en el TOML |
+| Infra y sobretriaje | Asignado menos o más urgente que el real. Con G normal estándar, ruido 0,32 y sesgo −0,08 salen un 10,2 % y un 6,2 %; el 31 % de los niveles 1 reales se asigna como 2 |
 | Asignado frente a real | La prioridad usa el asignado (lo que sabe el hospital); duraciones y pruebas, la gravedad real (el paciente que hay delante) |
 | Logística | Convierte una suma sin límites en una probabilidad entre 0 y 1; los coeficientes son odds ratios. El TOML da el porcentaje a gravedad media y el código calcula el intercepto |
 | Lognormal por factor | Multiplicar la mediana por k desplaza la lognormal sin cambiar σ: la media también queda multiplicada por k |
@@ -107,23 +107,35 @@ Un factor solo se escribe si hay una razón clínica, que va en un comentario al
 
 Cada paciente tiene una gravedad real G que el hospital nunca ve; la enfermera clasifica G + ε, y los cinco niveles son cuatro umbrales sobre esa escala (decisión candidata 38).
 
-**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia: 0 es la gravedad media de un adulto. Más G es más grave.
+**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia, la mezcla de un año del perfil de llegadas: 0 es la gravedad media de un adulto. Más G es más grave. Los valores por motivo son orientativos, respetan el orden de la columna «Gravedad típica» del catálogo (un test lo comprueba) y se desplazan y escalan en común para que la mezcla tenga media 0 y desviación 1.
 
-**Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales.
+**Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales. El nivel k es el intervalo (c_k, c_{k−1}]: un valor justo en un umbral se queda en el nivel menos urgente.
 
-**Umbrales calculados, no escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de toda la población, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %). Se calculan una vez al cargar los perfiles, con una muestra grande de pacientes de referencia o numéricamente sobre la mezcla, y se comprueban con un test. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
+**Umbrales derivados y escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de un año del perfil de llegadas, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %, que suman 100,1 por el redondeo y se normalizan). El cálculo es exacto: una raíz por umbral sobre una suma de normales, una por motivo y banda de edad. Como los pesos base, `thresholds_for(...)` se ejecuta una vez y su resultado se escribe en el TOML con el comando en un comentario; un test comprueba que los escritos siguen siendo los derivados. **No se recalculan al cargar los perfiles**: un escenario con más gravedad (un brote de gripe, un accidente con múltiples víctimas) debe dar más niveles urgentes, y si los umbrales se recalcularan el reparto volvería al objetivo y el shock desaparecería. Con la disnea ×1,5 y los umbrales del perfil base, el nivel 2 asignado pasa del 12,09 % al 13,09 %. El reparto objetivo se cumple por construcción solo en el perfil base. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
 
-**Calibración del error.** Con G normal estándar y el reparto de adultos, un ruido de 0,32 y un sesgo de −0,08 reproducen un 10,1 % de infratriaje y un 6,3 % de sobretriaje (el dato más reciente, de Asturias). Un ruido simétrico sin sesgo daría más sobretriaje que infratriaje. Con esos valores, el 31 % de los niveles 1 reales se asigna como 2 y el 17 % de los niveles 5 reales sube a 4: los errores se concentran en los niveles raros, de franjas estrechas.
+**Calibración del error.** Con G normal estándar y el reparto de adultos, un ruido de 0,32 y un sesgo de −0,08 dan un 10,2 % de infratriaje y un 6,2 % de sobretriaje, cerca del dato más reciente, de Asturias (10,1 % y 6,3 %). Un ruido simétrico sin sesgo daría más sobretriaje que infratriaje. Con esos valores, el 31 % de los niveles 1 reales se asigna como 2 y el 17 % de los niveles 5 reales sube a 4: los errores se concentran en los niveles raros, de franjas estrechas.
 
 | Nivel real \\ asignado (%) | 1 | 2 | 3 | 4 | 5 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 68,7 | 31,3 | 0 | 0 | 0 |
-| 2 | 1,3 | 76,7 | 22,0 | 0 | 0 |
-| 3 | 0 | 6,6 | 75,3 | 18,1 | 0 |
-| 4 | 0 | 0 | 7,2 | 91,4 | 1,4 |
-| 5 | 0 | 0 | 0 | 17,1 | 82,9 |
+| 1 | 69,1 | 30,9 | 0 | 0 | 0 |
+| 2 | 1,3 | 76,5 | 22,2 | 0 | 0 |
+| 3 | 0 | 6,5 | 75,4 | 18,2 | 0 |
+| 4 | 0 | 0 | 7,1 | 91,5 | 1,4 |
+| 5 | 0 | 0 | 0 | 16,8 | 83,2 |
 
-Calculado con un millón de pacientes, G normal estándar; con la mezcla de motivos real, la tarea 4.3 lo vuelve a medir.
+Valores exactos, por integración, con G normal estándar. La versión anterior de esta tabla salió de un millón de pacientes sorteados: la fila del nivel 1 (unos 3400 pacientes) tenía alrededor de 0,8 puntos de error de muestreo.
+
+**Con la mezcla real.** La mezcla de motivos y edades no es normal: tiene una cola grave (las paradas) y motivos de mucha dispersión. `triage_error_for(...)` ajusta ruido y sesgo a los objetivos de Asturias, recalculando los umbrales en cada paso, y da 0,335 y −0,082, que también se escriben en el TOML (calibrados). Con los valores escritos, el infratriaje es del 10,11 % y el sobretriaje del 6,30 %.
+
+| Nivel real \\ asignado (%), mezcla real | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 70,3 | 29,7 | 0 | 0 | 0 |
+| 2 | 1,1 | 78,5 | 20,4 | 0 | 0 |
+| 3 | 0 | 6,0 | 75,7 | 18,3 | 0 |
+| 4 | 0 | 0 | 7,7 | 90,6 | 1,7 |
+| 5 | 0 | 0 | 0 | 19,4 | 80,6 |
+
+Umbrales [3,088; 1,149; −0,044; −2,178]; reparto real 0,38 / 12,53 / 35,82 / 50,62 / 0,66 % frente al asignado 0,40 / 12,09 / 33,56 / 52,55 / 1,40 %.
 
 **Asignado frente a real.** La prioridad de box y médico usa el nivel asignado, que es lo que sabe el hospital. Las duraciones y las pruebas usan la gravedad real, porque el médico atiende al paciente que tiene delante. Así, un 2 infratriado como 4 espera como un 4 pero necesita lo que necesita un 2: es el mecanismo que hace peligroso el infratriaje.
 
@@ -285,10 +297,13 @@ mujeres = [50, 50, 55, 62]          # % por banda
 ambulancia = [6, 10, 21, 34]        # % por banda; 26,9 % en ≥65 frente al 27 % de EDEN ([20, 32] daría un 25,4 %)
 
 [triaje]
-reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]   # % asignado; los umbrales salen del código
-ruido = 0.32                        # desviación del error, en unidades de G
-sesgo = -0.08                       # negativo: tiende a infratriar
-duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5
+reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]   # % asignado (suma 100,1: se normaliza)
+infratriaje = 10.1                  # % objetivo (Asturias)
+sobretriaje = 6.3
+ruido = 0.335                       # calibrado con triage_error_for; desviación del error, en unidades de G
+sesgo = -0.082                      # calibrado; negativo: tiende a infratriar
+umbrales = [3.088, 1.149, -0.044, -2.178]   # derivado con thresholds_for; no se recalcula al cargar
+duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5 (tarea 4.4)
 
 [duraciones]
 valoracion = [[40, 90], [30, 70], [22, 50], [15, 35], [10, 25]]   # por nivel real
@@ -316,7 +331,7 @@ duracion = 1.2                      # factor sobre la mediana de su nivel
 **Reglas de `perfiles.toml`:**
 
 - `ClinicalProfiles` inmutable, validado y normalizado al construirse, y `load_profiles(path)` con `tomllib`, como `CenterConfig`.
-- Unidades clínicas en el fichero (porcentajes, minutos, factores, odds ratios); el código calcula pesos normalizados, umbrales, interceptos y μ y σ. Ningún número derivado se escribe a mano, salvo los pesos base, que escribe `base_weights_for` con un comentario.
+- Unidades clínicas en el fichero (porcentajes, minutos, factores, odds ratios); el código calcula pesos normalizados, interceptos y μ y σ. Ningún número derivado se escribe a mano. Los pesos base (`base_weights_for`) y los umbrales (`thresholds_for`) se derivan una vez y se escriben con un comentario, y ruido y sesgo se calibran con `triage_error_for`; un test comprueba que los escritos son los recalculados.
 - Factores opcionales: si faltan valen 1. Claves desconocidas prohibidas, con un error que nombra la clave y el motivo. Longitudes validadas: 4 bandas, 3 franjas, 2 tipos de día, 4 estaciones, 5 niveles y 4 tipos de prueba.
 - Los 17 motivos son obligatorios, con los nombres del catálogo en `snake_case`.
 - Hasta el cierre, `centro.toml` conserva sus secciones provisionales (`[triaje]`, `[duraciones]`, `[pruebas]`, `[destino]`) para el modelo provisional; en la tarea 4.9 pierde las tres primeras y conserva `[destino]` hasta el hito 5.
@@ -367,7 +382,7 @@ src/edsim/profiles/
   context.py             franja, tipo de día y estación de una llegada
   mixing.py              categórica log-lineal, Gumbel-max, base_weights_for
   population.py          banda, edad, sexo y medio de llegada
-  severity.py            gravedad latente, umbrales calculados, triaje con error
+  severity.py            gravedad latente, umbrales derivados, triaje con error
   workup.py              pruebas por tipo, resultado y respuesta
   durations.py           lognormales por nivel real y motivo
   sampler.py             ClinicalSampler y PatientDraws ampliado
@@ -403,7 +418,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Perfiles | Carga del TOML de ejemplo y del real; factores opcionales neutros; errores con claves desconocidas, longitudes, porcentajes y medianas inválidos |
 | Contexto | Franja en los bordes (7:59 y 8:00), tipo de día en el paso de domingo a lunes, estación por mes |
 | Mezcla | Valor a mano (22,7 % de disnea en mayores en invierno); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea» |
-| Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje con IC binomial; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
+| Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje; matriz real × asignado casilla a casilla; umbrales escritos = derivados y el shock con los escritos; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
 | Pruebas y duraciones | logit(0,40) = −0,41; probabilidad por tramos de G; máxima de las pedidas; media lognormal 24,43 → 29,32 con el factor 1,2; cuantiles con la binomial, como en la tarea 3.1 |
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
 | Motor | Payloads del catálogo, sin campos ocultos; invariantes con triajes de puerta; huellas del modelo provisional y del clínico |
@@ -460,7 +475,7 @@ Once decisiones candidatas, acordadas en la sesión conceptual del 5 de noviembr
 | 35 | Solo adultos de 15 años o más, con cuatro bandas de edad (15–44, 45–64, 65–79, 80–99) y edad uniforme dentro de la banda | Los objetivos de triaje son de adultos; la pediatría pide su propio catálogo (v3) |
 | 36 | `config/perfiles.toml` aparte de `centro.toml`, una tabla por motivo, unidades clínicas, factores opcionales neutros, claves desconocidas prohibidas y franjas propias | Hospital y población son preguntas distintas; perfiles intercambiables en la v3; nada derivado a mano |
 | 37 | Los 17 motivos desde el principio, cada parámetro con su estado (calibrado, derivado u orientativo) y pesos base derivados del reparto del catálogo con `base_weights_for` | No hay fuente pública por motivo; el estado dice qué respaldo tiene cada número; los shocks no se renormalizan |
-| 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo y umbrales calculados para el reparto asignado; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje |
+| 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo; umbrales derivados una vez para el reparto asignado y escritos en el TOML, sin recalcularse al cargar; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje; un escenario con más gravedad da más niveles urgentes |
 | 39 | El nivel 1 asignado se clasifica en la puerta (triaje de duración 0, `circuito: "puerta"`, sin enfermera) y va directo al box; sin desalojo de médicos | El crítico no hace cola de triaje sin cambiar el orden de los eventos; el desalojo de médicos ahorraría un minuto a un paciente al día con una regla clínica sin datos (v1) |
 | 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
 | 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; la plantilla de médicos es el único mando indirecto | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia |
@@ -478,7 +493,7 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | --- | --- | --- | --- | --- |
 | 4.1 | Especificación en `docs/specs/hito-4.md`; tres relojes y pretriaje (40); nivel 1 en la puerta (39); pendientes menores | Claude Code | `feat/h4-relojes` | Cumplimiento con el reloj C, triajes de puerta y huellas justificadas |
 | 4.2 | `perfiles.toml` y `ClinicalProfiles`; contexto; población; motivos con Gumbel-max y `base_weights_for` (35, 36, 37, 43) | Claude Code | `feat/h4-perfiles` | Población y motivo validados sin el motor |
-| 4.3 | Gravedad latente, umbrales calculados y triaje con ruido y sesgo; nivel real y calidad (38) | Claude Code | `feat/h4-triaje` | Reparto asignado, infra y sobretriaje en verde |
+| 4.3 | Gravedad latente, umbrales derivados y triaje con ruido y sesgo; nivel real y calidad (38) | Claude Code | `feat/h4-triaje` | Reparto asignado, infra y sobretriaje en verde |
 | 4.4 | Pruebas por tipo con resultado y respuesta (42); duraciones por nivel real y motivo | Claude Code | `feat/h4-pruebas` | Logísticas y lognormales validadas |
 | 4.5 | `ClinicalSampler` en el motor como opción (44): payloads, catálogo, ground truth, `--perfiles`, `run.json` con la huella de los perfiles; `perfiles validar` | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
 | 4.6 | `objetivos.toml`, `calibracion evaluar` y primera calibración de la plantilla (41); `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
