@@ -58,8 +58,8 @@ ambulancia = [6, 10, 21, 34]
 # valor se eligió por su marginal de un año (el % de los pacientes del motivo a
 # los que se pide), con la gravedad y la edad del motivo y los odds ratios de
 # [pruebas]. La marginal del comentario sale de los enteros escritos:
-#   edsim.profiles.workup.order_by_reason(perfiles, llegadas), con llegadas =
-#   load_profile("config/llegadas.toml").
+#   edsim.profiles.workup.workup_model(perfiles, llegadas).order_by_reason(),
+#   con llegadas = load_profile("config/llegadas.toml").
 # Si cambian los odds ratios, la gravedad, la mezcla o el perfil de llegadas,
 # un test obliga a actualizar estas marginales.
 # duracion es el factor k sobre la mediana de la valoración y la reevaluación

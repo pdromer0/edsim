@@ -1,6 +1,7 @@
 """Los ficheros de perfiles: config/perfiles.toml y su copia fija de ejemplo."""
 
 import dataclasses
+import re
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ from edsim.profiles.severity import (
     triage_error_rates,
     triage_matrix,
 )
+from edsim.profiles.workup import workup_model
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
@@ -246,3 +248,69 @@ def test_shock_con_los_umbrales_escritos(tmp_path):
     assert 100 * base[1] == pytest.approx(12.0852, abs=1e-4)
     assert 100 * shock[1] == pytest.approx(13.0953, abs=1e-4)
     assert 100 * shock[0] == pytest.approx(0.4074, abs=1e-4)  # también más niveles 1
+
+
+# --- Pruebas: la tabla por motivo (ajuste 1 de la aprobación de la tarea 4.4) ----
+
+# Marginal de un año de cada prueba en cada motivo (% de los pacientes del motivo
+# a los que se pide: analítica, radiografía, ECG, imagen), con los p enteros
+# escritos en config/perfiles.toml y config/llegadas.toml. Los p del TOML son el
+# % para un adulto con G = 0 y se eligieron por esta marginal: si cambian los odds
+# ratios, la gravedad, la mezcla o el perfil de llegadas, esta tabla y los
+# comentarios del TOML se actualizan juntos.
+MARGINALS = {
+    "traumatismo": (8.12, 69.71, 4.60, 6.42),
+    "dolor_abdominal": (74.96, 19.52, 14.87, 35.05),
+    "fiebre": (69.81, 49.61, 10.17, 5.40),
+    "disnea": (84.83, 84.95, 65.04, 7.29),
+    "malestar": (79.92, 35.37, 59.93, 8.41),
+    "dolor_toracico": (84.86, 69.94, 98.18, 5.89),
+    "neurologico": (59.66, 7.34, 30.54, 54.64),
+    "sincope": (64.89, 14.47, 94.91, 14.94),
+    "urologico": (59.99, 20.01, 5.01, 35.46),
+    "cutaneo": (9.89, 2.90, 3.20, 1.64),
+    "orl": (5.15, 3.72, 2.02, 3.08),
+    "digestivo": (69.63, 15.21, 15.59, 15.18),
+    "psiquiatrico": (19.75, 2.53, 12.19, 2.89),
+    "palpitaciones": (70.05, 25.32, 98.00, 3.70),
+    "intoxicacion": (74.66, 8.28, 49.74, 8.44),
+    "parada": (97.97, 90.13, 98.97, 40.38),
+    "otros": (19.66, 10.40, 8.54, 3.91),
+}
+GLOBAL_TESTS = (48.08, 37.32, 28.09, 13.14)  # % de los pacientes del año, por tipo
+ANY_TEST = 72.79  # % con alguna prueba (frente al 55,41 % del modelo provisional)
+
+
+@pytest.fixture(scope="module")
+def real_workup():
+    return workup_model(load_profiles(REAL), load_profile(ARRIVALS[REAL]))
+
+
+def test_marginales_de_las_pruebas_por_motivo(real_workup):
+    # Las 68 marginales (motivo × tipo), exactas, a 0,05 puntos de la tabla.
+    exact = 100 * real_workup.order_by_reason()
+
+    assert list(MARGINALS) == list(REASON_KEYS)
+    assert exact == pytest.approx(np.array(list(MARGINALS.values())), abs=0.05)
+
+
+def test_pruebas_globales_y_alguna_prueba(real_workup):
+    assert 100 * real_workup.order_shares() == pytest.approx(GLOBAL_TESTS, abs=0.05)
+    assert 100 * real_workup.any_test_share() == pytest.approx(ANY_TEST, abs=0.05)
+
+
+@FILES
+def test_comentarios_de_las_marginales_al_dia(path):
+    # Cada línea «pruebas = {...}» del TOML lleva su marginal de un año con un
+    # decimal; debe ser la exacta de los p enteros escritos, redondeada.
+    exact = 100 * workup_model(load_profiles(path), load_profile(ARRIVALS[path])).order_by_reason()
+    text = path.read_text(encoding="utf-8")
+    pattern = (
+        r"\[motivos\.(\w+)\](?:.*\n)*?pruebas = .*# orientativo, elegido por su marginal: (.*) %"
+    )
+    found = dict(re.findall(pattern, text))
+
+    assert list(found) == list(REASON_KEYS)
+    for i, key in enumerate(REASON_KEYS):
+        written = [float(x.replace(",", ".")) for x in found[key].split(" / ")]
+        assert written == pytest.approx(exact[i], abs=0.05 + 1e-9), key
