@@ -1,4 +1,6 @@
-"""Statistical checks of the mix of age bands and reasons, without the engine.
+"""Statistical checks of the sampler without the engine: the mix and the triage.
+
+**The mix** (``check_mixing``).
 
 For each context, the sampler draws many patients at one time of that context,
 and the frequency of each category is compared with its exact probability
@@ -21,6 +23,18 @@ the categories, so that a correct sampler fails the whole check 1 % of the
 times by chance. ``detectable_share`` gives the size of the error that each
 test sees with a power of 80 %.
 
+**The triage** (``check_triage``). The sampler draws the patients of a year:
+each patient gets a context with probability proportional to its expected
+arrivals (``context_weights``), and then its person, reason, severity and
+triage from streams 5, 6, 7 and 1. The counts are compared with the exact
+values of ``edsim.profiles.severity`` on the mixture of the same year and with
+the written thresholds: the 5 shares of assigned levels and the 25 cells of
+the joint matrix of true against assigned level, 30 categories with
+Bonferroni. Each one uses the chi-square of one degree of freedom if its
+expected count is at least ``MIN_EXPECTED``, and the exact binomial test
+below: the cells two or more levels away from the diagonal expect almost no
+patient, and a sampler that put patients there must still fail.
+
 **The hypothesis comes from the profiles; the draws, from the sampler.** For
 power tests the patients can be drawn with other profiles
 (``sampled_profiles``), as with the arrivals in ``arrivals.validation``.
@@ -33,12 +47,14 @@ from datetime import date
 import numpy as np
 from scipy import optimize, stats
 
+from edsim.arrivals.profile import ArrivalProfile
 from edsim.checks import ValidationResult, check_count
-from edsim.profiles.config import N_BANDS, REASON_KEYS, ClinicalProfiles
-from edsim.profiles.context import ArrivalContext, all_contexts, context_time
-from edsim.profiles.mixing import band_probabilities, reason_probabilities
+from edsim.profiles.config import N_BANDS, N_LEVELS, REASON_KEYS, ClinicalProfiles
+from edsim.profiles.context import ArrivalContext, all_contexts, context_time, context_weights
+from edsim.profiles.mixing import band_probabilities, probabilities, reason_probabilities
 from edsim.profiles.population import age_range
-from edsim.profiles.sampler import PersonReasonSampler
+from edsim.profiles.sampler import PersonReasonSampler, SeverityTriageSampler
+from edsim.profiles.severity import severity_mixture, triage_matrix
 from edsim.seeds import child_streams
 
 ALPHA = 0.01
@@ -55,6 +71,12 @@ POWER = 0.8
 
 POPULATION_STREAM, REASON_STREAM = 5, 6
 """Children of ``child_streams(seed, 8)`` that the sampler uses, as in the engine."""
+
+SEVERITY_STREAM, TRIAGE_STREAM = 7, 1
+"""Children of ``child_streams(seed, 8)`` for the severity and the nurse's error."""
+
+N_TRIAGE_CATEGORIES = N_LEVELS + N_LEVELS * N_LEVELS
+"""Categories of ``check_triage``: 5 assigned levels and the 25 cells of the matrix."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,4 +244,129 @@ def check_mixing(
         criterion=f"all {len(details)} contexts: p >= {alpha:.3g} (Bonferroni)",
         passed=failing == 0,
         details=tuple(details),
+    )
+
+
+def _binomial_category(
+    name: str, observed: int, n: int, p: float, alpha: float
+) -> ValidationResult:
+    """Exact two-sided binomial test, for a category with fewer than MIN_EXPECTED expected."""
+    p = float(np.clip(p, 0.0, 1.0))
+    p_value = float(stats.binomtest(observed, n, p).pvalue)
+    return ValidationResult(
+        name=name,
+        statistic=float(observed),
+        p_value=p_value,
+        ci_low=None,
+        ci_high=None,
+        target=p,
+        criterion=f"binomial p >= {alpha:.3g}",
+        passed=bool(p_value >= alpha),
+    )
+
+
+def year_patients(profiles: ClinicalProfiles, arrival_profile: ArrivalProfile) -> int:
+    """Expected arrivals of a year of the arrival profile, rounded: 109 542 in the base center."""
+    return round(float(context_weights(arrival_profile, profiles.shift_band_starts).sum()))
+
+
+def check_triage(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    seed: int | np.random.SeedSequence,
+    patients: int | None = None,
+    sampled_profiles: ClinicalProfiles | None = None,
+) -> ValidationResult:
+    """Assigned levels and the matrix of true against assigned level, over a year.
+
+    Each patient gets its context with probability proportional to the
+    expected arrivals of a year (child 0 of ``seed``) and is drawn at
+    ``context_time`` of that context, with streams 5, 6, 7 and 1 of
+    ``child_streams(child 1 of seed, 8)``. The 30 categories (see the module
+    docstring) are compared with the exact shares, each test at level
+    ``ALPHA / 30``.
+
+    Args:
+        profiles: The profiles that give the hypothesis, with their written
+            thresholds, noise and bias.
+        arrival_profile: The arrival profile, for the weight of each context.
+        seed: Master seed of the check.
+        patients: Number of patients; the expected arrivals of a year by
+            default (``year_patients``).
+        sampled_profiles: Profiles the patients are drawn with; ``profiles``
+            by default. Only for power tests.
+
+    Returns:
+        A result with one detail per category: ``asignado_1`` to
+        ``asignado_5`` and ``real_1/asignado_1`` to ``real_5/asignado_5``. Its
+        statistic is the number of failing categories and its p-value, the
+        smallest of all.
+
+    Raises:
+        ValueError: If ``patients`` is too small for an assigned level to have
+            ``MIN_EXPECTED`` expected patients.
+    """
+    patients = (
+        year_patients(profiles, arrival_profile)
+        if patients is None
+        else check_count("patients", patients, 1)
+    )
+    sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
+    alpha = ALPHA / N_TRIAGE_CATEGORIES
+    start_date = arrival_profile.start_date
+
+    context_seed, patient_seed = child_streams(seed, 2)
+    contexts = all_contexts()
+    weights = probabilities(
+        context_weights(arrival_profile, profiles.shift_band_starts).ravel()
+    )  # in the order of all_contexts()
+    drawn = np.random.default_rng(context_seed).choice(len(contexts), size=patients, p=weights)
+    arrivals = [_Arrival(context_time(start_date, profiles.shift_band_starts, c)) for c in contexts]
+
+    streams = child_streams(patient_seed, 8)
+    people = PersonReasonSampler(
+        sampled_profiles, start_date, [streams[POPULATION_STREAM], streams[REASON_STREAM]]
+    )
+    triage = SeverityTriageSampler(
+        sampled_profiles, [streams[SEVERITY_STREAM], streams[TRIAGE_STREAM]]
+    )
+    observed = np.zeros((N_LEVELS, N_LEVELS), dtype=np.int64)
+    for c in drawn:
+        x = triage(people(arrivals[c]))
+        observed[x.true_level - 1, x.level - 1] += 1
+
+    t = profiles.triage
+    exact = triage_matrix(
+        severity_mixture(profiles, arrival_profile), t.thresholds, t.noise, t.bias
+    )
+    assigned, expected_assigned = observed.sum(axis=0), exact.sum(axis=0)
+    tests = [
+        _category(
+            f"asignado_{j + 1}", int(assigned[j]), patients, float(expected_assigned[j]), alpha
+        )
+        for j in range(N_LEVELS)
+    ]
+    for i in range(N_LEVELS):
+        for j in range(N_LEVELS):
+            name, p = f"real_{i + 1}/asignado_{j + 1}", float(exact[i, j])
+            expected = patients * p
+            test = (
+                _category
+                if min(expected, patients - expected) >= MIN_EXPECTED
+                else _binomial_category
+            )
+            tests.append(test(name, int(observed[i, j]), patients, p, alpha))
+
+    failing = sum(not x.passed for x in tests)
+    return ValidationResult(
+        name="triage",
+        statistic=float(failing),
+        p_value=min(x.p_value for x in tests),
+        ci_low=None,
+        ci_high=None,
+        target=None,
+        criterion=f"all {len(tests)} categories: p >= {alpha:.3g} (Bonferroni)",
+        passed=failing == 0,
+        details=tuple(tests),
     )
