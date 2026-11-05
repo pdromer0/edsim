@@ -179,11 +179,15 @@ Umbrales \[3,260; 1,140; −0,044; −2,163\]; reparto real 0,42 / 12,46 / 35,81
 P(t) = \frac{1}{1 + e^{-(a_{t,m} + b_t G + c_t \cdot \text{mayor})}}, \qquad a_{t,m} = \operatorname{logit}(p_{t,m}), \quad b_t = \ln OR^{G}_t, \quad c_t = \ln OR^{\text{mayor}}_t
 ```
 
-El TOML da p\_{t,m}, el porcentaje para un adulto de gravedad media de cada motivo (por ejemplo, analítica 40 % en dolor abdominal: a = logit(0,40) = −0,41), y dos odds ratios por tipo. Con b = 1,2 y c = 0,8, la probabilidad a gravedad media es 40,1 % en un adulto y 59,9 % en un mayor. «Mayor» son las bandas de 65 años o más.
+El TOML da p\_{t,m}, el porcentaje para un adulto de menos de 65 años con G = 0 de cada motivo (por ejemplo, analítica 40 %: a = logit(0,40) = −0,4055), y dos odds ratios por tipo. Con b = 1,2 y c = 0,8, la probabilidad con G = 0 es 40,00 % en un adulto y 59,74 % en un mayor; con G = 1, 68,88 % y 83,13 %. «Mayor» son las bandas que empiezan en 65 años o más (`older_bands`). Los porcentajes de pedir y de alterado van en el intervalo abierto (0, 100), porque el logit de 0 o de 100 no existe.
 
-**Resultado y respuesta.** Cada tipo sortea también su resultado (normal o alterado, otra logística sobre G) y su tiempo de respuesta (lognormal por mediana y p90, con un factor por franja). El paciente espera a la prueba más lenta de las pedidas; con ninguna pedida no hay ronda. El resultado no lo usa nadie todavía: lo usará el destino del hito 5, y se sortea ya para que el flujo de pruebas no cambie de consumo entre hitos.
+**El porcentaje del TOML no es el del paciente típico del motivo.** Es el de un adulto con G = 0, y el motivo tiene su propia gravedad y su mezcla de edades: la parada escribe un 36 % de analítica y pide un 98 % en el año. Por eso cada p se eligió por su **marginal de un año** (el porcentaje de los pacientes del motivo a los que se pide), que es la que se lee clínicamente, y el TOML la lleva en un comentario, calculada con los enteros escritos (`workup_model(...).order_by_reason()`). Su estado es «orientativo, elegido por su marginal». Un test compara las 68 marginales, el porcentaje global de cada tipo y el de alguna prueba con una tabla literal (a 0,05 puntos), y otro comprueba que los comentarios siguen siendo las marginales exactas: si cambian los odds ratios, la gravedad, la mezcla o el perfil de llegadas, hay que actualizarlos.
 
-**Consumo fijo** (flujo 3): tres sorteos por tipo (pedir, resultado, respuesta), doce por paciente, se pida o no cada prueba.
+**Resultado y respuesta.** Cada tipo sortea también su resultado (normal o alterado, otra logística sobre G: `logit(base) + ln(OR)·G`; con base 30 y OR 2,5, 30,00 / 51,72 / 72,82 % con G = 0, 1 y 2) y su tiempo de respuesta (lognormal por mediana y p90, con un factor por franja). El paciente espera a la prueba más lenta de las pedidas; con ninguna pedida no hay ronda, y `round_turnaround` devuelve `None` (en la 4.5, `needs_tests=False`). El resultado no lo usa nadie todavía: lo usará el destino del hito 5, y se sortea ya para que el flujo de pruebas no cambie de consumo entre hitos. Una prueba se pide si su uniforme es estrictamente menor que la probabilidad, y sale alterada igual, como en el `ProvisionalSampler`.
+
+**La franja se aplica al pedir** (decisión de la tarea 4.4). El muestreador da la respuesta *base* de cada tipo (factor 1) y el motor, en la 4.5, la multiplica por el factor de la franja del *pedido*, no de la llegada: `round_turnaround(pedidas, respuestas, turnaround_shift_factors(perfiles, franja_del_pedido))`. Es exacto, porque multiplicar una lognormal por k equivale a multiplicar su mediana por k, y la máxima se calcula entonces porque los factores son distintos por tipo. Ejemplo: analítica (75) y ECG (12) pedidas e imagen (200) no; la ronda dura 75 de mañana y 82,5 de tarde (analítica ×1,1).
+
+**Consumo fijo** (flujo 3): tres sorteos por tipo, en el orden analítica, radiografía, ECG e imagen (uniforme de pedir, uniforme de resultado y normal de respuesta), doce por paciente, se pida o no cada prueba. Las pruebas usan G y no G + ε: con otro ruido de triaje, ninguna prueba ni duración cambia.
 
 **En el log**, un solo pedido y un solo resultado por ronda, con la lista dentro: `test_ordered` lleva `pruebas` (por ejemplo `["analitica", "ecg"]`) y `test_resulted` llega con la más lenta y lleva `resultados` (por ejemplo `{"analitica": "alterado", "ecg": "normal"}`). El orden de los eventos no cambia. El tiempo de respuesta de cada tipo va al ground truth.
 
@@ -193,7 +197,11 @@ El TOML da p\_{t,m}, el porcentaje para un adulto de gravedad media de cada moti
 \mu = \ln(k_m \cdot \text{mediana}_{n}), \qquad \sigma = \sigma_{n}, \qquad E[S] = k_m \cdot E[S_{n}]
 ```
 
-Multiplicar la mediana por k desplaza la lognormal sin cambiar σ, y la media también queda multiplicada por k. Con base 20 y 45 minutos, la media es 24,43; con k = 1,2 es 29,32. El triaje tiene una sola lognormal para los niveles 2 a 5; el nivel 1 no consume triaje. Las duraciones son orientativas y fijas durante la calibración del hito 4 (ver «Calibración»).
+Multiplicar la mediana por k desplaza la lognormal sin cambiar σ, y la media también queda multiplicada por k. Con base 20 y 45 minutos (σ = 0,6328), la media es 24,43; con k = 1,2, la mediana es 24, el p90 54 y la media 29,32. El triaje tiene una sola lognormal para los niveles 2 a 5, sin factor por motivo; se sortea siempre y el nivel 1 no lo usa. La reevaluación se sortea siempre y solo se usa si hay ronda. Las duraciones son orientativas y fijas durante la calibración del hito 4 (ver «Calibración»).
+
+**Regla de los k.** Los k reparten la duración entre motivos sin cambiar la carga: con los k, la carga de valoración de un año queda a 1 ± 0,05 de la carga sin ellos (un test lo comprueba sobre `config/perfiles.toml`). Con los valores orientativos, la razón es 1,0052 y la media simple de k por paciente, 0,9905.
+
+**Carga del médico por paciente**: E[valoración] + E[reevaluación · 1{alguna prueba}], con G dentro de la integral, porque mueve el nivel real y las pruebas a la vez. Las medias por nivel real, sin k, son 48,87 / 37,33 / 27,01 / 18,66 / 12,91 minutos de valoración y 17,36 / 14,14 / 11,58 / 9,02 / 6,95 de reevaluación; con el reparto real exacto, 24,07 y 10,60. Con los k y las pruebas del perfil, 24,20 + 8,18 = 32,38 minutos, frente a los 30,84 del modelo provisional (24,43 + 55,41 % × 11,58): la valoración baja un poco y toda la subida viene de la reevaluación, porque el 72,79 % de los pacientes tiene alguna prueba (55,41 % en el provisional). Es una comprobación clínica, no un objetivo.
 
 ## El muestreador clínico en el motor
 
@@ -209,7 +217,7 @@ class ClinicalSampler:
         reason = self._reason(ctx, person)  # stream 6: 17 Gumbel draws
         g = self._severity(reason, person)  # stream 7: 1 normal
         level, true_level = self._triage(g)  # stream 1: 1 normal (noise)
-        tests = self._tests(g, reason, person, ctx)  # stream 3: 3 draws per test type
+        tests = self._tests(g, reason, person)  # stream 3: 3 draws per test type
         times = self._durations(true_level, reason)  # stream 2: 3 normals
         disposition = self._disposition(level)  # stream 4: 1 uniform (provisional)
         return PatientDraws(...)
@@ -327,18 +335,18 @@ sobretriaje = 6.3
 ruido = 0.333                       # calibrado con triage_error_for; desviación del error, en unidades de G
 sesgo = -0.081                      # calibrado; negativo: tiende a infratriar
 umbrales = [3.260, 1.140, -0.044, -2.163]   # derivado con thresholds_for; no se recalcula al cargar
-duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5 (tarea 4.4)
+duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5; el nivel 1 no la usa
 
 [duraciones]
-valoracion = [[40, 90], [30, 70], [22, 50], [15, 35], [10, 25]]   # por nivel real
+valoracion = [[40, 90], [30, 70], [22, 50], [15, 35], [10, 25]]   # [mediana, p90] por nivel real
 reevaluacion = [[15, 30], [12, 25], [10, 20], [8, 15], [6, 12]]
 
 [pruebas.analitica]
 respuesta = [60, 150]               # [mediana, p90] en minutos
-respuesta_franja = [1.0, 1.1, 0.9]  # factor sobre la mediana
+respuesta_franja = [1.0, 1.1, 0.9]  # factor sobre la mediana según la franja del pedido; opcional, vale 1
 or_gravedad = 3.3                   # odds ratio por unidad de G
-or_mayor = 2.2
-alterado = { base = 30, or_gravedad = 2.5 }   # % alterado a gravedad media
+or_mayor = 2.2                      # opcional, vale 1
+alterado = { base = 30, or_gravedad = 2.5 }   # % alterado con G = 0 y su odds ratio
 
 [motivos.dolor_toracico]
 nombre = "Dolor torácico"
@@ -348,8 +356,8 @@ franja = [1.0, 1.1, 0.8]
 dia = [1.0, 0.9]                    # laborable; fin de semana
 estacion = [1.1, 1.0, 0.9, 1.0]     # invierno, primavera, verano, otoño
 gravedad = { media = 0.6, por_edad = [-0.3, 0.0, 0.3, 0.5], desviacion = 0.9 }
-pruebas = { ecg = 98, analitica = 90, radiografia = 70, imagen = 10 }   # % en adulto de gravedad media
-duracion = 1.2                      # factor sobre la mediana de su nivel
+pruebas = { analitica = 65, radiografia = 56, ecg = 96, imagen = 2 }   # % en adulto < 65 con G = 0; marginal del año 84,9 / 69,9 / 98,2 / 5,9
+duracion = 1.0                      # k sobre la mediana de su nivel real; opcional, vale 1
 ```
 
 **Reglas de `perfiles.toml`:**
@@ -357,6 +365,7 @@ duracion = 1.2                      # factor sobre la mediana de su nivel
 - `ClinicalProfiles` inmutable, validado y normalizado al construirse, y `load_profiles(path)` con `tomllib`, como `CenterConfig`.
 - Unidades clínicas en el fichero (porcentajes, minutos, factores, odds ratios); el código calcula pesos normalizados, interceptos y μ y σ. Ningún número derivado se escribe a mano. Los pesos base (`base_weights_for`) y los umbrales (`thresholds_for`) se derivan una vez y se escriben con un comentario, y ruido y sesgo se calibran con `triage_error_for`; un test comprueba que los escritos son los recalculados.
 - Factores opcionales: si faltan valen 1. Claves desconocidas prohibidas, con un error que nombra la clave y el motivo. Longitudes validadas: 4 bandas, 3 franjas, 2 tipos de día, 4 estaciones, 5 niveles y 4 tipos de prueba.
+- Pruebas: los cuatro tipos (`TEST_TYPES`: analitica, radiografia, ecg, imagen) son fijos en el código y obligatorios, en `[pruebas.<tipo>]` y en el `pruebas` de cada motivo. En cada tipo, `respuesta`, `or_gravedad` y `alterado = { base, or_gravedad }` son obligatorios; `respuesta_franja` y `or_mayor`, opcionales. Los porcentajes de pedir y de alterado van en (0, 100), con un error que nombra la clave y el valor, y cada `[mediana, p90]` exige mediana > 0 y p90 > mediana.
 - Los 17 motivos son obligatorios, con los nombres del catálogo en `snake_case`.
 - Hasta el cierre, `centro.toml` conserva sus secciones provisionales (`[triaje]`, `[duraciones]`, `[pruebas]`, `[destino]`) para el modelo provisional; en la tarea 4.9 pierde las tres primeras y conserva `[destino]` hasta el hito 5.
 
@@ -407,8 +416,8 @@ src/edsim/profiles/
   mixing.py              categórica log-lineal, Gumbel-max, base_weights_for
   population.py          banda, edad, sexo y medio de llegada
   severity.py            gravedad latente, umbrales derivados, triaje con error
-  workup.py              pruebas por tipo, resultado y respuesta
-  durations.py           lognormales por nivel real y motivo
+  workup.py              pruebas por tipo, resultado y respuesta; WorkupModel exacto
+  durations.py           lognormales por nivel real y motivo; DurationModel y carga del médico
   sampler.py             ClinicalSampler y PatientDraws ampliado
   validation.py          comprobaciones estadísticas del muestreador
 src/edsim/calibration/
@@ -424,6 +433,7 @@ src/edsim/engine/        cambios acotados
   invariants.py          capacidad sin triajes de puerta, nadie se cuela en el triaje
   ground_truth.py        campos clínicos del episodio
   validation.py          M/G/1 con λ·(1 − p₁)
+src/edsim/lognormal.py   lognormal por mediana y p90 (tarea 4.4; engine/clinical.py la reexporta)
 src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar
 notebooks/04_perfiles_clinicos.ipynb
 tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.py,
@@ -443,7 +453,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Contexto | Franja en los bordes (7:59 y 8:00), tipo de día en el paso de domingo a lunes, estación por mes |
 | Mezcla | Valor a mano (22,7 % de disnea en mayores en invierno); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea» |
 | Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje; matriz real × asignado casilla a casilla; umbrales escritos = derivados y el shock con los escritos; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
-| Pruebas y duraciones | logit(0,40) = −0,41; probabilidad por tramos de G; máxima de las pedidas; media lognormal 24,43 → 29,32 con el factor 1,2; cuantiles con la binomial, como en la tarea 3.1 |
+| Pruebas y duraciones | logit(0,40) = −0,4055 y 40,00 / 59,74 / 68,88 / 83,13 %; bordes u = P; máxima de las pedidas (75; 82,5 de tarde; `None` sin pruebas); media lognormal 24,43 → 29,32 con el factor 1,2; lo exacto contra `quad`; marginales por motivo y regla de los k sobre `config/perfiles.toml`; `check_workup` y `check_durations` |
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
 | Motor | Payloads del catálogo, sin campos ocultos; invariantes con triajes de puerta; huellas del modelo provisional y del clínico |
 | Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
@@ -451,6 +461,15 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso |
 
 **Potencia.** El muestreador se prueba sin el motor, con 20 000 pacientes en décimas de segundo. Con el χ² por motivo, nivel 0,01 y Bonferroni entre 17, se detecta un 5 % que pasa a 6 % con una potencia del 99,7 %, pero un 5 % que pasa a 5,5 % solo con un 43 %. Cada prueba escribe qué tamaño de error ve. Los motivos raros (crítico, 0,5 %) necesitan comprobar que hay pacientes suficientes, para que el test no pase de forma vacía.
+
+**Validación de pruebas y duraciones** (tarea 4.4). `check_workup` y `check_durations` sortean los pacientes de un año como `check_triage`, ahora también con los flujos 3 y 2, y comparan con lo exacto (`WorkupModel` y `DurationModel`, con el integrador de Gauss-Legendre de `triage_matrix`): χ² de un grado de libertad o binomial exacta por debajo de 5 esperados, con Bonferroni.
+
+| Comprobación | Categorías |
+| --- | --- |
+| `check_workup` (134, nivel 0,01/134) | Pedir × quintil de G (20); alterado × quintil, sobre todos los pacientes porque el resultado se sortea siempre (20); pedir \| infratriado (4); pedir × motivo (68); pedir × nivel real (20); mediana y p90 de la ronda (2) |
+| `check_durations` (64, nivel 0,01/64) | Mediana y p90 del triaje (2), de la respuesta base de cada tipo (8) y de la valoración y la reevaluación por nivel real (20); mediana de las dos por motivo (34), que prueba los k |
+
+Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en los tests rápidos. Cada grupo condicionado debe esperar al menos 50 pacientes, con los esperados exactos: el nivel real 1 (0,42 %) necesita 12 000. Con una potencia del 80 %, pedir analítica en el quintil central (45,0 %) se ve si pasa a 48,8 % con 20 000 y a 46,6 % en un año; los infratriados (59,8 %), a 65,0 % y 62,0 %; la mediana de la valoración del nivel 3, a 52,7 % y 51,2 %. Un error que comparten el muestreador y lo exacto (qué bandas son «mayores», cómo actúa k) mueve también la hipótesis: solo lo ven los valores a mano y los literales.
 
 **Versiones incorrectas con predicción** (ejemplos; cada plan añade las suyas):
 
@@ -461,8 +480,10 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | CDF inversa en lugar de Gumbel-max | Pasan las frecuencias; falla «con más disnea solo cambian los que pasan a disnea» |
 | Olvidar renormalizar con Gumbel-max | No falla nada: el argmax no depende de la escala (decisión de diseño) |
 | Umbrales sobre G en lugar de G + ε | Falla el reparto asignado (más niveles 1 y 5); pasa el real |
-| Pruebas con el nivel asignado en lugar de G | Pasan las pruebas marginales; falla solo el test sobre los infratriados |
-| Resultado sorteado solo si se pide la prueba | Fallan los tests de independencia, no los estadísticos |
+| Pruebas con G + ε (lo que ve la enfermera) en lugar de G | Con 20 000: pasan las marginales por motivo y falla el pedido de analítica de los infratriados (59,81 → 52,25 %, potencia 99,8 %). Con un año fallan también el nivel real 3 y los tramos de G (tarea 4.4, cumplida) |
+| Resultado sorteado solo si se pide la prueba | Fallan los tests de independencia y también los estadísticos, porque alterado y respuesta se prueban sobre todos los pacientes: las 20 categorías de alterado y las 8 de respuesta (tarea 4.4, cumplida) |
+| Duraciones con el nivel asignado | Con un año fallan las medianas de valoración de los niveles 2 a 4 y los p90 del 4; pasan las medianas por motivo (tarea 4.4, cumplida) |
+| Suma de las respuestas en lugar de la máxima | Fallan la ronda a mano y la mediana y el p90 de la ronda (tarea 4.4, cumplida) |
 | Hora en UTC en lugar de +01:00 | Falla la franja en el borde de las 8:00 |
 | Triaje de puerta contado como enfermera | Falla la capacidad con las enfermeras ocupadas |
 | Prioridad de triaje por nivel completo (1 a 5) | Falla «los niveles 2 a 5 siguen en FIFO entre sí» |
