@@ -8,7 +8,10 @@ import pytest
 from edsim.profiles.config import (
     REASON_KEYS,
     REASONS,
+    TEST_TYPES,
     ClinicalProfiles,
+    DiagnosticTest,
+    DurationProfile,
     Population,
     ReasonProfile,
     Severity,
@@ -30,7 +33,12 @@ DEFAULT = {
         "ambulancia": [6, 10, 21, 34],
     },
     "motivos": {
-        key: {"nombre": name, "peso_base": weight, "gravedad": {"media": 0.0, "desviacion": 1.0}}
+        key: {
+            "nombre": name,
+            "peso_base": weight,
+            "gravedad": {"media": 0.0, "desviacion": 1.0},
+            "pruebas": {"analitica": 40, "radiografia": 30, "ecg": 20, "imagen": 10},
+        }
         for key, name, weight in REASONS
     },
     "triaje": {
@@ -40,12 +48,45 @@ DEFAULT = {
         "ruido": 0.32,
         "sesgo": -0.08,
         "umbrales": [2.7, 1.13, 0.02, -2.42],
+        "duracion": [5, 10],
+    },
+    "duraciones": {
+        "valoracion": [[40, 90], [30, 70], [22, 50], [15, 35], [10, 25]],
+        "reevaluacion": [[15, 30], [12, 25], [10, 20], [8, 15], [6, 12]],
+    },
+    "pruebas": {
+        "analitica": {
+            "respuesta": [60, 150],
+            "respuesta_franja": [1.0, 1.1, 0.9],
+            "or_gravedad": 3.3,
+            "or_mayor": 2.2,
+            "alterado": {"base": 30, "or_gravedad": 2.5},
+        },
+        "radiografia": {
+            "respuesta": [30, 75],
+            "or_gravedad": 1.5,
+            "alterado": {"base": 25, "or_gravedad": 2.0},
+        },
+        "ecg": {
+            "respuesta": [10, 25],
+            "or_gravedad": 2.0,
+            "or_mayor": 3.0,
+            "alterado": {"base": 20, "or_gravedad": 2.0},
+        },
+        "imagen": {
+            "respuesta": [100, 240],
+            "or_gravedad": 2.0,
+            "alterado": {"base": 35, "or_gravedad": 2.0},
+        },
     },
 }
 DEFAULT["motivos"]["disnea"].update(
     {"edad": [0.4, 0.8, 1.8, 2.4], "franja": [1, 1, 1.2], "estacion": [1.5, 1, 0.7, 1]}
 )
 DEFAULT["motivos"]["intoxicacion"].update({"franja": [1, 1, 1.8], "dia": [1, 1.7]})
+DEFAULT["motivos"]["dolor_toracico"].update(
+    {"pruebas": {"ecg": 98, "analitica": 65, "radiografia": 56, "imagen": 2}, "duracion": 1.2}
+)
 DEFAULT["motivos"]["disnea"]["gravedad"] = {
     "media": 0.9,
     "por_edad": [-0.4, 0.0, 0.2, 0.4],
@@ -268,18 +309,22 @@ def test_motivo_que_no_es_tabla(tmp_path):
         load(tmp_path, {"motivos.disnea": 8})
 
 
-@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos", "triaje"])
+SECTIONS = ["contexto", "poblacion", "motivos", "triaje", "duraciones", "pruebas"]
+
+
+@pytest.mark.parametrize("section", SECTIONS)
 def test_falta_una_seccion(tmp_path, section):
     with pytest.raises(ValueError, match=rf"missing keys: {section}\b"):
         load(tmp_path, {section: None})
 
 
 def test_sobra_una_seccion(tmp_path):
-    with pytest.raises(ValueError, match=r"unknown keys: pruebas\b"):
-        load(tmp_path, {"pruebas": {"or_mayor": 2.2}})
+    # El destino sigue en centro.toml hasta el hito 5.
+    with pytest.raises(ValueError, match=r"unknown keys: destino\b"):
+        load(tmp_path, {"destino": {"probabilidad_ingreso": 2.2}})
 
 
-@pytest.mark.parametrize("section", ["contexto", "poblacion", "motivos", "triaje"])
+@pytest.mark.parametrize("section", SECTIONS)
 def test_seccion_que_no_es_tabla(tmp_path, section):
     with pytest.raises(ValueError, match=rf"{section} must be a table"):
         load(tmp_path, {section: [1, 2, 3]})
@@ -473,7 +518,13 @@ def test_bandas_de_edad_no_validas(tmp_path, bands, message):
 
 def test_tipos_de_las_clases():
     # Las clases se pueden construir a mano, sin TOML, con los factores por defecto.
-    r = ReasonProfile(key="otros", name="Otros", base_weight=10, severity=Severity(mean=0, sd=1))
+    r = ReasonProfile(
+        key="otros",
+        name="Otros",
+        base_weight=10,
+        severity=Severity(mean=0, sd=1),
+        test_pct=(20, 10, 8, 4),
+    )
     p = Population(
         band_starts=(15, 45, 65, 80),
         band_shares=(1, 1, 1, 1),
@@ -482,6 +533,8 @@ def test_tipos_de_las_clases():
     )
 
     assert r.age_factors == (1.0,) * 4
+    assert r.duration_factor == 1.0
+    assert r.test_pct == (20.0, 10.0, 8.0, 4.0)
     assert r.severity.age_shift == (0.0,) * 4
     assert p.band_day_factors == ((1.0, 1.0),) * 4
 
@@ -566,6 +619,7 @@ def test_triaje_leido(profiles):
         noise=0.32,
         bias=-0.08,
         thresholds=(2.7, 1.13, 0.02, -2.42),
+        duration=(5.0, 10.0),
     )
 
 
@@ -658,16 +712,16 @@ def test_objetivo_de_error_no_valido(tmp_path, key, value):
 
 
 @pytest.mark.parametrize(
-    "key", ["reparto_objetivo", "infratriaje", "sobretriaje", "ruido", "sesgo", "umbrales"]
+    "key",
+    ["reparto_objetivo", "infratriaje", "sobretriaje", "ruido", "sesgo", "umbrales", "duracion"],
 )
 def test_falta_una_clave_del_triaje(tmp_path, key):
     with pytest.raises(ValueError, match=rf"missing keys: triaje\.{key}\b"):
         load(tmp_path, {f"triaje.{key}": None})
 
 
-@pytest.mark.parametrize("key", ["duracion", "umbral"])
+@pytest.mark.parametrize("key", ["duraciones", "umbral"])
 def test_clave_desconocida_en_el_triaje(tmp_path, key):
-    # La duración del triaje llega en la tarea 4.4.
     with pytest.raises(ValueError, match=rf"unknown keys: triaje\.{key}\b"):
         load(tmp_path, {f"triaje.{key}": [5, 10]})
 
@@ -688,5 +742,223 @@ def test_gravedad_construccion_directa_valida(profiles):
 
 def test_replace_idempotente_con_triaje(profiles):
     again = dataclasses.replace(profiles, triage=dataclasses.replace(profiles.triage))
+
+    assert again == profiles
+
+
+# --- Pruebas y duraciones ------------------------------------------------------
+
+
+def test_pruebas_leidas(profiles):
+    analitica = profiles.diagnostic_test("analitica")
+
+    assert analitica == DiagnosticTest(
+        key="analitica",
+        turnaround=(60.0, 150.0),
+        severity_or=3.3,
+        abnormal_pct=30.0,
+        abnormal_severity_or=2.5,
+        turnaround_shift_factors=(1.0, 1.1, 0.9),
+        older_or=2.2,
+    )
+    assert tuple(t.key for t in profiles.diagnostic_tests) == TEST_TYPES
+    assert TEST_TYPES == ("analitica", "radiografia", "ecg", "imagen")
+
+
+def test_opcionales_de_una_prueba_valen_uno(profiles):
+    imagen = profiles.diagnostic_test("imagen")
+
+    assert imagen.turnaround_shift_factors == (1.0, 1.0, 1.0)
+    assert imagen.older_or == 1.0
+
+
+def test_pruebas_en_el_orden_de_los_tipos(tmp_path):
+    data = copy.deepcopy(DEFAULT)
+    data["pruebas"] = dict(reversed(data["pruebas"].items()))
+
+    profiles = load_profiles(write_profiles(tmp_path, data=data))
+
+    assert tuple(t.key for t in profiles.diagnostic_tests) == TEST_TYPES
+
+
+def test_pruebas_de_un_motivo_en_el_orden_de_los_tipos(profiles):
+    # El TOML las escribe en otro orden; se guardan en el de TEST_TYPES.
+    toracico = profiles.reason("dolor_toracico")
+
+    assert toracico.test_pct == (65.0, 56.0, 98.0, 2.0)
+    assert toracico.duration_factor == 1.2
+
+
+def test_duracion_de_un_motivo_ausente_vale_uno(profiles):
+    assert profiles.reason("otros").duration_factor == 1.0
+
+
+def test_duraciones_leidas(profiles):
+    assert profiles.durations == DurationProfile(
+        assessment=((40, 90), (30, 70), (22, 50), (15, 35), (10, 25)),
+        reassessment=((15, 30), (12, 25), (10, 20), (8, 15), (6, 12)),
+    )
+    assert all(type(x) is float for pair in profiles.durations.assessment for x in pair)
+    assert profiles.triage.duration == (5.0, 10.0)
+
+
+@pytest.mark.parametrize(
+    ("key", "message"),
+    [
+        ("pruebas.ecg", "missing keys: pruebas.ecg"),
+        ("pruebas.imagen.respuesta", "missing keys: pruebas.imagen.respuesta"),
+        ("pruebas.imagen.or_gravedad", "missing keys: pruebas.imagen.or_gravedad"),
+        ("pruebas.imagen.alterado", "missing keys: pruebas.imagen.alterado"),
+        ("pruebas.imagen.alterado.base", "missing keys: pruebas.imagen.alterado.base"),
+        ("pruebas.ecg.alterado.or_gravedad", "missing keys: pruebas.ecg.alterado.or_gravedad"),
+        ("duraciones.valoracion", "missing keys: duraciones.valoracion"),
+        ("motivos.orl.pruebas", "missing keys: motivos.orl.pruebas"),
+        ("motivos.orl.pruebas.ecg", "missing keys: motivos.orl.pruebas.ecg"),
+    ],
+)
+def test_falta_una_clave_de_pruebas_o_duraciones(tmp_path, key, message):
+    with pytest.raises(ValueError, match=message.replace(".", r"\.") + r"\b"):
+        load(tmp_path, {key: None})
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("pruebas.tac", {"respuesta": [60, 120]}),
+        ("pruebas.imagen.respuesta_noche", 1.2),
+        ("pruebas.imagen.alterado.bse", 30),
+        ("duraciones.triaje", [5, 10]),
+        ("motivos.orl.pruebas.tac", 3),
+        ("motivos.orl.duraciones", 1.2),
+    ],
+)
+def test_clave_desconocida_en_pruebas_o_duraciones(tmp_path, key, value):
+    with pytest.raises(ValueError, match=rf"unknown keys: {key.replace('.', r'\.')}\b"):
+        load(tmp_path, {key: value})
+
+
+@pytest.mark.parametrize(
+    "key", ["pruebas", "pruebas.ecg", "pruebas.ecg.alterado", "duraciones", "motivos.orl.pruebas"]
+)
+def test_tabla_de_pruebas_que_no_es_tabla(tmp_path, key):
+    with pytest.raises(ValueError, match=rf"{key.replace('.', r'\.')} must be a table"):
+        load(tmp_path, {key: 7})
+
+
+@pytest.mark.parametrize("value", [0, 100, -1, 100.5, math.nan, True, "40"])
+def test_porcentaje_de_pedir_fuera_del_intervalo_abierto(tmp_path, value):
+    # El logit de 0 o de 100 no existe: el error nombra la clave y el valor.
+    with pytest.raises(ValueError, match=r"motivos\.orl\.pruebas\.ecg"):
+        load(tmp_path, {"motivos.orl.pruebas.ecg": value})
+
+
+@pytest.mark.parametrize("value", [0, 100])
+def test_porcentaje_de_pedir_dice_por_que(tmp_path, value):
+    message = rf"motivos\.orl\.pruebas\.ecg must be between 0 and 100 \(excluded\), got {value}"
+    with pytest.raises(ValueError, match=message):
+        load(tmp_path, {"motivos.orl.pruebas.ecg": value})
+
+
+@pytest.mark.parametrize("value", [0, 100, -5, math.nan, True])
+def test_alterado_fuera_del_intervalo_abierto(tmp_path, value):
+    with pytest.raises(ValueError, match=r"pruebas\.ecg\.alterado\.base"):
+        load(tmp_path, {"pruebas.ecg.alterado.base": value})
+
+
+def test_porcentajes_cerca_de_los_extremos_validos(tmp_path):
+    profiles = load(tmp_path, {"motivos.orl.pruebas.ecg": 0.01, "pruebas.ecg.alterado.base": 99.99})
+
+    assert profiles.reason("orl").test_pct[2] == 0.01
+    assert profiles.diagnostic_test("ecg").abnormal_pct == 99.99
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "pruebas.ecg.or_gravedad",
+        "pruebas.ecg.or_mayor",
+        "pruebas.ecg.alterado.or_gravedad",
+        "motivos.orl.duracion",
+    ],
+)
+@pytest.mark.parametrize("value", [0, -1, math.nan, True, "2"])
+def test_odds_ratio_o_factor_no_valido(tmp_path, key, value):
+    with pytest.raises(ValueError, match=key.replace(".", r"\.")):
+        load(tmp_path, {key: value})
+
+
+@pytest.mark.parametrize("n", [2, 4])
+def test_longitud_de_respuesta_franja(tmp_path, n):
+    with pytest.raises(
+        ValueError, match=rf"pruebas\.ecg\.respuesta_franja must have 3 values, got {n}"
+    ):
+        load(tmp_path, {"pruebas.ecg.respuesta_franja": [1.0] * n})
+
+
+def test_factor_de_franja_no_positivo(tmp_path):
+    with pytest.raises(ValueError, match=r"pruebas\.ecg\.respuesta_franja\[2\] must be positive"):
+        load(tmp_path, {"pruebas.ecg.respuesta_franja": [1, 1, 0]})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("triaje.duracion", [10, 5], r"triaje\.duracion\[1\] \(the p90\) must be greater"),
+        ("triaje.duracion", [5, 5], r"triaje\.duracion\[1\] \(the p90\) must be greater"),
+        ("triaje.duracion", [0, 10], r"triaje\.duracion\[0\] \(the median\) must be positive"),
+        ("triaje.duracion", [5, 10, 15], r"triaje\.duracion must have 2 values, got 3"),
+        ("pruebas.ecg.respuesta", [25, 10], r"pruebas\.ecg\.respuesta\[1\] \(the p90\)"),
+        ("pruebas.ecg.respuesta", [-1, 10], r"pruebas\.ecg\.respuesta\[0\] \(the median\)"),
+        ("pruebas.ecg.respuesta", [10, math.nan], r"pruebas\.ecg\.respuesta\[1\]"),
+    ],
+)
+def test_mediana_y_p90_no_validos(tmp_path, key, value, message):
+    with pytest.raises(ValueError, match=message):
+        load(tmp_path, {key: value})
+
+
+def test_duraciones_por_nivel_no_validas(tmp_path):
+    rows = [[40, 90], [30, 70], [22, 20], [15, 35], [10, 25]]
+    with pytest.raises(ValueError, match=r"duraciones\.valoracion\[2\]\[1\] \(the p90\)"):
+        load(tmp_path, {"duraciones.valoracion": rows})
+    with pytest.raises(ValueError, match=r"duraciones\.reevaluacion must have 5 values, got 4"):
+        load(tmp_path, {"duraciones.reevaluacion": rows[:4]})
+
+
+@pytest.mark.parametrize("n", [3, 5])
+def test_longitud_de_las_pruebas_de_un_motivo_construido_a_mano(profiles, n):
+    with pytest.raises(ValueError, match=rf"motivos\.orl\.pruebas must have 4 values, got {n}"):
+        dataclasses.replace(profiles.reason("orl"), test_pct=(10,) * n)
+
+
+def test_pruebas_construccion_directa_valida(profiles):
+    with pytest.raises(ValueError, match=r"pruebas\.ecg\.or_gravedad must be positive"):
+        dataclasses.replace(profiles.diagnostic_test("ecg"), severity_or=0)
+    with pytest.raises(ValueError, match="one of"):
+        dataclasses.replace(profiles.diagnostic_test("ecg"), key="tac")
+    with pytest.raises(ValueError, match=r"missing keys: pruebas\.imagen"):
+        dataclasses.replace(profiles, diagnostic_tests=profiles.diagnostic_tests[:3])
+    with pytest.raises(ValueError, match=r"duplicate keys: pruebas\.ecg"):
+        dataclasses.replace(
+            profiles, diagnostic_tests=(*profiles.diagnostic_tests, profiles.diagnostic_tests[2])
+        )
+    with pytest.raises(ValueError, match="DiagnosticTest"):
+        dataclasses.replace(profiles, diagnostic_tests=({"respuesta": [1, 2]},) * 4)
+    with pytest.raises(ValueError, match="DurationProfile"):
+        dataclasses.replace(profiles, durations={"valoracion": []})
+
+
+def test_tipo_de_prueba_desconocido(profiles):
+    with pytest.raises(KeyError):
+        profiles.diagnostic_test("tac")
+
+
+def test_replace_idempotente_con_pruebas_y_duraciones(profiles):
+    again = dataclasses.replace(
+        profiles,
+        durations=dataclasses.replace(profiles.durations),
+        diagnostic_tests=tuple(dataclasses.replace(t) for t in profiles.diagnostic_tests),
+        reasons=tuple(dataclasses.replace(r) for r in profiles.reasons),
+    )
 
     assert again == profiles

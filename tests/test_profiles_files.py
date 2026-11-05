@@ -73,6 +73,18 @@ def test_valores_del_ejemplo(example):
     for key in ("dolor_abdominal", "digestivo", "otros"):
         r = example.reason(key)
         assert r.age_factors + r.shift_factors + r.day_factors + r.season_factors == (1.0,) * 13
+    # Pruebas y duraciones (tarea 4.4), en el orden de TEST_TYPES.
+    assert example.reason("dolor_toracico").test_pct == (65.0, 56.0, 96.0, 2.0)
+    assert example.reason("parada").test_pct == (36.0, 61.0, 83.0, 4.0)
+    assert example.reason("traumatismo").duration_factor == 0.85
+    assert example.reason("digestivo").duration_factor == 1.0
+    assert example.triage.duration == (5.0, 10.0)
+    assert example.durations.assessment[0] == (40.0, 90.0)
+    assert example.durations.reassessment[4] == (6.0, 12.0)
+    ecg = example.diagnostic_test("ecg")
+    assert (ecg.turnaround, ecg.turnaround_shift_factors) == ((10.0, 25.0), (1.0, 1.0, 1.0))
+    assert (ecg.severity_or, ecg.older_or) == (2.0, 3.0)
+    assert (ecg.abnormal_pct, ecg.abnormal_severity_or) == (20.0, 2.0)
 
 
 @FILES

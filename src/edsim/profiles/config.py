@@ -11,8 +11,16 @@ The file ``config/perfiles.toml`` has four tables (see docs/specs/hito-4.md):
   name, its base weight, optional factors per age band, shift band, day
   type and season, and its latent severity (``gravedad``);
 - ``[triaje]``: the target mix of assigned levels, the targets of under- and
-  overtriage, the noise and bias of the nurse's error and the four
-  thresholds.
+  overtriage, the noise and bias of the nurse's error, the four thresholds
+  and the duration of the triage;
+- ``[duraciones]``: the assessment and the reassessment of the doctor, per
+  true level;
+- ``[pruebas.<tipo>]``: one table per type of test (``TEST_TYPES``), with its
+  turnaround, its odds ratios and the share of abnormal results.
+
+Each reason also gives, in ``pruebas``, the percentage of each type of test
+for an adult with G = 0, and an optional factor on its durations
+(``duracion``).
 
 The thresholds, the noise and the bias are written in the file, not computed
 on loading: ``edsim.profiles.severity`` derives them once and a test checks
@@ -93,6 +101,14 @@ N_LEVELS = 5
 N_THRESHOLDS = N_LEVELS - 1
 """Thresholds between the triage levels."""
 
+TEST_TYPES: tuple[str, ...] = ("analitica", "radiografia", "ecg", "imagen")
+"""Types of test, in the order of every per-type value: blood tests, X-ray,
+ECG and imaging (ultrasound or CT). Fixed in the code: the log and the
+ground truth name them."""
+
+N_TEST_TYPES = len(TEST_TYPES)
+"""Types of test: 4."""
+
 TARGET_SUM_TOLERANCE = 0.5
 """Largest distance from 100 of the sum of ``reparto_objetivo``, in points.
 
@@ -108,7 +124,8 @@ _REASON_FACTORS = {
     "dia": ("day_factors", N_DAY_TYPES),
     "estacion": ("season_factors", N_SEASONS),
 }
-_REASON_REQUIRED = ("nombre", "peso_base", "gravedad")
+_REASON_REQUIRED = ("nombre", "peso_base", "gravedad", "pruebas")
+_REASON_OPTIONAL = ("duracion",)
 
 # Keys of the severity of a reason: TOML key → field.
 _SEVERITY_REQUIRED = {"media": "mean", "desviacion": "sd"}
@@ -122,7 +139,17 @@ _TRIAGE_KEYS = {
     "ruido": "noise",
     "sesgo": "bias",
     "umbrales": "thresholds",
+    "duracion": "duration",
 }
+
+# Keys of [duraciones]: TOML key → field. Both are required.
+_DURATION_KEYS = {"valoracion": "assessment", "reevaluacion": "reassessment"}
+
+# Keys of [pruebas.<tipo>]: TOML key → field.
+_TEST_REQUIRED = {"respuesta": "turnaround", "or_gravedad": "severity_or", "alterado": None}
+_TEST_OPTIONAL = {"respuesta_franja": "turnaround_shift_factors", "or_mayor": "older_or"}
+# Keys of alterado = { base, or_gravedad }: TOML key → field. Both are required.
+_ABNORMAL_KEYS = {"base": "abnormal_pct", "or_gravedad": "abnormal_severity_or"}
 
 # Keys of [poblacion]: TOML key → field.
 _POPULATION_REQUIRED = {
@@ -133,7 +160,7 @@ _POPULATION_REQUIRED = {
 }
 _POPULATION_OPTIONAL = {"franja": "band_shift_factors", "dia": "band_day_factors"}
 
-_SECTIONS = ("contexto", "poblacion", "motivos", "triaje")
+_SECTIONS = ("contexto", "poblacion", "motivos", "triaje", "duraciones", "pruebas")
 
 
 def _check_hours(key: str, values: object) -> tuple[int, ...]:
@@ -192,6 +219,27 @@ def _check_band_factors(key: str, values: object, n: int) -> tuple[tuple[float, 
     )
 
 
+def _check_open_percentage(key: str, value: object) -> float:
+    """A percentage in (0, 100), both ends excluded: its logit must exist."""
+    x = check_number(key, value)
+    if not 0 < x < 100:
+        raise ValueError(f"{key} must be between 0 and 100 (excluded), got {value!r}")
+    return x
+
+
+def _check_median_p90(key: str, values: object) -> tuple[float, float]:
+    """``[mediana, p90]`` of a lognormal, in minutes: median > 0 and p90 > median."""
+    median, p90 = (check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, 2)))
+    if median <= 0:
+        raise ValueError(f"{key}[0] (the median) must be positive, got {values[0]!r}")
+    if p90 <= median:
+        raise ValueError(
+            f"{key}[1] (the p90) must be greater than the median, got {values[1]!r} <= "
+            f"{values[0]!r}"
+        )
+    return median, p90
+
+
 def _check_numbers(key: str, values: object, n: int) -> tuple[float, ...]:
     """``n`` finite numbers."""
     return tuple(check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, n)))
@@ -244,6 +292,9 @@ class TriageProfile:
             Calibrated with ``triage_error_for``.
         thresholds: The four thresholds c1 > c2 > c3 > c4 (``umbrales``),
             stored as written. Derived with ``thresholds_for``.
+        duration: ``[mediana, p90]`` of the triage in minutes (``duracion``),
+            one lognormal for levels 2 to 5. Drawn for every patient; a level
+            1, classified at the door, does not use it. Orientative.
     """
 
     target_pct: tuple[float, ...]
@@ -252,6 +303,7 @@ class TriageProfile:
     noise: float
     bias: float
     thresholds: tuple[float, ...]
+    duration: tuple[float, float]
 
     def __post_init__(self) -> None:
         set_ = object.__setattr__
@@ -275,12 +327,106 @@ class TriageProfile:
                 f"triaje.umbrales must be strictly decreasing, got {list(thresholds)!r}"
             )
         set_(self, "thresholds", thresholds)
+        set_(self, "duration", _check_median_p90("triaje.duracion", self.duration))
 
     @property
     def target_shares(self) -> tuple[float, ...]:
         """The target mix of assigned levels, normalized to add up to 1."""
         total = sum(self.target_pct)
         return tuple(x / total for x in self.target_pct)
+
+
+@dataclass(frozen=True, slots=True)
+class DurationProfile:
+    """The durations of the doctor, from ``[duraciones]``.
+
+    Each is a lognormal per true level, given by ``[mediana, p90]`` in
+    minutes; the reason multiplies the median by its ``duracion`` factor (see
+    ``edsim.profiles.durations``). Orientative, and fixed during the
+    calibration of milestone 4 (ADR candidate 41).
+
+    Attributes:
+        assessment: ``[mediana, p90]`` of the first assessment for true levels
+            1 to 5 (``valoracion``).
+        reassessment: Same for the reassessment after the tests
+            (``reevaluacion``).
+    """
+
+    assessment: tuple[tuple[float, float], ...]
+    reassessment: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        for toml_key, field in _DURATION_KEYS.items():
+            key = f"duraciones.{toml_key}"
+            pairs = tuple(
+                _check_median_p90(f"{key}[{i}]", pair)
+                for i, pair in enumerate(check_list(key, getattr(self, field), N_LEVELS))
+            )
+            object.__setattr__(self, field, pairs)
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticTest:
+    """One type of test, from its ``[pruebas.<tipo>]`` table.
+
+    Named ``DiagnosticTest`` and not ``Test...``: pytest tries to collect every
+    class called ``Test*`` that a test module imports.
+
+    The probability of ordering it for a patient of reason m is a logistic of
+    ``logit(p_m) + ln(severity_or) * G + ln(older_or) * older``, and the
+    probability of an abnormal result, ``logit(abnormal_pct) +
+    ln(abnormal_severity_or) * G`` (see ``edsim.profiles.workup``).
+
+    Attributes:
+        key: The type, one of ``TEST_TYPES``.
+        turnaround: ``[mediana, p90]`` in minutes from ordering to the result
+            (``respuesta``).
+        severity_or: Odds ratio of ordering it per unit of G (``or_gravedad``);
+            positive.
+        abnormal_pct: Percentage of abnormal results at G = 0
+            (``alterado.base``), in (0, 100).
+        abnormal_severity_or: Odds ratio of an abnormal result per unit of G
+            (``alterado.or_gravedad``); positive.
+        turnaround_shift_factors: Factor on the median of the turnaround in
+            the morning, afternoon and night bands of the order
+            (``respuesta_franja``); 1 if absent.
+        older_or: Odds ratio of ordering it for a patient of 65 or more
+            (``or_mayor``); 1 if absent.
+    """
+
+    key: str
+    turnaround: tuple[float, float]
+    severity_or: float
+    abnormal_pct: float
+    abnormal_severity_or: float
+    turnaround_shift_factors: tuple[float, ...] = (1.0,) * N_SHIFT_BANDS
+    older_or: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.key not in TEST_TYPES:
+            raise ValueError(f"the type of a test must be one of {TEST_TYPES}, got {self.key!r}")
+        prefix = f"pruebas.{self.key}"
+        set_ = object.__setattr__
+        set_(self, "turnaround", _check_median_p90(f"{prefix}.respuesta", self.turnaround))
+        set_(self, "severity_or", _check_positive(f"{prefix}.or_gravedad", self.severity_or))
+        set_(
+            self,
+            "abnormal_pct",
+            _check_open_percentage(f"{prefix}.alterado.base", self.abnormal_pct),
+        )
+        set_(
+            self,
+            "abnormal_severity_or",
+            _check_positive(f"{prefix}.alterado.or_gravedad", self.abnormal_severity_or),
+        )
+        set_(
+            self,
+            "turnaround_shift_factors",
+            _check_factors(
+                f"{prefix}.respuesta_franja", self.turnaround_shift_factors, N_SHIFT_BANDS
+            ),
+        )
+        set_(self, "older_or", _check_positive(f"{prefix}.or_mayor", self.older_or))
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,22 +443,30 @@ class ReasonProfile:
         base_weight: Base weight (``peso_base``), derived with
             ``base_weights_for``; positive.
         severity: Latent severity of its patients (``gravedad``).
+        test_pct: Percentage of each type of test, in the order of
+            ``TEST_TYPES``, for an adult under 65 with G = 0 (``pruebas``); each
+            in (0, 100). Not the share of the reason's typical patient: that is
+            higher when the reason is more severe than the mean adult.
         age_factors: Factor per age band (``edad``); 1 if absent.
         shift_factors: Factor per shift band: morning, afternoon, night
             (``franja``).
         day_factors: Factor per day type: weekday, weekend (``dia``).
         season_factors: Factor per season: winter, spring, summer, autumn
             (``estacion``).
+        duration_factor: Factor on the median of the assessment and the
+            reassessment of its patients (``duracion``); positive, 1 if absent.
     """
 
     key: str
     name: str
     base_weight: float
     severity: Severity
+    test_pct: tuple[float, ...]
     age_factors: tuple[float, ...] = (1.0,) * N_BANDS
     shift_factors: tuple[float, ...] = (1.0,) * N_SHIFT_BANDS
     day_factors: tuple[float, ...] = (1.0,) * N_DAY_TYPES
     season_factors: tuple[float, ...] = (1.0,) * N_SEASONS
+    duration_factor: float = 1.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key:
@@ -328,6 +482,18 @@ class ReasonProfile:
         for toml_key, (field, n) in _REASON_FACTORS.items():
             checked = _check_factors(f"{prefix}.{toml_key}", getattr(self, field), n)
             object.__setattr__(self, field, checked)
+        pct = check_list(f"{prefix}.pruebas", self.test_pct, N_TEST_TYPES)
+        object.__setattr__(
+            self,
+            "test_pct",
+            tuple(
+                _check_open_percentage(f"{prefix}.pruebas.{t}", x)
+                for t, x in zip(TEST_TYPES, pct, strict=True)
+            ),
+        )
+        object.__setattr__(
+            self, "duration_factor", _check_positive(f"{prefix}.duracion", self.duration_factor)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +552,25 @@ class Population:
         )
 
 
+def _check_tests(tests: object) -> tuple[DiagnosticTest, ...]:
+    """The 4 types of test, each once, in the order of ``TEST_TYPES``."""
+    if not isinstance(tests, Iterable) or isinstance(tests, str | Mapping):
+        raise ValueError(f"diagnostic_tests must be a sequence of DiagnosticTest, got {tests!r}")
+    tests = list(tests)
+    for t in tests:
+        if not isinstance(t, DiagnosticTest):
+            raise ValueError(f"each test must be a DiagnosticTest, got {t!r}")
+    keys = [t.key for t in tests]
+    duplicates = sorted({k for k in keys if keys.count(k) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate keys: {', '.join(f'pruebas.{k}' for k in duplicates)}")
+    problems = _problems(*_missing_and_unknown("pruebas", keys, TEST_TYPES))
+    if problems:
+        raise ValueError("; ".join(problems))
+    by_key = {t.key: t for t in tests}
+    return tuple(by_key[k] for k in TEST_TYPES)
+
+
 def _check_reasons(reasons: object) -> tuple[ReasonProfile, ...]:
     """The 17 reasons, each once, in the order of the catalog."""
     if not isinstance(reasons, Iterable) or isinstance(reasons, str | Mapping):
@@ -424,12 +609,18 @@ class ClinicalProfiles:
         population: The age mix, sex and arrival mode (``[poblacion]``).
         reasons: The 17 reasons for consultation (``[motivos.<clave>]``).
         triage: The triage of the nurse (``[triaje]``).
+        durations: The assessment and reassessment per true level
+            (``[duraciones]``).
+        diagnostic_tests: The 4 types of test (``[pruebas.<tipo>]``), in the
+            order of ``TEST_TYPES``, whatever their order in the file.
     """
 
     shift_band_starts: tuple[int, ...]
     population: Population
     reasons: tuple[ReasonProfile, ...]
     triage: TriageProfile
+    durations: DurationProfile
+    diagnostic_tests: tuple[DiagnosticTest, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -440,11 +631,25 @@ class ClinicalProfiles:
         object.__setattr__(self, "reasons", _check_reasons(self.reasons))
         if not isinstance(self.triage, TriageProfile):
             raise ValueError(f"triage must be a TriageProfile, got {self.triage!r}")
+        if not isinstance(self.durations, DurationProfile):
+            raise ValueError(f"durations must be a DurationProfile, got {self.durations!r}")
+        object.__setattr__(self, "diagnostic_tests", _check_tests(self.diagnostic_tests))
 
     @property
     def reason_keys(self) -> tuple[str, ...]:
         """Keys of the reasons, in the order of the catalog."""
         return tuple(r.key for r in self.reasons)
+
+    def diagnostic_test(self, key: str) -> DiagnosticTest:
+        """The parameters of one type of test, by its key, one of ``TEST_TYPES``.
+
+        Raises:
+            KeyError: If there is no type of test with that key.
+        """
+        for t in self.diagnostic_tests:
+            if t.key == key:
+                return t
+        raise KeyError(key)
 
     def reason(self, key: str) -> ReasonProfile:
         """The profile of one reason, by its key.
@@ -513,7 +718,12 @@ def _structure(data: dict) -> list[str]:
             if key in reasons:
                 table = _check_table(f"motivos.{key}", reasons[key])
                 add(
-                    _missing_and_unknown(f"motivos.{key}", table, _REASON_REQUIRED, _REASON_FACTORS)
+                    _missing_and_unknown(
+                        f"motivos.{key}",
+                        table,
+                        _REASON_REQUIRED,
+                        (*_REASON_FACTORS, *_REASON_OPTIONAL),
+                    )
                 )
                 if "gravedad" in table:
                     prefix = f"motivos.{key}.gravedad"
@@ -523,8 +733,36 @@ def _structure(data: dict) -> list[str]:
                             prefix, severity, _SEVERITY_REQUIRED, _SEVERITY_OPTIONAL
                         )
                     )
+                if "pruebas" in table:
+                    prefix = f"motivos.{key}.pruebas"
+                    add(
+                        _missing_and_unknown(
+                            prefix, _check_table(prefix, table["pruebas"]), TEST_TYPES
+                        )
+                    )
     if "triaje" in data:
         add(_missing_and_unknown("triaje", _check_table("triaje", data["triaje"]), _TRIAGE_KEYS))
+    if "duraciones" in data:
+        add(
+            _missing_and_unknown(
+                "duraciones", _check_table("duraciones", data["duraciones"]), _DURATION_KEYS
+            )
+        )
+    if "pruebas" in data:
+        tests = _check_table("pruebas", data["pruebas"])
+        add(_missing_and_unknown("pruebas", tests, TEST_TYPES))
+        for key in TEST_TYPES:
+            if key in tests:
+                prefix = f"pruebas.{key}"
+                table = _check_table(prefix, tests[key])
+                add(_missing_and_unknown(prefix, table, _TEST_REQUIRED, _TEST_OPTIONAL))
+                if "alterado" in table:
+                    sub = f"{prefix}.alterado"
+                    add(
+                        _missing_and_unknown(
+                            sub, _check_table(sub, table["alterado"]), _ABNORMAL_KEYS
+                        )
+                    )
     return _problems(missing, unknown)
 
 
@@ -532,10 +770,12 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
     """Load the clinical profiles from a TOML file.
 
     The file must have the tables ``[contexto]``, ``[poblacion]``,
-    ``[triaje]`` and one ``[motivos.<clave>]`` for each of the 17 reasons of
-    ``REASON_KEYS``, each with its ``gravedad``. The factors are optional and
-    worth 1 when absent, as ``por_edad`` is worth 0; any other key is an
-    error. The thresholds are read as written, never recomputed.
+    ``[triaje]``, ``[duraciones]``, one ``[pruebas.<tipo>]`` for each of
+    ``TEST_TYPES`` and one ``[motivos.<clave>]`` for each of the 17 reasons of
+    ``REASON_KEYS``, each with its ``gravedad`` and its ``pruebas``. The
+    factors are optional and worth 1 when absent, as ``por_edad`` is worth 0;
+    any other key is an error. The thresholds are read as written, never
+    recomputed.
 
     Args:
         path: Path of the TOML file, such as ``config/perfiles.toml``.
@@ -572,6 +812,40 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
         except ValueError as error:
             raise ValueError(f"{path}: motivos.{key}.{error}") from None
 
+    def diagnostic_test(key: str) -> DiagnosticTest:
+        table = data["pruebas"][key]
+        abnormal = table["alterado"]
+        try:
+            return DiagnosticTest(
+                key=key,
+                **{field: table[k] for k, field in _TEST_REQUIRED.items() if field},
+                **{field: abnormal[k] for k, field in _ABNORMAL_KEYS.items()},
+                **{field: table[k] for k, field in _TEST_OPTIONAL.items() if k in table},
+            )
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from None
+
+    def reason(key: str) -> ReasonProfile:
+        table = reasons[key]
+        try:
+            return ReasonProfile(
+                key=key,
+                name=table["nombre"],
+                base_weight=table["peso_base"],
+                severity=severity(key),
+                test_pct=tuple(table["pruebas"][t] for t in TEST_TYPES),
+                **{
+                    field: table[toml_key]
+                    for toml_key, (field, _) in _REASON_FACTORS.items()
+                    if toml_key in table
+                },
+                **({"duration_factor": table["duracion"]} if "duracion" in table else {}),
+            )
+        except ValueError as error:
+            if str(error).startswith(str(path)):
+                raise
+            raise ValueError(f"{path}: {error}") from None
+
     return ClinicalProfiles(
         shift_band_starts=data["contexto"]["franjas"],
         population=Population(
@@ -582,19 +856,10 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
                 if key in population
             },
         ),
-        reasons=tuple(
-            ReasonProfile(
-                key=key,
-                name=reasons[key]["nombre"],
-                base_weight=reasons[key]["peso_base"],
-                severity=severity(key),
-                **{
-                    field: reasons[key][toml_key]
-                    for toml_key, (field, _) in _REASON_FACTORS.items()
-                    if toml_key in reasons[key]
-                },
-            )
-            for key in REASON_KEYS
-        ),
+        reasons=tuple(reason(key) for key in REASON_KEYS),
         triage=TriageProfile(**{field: data["triaje"][k] for k, field in _TRIAGE_KEYS.items()}),
+        durations=DurationProfile(
+            **{field: data["duraciones"][k] for k, field in _DURATION_KEYS.items()}
+        ),
+        diagnostic_tests=tuple(diagnostic_test(key) for key in TEST_TYPES),
     )
