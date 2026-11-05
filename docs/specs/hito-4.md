@@ -69,13 +69,13 @@ El centro atiende solo a adultos de 15 años o más (decisión candidata 35): lo
 | Rasgo | Valores | Nota |
 | --- | --- | --- |
 | Franja | mañana, tarde y noche, con inicios propios del perfil (8, 15 y 22 h por defecto) | Independientes de los turnos de `centro.toml`: mover un cambio de turno no mueve a los pacientes |
-| Tipo de día | laborable; fin de semana o festivo | Festivos, como en el hito 2 |
+| Tipo de día | laborable; fin de semana (sábado y domingo) | El hito 2 no tiene calendario de festivos; un festivo cuenta como laborable |
 | Estación | invierno, primavera, verano y otoño | Por meses: diciembre a febrero es invierno, y así sucesivamente |
 
-**Edad, sexo y medio de llegada** (flujo 5, cuatro sorteos fijos por paciente):
+**Edad, sexo y medio de llegada** (flujo 5, siete sorteos fijos por paciente):
 
-1. Banda de edad con una categórica log-lineal: 15–44, 45–64, 65–79 y 80–99 años. Cada banda tiene su peso base y factores por franja y tipo de día (más jóvenes de noche y en fin de semana).
-2. Edad entera, uniforme dentro de la banda.
+1. Banda de edad con una categórica log-lineal, sorteada con Gumbel-max (cuatro sorteos): 15–44, 45–64, 65–79 y 80–99 años. Cada banda tiene su peso base y factores por franja y tipo de día (más jóvenes de noche y en fin de semana).
+2. Edad entera, uniforme dentro de la banda (una uniforme).
 3. Sexo, con un porcentaje de mujeres por banda.
 4. Medio de llegada (ambulancia o propio), con un porcentaje por banda.
 
@@ -91,7 +91,7 @@ Los 17 motivos del catálogo del diseño existen desde el principio, cada uno co
 
 **Sorteo con Gumbel-max** (flujo 6, 17 sorteos fijos por paciente). Cada motivo recibe un g\_m de una Gumbel estándar y gana el mayor `log w_m + g_m`. La distribución es exactamente la categórica y no hace falta renormalizar. Al cambiar el peso de un motivo, solo cambian los pacientes que entran o salen de él: con la disnea ×1,5 cambia el 3,6 % de los pacientes (el mínimo posible es 3,5 %), frente al 17,3 % con la CDF inversa (decisión candidata 43).
 
-**Pesos base derivados.** La columna «peso aprox.» del catálogo es un reparto global, no un peso de referencia: el reparto que sale es la media de los contextos ponderada por las llegadas. `base_weights_for(...)` calcula los pesos base para que el reparto global de una semana tipo, con el perfil de llegadas y la mezcla de edades, coincida con el catálogo. Se ejecuta una vez y su resultado se escribe en el TOML con un comentario. Un test comprueba que el reparto global sale dentro de ±0,5 puntos. El peso base es el punto fijo y los factores mandan: así un shock «disnea ×1,5» no se renormaliza de vuelta.
+**Pesos base derivados.** La columna «peso aprox.» del catálogo es un reparto global, no un peso de referencia: el reparto que sale es la media de los contextos ponderada por las llegadas. `base_weights_for(...)` calcula los pesos base para que el reparto global de un año del perfil de llegadas (contextos ponderados por las llegadas esperadas y por la mezcla de bandas de cada contexto) coincida con el catálogo. Se ejecuta una vez y su resultado se escribe en el TOML con un comentario. Un test comprueba que el reparto global sale dentro de ±0,5 puntos. El peso base es el punto fijo y los factores mandan: así un shock «disnea ×1,5» no se renormaliza de vuelta.
 
 **Estado de cada parámetro.** No hay una fuente española pública con el reparto de diagramas de Manchester, así que cada número lleva su estado en un comentario del TOML y en esta especificación:
 
@@ -169,7 +169,7 @@ class ClinicalSampler:
 
     def __call__(self, arrival):
         ctx = self._calendar.context(arrival.time)  # shift band, day type, season
-        person = self._population(ctx)  # stream 5: 4 uniforms
+        person = self._population(ctx)  # stream 5: 4 Gumbel + 3 uniforms
         reason = self._reason(ctx, person)  # stream 6: 17 Gumbel draws
         g = self._severity(reason, person)  # stream 7: 1 normal
         level, true_level = self._triage(g)  # stream 1: 1 normal (noise)
@@ -188,7 +188,7 @@ class ClinicalSampler:
 | 2 | Duraciones | 3 normales (triaje, valoración, reevaluación) |
 | 3 | Pruebas | 12 (pedir, resultado y respuesta de 4 tipos) |
 | 4 | Destino provisional | 1 uniforme |
-| 5 | Población | 4 uniformes (banda, edad, sexo, medio) |
+| 5 | Población | 4 Gumbel (banda) y 3 uniformes (edad, sexo, medio) |
 | 6 | Motivo | 17 Gumbel |
 | 7 | Gravedad | 1 normal |
 
@@ -306,7 +306,7 @@ nombre = "Dolor torácico"
 peso_base = 5                       # derivado con base_weights_for
 edad = [0.5, 1.0, 1.6, 1.6]
 franja = [1.0, 1.1, 0.8]
-dia = [1.0, 0.9]                    # laborable; fin de semana o festivo
+dia = [1.0, 0.9]                    # laborable; fin de semana
 estacion = [1.1, 1.0, 0.9, 1.0]     # invierno, primavera, verano, otoño
 gravedad = { media = 0.6, por_edad = [-0.3, 0.0, 0.3, 0.5], desviacion = 0.9 }
 pruebas = { ecg = 98, analitica = 90, radiografia = 70, imagen = 10 }   # % en adulto de gravedad media
@@ -401,7 +401,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Grupo | Qué comprueba |
 | --- | --- |
 | Perfiles | Carga del TOML de ejemplo y del real; factores opcionales neutros; errores con claves desconocidas, longitudes, porcentajes y medianas inválidos |
-| Contexto | Franja en los bordes (7:59 y 8:00), tipo de día con festivos, estación por mes |
+| Contexto | Franja en los bordes (7:59 y 8:00), tipo de día en el paso de domingo a lunes, estación por mes |
 | Mezcla | Valor a mano (22,7 % de disnea en mayores en invierno); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea» |
 | Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje con IC binomial; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
 | Pruebas y duraciones | logit(0,40) = −0,41; probabilidad por tramos de G; máxima de las pedidas; media lognormal 24,43 → 29,32 con el factor 1,2; cuantiles con la binomial, como en la tarea 3.1 |
@@ -561,3 +561,88 @@ Consultadas el 3 de noviembre de 2026.
 ## Anexo: guía de referencia del hito 4
 
 Este anexo se amplía al cerrar cada tarea del hito con lo que se hizo, los conceptos que aparecieron, las decisiones, los resultados medidos, las versiones incorrectas y las lecciones aprendidas.
+
+### Tarea 4.1: relojes, pretriaje y nivel 1 en la puerta
+
+**Qué se hizo**
+
+PR #40 (rama `feat/h4-relojes`), abierto por Claude Code y fusionado por Pedro con *squash and merge*. Es la primera tarea con el plan aprobado en modo auto. Once commits: autonomía del agente; especificación y hito en curso; relojes; nivel 1 en la puerta; nadie se cuela en el triaje; M/G/1 con λ·(1 − p₁); cumplimiento con la medida como parámetro; pretriaje; resumen de la CLI; notebook 03; y la cifra de la M/G/1 en el test slow de `validate_engine`.
+
+- **Autonomía.** En `.claude/settings.json` desaparece `ask` para `git push` (en Claude Code `ask` gana a `allow`, así que con él el `allow` no tenía efecto); `allow` gana `git push -u origin feat/*` y `docs/*` y `git branch -D`; `deny` gana el push forzado y el push a `main`. `CLAUDE.md` dice que, con el plan aprobado, el agente hace push y abre el PR sin pedir confirmación.
+- **Preparación.** `docs/specs/hito-4.md` entra en modo 100644; `AGENTS.md` apunta al hito 4 y añade el prefijo `refactor`. El pendiente del `chmod -x` no tenía nada que cambiar: los 44 `.md` versionados ya eran 100644.
+- **Relojes** (`engine/analysis.py`): `triage_start_to_doctor` y `classified_to_doctor` en `EpisodeRecord` y en `MEASURES`, con `None` hasta la primera valoración. `SUMMARY_MEASURES` no cambia, porque la app construye sus columnas con él.
+- **Nivel 1 en la puerta.** `clinical.classified_at_the_door` y `triage_duration`; una rama en `patient.py` que emite `triage_started` y `triage_completed` en la llegada sin pedir enfermera. `events.py` define `DOOR` y `NURSE`, y el catálogo exige `circuito` en `triage_started`.
+- **Lectura de logs antiguos.** `from_json` completa `circuito: "enfermeria"` en los `triage_started` que no lo tienen; `emit` sigue exigiendo el campo. `schema_version` sigue en 1.
+- **Invariantes y curvas.** `check_capacity` y `busy_intervals` no cuentan los triajes de puerta; `step_curves` los trata como «sale de la cola de triaje y entra en la de box», sin enfermera. «Nadie se cuela» añade la cola de triaje (FIFO entre triajes de enfermería).
+- **Validación.** Pollaczek–Khinchine con λ·(1 − p₁) y Wq sobre los niveles 2 a 5; `total_stay`, `_held_intervals` y la capacidad infinita exacta, con triaje 0 para el nivel 1.
+- **Objetivos.** `manchester_compliance(..., measure="classified_to_doctor")` con `Compliance.measure` y `pooled_within`; `pretriage(...)` con recuentos por día y nivel y una columna «total 2–5»; `clock_quantiles`. `runs/metrics.py` pasa el reloj A de forma explícita (`APP_COMPLIANCE_MEASURE`), y `runs/truth.py` marca el triaje de puerta como no usado.
+- **CLI.** El resumen de `motor simular` añade dos tablas: relojes por nivel (mediana y p90) con el cumplimiento con C, y pretriaje. Las filas se llaman «nivel 1» a «niveles 2-5».
+- **Escenarios.** P5 llega en el minuto 20 en el escenario de tres boxes, y los escenarios a mano de `test_priority` y `test_timeline` mueven su nivel 1 al instante en que antes acababa el triaje: los demás instantes no cambian.
+- **Notebook 03.** Secciones 5 y 8 y la pista del nivel 1, reescritas tras ejecutarlo en modo normal; mide el cumplimiento con `door_to_doctor` explícito.
+- 1.459 tests en la suite completa (4 min 55 s); 1.441 rápidos (unos 2 min, antes 1.406); 241 de la app (2 min 30 s); notebooks en modo rápido en 32 s y el 03 en modo normal en 4 min 54 s.
+
+**Conceptos**
+
+- **Tres relojes, una resta.** Los tres salen de los mismos instantes del log; lo que cambia es desde cuándo se cuenta, y con ello qué cola se juzga.
+- **Cambiar un valor por defecto sin cambiar el significado.** `manchester_compliance` pasa a usar C, pero quien ya lo usaba con A (la app y el notebook 03) lo pide de forma explícita: nada cambia sin querer.
+- **Thinning de las llegadas a la enfermera.** Si cada llegada es nivel 1 con probabilidad p₁, independiente de las demás, las que llegan a la enfermera son un Poisson de tasa λ·(1 − p₁): la lección del hito 2, al revés. p₁ sale de la configuración, nunca de lo que vio la ejecución.
+- **Tolerancia solo en la frontera de lectura.** El escritor es estricto y el lector, tolerante con lo antiguo: así la tolerancia no puede tapar un fallo del motor.
+- **Comparar con `main` evento a evento** demuestra el alcance de un cambio: todo es idéntico hasta el primer nivel 1 y las diferencias empiezan justo ahí.
+- **Cambios del mismo instante.** Las escaleras pliegan los cambios de un mismo instante: un +1 y un −1 simultáneos no dejan rastro, y por eso la V6 no la ve ningún test.
+
+**Decisiones**
+
+- `circuito` obligatorio al escribir y con valor por defecto al leer; `schema_version` en 1. La política de versiones del catálogo la decide la tarea 4.5.
+- M/G/1 con λ·(1 − p₁) en lugar de dejar el nivel 1 a cero en `mg1_center`: la validación sigue simulando el centro real y pone a prueba la rama de puerta.
+- Exclusión explícita de los triajes de puerta con las constantes `DOOR` y `NURSE`.
+- `test_un_nivel_1_no_desaloja_a_otro` ya no puede construir su caso: con la puerta, los niveles 1 piden box en orden de llegada. Ahora comprueba que un nivel 1 espera sin desalojar a otro, y la regla sigue cubierta por el test unitario de `should_displace`.
+- `offered_load_by_pool` fallaba en `np.convolve` cuando nadie ocupaba un recurso (por ejemplo, con solo niveles 1); un test nuevo lo descubrió y ahora la carga es 0.
+
+**Resultados**
+
+| Comprobación | Valor |
+| --- | --- |
+| M/G/1 teórica, centro real | Wq 13,10 → 12,93 min; ρ 0,7717 → 0,7694; Lq 1,747 → 1,719 (λ = 0,13293 por minuto) |
+| M/G/1 a mano | p₁ = 0,5: λ = 1/15, ρ = 0,3858, Wq = 2,436; p₁ = 0 recupera 13,10 |
+| M/G/1 simulada (20 réplicas) | Wq 12,51 \[11,58; 13,44\] |
+| Huellas | Cambia `eventos.jsonl`; los dos CSV del ground truth no cambian (predicción cumplida) |
+| Comparación con `main` (semilla 7, 2 días, 707 episodios) | 457 episodios idénticos hasta el primer nivel 1 (EP-000461); 26 distintos, el primero en 1946,48, cuando antes esperaba enfermera hasta 1951,14 |
+| Escenario de puerta, relojes A / B / C | F 0 / 0 / 0; D 29 / 20 / 15; E 28 / 20 / 15; A 10 / 10 / 0 |
+
+En el mes del notebook 03 (ejecución larga de `validate_engine`):
+
+| Cifra | Antes | Después |
+| --- | --- | --- |
+| Nivel 1, días fuera con el reloj A | 17 de 17 | 8 de 17 |
+| Nivel 1, puerta-médico medio | 9,6 min | 0,6 min |
+| Nivel 2, días fuera | 25 de 26 (reloj A) | 0 de 26 (reloj C) |
+| Nivel 4, días fuera (reloj A) | 3 de 26 | 2 de 26 |
+| Nivel 5, días fuera (reloj A) | 8 de 26 | 8 de 26 |
+
+Al nivel 1 le queda la espera de médico: 10 de sus 26 pacientes esperan, hasta 5,3 minutos. Es la distancia conocida de la decisión de no desalojar médicos (circuito de críticos de la v1).
+
+**Comprobación con versiones incorrectas** (temporales; resultado del PR)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. `check_capacity` cuenta el triaje de puerta | Fallan los tests a mano y los de invariantes en ejecuciones del motor | Exacta en lo esencial: 21 fallos. Los escenarios a mano de `test_priority` no fallan; sí `test_estres_con_muchos_niveles_1` |
+| V2. Prioridad de triaje por (nivel, llegada) | Fallan el FIFO a mano, el orden de `test_shifts` y «nadie se cuela» en ejecuciones; el escenario de puerta pasa | Exacta: 23 fallos; en la ejecución base, las 198 violaciones son de la cola de triaje |
+| V3. Cumplimiento con `door_to_doctor` por defecto | Solo falla el test del reloj C por defecto | Exacta: 1 fallo; la app pasa |
+| V4. M/G/1 con λ y no λ·(1 − p₁) | Fallan los tests deterministas; la prueba estadística pasa | Exacta: 3 fallos. Con p₁ = 0,3 %, el IC contiene 13,10 y 12,93: límite de potencia |
+| V5. El pretriaje cuenta el nivel 1 en el total | Fallan los tests del total 2–5 | Exacta: 2 fallos |
+| V6. `step_curves` cuenta el triaje de puerta como enfermera | No falla nada: +1 y −1 en el mismo instante | Exacta: 0 fallos; la regla queda escrita, pero no se puede observar |
+| V7. `from_json` sin valor por defecto | Solo falla la lectura de una línea antigua | Exacta: 1 fallo |
+
+**Lecciones aprendidas**
+
+- **El incumplimiento del nivel 2 era del reloj, no del centro.** Con el reloj A, el nivel 2 no podía cumplir por construcción; con el C queda 0 días fuera. Antes de corregir un modelo hay que comprobar qué mide el indicador.
+- **Cambiar una regla puede volver imposible el escenario de un test.** Entonces se mueve la comprobación a donde todavía se puede hacer (el test unitario de `should_displace`), no se borra.
+- **Un test nuevo puede encontrar un fallo antiguo.** El caso límite «nadie ocupa el recurso» llevaba sin probarse desde que nació la función, en la tarea 3.8.
+- **Una prueba estadística no ve un sesgo pequeño.** Una diferencia de 0,17 minutos cabe en el IC de la M/G/1; solo el test determinista la detecta. Es la lección de potencia de la tarea 3.6.
+- **Los ajustes de la revisión del plan tienen que llegar al agente.** Los de esta tarea (reglas para los push posteriores, la V8 y los patrones de `-f` con espacios) no están en el PR; se aplican en la 4.2.
+
+**Pendiente para la tarea 4.2**
+
+- `.claude/settings.json`: permitir `git push` sin `-u` y `git push origin feat/*` y `docs/*`, y escribir los patrones de `-f` con espacios.
+- `docs/specs/hito-4.md`: el hito 2 no tiene calendario de festivos, así que el tipo de día es laborable o fin de semana; la especificación en línea ya está corregida y el fichero se corrige en la 4.2.
+- Para la 4.5: la política de versiones del catálogo de eventos.
