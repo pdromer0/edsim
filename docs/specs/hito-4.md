@@ -201,7 +201,7 @@ Multiplicar la mediana por k desplaza la lognormal sin cambiar σ, y la media ta
 
 **Regla de los k.** Los k reparten la duración entre motivos sin cambiar la carga: con los k, la carga de valoración de un año queda a 1 ± 0,05 de la carga sin ellos (un test lo comprueba sobre `config/perfiles.toml`). Con los valores orientativos, la razón es 1,0052 y la media simple de k por paciente, 0,9905.
 
-**Carga del médico por paciente**: E[valoración] + E[reevaluación · 1{alguna prueba}], con G dentro de la integral, porque mueve el nivel real y las pruebas a la vez. Las medias por nivel real, sin k, son 48,87 / 37,33 / 27,01 / 18,66 / 12,91 minutos de valoración y 17,36 / 14,14 / 11,58 / 9,02 / 6,95 de reevaluación; con el reparto real exacto, 24,07 y 10,60. Con los k y las pruebas del perfil, 24,20 + 8,18 = 32,38 minutos, frente a los 30,84 del modelo provisional (24,43 + 55,41 % × 11,58): la valoración baja un poco y toda la subida viene de la reevaluación, porque el 72,79 % de los pacientes tiene alguna prueba (55,41 % en el provisional). Es una comprobación clínica, no un objetivo.
+**Carga del médico por paciente**: E\[valoración\] + E\[reevaluación · 1{alguna prueba}\], con G dentro de la integral, porque mueve el nivel real y las pruebas a la vez. Las medias por nivel real, sin k, son 48,87 / 37,33 / 27,01 / 18,66 / 12,91 minutos de valoración y 17,36 / 14,14 / 11,58 / 9,02 / 6,95 de reevaluación; con el reparto real exacto, 24,07 y 10,60. Con los k y las pruebas del perfil, 24,20 + 8,18 = 32,38 minutos, frente a los 30,84 del modelo provisional (24,43 + 55,41 % × 11,58): la valoración baja un poco y toda la subida viene de la reevaluación, porque el 72,79 % de los pacientes tiene alguna prueba (55,41 % en el provisional). Es una comprobación clínica, no un objetivo.
 
 ## El muestreador clínico en el motor
 
@@ -892,3 +892,121 @@ Ninguna predicción de fallo quedó sin cumplirse; las sorpresas fueron fallos d
 - Para la 4.4: `duracion` de `[triaje]` (mediana 5 y p90 10 minutos, niveles 2 a 5) entra en el esquema con `[duraciones]` y las pruebas, que usan la gravedad real y el nivel real.
 - Para la 4.5: unir `PersonReasonSampler` y `SeverityTriageSampler` en el `ClinicalSampler`; la prioridad usa el nivel asignado; el ground truth lleva z, G, nivel real, calidad y salto.
 - Para la 4.5 y el notebook 04: medir la espera de las paradas que reciben nivel 2 (el 47 %), el coste del límite conocido.
+
+### Tarea 4.4: pruebas por tipo y duraciones por nivel real y motivo
+
+**Qué se hizo**
+
+PR #43 (rama `feat/h4-pruebas`), fusionado por Pedro con *squash and merge*: nueve commits del plan, con los tres ajustes de la aprobación, y uno de corrección que destapó la versión incorrecta V4; sin commits de revisión. No toca el motor: el muestreador de pruebas y duraciones se une a los otros dos en el `ClinicalSampler` de la tarea 4.5.
+
+- **Refactors.** `lognormal_params` y `Z90` pasan a `edsim/lognormal.py`, porque `profiles` no puede importar el motor; `engine/clinical.py` los reexporta. `severity.interval_nodes` es el único integrador de Gauss-Legendre por componente e intervalo de G, y lo usan `triage_matrix`, `workup.py` y `durations.py` (la matriz de la 4.3 cambia como mucho 3,9e-16).
+- **Esquema.** `TEST_TYPES` = analitica, radiografia, ecg, imagen. `[triaje] duracion`; `[duraciones]` con `valoracion` y `reevaluacion` (5 pares por nivel real); `[pruebas.<tipo>]` con `respuesta`, `respuesta_franja` (opcional), `or_gravedad`, `or_mayor` (opcional) y `alterado = { base, or_gravedad }`; en cada motivo, `pruebas` (los 4 tipos, % para un adulto de menos de 65 años con G = 0, en (0, 100)) y `duracion` = k (opcional).
+- **`workup.py`.** Logísticas de pedir y de alterado, respuesta base (factor 1), `turnaround_shift_factors`, `round_turnaround` (la máxima de las pedidas, o `None`), `Workup` y el modelo exacto `WorkupModel`: % global, por motivo, por nivel real y por quintiles de G; alguna prueba; alterado; pedir si infratriado; y la distribución de la ronda.
+- **`durations.py`.** `duration_params` (μ = ln(k·mediana) y la σ de su par), `durations_from_draws` y el modelo exacto `DurationModel`: medias, CDF por nivel real y por motivo, y `physician_load`.
+- **Muestreo.** `WorkupDurationSampler`, con los flujos 3 y 2 y 12 + 3 sorteos fijos por paciente, devuelve `WorkupAndDurations`.
+- **Validación.** `check_workup` (134 categorías) y `check_durations` (64), con lo exacto como hipótesis, χ² o binomial exacta y Bonferroni. Un año por defecto (unos 14 s cada una) y 20.000 pacientes en los tests rápidos (2,5 s).
+- **Guardas de la configuración.** Las 68 marginales, los globales y «alguna prueba» contra una tabla literal; los comentarios del TOML al día; y la regla de los k.
+- 2.098 tests en la suite completa (9 min 26 s); 2.076 rápidos; 241 de la app, sin cambios.
+
+**Conceptos**
+
+- **La logística trabaja en odds.** Un odds ratio multiplica las odds, y en la escala del logit se suma: a + b·G + c·mayor. Con p = 40 %, b = 1,2 y c = 0,8: 40,00 % en un adulto con G = 0, 59,74 % en un mayor y 68,88 % en un adulto con G = 1.
+- **El médico ve la gravedad real.** La prioridad usa el nivel asignado; las pruebas y las duraciones, G y el nivel real. Un infratriado espera como su nivel asignado y recibe las pruebas de su gravedad.
+- **El % del TOML no es el del paciente típico.** Es el de G = 0; el que se lee clínicamente es la marginal del año: la parada escribe un 36 % de analítica y pide un 98 %.
+- **La ronda dura lo que la más lenta.** Dado G, los tipos son independientes: P(ronda ≤ x) = Π(1 − P\_t + P\_t·F\_t(x)) − Π(1 − P\_t), dividido por P(ronda). La media de la máxima es mayor que la máxima de las medias.
+- **Multiplicar una lognormal por k es multiplicar su mediana.** Por eso el factor de la franja se puede aplicar al pedir sobre la respuesta base, y k mueve la mediana, la p90 y la media sin cambiar σ.
+- **Los k reparten, no añaden.** Con la carga de valoración a 1 ± 0,05 de la carga sin k, las bases por nivel siguen significando «el motivo medio de ese nivel», y la carga de los médicos no cambia a escondidas.
+- **Un error que comparten el muestreador y lo exacto no lo ve la estadística**, porque mueve también la hipótesis: solo lo ven los valores a mano y los literales (V4, V6). Un error solo del muestreador sí lo ve la estadística (V4b, V6b).
+
+**Decisiones**
+
+- El factor de la franja de la respuesta se aplica al pedir, en la 4.5; el muestreador da la respuesta base.
+- Una ronda sin pruebas es `None`; en la 4.5 equivale a `needs_tests=False`.
+- Los p de cada motivo son «orientativos, elegidos por su marginal»: el TOML lleva en un comentario la marginal que dan los enteros escritos, y dos tests la vigilan.
+- Regla de los k: la carga de valoración de un año con los k, a 1 ± 0,05 de la carga sin ellos (razón 1,0052; media simple 0,9905).
+- Se acepta que la carga del médico suba un 5 % respecto al modelo provisional: 32,38 frente a 30,84 min por paciente. La valoración baja (24,20 frente a 24,43) y toda la subida viene de la reevaluación (8,18 frente a 6,42), porque el 72,79 % tiene alguna prueba (55,41 % en el provisional). La 4.6 lo absorberá con la plantilla, a la vista.
+- Alterado y respuesta se prueban sobre todos los pacientes, porque se sortean siempre.
+- Cada grupo condicionado necesita al menos 50 pacientes esperados (exactos): el nivel real 1 pide 12.000.
+
+**Valores orientativos por tipo de prueba**
+
+| Tipo | Respuesta \[mediana, p90\] (min) | Franja (mañana / tarde / noche) | OR gravedad | OR mayor | Alterado (base %; OR) | Razón |
+| --- | --- | --- | --- | --- | --- | --- |
+| Analítica | \[60, 150\] | 1,0 / 1,1 / 0,9 | 3,3 | 2,2 | 30; 2,5 | Pico de muestras por la tarde; sigue a la gravedad; pluripatología en mayores |
+| Radiografía | \[30, 75\] | 1,0 / 1,0 / 1,2 | 1,5 | 1,8 | 25; 2,0 | Depende más del motivo que de la gravedad; un solo técnico de noche |
+| ECG | \[10, 25\] | sin factor | 2,0 | 3,0 | 20; 2,0 | A pie de cama; casi rutina en mayores |
+| Imagen (eco o TC) | \[100, 240\] | 1,0 / 1,1 / 1,3 | 2,0 | 1,8 | 35; 2,0 | Radiólogo de guardia y sin eco programada de noche; TC craneal en caídas con anticoagulantes |
+
+**Pruebas y k por motivo** (p en el TOML para un adulto de menos de 65 años con G = 0; marginal exacta de un año de `config/llegadas.toml`)
+
+| Motivo | p (an / rx / ecg / img) | Marginal del año (%) | Alguna (%) | k |
+| --- | --- | --- | --- | --- |
+| Traumatismo | 9 / 72 / 4 / 7 | 8,1 / 69,7 / 4,6 / 6,4 | 74,1 | 0,85 |
+| Dolor abdominal | 67 / 14 / 7 / 25 | 75,0 / 19,5 / 14,9 / 35,1 | 85,3 | 1,1 |
+| Fiebre | 72 / 46 / 6 / 4 | 69,8 / 49,6 / 10,2 / 5,4 | 84,1 | 1,0 |
+| Disnea | 59 / 73 / 32 / 2 | 84,8 / 85,0 / 65,0 / 7,3 | 98,2 | 1,1 |
+| Malestar | 68 / 24 / 38 / 4 | 79,9 / 35,4 / 59,9 / 8,4 | 92,4 | 1,2 |
+| Dolor torácico | 65 / 56 / 96 / 2 | 84,9 / 69,9 / 98,2 / 5,9 | 99,8 | 1,0 |
+| Neurológico | 40 / 4 / 13 / 40 | 59,7 / 7,3 / 30,5 / 54,6 | 81,0 | 1,15 |
+| Síncope | 49 / 9 / 92 / 8 | 64,9 / 14,5 / 94,9 / 14,9 | 97,7 | 1,1 |
+| Urológico | 59 / 17 / 3 / 32 | 60,0 / 20,0 / 5,0 / 35,5 | 77,3 | 0,9 |
+| Cutáneo | 14 / 3 / 3 / 2 | 9,9 / 2,9 / 3,2 / 1,6 | 16,4 | 0,8 |
+| ORL | 8 / 4 / 2 / 4 | 5,2 / 3,7 / 2,0 / 3,1 | 13,1 | 0,8 |
+| Digestivo | 72 / 12 / 9 / 11 | 69,6 / 15,2 / 15,6 / 15,2 | 77,1 | 1,0 |
+| Psiquiátrico | 12 / 2 / 8 / 2 | 19,8 / 2,5 / 12,2 / 2,9 | 31,9 | 1,3 |
+| Palpitaciones | 58 / 18 / 97 / 2 | 70,1 / 25,3 / 98,0 / 3,7 | 99,3 | 0,9 |
+| Intoxicación | 78 / 7 / 46 / 6 | 74,7 / 8,3 / 49,7 / 8,4 | 85,2 | 1,1 |
+| Parada | 36 / 61 / 83 / 4 | 98,0 / 90,1 / 99,0 / 40,4 | 100 | 1,0 |
+| Otros | 22 / 10 / 7 / 4 | 19,7 / 10,4 / 8,5 / 3,9 | 35,1 | 0,9 |
+
+**Resultados**
+
+| Comprobación | Valor |
+| --- | --- |
+| Pruebas en un año | Analítica 48,08 %, radiografía 37,32 %, ECG 28,09 %, imagen 13,14 %; alguna prueba 72,79 % (55,41 % en el provisional) |
+| Alguna prueba por nivel real | 100 / 98,2 / 86,7 / 57,1 / 26,9 % (provisional: 95 / 85 / 70 / 40 / 20) |
+| Alterado entre los pedidos | 42,3 / 30,0 / 30,8 / 44,9 %; alguna alterada en la ronda, 46,8 % |
+| Pedir si infratriado | 59,8 / 39,3 / 35,1 / 15,9 % (infratriaje del 10,10 %) |
+| Ronda (factor 1) | Media 78,19 min, mediana 57,67, p90 161,78 |
+| Valoración y reevaluación por nivel real, con k | 50,24 / 40,44 / 27,95 / 17,48 / 12,17 min y 17,85 / 15,32 / 11,98 / 8,45 / 6,54 min |
+| Carga del médico por paciente | 24,20 + 8,18 = 32,38 min (provisional 30,84) |
+| Regla de los k | Razón 1,0052; media simple 0,9905 |
+| Quintiles de G (un año) | −0,8435 / −0,3202 / 0,1796 / 0,8128 |
+| Potencia (80 %) | Pedir analítica en el quintil central, 45,0 → 48,8 % con 20.000 y 46,6 % en un año; infratriados, 59,8 → 65,0 y 62,0 %; mediana de valoración del nivel 3, 50 → 52,7 y 51,2 % |
+| Detección | Alterado de analítica 30 → 36, otro OR de pedir y el k de traumatismo 0,85 → 1: potencia mayor que 0,999 |
+| Tiempos | `check_workup` y `check_durations`, 2,5 s con 20.000 y 14 s en un año; lo exacto, milisegundos |
+| Verificación del chat | Globales, alguna prueba, por nivel real, infratriados, carga, razón de los k, quintiles y las 68 marginales, reproducidos con una integración independiente |
+
+**Comprobación con versiones incorrectas** (temporales; aplicadas y deshechas en el mismo turno)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Pedir con G + ε | Fallan el muestreador a mano, «otro ruido no cambia las pruebas» e infra/analítica con 20.000; con un año, los infratriados y real 3/analítica | Cumplida, con fallos de más: infra/imagen y real 3/analítica con 20.000, y 12 categorías con un año (quintiles 3 a 5). Un primer intento (V1′) pasó G + ε también al resultado y falló alterado: se limitó al pedido |
+| V2. Duraciones con el nivel asignado | Fallan el muestreador a mano, «otro ruido no cambia las duraciones» y siete categorías por nivel real con un año | Cumplida, más los p90 del nivel 2 (potencia 0,91 y 0,71, sin predicción) |
+| V3. Resultado y respuesta solo si se pide | Fallan el consumo, «otro p no cambia resultados ni respuestas», las 20 de alterado y las 8 de respuesta | Cumplida casilla a casilla, más dos tests que también comprueban resultados y respuestas |
+| V4. k sobre σ en `duration_params`, compartida | Fallan los valores a mano con k y los literales; `check_durations` pasa | No cumplida a la primera: fallaron los p90, porque `DurationModel` tomaba σ sin k. Corregido en un commit aparte, con un test casilla a casilla; después, cumplida |
+| V4b. k sobre σ solo al sortear | Fallan el muestreador a mano y `check_durations` en varios motivos | Fallan las categorías firmes (23 con 20.000 y 33 con un año). El muestreador «a mano» pasó, porque usa `durations_from_draws` como referencia; lo vieron los valores a mano de esa función |
+| V5. Suma de las respuestas en lugar de la máxima | Fallan la ronda a mano y la mediana y el p90 de la ronda | Exacta |
+| V6. «Mayor» desde 45, compartida | Fallan los valores a mano y los literales; `check_workup` pasa | Cumplida: 11 tests, incluida la guarda de la tabla |
+| V6b. «Mayor» desde 45 solo en el muestreador | Fallan el muestreador a mano y analítica y ECG por nivel real con un año | Cumplida: 64 categorías con un año y 15 con 20.000 |
+| V7. Un solo flujo para pruebas y duraciones | Fallan el consumo y «otra semilla de un flujo no cambia el otro» | Exacta |
+| V8. Factor de la franja de la llegada en la respuesta | Fallan el muestreador a mano, imagen con los dos tamaños y radiografía con un año | Cumplida, más radiografía con 20.000 y analítica y la ronda con un año |
+| V9. `<=` en lugar de `<` al pedir | Solo el borde a mano | Exacta |
+
+Una predicción fallida (V4) destapó un error real del modelo exacto; las demás se cumplieron, con fallos de más explicados.
+
+**Lecciones aprendidas**
+
+- **Una predicción fallida puede encontrar un error de verdad.** V4 debía pasar la validación y falló, porque lo exacto suponía cómo actúa k en lugar de usar la función del muestreador. Lo exacto y el muestreador comparten las funciones de parámetros, y un test lo comprueba casilla a casilla.
+- **Los errores compartidos solo los ven los valores a mano y los literales; los del muestreador, la estadística.** Por eso conviene probar cada versión incorrecta en las dos variantes (V4 y V4b, V6 y V6b).
+- **Un test de integración que usa las funciones como referencia comprueba el cableado, no las fórmulas** (V4b). Las fórmulas las cubren los valores a mano de cada función.
+- **Lo elegido con un script también necesita guarda.** Los p salieron de su marginal objetivo; sin la tabla literal, los comentarios del TOML mentirían en cuanto cambiase la mezcla.
+- **Una sola copia de la cuadratura.** Extraer `interval_nodes` antes de usarla en dos módulos más evitó tres integradores con sus propias colas.
+- **Un test por cosa.** El test de la regla de los k comprueba también el literal 1,0052: con V4 falló por el literal aunque la regla se cumplía.
+- **Los ajustes llegaron al agente.** Con «No, keep planning» y el texto, los tres ajustes estaban en el plan y en la sección «Ajustes de la aprobación» del PR: la primera tarea del hito sin ajustes perdidos.
+
+**Pendiente**
+
+- **Para la 4.5:** unir los tres muestreadores en el `ClinicalSampler`. El motor aplica `turnaround_shift_factors` con la franja del momento del pedido y llama a `round_turnaround`; `None` equivale a `needs_tests=False`. La reevaluación solo se usa si hay ronda, y el triaje no se usa en el nivel 1. Payloads `pruebas` y `resultados`; ground truth con las pruebas pedidas, su resultado y su respuesta por tipo. `perfiles validar` incluye `check_workup` y `check_durations`.
+- **Para la 4.6:** la carga del médico es un 5 % mayor que en el modelo provisional (32,38 frente a 30,84 min por paciente); la plantilla lo absorberá.
+- **Mejora menor:** separar en dos el test de la regla de los k (la regla y el literal).
