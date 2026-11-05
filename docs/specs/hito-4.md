@@ -107,11 +107,35 @@ Un factor solo se escribe si hay una razón clínica, que va en un comentario al
 
 Cada paciente tiene una gravedad real G que el hospital nunca ve; la enfermera clasifica G + ε, y los cinco niveles son cuatro umbrales sobre esa escala (decisión candidata 38).
 
-**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia, la mezcla de un año del perfil de llegadas: 0 es la gravedad media de un adulto. Más G es más grave. Los valores por motivo son orientativos, respetan el orden de la columna «Gravedad típica» del catálogo (un test lo comprueba) y se desplazan y escalan en común para que la mezcla tenga media 0 y desviación 1.
+**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia, la mezcla de un año del perfil de llegadas: 0 es la gravedad media de un adulto. Más G es más grave. Los valores por motivo son orientativos, respetan el orden de la columna «Gravedad típica» del catálogo (un test lo comprueba) y se desplazan y escalan en común para que la mezcla tenga media 0 y desviación 1: x′ = (x + 0,104) / 1,065 (por_edad y desviación solo se dividen), con media 0,0014 y desviación 1,0002 al redondear. Un desplazamiento y una escala comunes no cambian ningún nivel, porque los umbrales se mueven con ellos.
+
+| Motivo | Gravedad típica (catálogo) | media | desviación | por_edad (15–44, 45–64, 65–79, 80–99) | G media del año | Razón clínica (orientativa) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Parada / crítico | Muy alta | 3,38 | 0,38 | — | 3,38 | Compromiso vital a cualquier edad (3,5 y 0,4 antes de la transformación) |
+| Disnea | Media–alta | 0,94 | 0,85 | −0,38 / 0 / 0,19 / 0,38 | 1,07 | Asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores |
+| Dolor torácico | Media–alta | 0,94 | 0,75 | −0,38 / 0 / 0,19 / 0,28 | 0,94 | Mecánico o ansiedad en jóvenes; síndrome coronario desde los 45 |
+| Malestar | Media | 0,29 | 0,75 | −0,28 / 0 / 0,09 / 0,28 | 0,36 | En frágiles esconde sepsis o descompensación |
+| Dolor abdominal | Media | 0,29 | 0,75 | −0,19 / 0 / 0,19 / 0,47 | 0,32 | Abdomen agudo atenuado en mayores |
+| Síncope | Media | 0,29 | 0,75 | −0,38 / 0 / 0,19 / 0,28 | 0,31 | Vasovagal en jóvenes; arritmia o hemorragia en mayores |
+| Palpitaciones | Media | 0,29 | 0,66 | −0,28 / 0 / 0,09 / 0,19 | 0,27 | Fibrilación auricular rápida en mayores |
+| Psiquiátrico | Media | 0,19 | 0,75 | — | 0,19 | Ansiedad frente a agitación o ideación suicida |
+| Urológico | Baja–media | −0,18 | 0,66 | 0 / 0 / 0,09 / 0,19 | −0,13 | Retención y urosepsis en mayores |
+| Fiebre | Baja–media | −0,18 | 0,75 | −0,19 / 0 / 0,28 / 0,47 | −0,14 | Viriasis en jóvenes; neumonía y sepsis en mayores |
+| Traumatismo | Baja | −0,56 | 0,66 | −0,09 / 0 / 0,09 / 0,38 | −0,55 | Fractura de cadera en ≥80 |
+| Otros | Baja | −0,56 | 0,75 | — | −0,56 | Cajón de sastre |
+| Cutáneo | Baja | −0,75 | 0,56 | — | −0,75 | Banal; la anafilaxia es la cola |
+| ORL | Baja | −0,84 | 0,56 | — | −0,84 | Otitis, faringitis, cuerpo extraño |
+| Neurológico | Variable | 0,38 | 1,13 | −0,28 / 0 / 0,28 / 0,38 | 0,47 | Cefalea y vértigo frente a ictus |
+| Intoxicación | Variable | 0,10 | 1,13 | — | 0,10 | Embriaguez frente a sobredosis |
+| Digestivo | Variable | −0,09 | 1,03 | −0,19 / 0 / 0,19 / 0,38 | −0,08 | Gastroenteritis frente a hemorragia digestiva |
+
+Los «Variable» tienen más desviación que la mediana de los 17 motivos (0,75); un test lo comprueba.
+
+**Límite conocido: no todas las paradas van a la puerta.** El catálogo da un 0,5 % de paradas y el objetivo de nivel 1 asignado es un 0,4 %, así que, aunque el nivel 1 fuera solo de paradas, una de cada cinco no cabría en él. Con los valores de la tabla, el 62,4 % de las paradas tiene nivel real 1 y el 53,1 % recibe nivel 1 asignado y va a la puerta (unas 292 de 550 al año); las demás reciben nivel 2 y hacen cola en el triaje. El 74,1 % de los niveles 1 reales son paradas; el resto, sobre todo disnea (12,2 %) y neurológico (9,5 %). Con la parada en 2,94 y 0,47 (la primera versión de la tarea 4.3), solo el 34,5 % iba a la puerta. Subir más la parada no resuelve el límite: los umbrales se derivan para el 0,4 %, y c₁ sube con ella.
 
 **Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales. El nivel k es el intervalo (c_k, c_{k−1}]: un valor justo en un umbral se queda en el nivel menos urgente.
 
-**Umbrales derivados y escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de un año del perfil de llegadas, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %, que suman 100,1 por el redondeo y se normalizan). El cálculo es exacto: una raíz por umbral sobre una suma de normales, una por motivo y banda de edad. Como los pesos base, `thresholds_for(...)` se ejecuta una vez y su resultado se escribe en el TOML con el comando en un comentario; un test comprueba que los escritos siguen siendo los derivados. **No se recalculan al cargar los perfiles**: un escenario con más gravedad (un brote de gripe, un accidente con múltiples víctimas) debe dar más niveles urgentes, y si los umbrales se recalcularan el reparto volvería al objetivo y el shock desaparecería. Con la disnea ×1,5 y los umbrales del perfil base, el nivel 2 asignado pasa del 12,09 % al 13,09 %. El reparto objetivo se cumple por construcción solo en el perfil base. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
+**Umbrales derivados y escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de un año del perfil de llegadas, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %, que suman 100,1 por el redondeo y se normalizan). El cálculo es exacto: una raíz por umbral sobre una suma de normales, una por motivo y banda de edad. Como los pesos base, `thresholds_for(...)` se ejecuta una vez y su resultado se escribe en el TOML con el comando en un comentario; un test comprueba que los escritos siguen siendo los derivados. **No se recalculan al cargar los perfiles**: un escenario con más gravedad (un brote de gripe, un accidente con múltiples víctimas) debe dar más niveles urgentes, y si los umbrales se recalcularan el reparto volvería al objetivo y el shock desaparecería. Con la disnea ×1,5 y los umbrales del perfil base, el nivel 2 asignado pasa del 12,09 % al 13,10 %. El reparto objetivo se cumple por construcción solo en el perfil base. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
 
 **Calibración del error.** Con G normal estándar y el reparto de adultos, un ruido de 0,32 y un sesgo de −0,08 dan un 10,2 % de infratriaje y un 6,2 % de sobretriaje, cerca del dato más reciente, de Asturias (10,1 % y 6,3 %). Un ruido simétrico sin sesgo daría más sobretriaje que infratriaje. Con esos valores, el 31 % de los niveles 1 reales se asigna como 2 y el 17 % de los niveles 5 reales sube a 4: los errores se concentran en los niveles raros, de franjas estrechas.
 
@@ -125,17 +149,17 @@ Cada paciente tiene una gravedad real G que el hospital nunca ve; la enfermera c
 
 Valores exactos, por integración, con G normal estándar. La versión anterior de esta tabla salió de un millón de pacientes sorteados: la fila del nivel 1 (unos 3400 pacientes) tenía alrededor de 0,8 puntos de error de muestreo.
 
-**Con la mezcla real.** La mezcla de motivos y edades no es normal: tiene una cola grave (las paradas) y motivos de mucha dispersión. `triage_error_for(...)` ajusta ruido y sesgo a los objetivos de Asturias, recalculando los umbrales en cada paso, y da 0,335 y −0,082, que también se escriben en el TOML (calibrados). Con los valores escritos, el infratriaje es del 10,11 % y el sobretriaje del 6,30 %.
+**Con la mezcla real.** La mezcla de motivos y edades no es normal: tiene una cola grave (las paradas) y motivos de mucha dispersión. `triage_error_for(...)` ajusta ruido y sesgo a los objetivos de Asturias, recalculando los umbrales en cada paso, y da 0,333 y −0,081, que también se escriben en el TOML (calibrados). Con los valores escritos, el infratriaje es del 10,10 % y el sobretriaje del 6,28 %.
 
 | Nivel real \\ asignado (%), mezcla real | 1 | 2 | 3 | 4 | 5 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 70,3 | 29,7 | 0 | 0 | 0 |
-| 2 | 1,1 | 78,5 | 20,4 | 0 | 0 |
+| 1 | 72,4 | 27,6 | 0 | 0 | 0 |
+| 2 | 0,8 | 78,8 | 20,5 | 0 | 0 |
 | 3 | 0 | 6,0 | 75,7 | 18,3 | 0 |
 | 4 | 0 | 0 | 7,7 | 90,6 | 1,7 |
-| 5 | 0 | 0 | 0 | 19,4 | 80,6 |
+| 5 | 0 | 0 | 0 | 19,5 | 80,5 |
 
-Umbrales [3,088; 1,149; −0,044; −2,178]; reparto real 0,38 / 12,53 / 35,82 / 50,62 / 0,66 % frente al asignado 0,40 / 12,09 / 33,56 / 52,55 / 1,40 %.
+Umbrales [3,260; 1,140; −0,044; −2,163]; reparto real 0,42 / 12,46 / 35,81 / 50,65 / 0,65 % frente al asignado 0,40 / 12,09 / 33,55 / 52,56 / 1,40 %.
 
 **Asignado frente a real.** La prioridad de box y médico usa el nivel asignado, que es lo que sabe el hospital. Las duraciones y las pruebas usan la gravedad real, porque el médico atiende al paciente que tiene delante. Así, un 2 infratriado como 4 espera como un 4 pero necesita lo que necesita un 2: es el mecanismo que hace peligroso el infratriaje.
 
@@ -300,9 +324,9 @@ ambulancia = [6, 10, 21, 34]        # % por banda; 26,9 % en ≥65 frente al 27 
 reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]   # % asignado (suma 100,1: se normaliza)
 infratriaje = 10.1                  # % objetivo (Asturias)
 sobretriaje = 6.3
-ruido = 0.335                       # calibrado con triage_error_for; desviación del error, en unidades de G
-sesgo = -0.082                      # calibrado; negativo: tiende a infratriar
-umbrales = [3.088, 1.149, -0.044, -2.178]   # derivado con thresholds_for; no se recalcula al cargar
+ruido = 0.333                       # calibrado con triage_error_for; desviación del error, en unidades de G
+sesgo = -0.081                      # calibrado; negativo: tiende a infratriar
+umbrales = [3.260, 1.140, -0.044, -2.163]   # derivado con thresholds_for; no se recalcula al cargar
 duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5 (tarea 4.4)
 
 [duraciones]
