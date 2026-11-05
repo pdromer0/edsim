@@ -25,7 +25,18 @@ each of two streams per patient:
 
 With another noise, every patient keeps its G and its true level; with
 another mean of one reason, only the patients of that reason change their G.
-The ``ClinicalSampler`` of task 4.5 joins both parts.
+
+``WorkupDurationSampler`` is the third part: from the person, the reason and
+the severity it draws the tests and the durations, with the true severity
+and the true level, never what the nurse sees:
+
+- stream 3 (tests): 12 draws, per type in the order of ``TEST_TYPES`` a
+  uniform to order it, a uniform for its result and a normal for its base
+  turnaround (``workup.workup_from_draws``), whether it is ordered or not;
+- stream 2 (durations): 3 normals, for the triage, the assessment and the
+  reassessment (``durations.durations_from_draws``).
+
+The ``ClinicalSampler`` of task 4.5 joins the three parts.
 
 The module does not import the engine nor SimPy: ``ArrivalRecord`` is only a
 type hint, and the sampler reads nothing but ``arrival.time``.
@@ -43,15 +54,18 @@ from numpy.typing import NDArray
 
 from edsim.profiles.config import REASON_KEYS, ClinicalProfiles
 from edsim.profiles.context import ArrivalContext, arrival_context
+from edsim.profiles.durations import PatientDurations, draw_durations_standard, durations_from_draws
 from edsim.profiles.mixing import gumbel_max, reason_weight_table
 from edsim.profiles.population import Person, draw_person_standard, person_from_draws
 from edsim.profiles.severity import severity_from_draw, triage_from_draws, triage_quality
+from edsim.profiles.workup import Workup, draw_workup_standard, older_bands, workup_from_draws
 
 if TYPE_CHECKING:
     from edsim.arrivals.thinning import ArrivalRecord
 
 N_STREAMS = 2
-"""Streams of each sampler: population (5) and reason (6), or severity (7) and error (1)."""
+"""Streams of each sampler: population (5) and reason (6), severity (7) and error (1),
+or tests (3) and durations (2)."""
 
 N_REASON_DRAWS = len(REASON_KEYS)
 """Standard Gumbel draws of stream 6 per patient: one per reason."""
@@ -204,3 +218,72 @@ class SeverityTriageSampler:
         return SeverityAndTriage(
             z=z, severity=g, level=level, true_level=true_level, quality=quality, jump=jump
         )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkupAndDurations:
+    """What streams 3 and 2 give for one patient.
+
+    Attributes:
+        workup: Whether each type of test is ordered, its result and its base
+            turnaround, with the 12 standard draws; ``workup.has_round`` says
+            whether there is a round.
+        durations: Triage, assessment and reassessment, with the 3 standard
+            draws.
+    """
+
+    workup: Workup
+    durations: PatientDurations
+
+
+class WorkupDurationSampler:
+    """Tests and durations of each patient, given its person, reason and severity.
+
+    Call it once per patient, in arrival order, with the ``PersonAndReason``
+    of ``PersonReasonSampler`` and the ``SeverityAndTriage`` of
+    ``SeverityTriageSampler``. Each call consumes 12 numbers from stream 3 and
+    3 normals from stream 2, whatever comes out: the draws are all made before
+    they are transformed. The tests use the true severity G and the
+    durations the true level, not the assigned one.
+
+    Args:
+        profiles: The clinical profiles.
+        streams: Exactly two ``numpy.random.SeedSequence``: tests and
+            durations. The engine will pass children 3 and 2 of
+            ``child_streams(seed, 8)``, in that order. The objects are not
+            modified.
+
+    Raises:
+        ValueError: If ``streams`` is not two ``SeedSequence``.
+    """
+
+    def __init__(
+        self, profiles: ClinicalProfiles, streams: Sequence[np.random.SeedSequence]
+    ) -> None:
+        streams = _check_streams(streams)
+        self._test_rng, self._duration_rng = (np.random.default_rng(s) for s in streams)
+        self._profiles = profiles
+        self._tests = profiles.diagnostic_tests
+        self._reasons = {r.key: r for r in profiles.reasons}
+        self._older = older_bands(profiles.population)
+
+    def __call__(
+        self, person_and_reason: PersonAndReason, severity_and_triage: SeverityAndTriage
+    ) -> WorkupAndDurations:
+        """Tests and durations of the next patient."""
+        # Fixed consumption per patient: draw everything before transforming it.
+        test_draws = draw_workup_standard(self._test_rng)
+        duration_draws = draw_durations_standard(self._duration_rng)
+
+        reason = self._reasons[person_and_reason.reason]
+        workup = workup_from_draws(
+            self._tests,
+            reason.test_pct,
+            severity_and_triage.severity,
+            self._older[person_and_reason.person.band],
+            test_draws,
+        )
+        durations = durations_from_draws(
+            self._profiles, reason, severity_and_triage.true_level, duration_draws
+        )
+        return WorkupAndDurations(workup=workup, durations=durations)
