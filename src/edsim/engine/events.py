@@ -1,4 +1,4 @@
-"""Event log: the common envelope, the catalog of milestone 3 and JSONL.
+"""Event log: the common envelope, the catalogs of each schema version and JSONL.
 
 The log is the only output of the engine: every transition of a patient, and
 every staffing change, is one event. State and metrics are derived from it
@@ -24,7 +24,20 @@ values are in Spanish, as the configuration keys.
 The same ``EventLog`` writes to memory (``MemorySink``, for tests and
 notebooks) or to a JSONL file (``JsonlSink``), one JSON object per line.
 ``read_events`` reads the file back, line by line, and validates every event
-against the catalog.
+against the catalog of its version.
+
+**Schema versions** (docs/specs/hito-4.md, task 4.5a). There is one catalog per
+version, in ``CATALOGS``:
+
+- version 1 is the catalog of milestone 3 with the ``circuito`` of task 4.1,
+  without clinical payloads; the provisional model writes it;
+- version 2 is version 1 plus the payloads of the clinical model: ``medio``,
+  ``edad``, ``sexo``, ``motivo``, ``pruebas`` and ``resultados``.
+
+A log has one version, the one of its ``EventLog``; the invariant
+``schema_version`` checks it. Nothing hidden from the hospital (the latent
+severity, the true level, the quality of the triage, the age band, the
+turnarounds) is in any catalog.
 """
 
 import dataclasses
@@ -38,8 +51,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, Self, TextIO
 
-SCHEMA_VERSION = 1
-"""Version of the envelope and the catalog."""
+from edsim.profiles.config import REASON_KEYS, TEST_TYPES
+
+PROVISIONAL_SCHEMA_VERSION = 1
+"""Version of the logs of the provisional model: the catalog without clinical payloads."""
+
+CLINICAL_SCHEMA_VERSION = 2
+"""Version of the logs of the clinical model: version 1 plus the clinical payloads."""
 
 TIMEZONE = timezone(timedelta(hours=1))
 """Fixed offset of ``event_time``: +01:00 all year (ADR candidate 20)."""
@@ -135,11 +153,70 @@ with duration 0 (ADR candidate 39, docs/specs/hito-4.md)."""
 NURSE = "enfermeria"
 """``circuito`` of a triage done by a triage nurse: every level but 1."""
 
+ARRIVAL_MODES = ("ambulancia", "propios_medios")
+"""``medio`` of ``patient_arrived`` in version 2."""
+
+SEXES = ("mujer", "hombre")
+"""``sexo`` of ``patient_registered`` in version 2."""
+
+TEST_RESULTS = ("normal", "alterado")
+"""Values of ``resultados`` in ``test_resulted``, version 2."""
+
 _TIPO = _choice("inicial", "reevaluacion")
 _BOX = _int_range(1)
 _DESTINO = _choice("alta", "ingreso")
 
-CATALOG: Mapping[str, EventSpec] = MappingProxyType(
+
+def _test_types(event_type: str, key: str, value: object) -> tuple[str, ...]:
+    """A non-empty list of types of test, in the order of ``TEST_TYPES``, without repeats.
+
+    Kept as a tuple, so that the event stays immutable; JSON writes it as a
+    list. The order is strict: the engine writes it so, and a list is data.
+    """
+    if isinstance(value, str) or not isinstance(value, list | tuple) or not value:
+        raise ValueError(
+            f"{event_type}: payload {key} must be a non-empty list of {TEST_TYPES!r}, got {value!r}"
+        )
+    for item in value:
+        if not isinstance(item, str) or item not in TEST_TYPES:
+            raise ValueError(
+                f"{event_type}: payload {key} must hold types of {TEST_TYPES!r}, got {item!r}"
+            )
+    positions = [TEST_TYPES.index(item) for item in value]
+    if any(b <= a for a, b in zip(positions, positions[1:], strict=False)):
+        raise ValueError(
+            f"{event_type}: payload {key} must follow the order of {TEST_TYPES!r} "
+            f"without repeats, got {value!r}"
+        )
+    return tuple(value)
+
+
+def _test_results(event_type: str, key: str, value: object) -> Mapping[str, str]:
+    """A non-empty mapping from types of test to ``normal`` or ``alterado``.
+
+    Kept as a read-only mapping with the keys in the order of ``TEST_TYPES``:
+    the order of the keys of a JSON object means nothing, so it is normalized
+    and the JSON written does not depend on the caller.
+    """
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(
+            f"{event_type}: payload {key} must be a non-empty object of results, got {value!r}"
+        )
+    for test, result in value.items():
+        if not isinstance(test, str) or test not in TEST_TYPES:
+            raise ValueError(
+                f"{event_type}: payload {key} must have types of {TEST_TYPES!r} as keys, "
+                f"got {test!r}"
+            )
+        if not isinstance(result, str) or result not in TEST_RESULTS:
+            raise ValueError(
+                f"{event_type}: payload {key} must map each type to one of {TEST_RESULTS!r}, "
+                f"got {result!r} for {test!r}"
+            )
+    return MappingProxyType({t: value[t] for t in TEST_TYPES if t in value})
+
+
+CATALOG_V1: Mapping[str, EventSpec] = MappingProxyType(
     {
         "patient_arrived": _spec("admision"),
         "patient_registered": _spec("admision"),
@@ -162,8 +239,45 @@ CATALOG: Mapping[str, EventSpec] = MappingProxyType(
         ),
     }
 )
-"""Event types of milestone 3, in the order of the specification, with the
-``circuito`` of ``triage_started`` of task 4.1."""
+"""Version 1: the event types of milestone 3, in the order of the specification,
+with the ``circuito`` of ``triage_started`` of task 4.1."""
+
+CATALOG_V2: Mapping[str, EventSpec] = MappingProxyType(
+    {
+        **CATALOG_V1,
+        "patient_arrived": _spec("admision", medio=_choice(*ARRIVAL_MODES)),
+        "patient_registered": _spec("admision", edad=_int_range(0), sexo=_choice(*SEXES)),
+        "triage_completed": _spec("triaje", nivel=_int_range(1, 5), motivo=_choice(*REASON_KEYS)),
+        "test_ordered": _spec("his", pruebas=_test_types),
+        "test_resulted": _spec("lab", resultados=_test_results),
+    }
+)
+"""Version 2: version 1 plus the payloads of the clinical model (task 4.5a)."""
+
+CATALOGS: Mapping[int, Mapping[str, EventSpec]] = MappingProxyType(
+    {PROVISIONAL_SCHEMA_VERSION: CATALOG_V1, CLINICAL_SCHEMA_VERSION: CATALOG_V2}
+)
+"""The catalog of each schema version."""
+
+SCHEMA_VERSIONS: frozenset[int] = frozenset(CATALOGS)
+"""The schema versions a log can have: 1 and 2."""
+
+CATALOG = CATALOG_V1
+"""The catalog of version 1, as before task 4.5a."""
+
+
+def _check_schema_version(where: str, schema_version: object) -> int:
+    # bool is a subclass of int in Python: True must not pass as 1.
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version not in SCHEMA_VERSIONS
+    ):
+        raise ValueError(
+            f"{where}: schema_version must be one of {sorted(SCHEMA_VERSIONS)}, "
+            f"got {schema_version!r}"
+        )
+    return schema_version
 
 
 def _check_arrival_id(arrival_id: object) -> int:
@@ -264,15 +378,16 @@ class Event:
     ``read_events`` or is built directly. The payload is copied into a
     read-only mapping, so neither the event nor the caller's dict can change
     it later. Values in the payload are ``int``, ``str`` or ``bool``, which
-    are immutable themselves.
+    are immutable themselves, or, in version 2, a tuple of strings
+    (``pruebas``) and a read-only mapping of strings (``resultados``).
 
     Events compare with ``==`` field by field, but are not hashable: the
     payload is a mapping. They pickle and deep-copy (see ``__reduce__``).
 
     Attributes:
         event_id: ``run_id``, a hyphen and the emission number with nine digits.
-        event_type: A key of ``CATALOG``.
-        schema_version: ``SCHEMA_VERSION``.
+        event_type: A key of the catalog of ``schema_version``.
+        schema_version: One of ``SCHEMA_VERSIONS``; it chooses the catalog.
         run_id: Identifier of the run, ``r`` and the seed by default.
         episode_id: Such as ``EP-000137``; ``None`` in resource events.
         patient_id: Such as ``PT-000137``, with the episode's number; ``None``
@@ -283,7 +398,7 @@ class Event:
         recorded_time: When it was recorded; equal to ``event_time`` until
             milestone 7.
         ingest_time: When it reached the broker; ``None`` until milestone 6.
-        payload: Exactly the keys of the catalog for ``event_type``.
+        payload: Exactly the keys of the catalog of its version for ``event_type``.
     """
 
     event_id: str
@@ -301,19 +416,15 @@ class Event:
 
     def __post_init__(self) -> None:
         event_type = self.event_type
-        if not isinstance(event_type, str) or event_type not in CATALOG:
+        catalog = CATALOGS[_check_schema_version(str(event_type), self.schema_version)]
+        if not isinstance(event_type, str) or event_type not in catalog:
             raise ValueError(f"unknown event_type {event_type!r}")
-        spec = CATALOG[event_type]
+        spec = catalog[event_type]
 
         _check_str("event_id", self.event_id)
         _check_str("run_id", self.run_id)
         _check_str("event_time", self.event_time)
         _check_str("recorded_time", self.recorded_time)
-        if isinstance(self.schema_version, bool) or self.schema_version != SCHEMA_VERSION:
-            raise ValueError(
-                f"{event_type}: schema_version must be {SCHEMA_VERSION}, "
-                f"got {self.schema_version!r}"
-            )
         if self.source_system != spec.source_system:
             raise ValueError(
                 f"{event_type}: source_system must be {spec.source_system!r}, "
@@ -449,21 +560,35 @@ class EventLog:
 
     It fills in what does not depend on the caller: ``event_id``,
     ``schema_version``, ``source_system`` from the catalog, the identifiers
-    from ``arrival_id`` and the clock times from ``sim_time``.
+    from ``arrival_id`` and the clock times from ``sim_time``. Every event of
+    the log has its ``schema_version`` and is checked with its catalog.
 
     Args:
         run_id: Identifier of the run, such as ``"r2026"``.
         start_date: Date of minute 0, at 00:00 (``fecha_inicio``).
         sink: ``MemorySink``, ``JsonlSink`` or anything with ``write(event)``.
+        schema_version: Version of the log, one of ``SCHEMA_VERSIONS``:
+            ``PROVISIONAL_SCHEMA_VERSION`` (1) by default, or
+            ``CLINICAL_SCHEMA_VERSION`` (2) for the clinical model.
 
     Raises:
-        ValueError: If ``run_id`` is not a non-empty string or ``start_date``
-            is not a date without time.
+        ValueError: If ``run_id`` is not a non-empty string, ``start_date``
+            is not a date without time, or ``schema_version`` is not a
+            version of ``SCHEMA_VERSIONS``.
     """
 
-    def __init__(self, run_id: str, start_date: date, sink: EventSink) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        start_date: date,
+        sink: EventSink,
+        *,
+        schema_version: int = PROVISIONAL_SCHEMA_VERSION,
+    ) -> None:
         self.run_id = _check_str("run_id", run_id)
         self.start_date = _check_start_date(start_date)
+        self.schema_version = _check_schema_version("EventLog", schema_version)
+        self._catalog = CATALOGS[self.schema_version]
         self.sink = sink
         self._next_number = 0
         self._last_time = 0.0
@@ -477,12 +602,12 @@ class EventLog:
         uses no number and does not move the clock of the log.
 
         Args:
-            event_type: A key of ``CATALOG``.
+            event_type: A key of the catalog of the log's version.
             sim_time: Minutes of simulation, such as SimPy's ``env.now``; not
                 less than the previous event's.
             arrival_id: Arrival of the patient, for patient events; must be
                 ``None`` for resource events.
-            **payload: Exactly the payload keys of the catalog for the type.
+            **payload: Exactly the payload keys of the log's catalog for the type.
 
         Returns:
             The event.
@@ -495,9 +620,9 @@ class EventLog:
                 or the run already has 10**9 events. Both are broken internal
                 rules of the engine, not wrong inputs.
         """
-        if not isinstance(event_type, str) or event_type not in CATALOG:
+        if not isinstance(event_type, str) or event_type not in self._catalog:
             raise ValueError(f"unknown event_type {event_type!r}")
-        spec = CATALOG[event_type]
+        spec = self._catalog[event_type]
 
         if spec.patient:
             if arrival_id is None:
@@ -523,7 +648,7 @@ class EventLog:
         event = Event(
             event_id=f"{self.run_id}-{self._next_number:09d}",
             event_type=event_type,
-            schema_version=SCHEMA_VERSION,
+            schema_version=self.schema_version,
             run_id=self.run_id,
             episode_id=episode,
             patient_id=patient,
@@ -578,16 +703,19 @@ def from_json(line: str) -> Event:
 
 
 def _upgrade(data: dict) -> dict:
-    """Fill in what logs written before task 4.1 do not have.
+    """Fill in what logs of version 1 written before task 4.1 do not have.
 
     Their ``triage_started`` has no ``circuito``: every triage went through a
     nurse then, so the value is ``NURSE``. Only reading tolerates it;
     ``EventLog.emit`` and ``Event`` still require the key. The version stays
-    1 (docs/specs/hito-4.md, task 4.1).
+    1 (docs/specs/hito-4.md, task 4.1). A log of version 2 was always written
+    with ``circuito``, so it is never upgraded.
     """
     payload = data["payload"]
     if (
-        data["event_type"] == "triage_started"
+        data["schema_version"] == PROVISIONAL_SCHEMA_VERSION
+        and not isinstance(data["schema_version"], bool)
+        and data["event_type"] == "triage_started"
         and isinstance(payload, dict)
         and "circuito" not in payload
     ):
@@ -603,6 +731,10 @@ def read_events(path: str | Path) -> Iterator[Event]:
 
     Yields:
         The events in file order.
+
+    Each event is validated with the catalog of its own ``schema_version``;
+    a file that mixes versions reads, and the invariant ``schema_version``
+    reports it.
 
     Raises:
         ValueError: While iterating, at the first line that is not a valid
