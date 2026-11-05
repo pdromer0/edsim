@@ -6,7 +6,8 @@ something (docs/specs/hito-3.md, "Validación del motor"):
 
 - M/G/1: the triage with one nurse, a constant rate and everything else with
   room to spare is an M/G/1 FIFO queue, whose wait is given by
-  Pollaczek–Khinchine. It catches waits computed wrong in a FIFO queue.
+  Pollaczek–Khinchine, with the rate of the arrivals that are not level 1
+  (those are classified at the door, task 4.1). It catches waits computed wrong in a FIFO queue.
 - Mₜ/G/∞: with infinite capacity nobody waits, and the census at t is
   Poisson with mean m(t) = ∫ λ(s) · P(stay > t − s) ds. It catches errors in
   the flow with lambda(t). The same runs check an extreme condition: every
@@ -42,11 +43,18 @@ from edsim.arrivals.rate import MINUTES_PER_DAY, rate
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.arrivals.validation import ALPHA
 from edsim.checks import ValidationResult, all_of, check_count, interval_result, tolerance_result
-from edsim.engine.analysis import RunAnalysis, analyze_run, hourly_means_by_day, step_curves
+from edsim.engine.analysis import (
+    RunAnalysis,
+    analyze_run,
+    completed_in_window,
+    hourly_means_by_day,
+    step_curves,
+)
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import (
     PatientDraws,
     ProvisionalSampler,
+    classified_at_the_door,
     lognormal_params,
     triage_duration,
 )
@@ -131,7 +139,8 @@ class MG1Theory:
     """Pollaczek–Khinchine for the triage queue.
 
     Attributes:
-        lam: Arrival rate, per minute.
+        lam: Arrival rate to the nurse, per minute: the rate of the profile
+            times ``1 - p1``, without the levels 1 classified at the door.
         mean_service: E[S] of the triage time, ``exp(mu + sigma**2 / 2)``.
         second_moment: E[S²], ``exp(2 mu + 2 sigma**2)``.
         rho: ``lam * E[S]``.
@@ -160,6 +169,12 @@ def _constant_rate(profile: ArrivalProfile) -> float:
 def pollaczek_khinchine(center: CenterConfig, profile: ArrivalProfile) -> MG1Theory:
     """Theory of the triage queue of ``center`` with the constant rate of ``profile``.
 
+    A level 1 is classified at the door and never reaches the nurse (task
+    4.1). Each arrival is a level 1 with probability ``p1``, independently of
+    the others, so the arrivals that reach the nurse are a thinning of the
+    Poisson process: Poisson again, with rate ``lam * (1 - p1)``. ``p1`` is
+    the share of level 1 of the configuration, never the one the run saw.
+
     The triage time is the lognormal of ``center.triage_time``; with an
     exponential service it would give back the M/M/1 of milestone 1. The
     difference between both is the factor ``(1 + CV²) / 2``: the variability
@@ -174,7 +189,7 @@ def pollaczek_khinchine(center: CenterConfig, profile: ArrivalProfile) -> MG1The
         ValueError: If the profile is not flat, the center has not one
             nurse in every shift, or ``rho >= 1``.
     """
-    lam = _constant_rate(profile)
+    lam = _constant_rate(profile) * (1 - center.level_shares[0])
     if center.triage_nurses != (1, 1, 1):
         raise ValueError(
             f"the M/G/1 needs one triage nurse in every shift, got {center.triage_nurses}"
@@ -195,8 +210,9 @@ class MG1Replicas:
 
     Attributes:
         theory: Pollaczek–Khinchine.
-        wq: Mean triage wait of the episodes that arrived in the window and
-            departed, one per replication.
+        wq: Mean triage wait of the episodes of levels 2 to 5 that arrived in
+            the window and departed, one per replication: those who reach the
+            nurse. A level 1 waits 0 at the door.
         rho: Time average of the busy nurses in the window.
         lq: Time average of the triage queue in the window.
     """
@@ -253,8 +269,14 @@ def check_mg1(
     wq, rho, lq = [], [], []
     for child in child_streams(seed, replicas):
         sampler = None if sampler_factory is None else sampler_factory(child)
-        metrics = _run(mg1, profile, days, warmup_days, child, sampler).analysis.metrics
-        wq.append(metrics.overall.mean["triage_wait"])
+        analysis = _run(mg1, profile, days, warmup_days, child, sampler).analysis
+        metrics = analysis.metrics
+        nurse = [
+            e.triage_wait
+            for e in completed_in_window(analysis.table, metrics.start, metrics.end)
+            if not classified_at_the_door(e.level)
+        ]
+        wq.append(float(np.mean(nurse)))
         rho.append(metrics.time_averages["nurses_busy"])
         lq.append(metrics.time_averages["waiting_triage"])
 

@@ -76,23 +76,41 @@ def test_centro_mg1(center):
 
 
 def test_pollaczek_khinchine_de_la_especificacion(center):
-    # Triaje con mediana 5 y p90 10, 8 llegadas por hora (docs/specs/hito-3.md).
+    # Triaje con mediana 5 y p90 10, 8 llegadas por hora (docs/specs/hito-3.md). Desde
+    # la tarea 4.1 el nivel 1 (0,3 %) se clasifica en la puerta: a la enfermera le llega
+    # un Poisson de λ·(1 − p₁) (thinning), y Wq pasa de 13,10 a 12,93 minutos.
     theory = pollaczek_khinchine(mg1_center(center), flat_profile())
 
-    assert theory.lam == 192 / 1440
+    assert center.level_shares[0] == 0.003
+    assert theory.lam == 192 / 1440 * (1 - 0.003)
+    assert theory.lam == pytest.approx(0.13293, abs=5e-6)
     assert theory.mean_service == pytest.approx(5.788, abs=5e-4)
     assert theory.second_moment == pytest.approx(44.88, abs=5e-3)
-    assert theory.rho == pytest.approx(0.7717, abs=5e-5)
-    assert theory.wq == pytest.approx(13.10, abs=5e-3)
-    assert theory.lq == pytest.approx(1.747, abs=5e-4)
+    assert theory.rho == pytest.approx(0.7694, abs=5e-5)
+    assert theory.wq == pytest.approx(12.93, abs=5e-3)
+    assert theory.lq == pytest.approx(1.719, abs=5e-4)
     assert theory.lq == theory.lam * theory.wq  # Little en la teoría
+
+
+def test_la_teoria_usa_las_llegadas_que_ven_la_enfermera(center):
+    # La parte de niveles 1 sale de la configuración. Con p₁ = 0,5 llega a la enfermera
+    # la mitad: λ = 192/1440 · 0,5 = 1/15, ρ = 5,788/15 = 0,3858 y
+    # Wq = (1/15) · 44,88 / (2 · 0,6142) = 2,436.
+    half = dataclasses.replace(mg1_center(center), level_shares=(50, 12.5, 12.5, 12.5, 12.5))
+    theory = pollaczek_khinchine(half, flat_profile())
+    assert theory.lam == pytest.approx(1 / 15, rel=1e-15)
+    assert theory.rho == pytest.approx(0.3858, abs=5e-5)
+    assert theory.wq == pytest.approx(2.436, abs=5e-4)
+    # Sin niveles 1 vuelve la cifra del hito 3.
+    none = dataclasses.replace(mg1_center(center), level_shares=(0, 12.1, 33.6, 52.6, 1.4))
+    assert pollaczek_khinchine(none, flat_profile()).wq == pytest.approx(13.10, abs=5e-3)
 
 
 def test_pollaczek_khinchine_a_mano(center):
     mu, sigma = lognormal_params(*center.triage_time)
     es = math.exp(mu + sigma**2 / 2)
     es2 = math.exp(2 * mu + 2 * sigma**2)
-    lam = 192 / 1440
+    lam = 192 / 1440 * (1 - center.level_shares[0])
     theory = pollaczek_khinchine(mg1_center(center), flat_profile())
     assert theory.mean_service == pytest.approx(es, rel=1e-15)
     assert theory.second_moment == pytest.approx(es2, rel=1e-15)
