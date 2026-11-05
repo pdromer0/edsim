@@ -18,8 +18,12 @@ from edsim.profiles.sampler import (
     N_REASON_DRAWS,
     PersonAndReason,
     PersonReasonSampler,
+    SeverityAndTriage,
+    SeverityTriageSampler,
     draw_reason_standard,
+    draw_severity_standard,
 )
+from edsim.profiles.severity import severity_from_draw, triage_from_draws, triage_quality
 from edsim.seeds import child_streams
 
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
@@ -218,3 +222,129 @@ def test_profiles_no_carga_simpy_ni_el_motor():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- Gravedad y triaje (flujos 7 y 1) ------------------------------------------
+
+
+def severity_streams(seed=SEED) -> list[np.random.SeedSequence]:
+    """Los flujos 7 y 1 de child_streams(seed, 8), en ese orden."""
+    children = child_streams(seed, 8)
+    return [children[7], children[1]]
+
+
+def run_triage(profiles: ClinicalProfiles, people, seed=SEED) -> list[SeverityAndTriage]:
+    sampler = SeverityTriageSampler(profiles, severity_streams(seed))
+    return [sampler(p) for p in people]
+
+
+def with_triage(profiles: ClinicalProfiles, **changes) -> ClinicalProfiles:
+    return dataclasses.replace(profiles, triage=dataclasses.replace(profiles.triage, **changes))
+
+
+@pytest.fixture(scope="module")
+def triaged(profiles, base) -> list[SeverityAndTriage]:
+    return run_triage(profiles, base)
+
+
+def test_paciente_k_recibe_su_normal_de_cada_flujo(profiles, base):
+    # El paciente k usa exactamente la normal k del flujo 7 y la normal k del
+    # flujo 1, de generadores independientes: el consumo no depende de lo que salga.
+    severity_seq, noise_seq = severity_streams()
+    severity_rng = np.random.default_rng(severity_seq)
+    noise_rng = np.random.default_rng(noise_seq)
+    sampler = SeverityTriageSampler(profiles, severity_streams())
+    t = profiles.triage
+
+    for pr in base[:3000]:
+        z, z_noise = severity_rng.standard_normal(), noise_rng.standard_normal()
+        g = severity_from_draw(profiles.reason(pr.reason).severity, pr.person.band, z)
+        level, true_level = triage_from_draws(g, z_noise, t.thresholds, t.noise, t.bias)
+        quality, jump = triage_quality(level, true_level)
+
+        assert sampler(pr) == SeverityAndTriage(
+            z=z, severity=g, level=level, true_level=true_level, quality=quality, jump=jump
+        )
+
+
+def test_una_normal_por_flujo_y_paciente():
+    a, b = np.random.default_rng(5), np.random.default_rng(5)
+
+    assert draw_severity_standard(a) == b.standard_normal()
+    assert draw_severity_standard(a) == b.standard_normal()
+
+
+def test_los_flujos_de_gravedad_no_se_modifican(profiles, base):
+    seqs = severity_streams()
+    before = [(s.entropy, s.spawn_key, s.n_children_spawned) for s in seqs]
+
+    first = list(map(SeverityTriageSampler(profiles, seqs), base[:500]))
+    second = list(map(SeverityTriageSampler(profiles, seqs), base[:500]))
+
+    assert [(s.entropy, s.spawn_key, s.n_children_spawned) for s in seqs] == before
+    assert first == second
+
+
+def test_con_otro_ruido_solo_cambia_el_nivel_asignado(profiles, base, triaged):
+    other = run_triage(with_triage(profiles, noise=0.5), base)
+
+    assert [x.severity for x in other] == [x.severity for x in triaged]
+    assert [x.true_level for x in other] == [x.true_level for x in triaged]
+    changed = sum(a.level != b.level for a, b in zip(triaged, other, strict=True))
+    # El caso ocurre: si nadie cambiara de nivel asignado, el test sería vacío.
+    assert changed > 0
+
+
+def test_con_otra_media_solo_cambia_la_gravedad_de_ese_motivo(profiles, base, triaged):
+    disnea = profiles.reason("disnea")
+    other_profiles = dataclasses.replace(
+        profiles,
+        reasons=tuple(
+            dataclasses.replace(r, severity=dataclasses.replace(r.severity, mean=1.5))
+            if r.key == "disnea"
+            else r
+            for r in profiles.reasons
+        ),
+    )
+    other = run_triage(other_profiles, base)
+
+    shift = 1.5 - disnea.severity.mean
+    for pr, a, b in zip(base, triaged, other, strict=True):
+        if pr.reason == "disnea":
+            assert b.severity == pytest.approx(a.severity + shift, abs=1e-12)
+            assert b.z == a.z  # el paciente conserva su percentil
+        else:
+            assert b == a
+    assert any(pr.reason == "disnea" for pr in base)
+
+
+def test_el_muestreador_usa_los_umbrales_escritos(profiles, base, triaged):
+    # Los umbrales del perfil, tal cual: con otros, otros niveles.
+    other = run_triage(with_triage(profiles, thresholds=(9.0, 8.0, 7.0, 6.0)), base[:500])
+
+    assert all(x.level == 5 and x.true_level == 5 for x in other)
+    assert {x.level for x in triaged} == {1, 2, 3, 4, 5}
+
+
+def test_tipos_de_la_gravedad(triaged):
+    x = triaged[0]
+
+    assert type(x.z) is float and type(x.severity) is float
+    assert type(x.level) is int and type(x.true_level) is int and type(x.jump) is int
+    assert x.quality in ("correcto", "infratriaje", "sobretriaje")
+
+
+def test_calidad_coherente_con_los_niveles(triaged):
+    for x in triaged:
+        assert (x.quality, x.jump) == triage_quality(x.level, x.true_level)
+
+
+@pytest.mark.parametrize("n", [1, 3])
+def test_numero_de_flujos_de_gravedad_incorrecto(profiles, n):
+    with pytest.raises(ValueError, match="2"):
+        SeverityTriageSampler(profiles, child_streams(SEED, n))
+
+
+def test_flujos_de_gravedad_que_no_son_seed_sequence(profiles):
+    with pytest.raises(ValueError, match="SeedSequence"):
+        SeverityTriageSampler(profiles, [7, 1])
