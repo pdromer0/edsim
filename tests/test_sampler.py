@@ -1,4 +1,8 @@
-"""Muestreador de persona y motivo (flujos 5 y 6): consumo fijo y números comunes."""
+"""Muestreadores clínicos sin el motor: consumo fijo y números comunes.
+
+Persona y motivo (flujos 5 y 6), gravedad y triaje (flujos 7 y 1), y pruebas y
+duraciones (flujos 3 y 2).
+"""
 
 import dataclasses
 import subprocess
@@ -10,8 +14,9 @@ import pytest
 from profiles_factory import START
 
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.profiles.config import REASON_KEYS, ClinicalProfiles, load_profiles
+from edsim.profiles.config import REASON_KEYS, TEST_TYPES, ClinicalProfiles, load_profiles
 from edsim.profiles.context import arrival_context
+from edsim.profiles.durations import durations_from_draws
 from edsim.profiles.mixing import gumbel_max, reason_weights
 from edsim.profiles.population import Person, draw_person_standard, person_from_draws
 from edsim.profiles.sampler import (
@@ -20,10 +25,13 @@ from edsim.profiles.sampler import (
     PersonReasonSampler,
     SeverityAndTriage,
     SeverityTriageSampler,
+    WorkupAndDurations,
+    WorkupDurationSampler,
     draw_reason_standard,
     draw_severity_standard,
 )
 from edsim.profiles.severity import severity_from_draw, triage_from_draws, triage_quality
+from edsim.profiles.workup import older_bands, workup_from_draws
 from edsim.seeds import child_streams
 
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
@@ -348,3 +356,235 @@ def test_numero_de_flujos_de_gravedad_incorrecto(profiles, n):
 def test_flujos_de_gravedad_que_no_son_seed_sequence(profiles):
     with pytest.raises(ValueError, match="SeedSequence"):
         SeverityTriageSampler(profiles, [7, 1])
+
+
+# --- Pruebas y duraciones (flujos 3 y 2) ---------------------------------------
+
+N_WORKUP = 5_000  # pacientes de los tests de pruebas y duraciones
+
+
+def workup_streams(seed=SEED) -> list[np.random.SeedSequence]:
+    """Los flujos 3 y 2 de child_streams(seed, 8), en ese orden."""
+    children = child_streams(seed, 8)
+    return [children[3], children[2]]
+
+
+def run_workup(profiles, people, triage, streams=None) -> list[WorkupAndDurations]:
+    sampler = WorkupDurationSampler(profiles, workup_streams() if streams is None else streams)
+    return [sampler(p, t) for p, t in zip(people, triage, strict=True)]
+
+
+def with_reason(profiles: ClinicalProfiles, key: str, **changes) -> ClinicalProfiles:
+    reasons = tuple(
+        dataclasses.replace(r, **changes) if r.key == key else r for r in profiles.reasons
+    )
+    return dataclasses.replace(profiles, reasons=reasons)
+
+
+def with_test(profiles: ClinicalProfiles, key: str, **changes) -> ClinicalProfiles:
+    tests = tuple(
+        dataclasses.replace(t, **changes) if t.key == key else t for t in profiles.diagnostic_tests
+    )
+    return dataclasses.replace(profiles, diagnostic_tests=tests)
+
+
+@pytest.fixture(scope="module")
+def people(base):
+    return base[:N_WORKUP]
+
+
+@pytest.fixture(scope="module")
+def severities(triaged):
+    return triaged[:N_WORKUP]
+
+
+@pytest.fixture(scope="module")
+def worked(profiles, people, severities) -> list[WorkupAndDurations]:
+    return run_workup(profiles, people, severities)
+
+
+def hand_draws(n: int, seed=SEED):
+    """Sorteos hechos a mano, con un generador por flujo: 12 del 3 y 3 del 2 por paciente."""
+    test_seq, duration_seq = workup_streams(seed)
+    test_rng, duration_rng = np.random.default_rng(test_seq), np.random.default_rng(duration_seq)
+    for _ in range(n):
+        tests = []
+        for _ in TEST_TYPES:
+            tests += [test_rng.random(), test_rng.random(), test_rng.standard_normal()]
+        yield tests, [duration_rng.standard_normal() for _ in range(3)]
+
+
+def test_paciente_k_recibe_sus_sorteos_de_pruebas_y_duraciones(
+    profiles, people, severities, worked
+):
+    # El paciente k usa los sorteos 12k a 12k+11 del flujo 3 y 3k a 3k+2 del flujo 2,
+    # con G y el nivel real: ni el nivel asignado ni G + ε.
+    older = older_bands(profiles.population)
+    for pr, st, got, (tests, durations) in zip(
+        people, severities, worked, hand_draws(N_WORKUP), strict=True
+    ):
+        reason = profiles.reason(pr.reason)
+        expected = WorkupAndDurations(
+            workup=workup_from_draws(
+                profiles.diagnostic_tests,
+                reason.test_pct,
+                st.severity,
+                older[pr.person.band],
+                tests,
+            ),
+            durations=durations_from_draws(profiles, reason, st.true_level, durations),
+        )
+        assert got == expected
+
+
+def test_consumo_fijo_de_doce_y_tres_por_paciente(profiles, people, severities):
+    # Tras n pacientes, cada generador está donde estaría tras 12n y 3n sorteos a mano,
+    # se pidan las pruebas o no.
+    sampler = WorkupDurationSampler(profiles, workup_streams())
+    n = 777
+    for p, t in zip(people[:n], severities[:n], strict=True):
+        sampler(p, t)
+    test_rng, duration_rng = (np.random.default_rng(s) for s in workup_streams())
+    for _ in range(n):
+        for _ in TEST_TYPES:
+            test_rng.random(), test_rng.random(), test_rng.standard_normal()
+        for _ in range(3):
+            duration_rng.standard_normal()
+
+    assert sampler._test_rng.bit_generator.state == test_rng.bit_generator.state
+    assert sampler._duration_rng.bit_generator.state == duration_rng.bit_generator.state
+
+
+def test_el_caso_ocurre(worked):
+    # Hay pacientes con y sin ronda, y todos los tipos se piden alguna vez.
+    rounds = [w.workup.has_round for w in worked]
+    assert 0 < sum(rounds) < len(rounds)
+    assert all(any(w.workup.ordered[t] for w in worked) for t in range(4))
+
+
+def test_con_otro_p_solo_cambia_esa_prueba_en_ese_motivo(profiles, people, severities, worked):
+    # ECG en dolor torácico del 96 % al 60 %: solo cambia «pedida» del ECG en ese motivo.
+    other_profiles = with_reason(profiles, "dolor_toracico", test_pct=(65, 56, 60, 2))
+    other = run_workup(other_profiles, people, severities)
+
+    changed = 0
+    for pr, a, b in zip(people, worked, other, strict=True):
+        assert a.durations == b.durations
+        assert (a.workup.abnormal, a.workup.turnarounds) == (
+            b.workup.abnormal,
+            b.workup.turnarounds,
+        )
+        for t in range(4):
+            if pr.reason != "dolor_toracico" or t != 2:
+                assert a.workup.ordered[t] == b.workup.ordered[t]
+        changed += a.workup.ordered[2] != b.workup.ordered[2]
+    assert changed > 0  # el caso ocurre
+
+
+def test_con_otro_or_de_gravedad_solo_cambia_ese_tipo(profiles, people, severities, worked):
+    other = run_workup(with_test(profiles, "analitica", severity_or=5.0), people, severities)
+
+    changed = 0
+    for a, b in zip(worked, other, strict=True):
+        assert a.durations == b.durations
+        assert (a.workup.abnormal, a.workup.turnarounds) == (
+            b.workup.abnormal,
+            b.workup.turnarounds,
+        )
+        assert a.workup.ordered[1:] == b.workup.ordered[1:]
+        changed += a.workup.ordered[0] != b.workup.ordered[0]
+    assert changed > 0
+
+
+def test_con_otro_or_del_resultado_solo_cambia_ese_resultado(profiles, people, severities, worked):
+    other = run_workup(with_test(profiles, "imagen", abnormal_severity_or=4.0), people, severities)
+
+    changed = 0
+    for a, b in zip(worked, other, strict=True):
+        assert a.durations == b.durations
+        assert (a.workup.ordered, a.workup.turnarounds) == (b.workup.ordered, b.workup.turnarounds)
+        assert a.workup.abnormal[:3] == b.workup.abnormal[:3]
+        changed += a.workup.abnormal[3] != b.workup.abnormal[3]
+    assert changed > 0
+
+
+def test_con_otro_k_solo_cambian_las_duraciones_de_ese_motivo(profiles, people, severities, worked):
+    other = run_workup(
+        with_reason(profiles, "traumatismo", duration_factor=1.0), people, severities
+    )
+
+    trauma = 0
+    for pr, a, b in zip(people, worked, other, strict=True):
+        assert a.workup == b.workup
+        assert a.durations.triage_time == b.durations.triage_time
+        assert a.durations.draws == b.durations.draws  # conserva su percentil
+        if pr.reason == "traumatismo":
+            trauma += 1
+            ratio = b.durations.assessment_time / a.durations.assessment_time
+            assert ratio == pytest.approx(1 / 0.85, rel=1e-12)
+        else:
+            assert a.durations == b.durations
+    assert trauma > 0
+
+
+def test_con_otro_ruido_de_triaje_pruebas_y_duraciones_no_cambian(profiles, people, worked):
+    # Usan G y el nivel real; el ruido solo mueve el nivel asignado.
+    other_triage = run_triage(with_triage(profiles, noise=0.6), people)
+    other = run_workup(profiles, people, other_triage)
+
+    assert other == worked
+    # El caso ocurre: el ruido cambia el nivel asignado de muchos pacientes.
+    assert (
+        sum(
+            a.level != b.level
+            for a, b in zip(other_triage, run_triage(profiles, people), strict=True)
+        )
+        > 0
+    )
+
+
+def test_cada_flujo_es_independiente_del_otro(profiles, people, severities, worked):
+    # Otra semilla en el flujo de duraciones no cambia las pruebas, y al revés.
+    other_seed = child_streams(SEED + 1, 8)
+    tests_seq, durations_seq = workup_streams()
+
+    new_durations = run_workup(profiles, people, severities, [tests_seq, other_seed[2]])
+    assert [x.workup for x in new_durations] == [x.workup for x in worked]
+    assert all(a.durations != b.durations for a, b in zip(new_durations, worked, strict=True))
+
+    new_tests = run_workup(profiles, people, severities, [other_seed[3], durations_seq])
+    assert [x.durations for x in new_tests] == [x.durations for x in worked]
+    assert sum(a.workup != b.workup for a, b in zip(new_tests, worked, strict=True)) > 0
+
+
+def test_los_flujos_de_pruebas_no_se_modifican(profiles, people, severities):
+    seqs = workup_streams()
+    before = [(s.entropy, s.spawn_key, s.n_children_spawned) for s in seqs]
+
+    first = run_workup(profiles, people[:300], severities[:300], seqs)
+    second = run_workup(profiles, people[:300], severities[:300], seqs)
+
+    assert [(s.entropy, s.spawn_key, s.n_children_spawned) for s in seqs] == before
+    assert first == second
+
+
+def test_tipos_de_pruebas_y_duraciones(worked):
+    x = worked[0]
+
+    assert all(type(v) is bool for v in (*x.workup.ordered, *x.workup.abnormal))
+    assert all(type(v) is float for v in (*x.workup.turnarounds, *x.workup.draws))
+    d = x.durations
+    assert all(type(v) is float for v in (d.triage_time, d.assessment_time, d.reassessment_time))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        x.workup = None
+
+
+@pytest.mark.parametrize("n", [1, 3])
+def test_numero_de_flujos_de_pruebas_incorrecto(profiles, n):
+    with pytest.raises(ValueError, match="2"):
+        WorkupDurationSampler(profiles, child_streams(SEED, n))
+
+
+def test_flujos_de_pruebas_que_no_son_seed_sequence(profiles):
+    with pytest.raises(ValueError, match="SeedSequence"):
+        WorkupDurationSampler(profiles, [3, 2])

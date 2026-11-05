@@ -20,50 +20,18 @@ inside of the sampler, with latent severity and reasons for consultation,
 without changing its interface.
 """
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from statistics import NormalDist
 
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.engine.center import N_LEVELS, CenterConfig
-
-Z90 = NormalDist().inv_cdf(0.9)
-"""90th percentile of the standard normal, 1.2815515..."""
+from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before 4.4
+from edsim.lognormal import lognormal_params
 
 N_STREAMS = 4
 """Streams of the sampler: level, durations, tests and destination."""
-
-
-def lognormal_params(median: float, p90: float) -> tuple[float, float]:
-    """Parameters ``(mu, sigma)`` of the normal behind a lognormal.
-
-    If ``X = exp(Y)`` with ``Y ~ Normal(mu, sigma)``, the median of ``X`` is
-    ``exp(mu)`` and its 90th percentile is ``exp(mu + Z90 * sigma)``. Solving
-    for both gives ``mu = ln(median)`` and
-    ``sigma = (ln(p90) - ln(median)) / Z90``.
-
-    These are what ``numpy.random.Generator.lognormal(mean, sigma)`` expects:
-    the mean and the standard deviation of the normal, not of the lognormal.
-
-    Args:
-        median: Median of the lognormal; positive.
-        p90: 90th percentile; greater than the median.
-
-    Returns:
-        ``(mu, sigma)``.
-
-    Raises:
-        ValueError: If the median is not positive or ``p90 <= median``.
-    """
-    if not median > 0:
-        raise ValueError(f"median must be positive, got {median!r}")
-    if not p90 > median:
-        raise ValueError(f"p90 must be greater than the median, got {p90!r} <= {median!r}")
-    mu = math.log(median)
-    return mu, (math.log(p90) - mu) / Z90
 
 
 def cumulative_shares(shares: Sequence[float]) -> tuple[float, ...]:

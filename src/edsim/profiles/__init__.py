@@ -9,9 +9,15 @@ and without the engine, so that it can be tested and validated on its own:
 - ``population``: age band, age, sex and arrival mode;
 - ``severity``: latent severity, thresholds, triage with error and its exact
   matrix of true against assigned level;
-- ``sampler``: person and reason of each arrival, with streams 5 and 6, and
-  severity and triage, with streams 7 and 1;
-- ``validation``: statistical checks of the mix and of the triage.
+- ``workup``: tests of four types, their results and turnarounds, and their
+  exact shares over a year;
+- ``durations``: triage, assessment and reassessment by true level and
+  reason, and the exact load of the doctor;
+- ``sampler``: person and reason of each arrival, with streams 5 and 6;
+  severity and triage, with streams 7 and 1; tests and durations, with
+  streams 3 and 2;
+- ``validation``: statistical checks of the mix, the triage, the tests and
+  the durations.
 
 See docs/specs/hito-4.md.
 """

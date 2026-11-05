@@ -9,6 +9,10 @@ desviación 1 y sin ajuste por edad), de modo que la mezcla de un año también 
 es, sean cuales sean los pesos: es el modelo de la especificación, con ruido
 0,32 y sesgo −0,08. Los umbrales de ``TRIAGE`` son orientativos; los tests que los
 necesitan exactos los calculan con ``thresholds_for``.
+
+Las pruebas y las duraciones por defecto son las de la especificación (las de
+``config/perfiles.toml`` para los tipos de prueba y los niveles), con un 40 % de
+cada prueba en todos los motivos y sin factor de duración.
 """
 
 from datetime import date
@@ -16,6 +20,8 @@ from datetime import date
 from edsim.profiles.config import (
     REASONS,
     ClinicalProfiles,
+    DiagnosticTest,
+    DurationProfile,
     Population,
     ReasonProfile,
     Severity,
@@ -44,7 +50,53 @@ TRIAGE = TriageProfile(
     noise=0.32,
     bias=-0.08,
     thresholds=(2.70, 1.13, 0.02, -2.42),  # orientativos, cerca de los exactos
+    duration=(5, 10),
 )
+
+DURATIONS = DurationProfile(
+    assessment=((40, 90), (30, 70), (22, 50), (15, 35), (10, 25)),
+    reassessment=((15, 30), (12, 25), (10, 20), (8, 15), (6, 12)),
+)
+
+DIAGNOSTIC_TESTS = (
+    DiagnosticTest(
+        key="analitica",
+        turnaround=(60, 150),
+        turnaround_shift_factors=(1.0, 1.1, 0.9),
+        severity_or=3.3,
+        older_or=2.2,
+        abnormal_pct=30,
+        abnormal_severity_or=2.5,
+    ),
+    DiagnosticTest(
+        key="radiografia",
+        turnaround=(30, 75),
+        turnaround_shift_factors=(1.0, 1.0, 1.2),
+        severity_or=1.5,
+        older_or=1.8,
+        abnormal_pct=25,
+        abnormal_severity_or=2.0,
+    ),
+    DiagnosticTest(
+        key="ecg",
+        turnaround=(10, 25),
+        severity_or=2.0,
+        older_or=3.0,
+        abnormal_pct=20,
+        abnormal_severity_or=2.0,
+    ),
+    DiagnosticTest(
+        key="imagen",
+        turnaround=(100, 240),
+        turnaround_shift_factors=(1.0, 1.1, 1.3),
+        severity_or=2.0,
+        older_or=1.8,
+        abnormal_pct=35,
+        abnormal_severity_or=2.0,
+    ),
+)
+
+TEST_PCT = (40.0, 40.0, 40.0, 40.0)
 
 
 def make_profiles(
@@ -55,23 +107,29 @@ def make_profiles(
     population: Population = POPULATION,
     shift_band_starts: tuple[int, ...] = (8, 15, 22),
     triage: TriageProfile = TRIAGE,
+    durations: DurationProfile = DURATIONS,
+    diagnostic_tests: tuple[DiagnosticTest, ...] = DIAGNOSTIC_TESTS,
+    test_pct: dict[str, tuple[float, ...]] | None = None,
 ) -> ClinicalProfiles:
     """Profiles with the catalog weights and only the given factors.
 
     ``factors`` maps a reason key to its fields, such as
-    ``{"disnea": {"age_factors": (1, 1, 1, 2.4)}}``; ``base_weights`` replaces
-    some base weights and ``severity`` some severities (standard normal by
-    default).
+    ``{"disnea": {"age_factors": (1, 1, 1, 2.4)}}`` or ``{"disnea":
+    {"duration_factor": 1.2}}``; ``base_weights`` replaces some base weights,
+    ``severity`` some severities (standard normal by default) and ``test_pct``
+    the percentages of tests of some reasons (``TEST_PCT`` by default).
     """
     factors = factors or {}
     base_weights = base_weights or {}
     severity = severity or {}
+    test_pct = test_pct or {}
     reasons = tuple(
         ReasonProfile(
             key=key,
             name=name,
             base_weight=base_weights.get(key, weight),
             severity=severity.get(key, STANDARD),
+            test_pct=test_pct.get(key, TEST_PCT),
             **factors.get(key, {}),
         )
         for key, name, weight in REASONS
@@ -81,6 +139,8 @@ def make_profiles(
         population=population,
         reasons=reasons,
         triage=triage,
+        durations=durations,
+        diagnostic_tests=diagnostic_tests,
     )
 
 
