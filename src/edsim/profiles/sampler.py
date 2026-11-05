@@ -36,7 +36,8 @@ and the true level, never what the nurse sees:
 - stream 2 (durations): 3 normals, for the triage, the assessment and the
   reassessment (``durations.durations_from_draws``).
 
-The ``ClinicalSampler`` of task 4.5 joins the three parts.
+The ``ClinicalSampler`` of the engine (``edsim.engine.clinical_sampler``,
+task 4.5a) joins the three parts with the provisional destination.
 
 The module does not import the engine nor SimPy: ``ArrivalRecord`` is only a
 type hint, and the sampler reads nothing but ``arrival.time``.
