@@ -2,9 +2,9 @@
 
 Two kinds of helper live here because more than one subpackage needs them:
 
-- checks of inputs: ``check_number`` for the numbers of the TOML files
-  (``arrivals.profile`` and ``engine.center``) and ``check_count`` for the
-  sizes of a validation;
+- checks of inputs: ``check_number``, ``check_integer`` and ``check_list``
+  for the values of the TOML files (``arrivals.profile``, ``engine.center``
+  and ``profiles.config``) and ``check_count`` for the sizes of a validation;
 - ``ValidationResult`` and the functions that build one from a confidence
   interval, a list of intervals or a tolerance, so that ``edsim llegadas
   validar`` and ``edsim motor validar`` print their tables alike.
@@ -67,6 +67,22 @@ def check_number(key: str, value: object) -> float:
     if not math.isfinite(value):
         raise ValueError(f"{key} must be a finite number, got {value!r}")
     return float(value)
+
+
+def check_integer(key: str, value: object) -> int:
+    """Return ``value`` if it is an integer; ``3.0`` and ``true`` are not."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer, got {value!r}")
+    return value
+
+
+def check_list(key: str, values: object, n: int) -> list:
+    """Check that ``values`` is a list (or tuple) of ``n`` values."""
+    if not isinstance(values, list | tuple):
+        raise ValueError(f"{key} must be a list of {n} values, got {values!r}")
+    if len(values) != n:
+        raise ValueError(f"{key} must have {n} values, got {len(values)}")
+    return list(values)
 
 
 def check_count(name: str, value: object, minimum: int) -> int:
