@@ -31,18 +31,25 @@ from profiles_factory import START
 from edsim.arrivals.profile import load_profile
 from edsim.profiles.config import REASON_KEYS, load_profiles
 from edsim.profiles.context import ArrivalContext, all_contexts
+from edsim.profiles.durations import ASSESSMENT, duration_model
 from edsim.profiles.mixing import band_probabilities, reason_probabilities
 from edsim.profiles.severity import severity_mixture, triage_matrix
 from edsim.profiles.validation import (
     MIN_EXPECTED,
+    MIN_GROUP_PATIENTS,
     N_CATEGORIES,
+    N_DURATION_CATEGORIES,
     N_TRIAGE_CATEGORIES,
+    N_WORKUP_CATEGORIES,
+    check_durations,
     check_mixing,
     check_triage,
+    check_workup,
     detectable_share,
     detection_power,
     year_patients,
 )
+from edsim.profiles.workup import workup_model
 
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
 ARRIVALS = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
@@ -302,3 +309,175 @@ def test_triaje_de_un_ano(profiles, arrivals):
 
     assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
     assert result.criterion.startswith("all 30 categories")
+
+
+# --- Pruebas y duraciones ------------------------------------------------------
+#
+# Potencia. check_workup prueba 134 categorías (nivel 0,01/134) y check_durations,
+# 64 (0,01/64). Con una potencia del 80 %, con 20 000 pacientes (un año: 109 542):
+# - pedir analítica en el quintil central de G, 45,0 %: se ve si pasa a 48,8 %
+#   (46,6 % en un año);
+# - pedir analítica entre los infratriados (2021 pacientes), 59,8 %: 65,0 % (62,0 %);
+# - valoración del nivel real 3 (7162 pacientes) bajo su mediana exacta, 50 %:
+#   52,7 % (51,2 %).
+# Los tests rápidos usan 20 000 pacientes (unos 2,5 s cada comprobación) y los
+# slow, un año (unos 14 s): con 20 000, las versiones incorrectas V1 y V2 solo se
+# ven con firmeza en una categoría o en ninguna; con un año, en varias.
+
+WORKUP_N = 20_000
+
+
+def with_test(profiles, key, **changes):
+    tests = tuple(
+        dataclasses.replace(t, **changes) if t.key == key else t for t in profiles.diagnostic_tests
+    )
+    return dataclasses.replace(profiles, diagnostic_tests=tests)
+
+
+@pytest.fixture(scope="module")
+def workup(profiles, arrivals):
+    return workup_model(profiles, arrivals)
+
+
+@pytest.fixture(scope="module")
+def durations(profiles, arrivals):
+    return duration_model(profiles, arrivals)
+
+
+def test_potencia_de_pruebas_y_duraciones_escrita(profiles, arrivals, workup, durations):
+    assert N_WORKUP_CATEGORIES == 20 + 20 + 4 + 68 + 20 + 2 == 134
+    assert N_DURATION_CATEGORIES == 2 + 8 + 20 + 34 == 64
+    aw, ad = 0.01 / N_WORKUP_CATEGORIES, 0.01 / N_DURATION_CATEGORIES
+    year = year_patients(profiles, arrivals)
+    middle = workup.order_by_severity()[2, 0]
+    under = workup.order_given_undertriage()[0]
+    level_3 = durations.reason_level.sum(axis=0)[2]
+
+    assert middle == pytest.approx(0.4500, abs=5e-5)
+    assert under == pytest.approx(0.5981, abs=5e-5)
+    for n, p1 in [(WORKUP_N, 0.4878), (year, 0.4661)]:
+        assert detectable_share(middle, n // 5, aw) == pytest.approx(p1, abs=1e-4)
+    for n, p1 in [(WORKUP_N, 0.6502), (year, 0.6205)]:
+        n_under = int(n * workup.undertriage_share())
+        assert detectable_share(under, n_under, aw) == pytest.approx(p1, abs=1e-4)
+    for n, p1 in [(WORKUP_N, 0.5273), (year, 0.5117)]:
+        assert detectable_share(0.5, int(n * level_3), ad) == pytest.approx(p1, abs=1e-4)
+
+
+def test_pruebas_con_20000_pacientes(profiles, arrivals):
+    result = check_workup(profiles, arrivals, seed=SEED, patients=WORKUP_N)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    names = [d.name for d in result.details]
+    assert len(names) == len(set(names)) == N_WORKUP_CATEGORIES
+    assert names[0] == "pedir/analitica/quintil_1"
+    assert names[20] == "alterado/analitica/quintil_1"
+    assert names[40] == "pedir/analitica/infratriaje"
+    assert names[44] == "pedir/analitica/traumatismo"
+    assert names[-3:] == ["pedir/imagen/real_5", "ronda/mediana", "ronda/p90"]
+    criteria = {d.name: d.criterion.split()[0] for d in result.details}
+    # El ECG de las paradas (99 %) deja 1 paciente esperado fuera: binomial.
+    assert criteria["pedir/ecg/parada"] == "binomial"
+    assert criteria["pedir/analitica/quintil_3"] == "p"
+
+
+def test_duraciones_con_20000_pacientes(profiles, arrivals):
+    result = check_durations(profiles, arrivals, seed=SEED, patients=WORKUP_N)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    names = [d.name for d in result.details]
+    assert len(names) == len(set(names)) == N_DURATION_CATEGORIES
+    assert names[:3] == ["triaje/mediana", "triaje/p90", "respuesta/analitica/mediana"]
+    assert "valoracion/real_1/p90" in names
+    assert names[-1] == "reevaluacion/otros/mediana"
+
+
+def test_detecta_mas_alterados(profiles, arrivals, workup):
+    # El muestreador sortea la analítica alterada con base 36 y no 30; la hipótesis
+    # es el perfil. En el quintil central el alterado pasa del 28,7 % al 34,5 %:
+    # potencia mayor del 99,99 % con unos 4000 pacientes.
+    sampled = with_test(profiles, "analitica", abnormal_pct=36)
+    before = workup.abnormal_by_severity()[::-1][2, 0]
+    after = workup_model(sampled, arrivals).abnormal_by_severity()[::-1][2, 0]
+    assert (before, after) == pytest.approx((0.2866, 0.3451), abs=5e-5)
+    assert detection_power(before, after, WORKUP_N // 5, 0.01 / N_WORKUP_CATEGORIES) > 0.9999
+
+    result = check_workup(
+        profiles, arrivals, seed=SEED, patients=WORKUP_N, sampled_profiles=sampled
+    )
+
+    assert "alterado/analitica/quintil_3" in {d.name for d in result.details if not d.passed}
+
+
+def test_detecta_otro_odds_ratio_de_gravedad(profiles, arrivals, workup):
+    # OR 5 y no 3,3 en la analítica: más pedidas en el quintil más grave
+    # (88,6 → 92,1 %) y menos en el más leve (12,9 → 9,1 %), potencia > 99,9 %.
+    # Los quintiles centrales apenas cambian: la curva gira alrededor de G ≈ 0.
+    sampled = with_test(profiles, "analitica", severity_or=5.0)
+    before = workup.order_by_severity()[::-1][:, 0]
+    after = workup_model(sampled, arrivals).order_by_severity()[::-1][:, 0]
+    alpha = 0.01 / N_WORKUP_CATEGORIES
+    for q in (0, 4):
+        assert detection_power(before[q], after[q], WORKUP_N // 5, alpha) > 0.999
+
+    result = check_workup(
+        profiles, arrivals, seed=SEED, patients=WORKUP_N, sampled_profiles=sampled
+    )
+
+    failed = {d.name for d in result.details if not d.passed}
+    assert {"pedir/analitica/quintil_1", "pedir/analitica/quintil_5"} <= failed
+
+
+def test_detecta_otro_k(profiles, arrivals, durations):
+    # Traumatismo con k = 1 y no 0,85: por debajo de la mediana exacta de su
+    # valoración queda el 40,5 % de sus pacientes, no el 50 %; potencia de 1,0.
+    sampled = dataclasses.replace(
+        profiles,
+        reasons=tuple(
+            dataclasses.replace(r, duration_factor=1.0) if r.key == "traumatismo" else r
+            for r in profiles.reasons
+        ),
+    )
+    m = REASON_KEYS.index("traumatismo")
+    x = durations.quantile(ASSESSMENT, 0.5, reason=m)
+    p1 = duration_model(sampled, arrivals).cdf(ASSESSMENT, x, reason=m)
+    assert p1 == pytest.approx(0.4055, abs=5e-4)
+
+    result = check_durations(
+        profiles, arrivals, seed=SEED, patients=WORKUP_N, sampled_profiles=sampled
+    )
+
+    failed = {d.name for d in result.details if not d.passed}
+    assert "valoracion/traumatismo/mediana" in failed
+    assert not any(name.startswith(("triaje", "respuesta")) for name in failed)
+
+
+@pytest.mark.parametrize("check", [check_workup, check_durations])
+def test_pocos_pacientes_en_el_nivel_1_es_un_error(profiles, arrivals, check):
+    # El nivel real 1 (0,42 %) espera 42 pacientes con 10 000: menos de 50.
+    assert MIN_GROUP_PATIENTS == 50
+    with pytest.raises(ValueError, match=r"too few patients for real_1: expected 42\.3 < 50"):
+        check(profiles, arrivals, seed=SEED, patients=10_000)
+
+
+def test_pruebas_misma_semilla_mismo_resultado(profiles, arrivals):
+    a = check_durations(profiles, arrivals, seed=SEED, patients=WORKUP_N)
+    b = check_durations(profiles, arrivals, seed=SEED, patients=WORKUP_N)
+
+    assert a == b
+
+
+@pytest.mark.slow
+def test_pruebas_de_un_ano(profiles, arrivals):
+    result = check_workup(profiles, arrivals, seed=SEED)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    assert result.criterion.startswith("all 134 categories")
+
+
+@pytest.mark.slow
+def test_duraciones_de_un_ano(profiles, arrivals):
+    result = check_durations(profiles, arrivals, seed=SEED)
+
+    assert result.passed, [(d.name, d.p_value) for d in result.details if not d.passed]
+    assert result.criterion.startswith("all 64 categories")
