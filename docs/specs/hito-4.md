@@ -1,0 +1,563 @@
+# Hito 4 — Perfiles clínicos
+
+## Objetivo y alcance
+
+Al terminar el hito 4, cada paciente de EDsim llega con edad, sexo, medio de llegada y motivo de consulta, tiene una gravedad real que el hospital no ve y recibe un nivel de triaje con error. Sus pruebas y duraciones dependen de esa gravedad y de su motivo. Todo sale de un muestreador clínico que se enchufa en el punto de muestreo inyectable del hito 3, sin cambiar la lógica de colas, recursos ni turnos. El centro base queda calibrado, por primera vez, contra datos españoles observados: pretriaje y tiempo hasta el médico.
+
+Dentro del alcance
+
+- Población de adultos (15 años o más): banda y edad, sexo y medio de llegada, condicionados al contexto (franja, tipo de día y estación).
+- Los 17 motivos de consulta del catálogo como perfiles, con una categórica log-lineal sorteada con Gumbel-max.
+- Gravedad latente G y triaje ordinal con ruido y sesgo (G + ε cortada por umbrales calculados); nivel real, calidad del triaje e infra y sobretriaje en el ground truth.
+- El nivel 1 asignado se clasifica en la puerta y va directo al box.
+- Pruebas de cuatro tipos con probabilidad logística, resultado y tiempo de respuesta; duraciones lognormales por nivel real y motivo.
+- Tres relojes hasta el médico con nombre propio; cumplimiento Manchester desde la clasificación; indicador de pretriaje.
+- Primera calibración: parámetros directos contra datos y plantilla de médicos contra horquillas observadas, con objetivos de ajuste y de comprobación en `config/objetivos.toml`.
+- `config/perfiles.toml`, validación estadística del muestreador, CLI, tests y el notebook `04_perfiles_clinicos.ipynb`.
+- El incremento de la app para el hito 4 (tareas 4.8a y 4.8b), documentado en la pestaña «App web — incrementos».
+
+Fuera del alcance
+
+- Destino real (alta, ingreso, UCI, traslado, exitus), abandono, boarding y bucles de saturación (ruido de triaje que crece con la cola): hito 5. El destino provisional del hito 3 no cambia.
+- Calibrar el porcentaje de ingreso, la estancia y la cola de los niveles 4 y 5 en días punta: dependen de lo anterior y se calibran en el hito 5.
+- Pediatría y centros mixtos: perfiles de centro de la v3.
+- Triaje dentro del box y desalojo de médicos: circuito de críticos de la v1.
+- Un evento por tipo de prueba: versiones posteriores (ver «Para versiones posteriores»).
+- Editar los perfiles desde la app: fase 2 de la app.
+
+Las tareas con código empiezan con la etiqueta `v0.3-hito3`, que ya existe. El núcleo lo implementa Claude Code y las páginas de la app, Codex. Claude Code y Codex ejecutan git (rama, commits, push con permiso y PR) y Pedro siempre fusiona.
+
+## Sesión conceptual
+
+Los conceptos se explicaron en la conversación de arranque del hito (3 y 5 de noviembre de 2026), con gráficas y cálculos reales. Esta tabla es el resumen de referencia.
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Cadena generativa | Cada atributo se sortea condicionado a los anteriores: contexto, edad, motivo, gravedad, nivel, pruebas, duraciones |
+| Categórica log-lineal | Peso base × factores de contexto, renormalizado; en logaritmos los factores se suman. Un factor multiplica, no suma puntos |
+| Peso base frente a reparto global | El reparto que sale es la media de los contextos ponderada por las llegadas; los pesos base se derivan para dar el reparto del catálogo |
+| Gumbel-max | Un sorteo por categoría y gana el mayor log w + g. Misma distribución, y al cambiar un peso solo cambian los pacientes que entran o salen de esa categoría (3,6 % frente a 17,3 % con la CDF inversa en el ejemplo de la gripe) |
+| Gravedad latente | G continua, oculta, en desviaciones de la población de referencia; depende del motivo y de la edad |
+| Triaje ordinal | Nivel asignado = umbrales(G + ε); nivel real = umbrales(G). Los umbrales se calculan para dar el reparto asignado objetivo |
+| Infra y sobretriaje | Asignado menos o más urgente que el real. Con ruido 0,32 y sesgo −0,08 salen un 10,1 % y un 6,3 %; el 31 % de los niveles 1 reales se asigna como 2 |
+| Asignado frente a real | La prioridad usa el asignado (lo que sabe el hospital); duraciones y pruebas, la gravedad real (el paciente que hay delante) |
+| Logística | Convierte una suma sin límites en una probabilidad entre 0 y 1; los coeficientes son odds ratios. El TOML da el porcentaje a gravedad media y el código calcula el intercepto |
+| Lognormal por factor | Multiplicar la mediana por k desplaza la lognormal sin cambiar σ: la media también queda multiplicada por k |
+| Consumo fijo | Número fijo de sorteos por flujo, salga lo que salga; un flujo por fuente |
+| Sortear un puesto | Se sortea una z estándar y los parámetros la transforman: al cambiar un parámetro, el paciente conserva su percentil |
+| Tres relojes | Desde la llegada (A), desde el inicio del triaje (B), desde la clasificación (C). El cumplimiento Manchester usa C |
+| Norma frente a observación | Se calibra a lo observado; las normas solo puntúan. Un centro calibrado a la norma cumpliría por diseño |
+| Directos e indirectos | Los directos se fijan contra su dato; los indirectos se ajustan iterando contra KPIs emergentes |
+| Identificabilidad | Si dos mandos producen el mismo efecto en todos los objetivos disponibles, no se pueden calibrar a la vez |
+| Ajuste y comprobación | Unos objetivos ajustan y otros, reservados, comprueban que el ajuste no ha sido trampa; semillas distintas para cada uno |
+| Días fuera de objetivo | Manchester es una regla por paciente y las colas son no lineales: se miran percentiles y días fuera, no medias |
+
+## Cómo encajan las piezas
+
+Cada llegada del hito 2 pasa por el muestreador clínico, que sortea al paciente en orden fijo y con un flujo aleatorio por fuente; el motor del hito 3 solo usa el resultado.
+
+&#91;embedded content: cadena generativa del muestreador clínico · 8 flujos\]
+
+La gravedad se bifurca: el nivel asignado (G más el error de la enfermera) va al log y decide la prioridad, y el nivel real (G sola) va al ground truth. Pruebas y duraciones dependen de la gravedad real; el destino sigue siendo el provisional.
+
+## Población y contexto
+
+El centro atiende solo a adultos de 15 años o más (decisión candidata 35): los objetivos de triaje son de adultos y el corte coincide con el que usa el SAS para separar a los menores. Las 300 urgencias al día del hito 2 pasan a ser 300 urgencias de adultos; el perfil de llegadas no cambia.
+
+**Contexto de la llegada.** El muestreador traduce el instante de cada llegada en tres rasgos, con el mismo calendario que λ(t) del hito 2 (reloj sin cambio de hora, +01:00):
+
+| Rasgo | Valores | Nota |
+| --- | --- | --- |
+| Franja | mañana, tarde y noche, con inicios propios del perfil (8, 15 y 22 h por defecto) | Independientes de los turnos de `centro.toml`: mover un cambio de turno no mueve a los pacientes |
+| Tipo de día | laborable; fin de semana o festivo | Festivos, como en el hito 2 |
+| Estación | invierno, primavera, verano y otoño | Por meses: diciembre a febrero es invierno, y así sucesivamente |
+
+**Edad, sexo y medio de llegada** (flujo 5, cuatro sorteos fijos por paciente):
+
+1. Banda de edad con una categórica log-lineal: 15–44, 45–64, 65–79 y 80–99 años. Cada banda tiene su peso base y factores por franja y tipo de día (más jóvenes de noche y en fin de semana).
+2. Edad entera, uniforme dentro de la banda.
+3. Sexo, con un porcentaje de mujeres por banda.
+4. Medio de llegada (ambulancia o propio), con un porcentaje por banda.
+
+**Objetivo de edad convertido a adultos.** Las fuentes dan entre un 27 y un 35 % de urgencias de mayores de 65 años sobre todas las edades. Si los menores son una de cada cinco urgencias (SAS, 2013), la proporción sobre adultos es un 34–44 % (se divide por 0,79). Un objetivo se convierte siempre a la población que se simula antes de usarlo. Entre los mayores de 65 años, el 27 % llega en ambulancia (cohorte EDEN).
+
+## Motivos de consulta
+
+Los 17 motivos del catálogo del diseño existen desde el principio, cada uno como un perfil de `config/perfiles.toml` (decisiones candidatas 36 y 37).
+
+**Mezcla de casos.** Para una llegada con contexto c y paciente de banda b, el peso del motivo m es `w_m = peso_base_m × f_edad[b] × f_franja × f_dia × f_estacion`, y la probabilidad es `w_m / Σ w`. Un factor que el motivo no escribe vale 1.
+
+**Ejemplo a mano** (valores orientativos de la sesión). Disnea con peso base 8, factor 2,4 en mayores y 1,5 en invierno: 8 × 2,4 × 1,5 = 28,8. Con todos los motivos, la suma es 126,74, y la disnea queda en 22,7 % de los mayores un martes de invierno.
+
+**Sorteo con Gumbel-max** (flujo 6, 17 sorteos fijos por paciente). Cada motivo recibe un g\_m de una Gumbel estándar y gana el mayor `log w_m + g_m`. La distribución es exactamente la categórica y no hace falta renormalizar. Al cambiar el peso de un motivo, solo cambian los pacientes que entran o salen de él: con la disnea ×1,5 cambia el 3,6 % de los pacientes (el mínimo posible es 3,5 %), frente al 17,3 % con la CDF inversa (decisión candidata 43).
+
+**Pesos base derivados.** La columna «peso aprox.» del catálogo es un reparto global, no un peso de referencia: el reparto que sale es la media de los contextos ponderada por las llegadas. `base_weights_for(...)` calcula los pesos base para que el reparto global de una semana tipo, con el perfil de llegadas y la mezcla de edades, coincida con el catálogo. Se ejecuta una vez y su resultado se escribe en el TOML con un comentario. Un test comprueba que el reparto global sale dentro de ±0,5 puntos. El peso base es el punto fijo y los factores mandan: así un shock «disnea ×1,5» no se renormaliza de vuelta.
+
+**Estado de cada parámetro.** No hay una fuente española pública con el reparto de diagramas de Manchester, así que cada número lleva su estado en un comentario del TOML y en esta especificación:
+
+| Estado | Qué significa | Ejemplos |
+| --- | --- | --- |
+| Calibrado | Ajustado a un objetivo público con su horquilla | Reparto de triaje, infra y sobretriaje, edad, pretriaje, plantilla |
+| Derivado | Lo calcula el código a partir de otros | Umbrales, interceptos, μ y σ, pesos base |
+| Orientativo | Juicio clínico razonado, sin dato | Gravedad, pruebas, duraciones y factores por motivo |
+
+Un factor solo se escribe si hay una razón clínica, que va en un comentario al lado (por ejemplo, intoxicación ×3 en noches de fin de semana por el ocio nocturno). El orden clínico de gravedad del catálogo (de muy alta en parada a baja en ORL) es una comprobación: la gravedad media de los motivos debe respetarlo.
+
+## Gravedad latente y triaje
+
+Cada paciente tiene una gravedad real G que el hospital nunca ve; la enfermera clasifica G + ε, y los cinco niveles son cuatro umbrales sobre esa escala (decisión candidata 38).
+
+**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia: 0 es la gravedad media de un adulto. Más G es más grave.
+
+**Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales.
+
+**Umbrales calculados, no escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de toda la población, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %). Se calculan una vez al cargar los perfiles, con una muestra grande de pacientes de referencia o numéricamente sobre la mezcla, y se comprueban con un test. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
+
+**Calibración del error.** Con G normal estándar y el reparto de adultos, un ruido de 0,32 y un sesgo de −0,08 reproducen un 10,1 % de infratriaje y un 6,3 % de sobretriaje (el dato más reciente, de Asturias). Un ruido simétrico sin sesgo daría más sobretriaje que infratriaje. Con esos valores, el 31 % de los niveles 1 reales se asigna como 2 y el 17 % de los niveles 5 reales sube a 4: los errores se concentran en los niveles raros, de franjas estrechas.
+
+| Nivel real \\ asignado (%) | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 68,7 | 31,3 | 0 | 0 | 0 |
+| 2 | 1,3 | 76,7 | 22,0 | 0 | 0 |
+| 3 | 0 | 6,6 | 75,3 | 18,1 | 0 |
+| 4 | 0 | 0 | 7,2 | 91,4 | 1,4 |
+| 5 | 0 | 0 | 0 | 17,1 | 82,9 |
+
+Calculado con un millón de pacientes, G normal estándar; con la mezcla de motivos real, la tarea 4.3 lo vuelve a medir.
+
+**Asignado frente a real.** La prioridad de box y médico usa el nivel asignado, que es lo que sabe el hospital. Las duraciones y las pruebas usan la gravedad real, porque el médico atiende al paciente que tiene delante. Así, un 2 infratriado como 4 espera como un 4 pero necesita lo que necesita un 2: es el mecanismo que hace peligroso el infratriaje.
+
+**Nivel 1 en la puerta** (decisión candidata 39). Si el nivel asignado es 1, el paciente no pide enfermera: emite `triage_started` y `triage_completed` en el mismo instante de la llegada, con `circuito: "puerta"` en el payload de `triage_started`, y pide box con desalojo. El orden de los eventos no cambia. Los demás pacientes siguen en FIFO, con `circuito: "enfermeria"`, y el triaje sigue la lognormal del perfil (mediana 5 y p90 10 minutos). Consecuencias:
+
+- Los críticos infratriados como 2 hacen cola como cualquier otro; el ground truth lo mide (críticos reales no reconocidos y su espera).
+- Los médicos no se desalojan (decisión 25): al nivel 1 le queda su espera de médico, de alrededor de 1 minuto en el hito 3. Es la distancia medida entre «inmediato» y el modelo, y se resuelve con el circuito de críticos de la v1.
+- La capacidad de enfermería y su escalera no cuentan los triajes de puerta; la teoría de la M/G/1 del triaje usa λ · (1 − p₁), porque los niveles 1 ya no llegan a la enfermera (por *thinning*, la llegada sigue siendo Poisson).
+
+**Ground truth.** G, nivel real, calidad del triaje (correcto, infra o sobre) y salto en niveles. Ninguno va al log.
+
+## Pruebas y duraciones
+
+**Cuatro tipos de prueba, en una sola ronda** (decisión candidata 42): analítica, radiografía, ECG e imagen (eco o TC). Para cada tipo t, el paciente sortea si se le pide con una probabilidad logística sobre la gravedad real, el motivo y la edad:
+
+```latex
+P(t) = \frac{1}{1 + e^{-(a_{t,m} + b_t G + c_t \cdot \text{mayor})}}, \qquad a_{t,m} = \operatorname{logit}(p_{t,m}), \quad b_t = \ln OR^{G}_t, \quad c_t = \ln OR^{\text{mayor}}_t
+```
+
+El TOML da p\_{t,m}, el porcentaje para un adulto de gravedad media de cada motivo (por ejemplo, analítica 40 % en dolor abdominal: a = logit(0,40) = −0,41), y dos odds ratios por tipo. Con b = 1,2 y c = 0,8, la probabilidad a gravedad media es 40,1 % en un adulto y 59,9 % en un mayor. «Mayor» son las bandas de 65 años o más.
+
+**Resultado y respuesta.** Cada tipo sortea también su resultado (normal o alterado, otra logística sobre G) y su tiempo de respuesta (lognormal por mediana y p90, con un factor por franja). El paciente espera a la prueba más lenta de las pedidas; con ninguna pedida no hay ronda. El resultado no lo usa nadie todavía: lo usará el destino del hito 5, y se sortea ya para que el flujo de pruebas no cambie de consumo entre hitos.
+
+**Consumo fijo** (flujo 3): tres sorteos por tipo (pedir, resultado, respuesta), doce por paciente, se pida o no cada prueba.
+
+**En el log**, un solo pedido y un solo resultado por ronda, con la lista dentro: `test_ordered` lleva `pruebas` (por ejemplo `["analitica", "ecg"]`) y `test_resulted` llega con la más lenta y lleva `resultados` (por ejemplo `{"analitica": "alterado", "ecg": "normal"}`). El orden de los eventos no cambia. El tiempo de respuesta de cada tipo va al ground truth.
+
+**Duraciones** (flujo 2, tres normales por paciente: triaje, valoración y reevaluación). La parametrización es la del hito 3: μ = ln(mediana) y σ = (ln p90 − ln mediana) / z₀,₉, con z₀,₉ = 1,28155. La valoración y la reevaluación tienen una base por nivel real, y cada motivo aplica un factor sobre la mediana:
+
+```latex
+\mu = \ln(k_m \cdot \text{mediana}_{n}), \qquad \sigma = \sigma_{n}, \qquad E[S] = k_m \cdot E[S_{n}]
+```
+
+Multiplicar la mediana por k desplaza la lognormal sin cambiar σ, y la media también queda multiplicada por k. Con base 20 y 45 minutos, la media es 24,43; con k = 1,2 es 29,32. El triaje tiene una sola lognormal para los niveles 2 a 5; el nivel 1 no consume triaje. Las duraciones son orientativas y fijas durante la calibración del hito 4 (ver «Calibración»).
+
+## El muestreador clínico en el motor
+
+El `ClinicalSampler` tiene el mismo contrato que el `ProvisionalSampler` del hito 3, `sampler(arrival) → PatientDraws`: el motor sigue leyendo nivel, duraciones, pruebas y destino, y el resto de campos solo los copia a los payloads y al ground truth.
+
+```python
+class ClinicalSampler:
+    """Same contract as ProvisionalSampler: sampler(arrival) -> PatientDraws."""
+
+    def __call__(self, arrival):
+        ctx = self._calendar.context(arrival.time)  # shift band, day type, season
+        person = self._population(ctx)  # stream 5: 4 uniforms
+        reason = self._reason(ctx, person)  # stream 6: 17 Gumbel draws
+        g = self._severity(reason, person)  # stream 7: 1 normal
+        level, true_level = self._triage(g)  # stream 1: 1 normal (noise)
+        tests = self._tests(g, reason, person, ctx)  # stream 3: 3 draws per test type
+        times = self._durations(true_level, reason)  # stream 2: 3 normals
+        disposition = self._disposition(level)  # stream 4: 1 uniform (provisional)
+        return PatientDraws(...)
+```
+
+**Flujos y consumo** (decisión candidata 43). `child_streams(seed, 8)` da los mismos cinco primeros hijos que `child_streams(seed, 5)`, porque cada hijo depende solo de su índice: las llegadas (flujo 0) no cambian ni un bit.
+
+| Flujo | Fuente | Sorteos fijos por paciente |
+| --- | --- | --- |
+| 0 | Llegadas (hito 2) | Los de `iter_arrivals` |
+| 1 | Triaje: error de la enfermera | 1 normal |
+| 2 | Duraciones | 3 normales (triaje, valoración, reevaluación) |
+| 3 | Pruebas | 12 (pedir, resultado y respuesta de 4 tipos) |
+| 4 | Destino provisional | 1 uniforme |
+| 5 | Población | 4 uniformes (banda, edad, sexo, medio) |
+| 6 | Motivo | 17 Gumbel |
+| 7 | Gravedad | 1 normal |
+
+Tres reglas: orden fijo y número fijo de sorteos por flujo, salga lo que salga; un flujo por fuente; y sortear lo estándar (uniformes, normales, Gumbel) y transformarlo después con los parámetros. Con la tercera, al cambiar un parámetro clínico el paciente conserva su percentil, y los números aleatorios comunes sirven también para escenarios clínicos, no solo de plantilla.
+
+**Cambios en el motor**, pequeños y explícitos; la lógica de colas, recursos y turnos no cambia:
+
+1. Payloads que el catálogo del hito 3 dejó para el hito 4: `patient_arrived` lleva `medio`; `patient_registered`, `edad` y `sexo`; `triage_completed`, `motivo` además de `nivel`; `triage_started`, `circuito`; `test_ordered`, `pruebas`; `test_resulted`, `resultados`.
+2. El nivel 1 en la puerta: una rama en `patient.py` sin petición de enfermera.
+3. `check_capacity`, la escalera de enfermeras y la identidad de utilización no cuentan los triajes con `circuito: "puerta"`; «nadie se cuela» se amplía al triaje (nadie adelanta en su cola salvo un nivel 1).
+
+**Ground truth de episodios**, añadido a lo del hito 3: G, nivel real, calidad del triaje y salto en niveles, z de gravedad, motivo, banda y edad, pruebas pedidas con su resultado y su tiempo de respuesta por tipo. La paciencia llega en el hito 5.
+
+**Modelo opcional durante el hito** (decisión candidata 44). `simulate_ed` y la CLI aceptan unos perfiles. Con ellos usan el `ClinicalSampler`; sin ellos, el `ProvisionalSampler`, y la app y `runs/` siguen funcionando sin cambios. El cambio de modelo por defecto y la separación de `centro.toml` (decisión candidata 36) se hacen en la tarea de cierre, cuando la app ya trabaje con perfiles. El `ProvisionalSampler` se queda para la validación del motor (M/G/1, escenario de tres boxes), que necesita un modelo sencillo con teoría conocida.
+
+**Huellas.** Con el modelo clínico, el log y el ground truth cambian. Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito.
+
+## Relojes y cumplimiento
+
+Entre la llegada y el primer médico hay tres tramos (pretriaje, triaje y espera de box y médico), y en España se usan tres relojes distintos (decisión candidata 40). `EpisodeRecord` tiene los tres con nombre propio:
+
+| Reloj | Medida | Desde | Para qué |
+| --- | --- | --- | --- |
+| A | `door_to_doctor` (ya existe) | Llegada | Comparar con el TPAM del SAS |
+| B | `triage_start_to_doctor` | Inicio del triaje | Comparar con el TEA del SAS |
+| C | `classified_to_doctor` | Fin del triaje (nivel asignado) | Cumplimiento Manchester de EDsim |
+
+**Por qué C para el cumplimiento.** Antes del triaje el nivel no existe, y no se puede incumplir un plazo que aún no se ha asignado. Además, C separa responsabilidades: un fallo de pretriaje es de la enfermería de triaje y un fallo de C, de boxes y médicos. Con el reloj A, el nivel 2 no puede cumplir nunca en el modelo del hito 3: el triaje tiene p90 de 10 minutos, así que solo el 90 % de los triajes acaba en 10 minutos, y cualquier espera deja el cumplimiento por debajo del 90 %.
+
+**Reglas:**
+
+- `manchester_compliance` recibe la medida como parámetro y usa C por defecto. Un día está fuera para un nivel si menos del 90 % de sus pacientes llega dentro del máximo (justo en el máximo cumple), como en la tarea 3.8.
+- `runs/metrics.py` pasa la medida de forma explícita: la app sigue mostrando el reloj A hasta la tarea 4.8a, que la cambia a C junto con las etiquetas de la 4.8b.
+- **Pretriaje con indicador propio**, por día: porcentaje con pretriaje de 10 minutos o menos (estándar del 85 %) y porcentaje por encima de 5 minutos (el TECLA del SAS). Los niveles 1 no cuentan.
+- **Nivel 1 solo con su tiempo** (mediana y p90), sin porcentaje: su máximo es 0 y el porcentaje sería siempre 0 %.
+- **Cumplimiento por nivel real**, solo con ground truth: la misma regla con el nivel real. La diferencia con el KPI es el coste del infratriaje medido en tiempo. Nunca entra en el log ni en los KPIs observables.
+
+Las normas (máximos de Manchester, pretriaje en 10 minutos, límites del PAUE) se informan siempre, pero no son objetivos de calibración.
+
+## Calibración
+
+El centro base es realista: se calibra a lo observado en hospitales españoles, con horquillas, y por eso incumplirá a veces, como los reales (decisión candidata 41). Un centro que cumple Manchester el 90 % de los días es una variante (`centro_cumplidor.toml`), no la base.
+
+**Parámetros directos**, fijados contra su dato:
+
+| Parámetro | Objetivo | Fuente |
+| --- | --- | --- |
+| Umbrales de triaje | Reparto asignado en adultos 0,4 / 12,1 / 33,6 / 52,6 / 1,4 % | Emergencias 2013 (Hospital do Salnés) |
+| Ruido y sesgo del triaje | Infratriaje 10,1 %, sobretriaje 6,3 % | Concordancia Manchester en Asturias (2026) |
+| Pesos base de motivos | Reparto global del catálogo del diseño | Catálogo (orientativo) |
+| Reparto de edad | 34–44 % de mayores de 65 años entre adultos | Gaceta Sanitaria 2018, convertido a adultos |
+
+El reparto de triaje se cumple por construcción, porque los umbrales salen de él: elegirlo es fijar un dato, no validar el modelo.
+
+**Parámetros indirectos: un solo mando, la plantilla de médicos por turno.** Menos médicos y valoraciones más largas alargan igual el tiempo hasta el médico, y en el hito 4 no hay ningún objetivo que los distinga (la estancia, que sí depende de las duraciones, se calibra en el hito 5). Calibrar los dos sería un problema no identificable. Las duraciones quedan fijas por criterio clínico y se ajusta solo la plantilla, que es una «plantilla equivalente» del modelo, no una recomendación de dotación.
+
+**Objetivos indirectos** (horquillas orientativas; se fijan en `config/objetivos.toml` en la tarea 4.6). El CMBD del SAS es de 2013 e incluye niños, así que da el orden de magnitud y las horquillas son anchas.
+
+| Objetivo | Reloj | Referencia observada | Horquilla | Uso |
+| --- | --- | --- | --- | --- |
+| Pretriaje medio | — | SAS 12,4 min | 6–15 min | Ajuste |
+| Tiempo medio hasta el médico, niveles 2 a 5 | A | SAS 35,6 a 68,5 min según el nivel | 35–70 min | Ajuste |
+| Tiempo medio hasta el médico, nivel 3 | A | SAS 59,0 min | 45–75 min | Ajuste |
+| Porcentaje por encima del tiempo recomendado | A | SAS 18,95 % | 10–30 % | Comprobación |
+| Porcentaje con pretriaje de más de 5 minutos | — | SAS 46,3 % | 30–60 % | Comprobación |
+
+Fuera de la calibración del hito 4, a propósito (decisión candidata 34): el porcentaje de ingreso, la estancia y la cola de los niveles 4 y 5 en días punta. Sin destino, boarding ni abandono saldrían mal por construcción, y ajustarlos ahora sobredimensionaría la plantilla.
+
+**Reglas contra el sobreajuste:**
+
+1. Pocos mandos, globales y documentados en un registro de calibración (parámetro, antes, después, KPI y motivo).
+2. Objetivos de ajuste y de comprobación separados: si los de comprobación también encajan, el modelo tiene algo de verdad.
+3. Semillas distintas para calibrar y para verificar.
+4. Horquillas, no puntos: un objetivo pasa si la media entre réplicas cae dentro y su IC no es más ancho que la horquilla.
+5. Sensibilidad antes de ajustar: si mover un mando apenas cambia un KPI, ese KPI no puede calibrarlo.
+
+**Por qué días fuera de objetivo y percentiles.** Manchester es una regla por paciente, las colas crecen de forma no lineal cerca de la saturación y el servicio se juzga por sus días malos: en el hito 3, una ocupación media del 64 % convivía con lunes de 572 minutos de espera de box en el nivel 5. Cada objetivo se informa también por día, con su porcentaje de días fuera y su p90.
+
+## Ficheros de configuración
+
+`config/perfiles.toml` describe a los pacientes que llegan y `centro.toml`, el hospital (decisión candidata 36). Los valores de abajo son orientativos; lo que fija la especificación es la forma.
+
+```toml
+# config/perfiles.toml — población y perfiles clínicos. Ver docs/specs/hito-4.md.
+# Cada valor lleva su estado: calibrado, derivado u orientativo.
+
+[contexto]
+franjas = [8, 15, 22]               # inicio de mañana, tarde y noche (independiente de los turnos)
+
+[poblacion]
+bandas_edad = [15, 45, 65, 80]      # límite inferior de cada banda; tope 99
+reparto_edad = [38, 22, 22, 18]     # % en el contexto de referencia
+mujeres = [50, 50, 55, 62]          # % por banda
+ambulancia = [6, 10, 20, 32]        # % por banda
+
+[triaje]
+reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]   # % asignado; los umbrales salen del código
+ruido = 0.32                        # desviación del error, en unidades de G
+sesgo = -0.08                       # negativo: tiende a infratriar
+duracion = [5, 10]                  # [mediana, p90] en minutos, niveles 2 a 5
+
+[duraciones]
+valoracion = [[40, 90], [30, 70], [22, 50], [15, 35], [10, 25]]   # por nivel real
+reevaluacion = [[15, 30], [12, 25], [10, 20], [8, 15], [6, 12]]
+
+[pruebas.analitica]
+respuesta = [60, 150]               # [mediana, p90] en minutos
+respuesta_franja = [1.0, 1.1, 0.9]  # factor sobre la mediana
+or_gravedad = 3.3                   # odds ratio por unidad de G
+or_mayor = 2.2
+alterado = { base = 30, or_gravedad = 2.5 }   # % alterado a gravedad media
+
+[motivos.dolor_toracico]
+nombre = "Dolor torácico"
+peso_base = 5                       # derivado con base_weights_for
+edad = [0.5, 1.0, 1.6, 1.6]
+franja = [1.0, 1.1, 0.8]
+dia = [1.0, 0.9]                    # laborable; fin de semana o festivo
+estacion = [1.1, 1.0, 0.9, 1.0]     # invierno, primavera, verano, otoño
+gravedad = { media = 0.6, por_edad = [-0.3, 0.0, 0.3, 0.5], desviacion = 0.9 }
+pruebas = { ecg = 98, analitica = 90, radiografia = 70, imagen = 10 }   # % en adulto de gravedad media
+duracion = 1.2                      # factor sobre la mediana de su nivel
+```
+
+**Reglas de `perfiles.toml`:**
+
+- `ClinicalProfiles` inmutable, validado y normalizado al construirse, y `load_profiles(path)` con `tomllib`, como `CenterConfig`.
+- Unidades clínicas en el fichero (porcentajes, minutos, factores, odds ratios); el código calcula pesos normalizados, umbrales, interceptos y μ y σ. Ningún número derivado se escribe a mano, salvo los pesos base, que escribe `base_weights_for` con un comentario.
+- Factores opcionales: si faltan valen 1. Claves desconocidas prohibidas, con un error que nombra la clave y el motivo. Longitudes validadas: 4 bandas, 3 franjas, 2 tipos de día, 4 estaciones, 5 niveles y 4 tipos de prueba.
+- Los 17 motivos son obligatorios, con los nombres del catálogo en `snake_case`.
+- Hasta el cierre, `centro.toml` conserva sus secciones provisionales (`[triaje]`, `[duraciones]`, `[pruebas]`, `[destino]`) para el modelo provisional; en la tarea 4.9 pierde las tres primeras y conserva `[destino]` hasta el hito 5.
+
+`config/objetivos.toml` guarda cada objetivo de calibración con su fuente al lado, para que el notebook, la CLI y los tests lean lo mismo:
+
+```toml
+[objetivos.tiempo_medico_nivel_3]
+medida = "door_to_doctor"           # reloj A
+niveles = [3]
+estadistico = "media"
+referencia = 59.0
+horquilla = [45, 75]
+uso = "ajuste"                      # ajuste o comprobacion
+fuente = "SAS, CMBD de urgencias 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/..."
+nota = "Incluye menores de 15 años"
+```
+
+## Salidas: CLI
+
+La CLI sigue siendo fina: lee argumentos, llama al paquete y escribe.
+
+```bash
+edsim motor simular --perfiles config/perfiles.toml --dias 14 --calentamiento 2 --semilla 2026 --salida resultados/motor
+edsim perfiles validar --perfiles config/perfiles.toml --pacientes 20000 --semilla 2026 --salida resultados/perfiles
+edsim calibracion evaluar --perfiles config/perfiles.toml --objetivos config/objetivos.toml --replicas 10 --semilla 2026 --salida resultados/calibracion
+```
+
+- `motor simular` acepta `--perfiles`; sin él usa el modelo provisional, como hasta ahora. La ejecución se escribe con `simulate_run`, y `run.json` guarda la huella de los perfiles cuando los hay.
+- `perfiles validar` prueba el muestreador sin el motor: imprime una tabla con una fila por comprobación (mezcla de motivos por contexto, reparto asignado y real, infra y sobretriaje, pruebas por tramos de G, cuantiles de duraciones) y guarda sus gráficas.
+- `calibracion evaluar` ejecuta las réplicas, compara cada objetivo con su horquilla e imprime una tabla con la media, su IC, la horquilla, el uso, el porcentaje de días fuera y el resultado. Guarda un CSV para el registro de calibración.
+- Códigos de salida como en los hitos 2 y 3: 0 si todo va bien, 1 si alguna comprobación falla (escribiendo igualmente los ficheros) y 2 para errores de uso, sin crear ficheros a medias.
+- Las opciones `--perfiles` y `--objetivos` usan por defecto los ficheros de `config/` en los subcomandos nuevos.
+
+## Estructura del código
+
+Un subpaquete nuevo para el modelo clínico y otro para la calibración; el motor solo cambia en los puntos de «El muestreador clínico en el motor».
+
+```
+config/
+  perfiles.toml          población y perfiles clínicos
+  objetivos.toml         objetivos de calibración con horquilla y fuente
+  centro_cumplidor.toml  variante que cumple Manchester (tarea 4.6)
+src/edsim/profiles/
+  __init__.py
+  config.py              ClinicalProfiles, load_profiles (tomllib), validación
+  context.py             franja, tipo de día y estación de una llegada
+  mixing.py              categórica log-lineal, Gumbel-max, base_weights_for
+  population.py          banda, edad, sexo y medio de llegada
+  severity.py            gravedad latente, umbrales calculados, triaje con error
+  workup.py              pruebas por tipo, resultado y respuesta
+  durations.py           lognormales por nivel real y motivo
+  sampler.py             ClinicalSampler y PatientDraws ampliado
+  validation.py          comprobaciones estadísticas del muestreador
+src/edsim/calibration/
+  __init__.py
+  targets.py             objetivos.toml: Target, load_targets
+  evaluate.py            réplicas, comparación con horquillas, días fuera
+src/edsim/engine/        cambios acotados
+  patient.py             nivel 1 en la puerta, payloads nuevos
+  events.py              catálogo: circuito, medio, edad, sexo, motivo, pruebas, resultados
+  engine.py              simulate_ed(..., profiles=None)
+  analysis.py            triage_start_to_doctor y classified_to_doctor
+  targets.py             cumplimiento con medida, pretriaje, nivel 1 sin porcentaje
+  invariants.py          capacidad sin triajes de puerta, nadie se cuela en el triaje
+  ground_truth.py        campos clínicos del episodio
+  validation.py          M/G/1 con λ·(1 − p₁)
+src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar
+notebooks/04_perfiles_clinicos.ipynb
+tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.py,
+      test_severity.py, test_workup.py, test_durations.py, test_sampler.py,
+      test_profiles_validation.py, test_calibration.py, test_door_triage.py
+```
+
+`ProvisionalSampler` sigue en `engine/clinical.py` para la validación del motor. Sin dependencias nuevas: `tomllib`, NumPy y SciPy cubren la Gumbel, la logística y la búsqueda de umbrales. Los nombres de módulos los confirma el plan de cada tarea.
+
+## Tests y validación
+
+La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas con predicción y pruebas estadísticas con su potencia.
+
+| Grupo | Qué comprueba |
+| --- | --- |
+| Perfiles | Carga del TOML de ejemplo y del real; factores opcionales neutros; errores con claves desconocidas, longitudes, porcentajes y medianas inválidos |
+| Contexto | Franja en los bordes (7:59 y 8:00), tipo de día con festivos, estación por mes |
+| Mezcla | Valor a mano (22,7 % de disnea en mayores en invierno); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea» |
+| Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje con IC binomial; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
+| Pruebas y duraciones | logit(0,40) = −0,41; probabilidad por tramos de G; máxima de las pedidas; media lognormal 24,43 → 29,32 con el factor 1,2; cuantiles con la binomial, como en la tarea 3.1 |
+| Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
+| Motor | Payloads del catálogo, sin campos ocultos; invariantes con triajes de puerta; huellas del modelo provisional y del clínico |
+| Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
+| Calibración (slow) | Objetivos cargados con su fuente; evaluación con réplicas; semillas de ajuste y de comprobación distintas |
+| CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso |
+
+**Potencia.** El muestreador se prueba sin el motor, con 20 000 pacientes en décimas de segundo. Con el χ² por motivo, nivel 0,01 y Bonferroni entre 17, se detecta un 5 % que pasa a 6 % con una potencia del 99,7 %, pero un 5 % que pasa a 5,5 % solo con un 43 %. Cada prueba escribe qué tamaño de error ve. Los motivos raros (crítico, 0,5 %) necesitan comprobar que hay pacientes suficientes, para que el test no pase de forma vacía.
+
+**Versiones incorrectas con predicción** (ejemplos; cada plan añade las suyas):
+
+| Versión incorrecta | Predicción |
+| --- | --- |
+| Factores sumados en lugar de multiplicados | Falla el valor a mano y el χ² del contexto de mayores en invierno |
+| Gumbel-max sin el logaritmo (w + g) | Falla el χ² de la mezcla en todos los contextos |
+| CDF inversa en lugar de Gumbel-max | Pasan las frecuencias; falla «con más disnea solo cambian los que pasan a disnea» |
+| Olvidar renormalizar con Gumbel-max | No falla nada: el argmax no depende de la escala (decisión de diseño) |
+| Umbrales sobre G en lugar de G + ε | Falla el reparto asignado (más niveles 1 y 5); pasa el real |
+| Pruebas con el nivel asignado en lugar de G | Pasan las pruebas marginales; falla solo el test sobre los infratriados |
+| Resultado sorteado solo si se pide la prueba | Fallan los tests de independencia, no los estadísticos |
+| Hora en UTC en lugar de +01:00 | Falla la franja en el borde de las 8:00 |
+| Triaje de puerta contado como enfermera | Falla la capacidad con las enfermeras ocupadas |
+| Prioridad de triaje por nivel completo (1 a 5) | Falla «los niveles 2 a 5 siguen en FIFO entre sí» |
+
+Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
+
+## Notebook de perfiles clínicos
+
+Un cuarto notebook didáctico, `notebooks/04_perfiles_clinicos.ipynb`, con las reglas de los anteriores: toda la lógica vive en `edsim`, se ejecuta de principio a fin, semillas explícitas, modo rápido `EDSIM_NB_RAPIDO=1` para el CI y sin resultados en git. Cada sección combina una explicación breve, código que solo llama a `edsim`, una gráfica, preguntas «Para experimentar» y un recuadro «Lo que debes recordar».
+
+Contenido
+
+1. Uso: cómo ejecutarlo y el modo rápido.
+2. Del paciente sin rasgos al paciente con perfil: la cadena generativa.
+3. La mezcla de motivos: los 17 motivos en varios contextos y el reparto global frente al peso base.
+4. Gumbel-max y los números aleatorios comunes: la ola de gripe con los dos métodos.
+5. Gravedad y triaje: G con sus umbrales, la matriz de nivel real frente a asignado y qué pasa al mover el ruido y el sesgo.
+6. El nivel 1 en la puerta y los críticos no reconocidos.
+7. Pruebas y duraciones: curvas logísticas y lognormales por nivel y motivo.
+8. Los tres relojes: el mismo día medido con A, B y C, y por qué el nivel 2 no podía cumplir con A.
+9. La calibración: norma frente a observación, horquillas, sensibilidad de la plantilla y objetivos de comprobación.
+10. El coste del infratriaje: cumplimiento por nivel asignado frente a nivel real.
+11. Centro realista frente a centro cumplidor, con los mismos pacientes.
+12. Para experimentar: un perfil con muchos niveles 5 (el reparto del SAS), otro ruido de triaje, otra plantilla.
+13. Resumen: las lecciones del hito en pocas frases.
+
+## Decisiones del hito
+
+Once decisiones candidatas, acordadas en la sesión conceptual del 5 de noviembre de 2026. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0044 y las añade al registro del diseño. La decisión APP-0003, que solo afecta a la app, está en «App web — incrementos».
+
+| # | Decisión | Motivo |
+| --- | --- | --- |
+| 34 | El hito 4 cubre población, motivo, gravedad, triaje con error, pruebas, duraciones, relojes y una primera calibración; el destino provisional no cambia, y abandono, destino, boarding y bucles de saturación van al hito 5 | Sin destino, boarding ni abandono, el ingreso, la estancia y la cola en días punta saldrían mal por construcción; los bucles necesitan el estado del servicio en el paciente |
+| 35 | Solo adultos de 15 años o más, con cuatro bandas de edad (15–44, 45–64, 65–79, 80–99) y edad uniforme dentro de la banda | Los objetivos de triaje son de adultos; la pediatría pide su propio catálogo (v3) |
+| 36 | `config/perfiles.toml` aparte de `centro.toml`, una tabla por motivo, unidades clínicas, factores opcionales neutros, claves desconocidas prohibidas y franjas propias | Hospital y población son preguntas distintas; perfiles intercambiables en la v3; nada derivado a mano |
+| 37 | Los 17 motivos desde el principio, cada parámetro con su estado (calibrado, derivado u orientativo) y pesos base derivados del reparto del catálogo con `base_weights_for` | No hay fuente pública por motivo; el estado dice qué respaldo tiene cada número; los shocks no se renormalizan |
+| 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo y umbrales calculados para el reparto asignado; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje |
+| 39 | El nivel 1 asignado se clasifica en la puerta (triaje de duración 0, `circuito: "puerta"`, sin enfermera) y va directo al box; sin desalojo de médicos | El crítico no hace cola de triaje sin cambiar el orden de los eventos; el desalojo de médicos ahorraría un minuto a un paciente al día con una regla clínica sin datos (v1) |
+| 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
+| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; la plantilla de médicos es el único mando indirecto | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia |
+| 42 | Pruebas de cuatro tipos en una ronda, con un solo `test_ordered` (lista de pruebas) y un solo `test_resulted` (resultados) | Mismo comportamiento del paciente sin cambiar el contrato del log; un evento por tipo queda para versiones posteriores |
+| 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,6 % de los pacientes y no el 17,3 % |
+| 44 | Modelo clínico opcional durante el hito (`profiles=None` usa el provisional) y por defecto en el cierre, cuando la app ya lo soporta; el `ProvisionalSampler` se queda para la validación del motor | `main` estable y `tests-app` obligatorio en todo el hito; la app no se rompe a mitad de camino |
+
+Al cerrar el hito se actualizan también la pestaña de diseño (catálogo de eventos con los payloads nuevos, objetivos de calibración, hoja de ruta con lo aplazado) y la ADR 0031 con una nota de actualización: los incrementos de la app se documentan en su propia pestaña, no en la del hito.
+
+## Tareas, ramas y orden de ejecución
+
+Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza con una explicación del concepto en el chat del hito, sigue con el plan en modo Plan en una sesión nueva y, con el plan aprobado, se implementa completa; al cerrarla se actualiza el anexo.
+
+| # | Tarea | Quién | Rama | Resultado |
+| --- | --- | --- | --- | --- |
+| 4.1 | Especificación en `docs/specs/hito-4.md`; tres relojes y pretriaje (40); nivel 1 en la puerta (39); pendientes menores | Claude Code | `feat/h4-relojes` | Cumplimiento con el reloj C, triajes de puerta y huellas justificadas |
+| 4.2 | `perfiles.toml` y `ClinicalProfiles`; contexto; población; motivos con Gumbel-max y `base_weights_for` (35, 36, 37, 43) | Claude Code | `feat/h4-perfiles` | Población y motivo validados sin el motor |
+| 4.3 | Gravedad latente, umbrales calculados y triaje con ruido y sesgo; nivel real y calidad (38) | Claude Code | `feat/h4-triaje` | Reparto asignado, infra y sobretriaje en verde |
+| 4.4 | Pruebas por tipo con resultado y respuesta (42); duraciones por nivel real y motivo | Claude Code | `feat/h4-pruebas` | Logísticas y lognormales validadas |
+| 4.5 | `ClinicalSampler` en el motor como opción (44): payloads, catálogo, ground truth, `--perfiles`, `run.json` con la huella de los perfiles; `perfiles validar` | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
+| 4.6 | `objetivos.toml`, `calibracion evaluar` y primera calibración de la plantilla (41); `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
+| 4.7 | Notebook `04_perfiles_clinicos.ipynb` | Claude Code | `feat/h4-notebook` | Notebook ejecutable de principio a fin en el CI |
+| 4.8a | Núcleo de la app con perfiles (`runs/`) | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
+| 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
+| 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0044; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
+
+Preparación en la tarea 4.1: exportar esta pestaña a `docs/specs/hito-4.md`, apuntar el hito en curso al hito 4 en `CLAUDE.md` y `AGENTS.md`, añadir el prefijo `refactor` a la lista de commits y quitar el permiso de ejecución a los `.md` de `docs/` (`git update-index --chmod=-x`).
+
+**Autonomía del agente** (desde la tarea 4.1). En el primer commit de la 4.1, `.claude/settings.json` pasa `git push` de `ask` a `allow` solo para las ramas `feat/*` y `docs/*`, permite `git branch -D`, y añade a `deny` el push forzado y el push a `main`; `gh pr merge` sigue prohibido. `CLAUDE.md` añade que, con el plan aprobado, el agente hace push de su rama y abre el PR sin pedir confirmación. El plan se aprueba con el modo auto de Claude Code, que no necesita ningún cambio en el repositorio. La red de seguridad sigue siendo el ruleset de `main` (solo por PR y con el CI en verde) y la fusión reservada a Pedro.
+
+**Prompts.** Cada tarea va en una sesión nueva, así que el prompt pide un plan que empiece con una sección «Contexto»: qué ficheros ha leído (`CLAUDE.md` o `AGENTS.md`, `docs/specs/hito-4.md`, los módulos que reutiliza y los de las tareas anteriores) y qué ha entendido de la tarea, antes de proponer cambios. Para la lógica delicada, el plan incluye versiones incorrectas temporales con la predicción de qué tests fallarán. Los prompts se entregan en el chat del hito, en una caja de código, también los de Codex.
+
+## Flujo de git y reparto entre agentes
+
+El núcleo (`src/edsim/`, `tests/`, `config/`, `notebooks/`, `docs/`) lo implementa Claude Code. Las páginas de la app (`app/`) las implementa Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro; si una tarea del núcleo rompe un test de `app/tests`, para y lo explica, en lugar de arreglarlo. El CI, con `tests` y `tests-app` obligatorios, lo hace visible antes de fusionar.
+
+En cada tarea, como en el hito 3:
+
+1. El agente parte de `main` actualizado y crea la rama: `git switch main && git pull && git switch -c <rama>`.
+2. Pedro aprueba el plan con «Yes, and use auto mode»: un clasificador revisa cada acción en segundo plano y el agente no pide permiso para ediciones ni comandos. Implementa la tarea completa sin esperar revisión entre pasos: un commit por paso lógico, con prefijo y mensaje en español, añadiendo los ficheros por su nombre y con ruff y los tests rápidos en verde. Solo para y pregunta si algo contradice el plan o la especificación, una biblioteca no se comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño nueva.
+3. Hace `git push -u origin <rama>` sin pedir permiso (solo ramas `feat/*` y `docs/*`; el push forzado y el push a `main` están prohibidos) y abre el PR con `gh pr create`. La descripción explica cada decisión, lo que cambió respecto al plan, las comprobaciones, las medidas y las versiones incorrectas.
+4. Pedro revisa el PR completo con este chat, espera el CI en verde y fusiona con *squash and merge*. `gh pr merge` sigue denegado para los dos agentes.
+5. Sincronización: `git switch main && git pull && git branch -D <rama>`.
+
+Solo una rama abierta a la vez. La revisión automática con `@codex review` se pide solo en las tareas críticas: en este hito, la 4.5 (el muestreador en el motor) y la 4.9 (el cambio de modelo por defecto).
+
+## Criterios de aceptación
+
+El hito 4 está cerrado cuando se cumplen todos:
+
+- `uv run pytest` pasa, incluidos los tests slow, los tests de la app pasan y el CI está en verde con `tests` y `tests-app`.
+- `edsim perfiles validar` pasa todas sus comprobaciones con los perfiles reales: mezcla de motivos por contexto, reparto global del catálogo, reparto asignado, infra y sobretriaje, pruebas y duraciones.
+- `edsim motor simular` con los perfiles por defecto escribe un log sin invariantes violadas, con los payloads nuevos y sin campos fuera del catálogo; el ground truth tiene G, nivel real y calidad del triaje.
+- Con la misma semilla, dos ejecuciones dan el mismo log y el mismo ground truth bit a bit, y las llegadas siguen siendo las de `iter_arrivals`. Con otra plantilla, ningún valor sorteado del paciente cambia; con otro parámetro clínico, cada paciente conserva sus sorteos estándar.
+- El nivel 1 no consume enfermería y su tiempo hasta el box es 0 cuando puede desalojar.
+- El cumplimiento Manchester usa el reloj C, el pretriaje tiene su indicador y el nivel 1 se informa sin porcentaje.
+- `edsim calibracion evaluar` deja los objetivos de ajuste dentro de su horquilla con semillas de calibración e informa los de comprobación con semillas distintas; el registro de calibración explica cada cambio.
+- Cada parámetro de `perfiles.toml` tiene su estado (calibrado, derivado u orientativo) y cada objetivo de `objetivos.toml`, su fuente.
+- La app trabaja con perfiles (ver «App web — incrementos») y existe la etiqueta `app-v0.2.0`.
+- `notebooks/04_perfiles_clinicos.ipynb` se ejecuta de principio a fin en el CI y se versiona sin resultados.
+- Pedro sabe explicar cómo se mezcla un motivo con su contexto, por qué el nivel asignado no es el real y qué consecuencias tiene, por qué el cumplimiento se mide desde la clasificación, y por qué se calibra a lo observado con un solo mando.
+- `docs/` contiene esta especificación, los ADR 0034 a 0044, la entrada del diario y el anexo de referencia del hito.
+- La etiqueta `v0.4-hito4` existe en GitHub.
+
+## Para versiones posteriores
+
+Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo lleva a la hoja de ruta del diseño.
+
+| Aplazado | Por qué ahora no | Dónde |
+| --- | --- | --- |
+| Un `test_ordered` y un `test_resulted` por tipo de prueba, cada uno a su hora (opción 1 de la decisión 42) | Cambia el contrato del log que comparten el motor, el replay y la app; el paciente se comporta igual | Versiones posteriores, cuando la analítica de servicios (laboratorio frente a radiología) lo necesite |
+| Triaje dentro del box para el nivel 1 | Cambia el orden de los eventos en 11 módulos y en la app | Circuito de críticos de la v1 |
+| Desalojo de médicos por un nivel 1 | Ahorra alrededor de 1 minuto a un paciente al día; regla clínica sin datos (¿a quién deja el médico?) | Circuito de críticos de la v1, con equipo propio |
+| Reconocimiento en la puerta por la gravedad real, con su propio error | Un segundo juicio que calibrar sin datos | Por decidir |
+| Ruido de triaje que crece con la saturación | Necesita el estado del servicio en el paciente, como el abandono | Hito 5 |
+| Destino multinomial, abandono, boarding y su calibración (ingreso, estancia, días punta) | Dependen unos de otros | Hito 5 |
+| Editar los perfiles desde la app | Tarea grande: 17 motivos con validación en vivo | Fase 2 de la app |
+| Pediatría y centros mixtos | Catálogo y gravedad propios | Perfiles de centro de la v3 |
+
+## Fuentes
+
+Consultadas el 3 de noviembre de 2026.
+
+- [Ministerio de Sanidad — Urgencias atendidas en el SNS, frecuentación y porcentaje de ingresos, tabla 27 (2024)](https://www.sanidad.gob.es/estadEstudios/sanidadDatos/tablas/tabla27.htm): 10,1 % de ingresos en el SNS y 7,5 % en Andalucía.
+- [SAS — Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013](https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf): definiciones de TRC, TEA, TPAM y TPU; reparto por prioridad; TPAM por nivel; pretriaje; estancias; salidas voluntarias.
+- [Junta de Andalucía — Objetivos PAUE, contrato-programa 2015](https://www.juntadeandalucia.es/sites/default/files/2020-03/PAUE%20OBJETIVOS%20CP%202015.pdf): indicadores TECLA y TEPCOF de la prioridad II; Manchester modificado.
+- [Castro González et al. — Validez del Sistema de Triaje Manchester, Emergencias 2013](https://revistaemergencias.org/wp-content/uploads/2023/08/Emergencias-2013_25_3_191-195.pdf): reparto de triaje en adultos y definiciones de tiempos.
+- [El triaje como indicador de calidad — Anales del Sistema Sanitario de Navarra](https://recyt.fecyt.es/index.php/ASSN/article/download/9391/7014/20917): llegada–clasificación menor de 10 minutos, clasificación menor de 5 minutos y tiempos por nivel.
+- [Indicadores de urgencias, cuadro de mando — ponencia FESEMI](https://www.fesemi.org/sites/default/files/documentos/ponencias/xxxi-congreso-semi/Dra.%20Cristina%20Netto.pdf): admisión–triaje en menos de 10 minutos en al menos el 85 %; fugas antes y después del triaje.
+- [Ministerio de Sanidad y Política Social — Unidad de urgencias hospitalaria: estándares y recomendaciones (2010)](https://vsf-iwsold-pro-01.mscbs.gob.es/areas/calidadAsistencial/excelenciaClinica/docs/UUH.pdf): 90 % de los pacientes fuera de urgencias en cuatro horas.
+- [Concordancia del triaje Manchester en Asturias — Enfermería Clínica 2026](https://portalinvestigacion.uniovi.es/documentos/6a98ad557986db85ebf3a195): infratriaje del 10,1 % y sobretriaje del 6,3 % en viñetas.
+- [Parenti et al. — Revisión sistemática del Manchester Triage System (2014)](https://cris.unibo.it/handle/11585/516047): alta tasa de infratriaje y baja sensibilidad en los niveles más urgentes.
+- [Miró et al. — Cohorte EDEN, Emergencias 2022](https://revistaemergencias.org/wp-content/uploads/2023/08/Emergencias-2022_34_6_418-427.pdf): mayores de 65 años en urgencias; 27 % llega en ambulancia.
+- [Urgencias procedentes de residencias geriátricas — Gaceta Sanitaria 2018](https://scielosp.org/pdf/gs/2018.v32n1/27-34/es): entre el 27 y el 35 % de las urgencias son de mayores de 65 años.
+- [Caracterização dos atendimentos segundo o STM — REME 2019](https://doaj.org/article/926dcf7162664dbdb4ebf4b029b66c35): diagramas de Manchester más usados (orden de magnitud, Brasil).
+- Documentación del hito 3 (anexo de las tareas 3.6 a 3.8) para los tiempos del centro provisional.
+
+## Anexo: guía de referencia del hito 4
+
+Este anexo se amplía al cerrar cada tarea del hito con lo que se hizo, los conceptos que aparecieron, las decisiones, los resultados medidos, las versiones incorrectas y las lecciones aprendidas.

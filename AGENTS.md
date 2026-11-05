@@ -5,7 +5,8 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Último hito cerrado: [docs/specs/hito-3.md](docs/specs/hito-3.md) (el hito 4 aún no tiene especificación)
+- Hito en curso: [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos)
+- Último hito cerrado: [docs/specs/hito-3.md](docs/specs/hito-3.md)
 - App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
 ## Modo de trabajo
@@ -57,7 +58,7 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se ve
 - Código, nombres y docstrings en inglés.
 - Documentación, especificaciones y mensajes de commit en español.
 - Claves de los ficheros de configuración (TOML) en español, como en el diseño.
-- Commits con prefijo `feat`, `fix`, `docs`, `test`, `chore` o `ci`, p. ej. `feat(sim): cola M/M/1 con SimPy`.
+- Commits con prefijo `feat`, `fix`, `refactor`, `docs`, `test`, `chore` o `ci`, p. ej. `feat(sim): cola M/M/1 con SimPy`.
 - Decisiones importantes como ADR en [docs/decisiones/](docs/decisiones/README.md); aprendizaje en [docs/diario/](docs/diario/README.md).
 
 ## Reglas de git
