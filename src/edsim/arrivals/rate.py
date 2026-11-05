@@ -28,6 +28,7 @@ Both functions are vectorized: they take a scalar or an array of any shape,
 because the validation computes Lambda at hundreds of thousands of arrivals.
 """
 
+from datetime import date
 from functools import lru_cache
 
 import numpy as np
@@ -73,22 +74,49 @@ def _check_day_effects(day_effects: ArrayLike, needed: int) -> NDArray[np.float6
     return effects
 
 
-def _split(times: NDArray[np.float64]) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
-    """Split times into the day index and the minute within the day, in [0, 1440)."""
+def split_days(times: ArrayLike) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
+    """Split times into the day index and the minute within the day, in [0, 1440).
+
+    No check is made on ``times``: the public functions of this module check
+    them first, and ``edsim.profiles`` uses it on times it has checked.
+
+    Args:
+        times: Minutes since 00:00 of ``start_date``; a scalar or an array.
+
+    Returns:
+        The day index (0 for ``start_date``) and the minute within that day,
+        as arrays with the shape of ``times``.
+    """
+    times = np.asarray(times, dtype=float)
     days = np.floor(times / MINUTES_PER_DAY).astype(np.int64)
     return days, times - days * MINUTES_PER_DAY
 
 
-def _day_scale(days: NDArray[np.int64], profile: ArrivalProfile) -> NDArray[np.float64]:
-    """Rate scale ``daily_base / 1440 * d * m`` of each day index.
+def day_calendar(days: ArrayLike, start_date: date) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Weekday and month of each day index, from the calendar date of the day.
 
-    The weekday and the month come from the calendar date of each day, so
-    month lengths and the change of year are handled by NumPy's dates.
+    Month lengths and the change of year are handled by NumPy's dates. There
+    is no calendar of holidays: a holiday is a plain weekday.
+
+    Args:
+        days: Day indices, 0 for ``start_date``; integers.
+        start_date: Date of day 0, such as the ``start_date`` of a profile.
+
+    Returns:
+        The weekday (0 for Monday to 6 for Sunday) and the month (0 for
+        January to 11 for December) of each day, as integer arrays.
     """
-    dates = np.datetime64(profile.start_date, "D") + days.astype("timedelta64[D]")
-    weekdays = (days + profile.start_date.weekday()) % 7
+    days = np.asarray(days, dtype=np.int64)
+    dates = np.datetime64(start_date, "D") + days.astype("timedelta64[D]")
+    weekdays = (days + start_date.weekday()) % 7
     # Months since 1970-01; modulo 12 gives 0 for January.
     months = dates.astype("datetime64[M]").astype(np.int64) % 12
+    return weekdays, months
+
+
+def _day_scale(days: NDArray[np.int64], profile: ArrivalProfile) -> NDArray[np.float64]:
+    """Rate scale ``daily_base / 1440 * d * m`` of each day index."""
+    weekdays, months = day_calendar(days, profile.start_date)
     return (
         profile.daily_base
         / MINUTES_PER_DAY
@@ -238,7 +266,7 @@ def rate(
             days of ``t``.
     """
     times = _check_times(t)
-    days, minutes = _split(times)
+    days, minutes = split_days(times)
     scale = _day_scale(days, profile)
     if day_effects is not None:
         needed = int(days.max()) + 1 if days.size else 0
@@ -280,7 +308,7 @@ def cumulative_rate(
         effects = _check_day_effects(day_effects, needed)
     if times.size == 0:
         return times
-    days, minutes = _split(times)
+    days, minutes = split_days(times)
 
     # Scale of every day up to the last one asked for, and the area of the
     # full days before each day (cumulative sum shifted by one day).

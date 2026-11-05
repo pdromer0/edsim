@@ -6,7 +6,15 @@ import pytest
 from scipy.integrate import quad
 
 from edsim.arrivals.profile import ArrivalProfile, load_profile
-from edsim.arrivals.rate import cumulative_rate, day_scale, day_shape_area, rate, shape
+from edsim.arrivals.rate import (
+    cumulative_rate,
+    day_calendar,
+    day_scale,
+    day_shape_area,
+    rate,
+    shape,
+    split_days,
+)
 
 EXAMPLE = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DAY = 1440  # minutos
@@ -305,3 +313,39 @@ def test_vectorizado(profile, function):
 def test_tiempo_negativo_o_no_finito(profile, function, t):
     with pytest.raises(ValueError, match="t must"):
         function(t, profile)
+
+
+# --- Calendario público (lo reutiliza edsim.profiles) ---------------------------
+
+
+def test_split_days_en_los_bordes():
+    # 1439 es el último minuto del día 0; 1440, el primero del día 1.
+    days, minutes = split_days([0.0, 1439.5, 1440.0, 3 * DAY + 480.0])
+
+    assert days.tolist() == [0, 0, 1, 3]
+    assert minutes.tolist() == [0.0, 1439.5, 0.0, 480.0]
+
+
+def test_day_calendar_igual_que_datetime():
+    # Días de varios años, con el cambio de año y el 29 de febrero de 2028.
+    start = date(2026, 1, 5)
+    days = np.array([0, 5, 6, 360, 361, 785, 786, 1095])
+    weekdays, months = day_calendar(days, start)
+
+    for day, weekday, month in zip(days, weekdays, months, strict=True):
+        when = start + timedelta(days=int(day))
+        assert (weekday, month) == (when.weekday(), when.month - 1), when
+
+
+def test_day_scale_usa_el_calendario(profile):
+    # day_scale es B/1440 · d[día de la semana] · m[mes] con el calendario de day_calendar.
+    days = np.arange(400)
+    weekdays, months = day_calendar(days, profile.start_date)
+    expected = (
+        profile.daily_base
+        / DAY
+        * np.asarray(profile.weekday_factors)[weekdays]
+        * np.asarray(profile.month_factors)[months]
+    )
+
+    np.testing.assert_array_equal(day_scale(days, profile), expected)
