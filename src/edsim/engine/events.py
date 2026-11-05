@@ -53,15 +53,16 @@ _MAX_EVENTS = 10**9
 _EPISODE = re.compile(r"EP-[0-9]{6}")
 _PATIENT = re.compile(r"PT-[0-9]{6}")
 
-# A payload check gets the event type and the key, to name them in errors.
-Check = Callable[[str, str, object], None]
+# A payload check gets the event type and the key, to name them in errors, and
+# returns the value to keep: the same one, or an immutable copy of a container.
+Check = Callable[[str, str, object], object]
 
 
 def _int_range(low: int, high: int | None = None) -> Check:
     """An integer (not a bool) in ``[low, high]``; no upper limit if ``high`` is None."""
     limit = f">= {low}" if high is None else f"between {low} and {high}"
 
-    def check(event_type: str, key: str, value: object) -> None:
+    def check(event_type: str, key: str, value: object) -> object:
         # bool is a subclass of int in Python: True must not pass as 1.
         if (
             isinstance(value, bool)
@@ -72,6 +73,7 @@ def _int_range(low: int, high: int | None = None) -> Check:
             raise ValueError(
                 f"{event_type}: payload {key} must be an integer {limit}, got {value!r}"
             )
+        return value
 
     return check
 
@@ -79,27 +81,30 @@ def _int_range(low: int, high: int | None = None) -> Check:
 def _choice(*values: str) -> Check:
     """One of a fixed set of strings."""
 
-    def check(event_type: str, key: str, value: object) -> None:
+    def check(event_type: str, key: str, value: object) -> object:
         if not isinstance(value, str) or value not in values:
             raise ValueError(
                 f"{event_type}: payload {key} must be one of {values!r}, got {value!r}"
             )
+        return value
 
     return check
 
 
-def _bool(event_type: str, key: str, value: object) -> None:
+def _bool(event_type: str, key: str, value: object) -> object:
     """``True`` or ``False``; 0 and 1 are not."""
     if not isinstance(value, bool):
         raise ValueError(f"{event_type}: payload {key} must be true or false, got {value!r}")
+    return value
 
 
-def _episode(event_type: str, key: str, value: object) -> None:
+def _episode(event_type: str, key: str, value: object) -> object:
     """An episode identifier, such as ``EP-000137``."""
     if not isinstance(value, str) or not _EPISODE.fullmatch(value):
         raise ValueError(
             f"{event_type}: payload {key} must be an episode_id such as 'EP-000137', got {value!r}"
         )
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,7 +353,7 @@ class Event:
         # fields, with the payload as a dict, so that it goes through
         # __post_init__ again (validation and the read-only copy).
         values = [getattr(self, f.name) for f in dataclasses.fields(self)]
-        values[-1] = dict(self.payload)
+        values[-1] = _plain(self.payload)
         return (Event, tuple(values))
 
 
@@ -365,10 +370,24 @@ def _check_payload(event_type: str, spec: EventSpec, payload: object) -> Mapping
         if unknown:
             problems.append(f"unknown payload keys: {', '.join(unknown)}")
         raise ValueError(f"{event_type}: {'; '.join(problems)}")
-    for key, check in spec.payload.items():
-        check(event_type, key, payload[key])
     # In the order of the catalog, so the JSON does not depend on the caller.
-    return MappingProxyType({key: payload[key] for key in spec.payload})
+    return MappingProxyType(
+        {key: check(event_type, key, payload[key]) for key, check in spec.payload.items()}
+    )
+
+
+def _plain(value: object) -> object:
+    """A payload value as plain JSON types: tuples as lists, mappings as dicts.
+
+    The payload keeps containers immutable (a tuple, a read-only mapping), but
+    neither ``json`` nor ``pickle`` handles a ``mappingproxy``. Scalars are
+    returned as they are, so a payload without containers is unchanged.
+    """
+    if isinstance(value, Mapping):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, tuple | list):
+        return [_plain(v) for v in value]
+    return value
 
 
 class EventSink(Protocol):
@@ -532,7 +551,7 @@ def to_json(event: Event) -> str:
     the shortest repr of the float, which reads back to the same bits.
     """
     data = {name: getattr(event, name) for name in _ENVELOPE}
-    data["payload"] = dict(event.payload)
+    data["payload"] = _plain(event.payload)
     return json.dumps(data, ensure_ascii=False, allow_nan=False)
 
 
