@@ -152,6 +152,19 @@ def band_context_mass(
     return mass / mass.sum()
 
 
+def reason_band_mass(
+    profiles: ClinicalProfiles, arrival_profile: ArrivalProfile
+) -> NDArray[np.float64]:
+    """Share of the patients of a year with each reason and age band, of shape (17, 4).
+
+    It is ``sum over contexts of mass(band, context) * p(reason | band,
+    context)``: the weight of each component of the mixture of severities.
+    Its sum over the bands is ``global_reason_shares``; it adds up to 1.
+    """
+    p = probabilities(reason_weight_table(profiles), axis=0)
+    return np.einsum("mbfds,bfds->mb", p, band_context_mass(profiles, arrival_profile))
+
+
 def _global_shares(base: NDArray, factors: NDArray, mass: NDArray) -> NDArray[np.float64]:
     """Global mix of the reasons: the mix of each band and context weighted by ``mass``."""
     p = probabilities(base[:, None, None, None, None] * factors, axis=0)
