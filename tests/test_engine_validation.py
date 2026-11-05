@@ -178,6 +178,8 @@ def test_estancia_total_a_mano():
     assert total_stay(DRAWS) == 5 + 20 + 60 + 10
     # Sin pruebas no cuentan la respuesta ni la reevaluación, aunque se sorteen.
     assert total_stay(dataclasses.replace(DRAWS, needs_tests=False)) == 25
+    # Un nivel 1 se clasifica en la puerta: su triaje sorteado no cuenta (tarea 4.1).
+    assert total_stay(dataclasses.replace(DRAWS, level=1)) == 20 + 60 + 10
 
 
 def test_centro_infinito(center):
@@ -443,6 +445,18 @@ def test_carga_por_pool_a_mano():
     # Al principio nadie ha terminado el triaje: ni boxes ni médicos.
     assert load["boxes"][4] == load["medicos"][4] == 0.0
     assert load["enfermeria_triaje"][4] == pytest.approx(0.1 * 4, rel=1e-12)
+
+
+def test_carga_por_pool_del_nivel_1_sin_enfermera():
+    # El mismo paciente sin pruebas como nivel 1: sin enfermera, box y médico desde la
+    # llegada. Pasada la estancia, m = λ · 20 en médicos, boxes y censo.
+    door = dataclasses.replace(DRAWS, level=1, assessment_time=20.0, needs_tests=False)
+    load = offered_load_by_pool(flat_profile(daily_base=144), [door], horizon=100)
+
+    assert load["enfermeria_triaje"][50] == 0.0
+    assert load["medicos"][50] == load["boxes"][50] == load["census"][50]
+    assert load["census"][50] == pytest.approx(0.1 * 20, rel=1e-12)
+    assert load["boxes"][4] == pytest.approx(0.1 * 4, rel=1e-12)  # box desde el minuto 0
 
 
 def test_carga_del_censo_es_la_de_offered_load(center, profile):

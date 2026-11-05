@@ -44,7 +44,12 @@ from edsim.arrivals.validation import ALPHA
 from edsim.checks import ValidationResult, all_of, check_count, interval_result, tolerance_result
 from edsim.engine.analysis import RunAnalysis, analyze_run, hourly_means_by_day, step_curves
 from edsim.engine.center import CenterConfig
-from edsim.engine.clinical import PatientDraws, ProvisionalSampler, lognormal_params
+from edsim.engine.clinical import (
+    PatientDraws,
+    ProvisionalSampler,
+    lognormal_params,
+    triage_duration,
+)
 from edsim.engine.engine import EDResult, Sampler, simulate_ed
 from edsim.engine.events import Event, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
@@ -286,9 +291,10 @@ def infinite_center(center: CenterConfig) -> CenterConfig:
 
 
 def total_stay(draws: PatientDraws) -> float:
-    """Stay of a patient who never waits: triage and assessment and, with tests,
-    their turnaround and the reassessment (the box is kept while they run)."""
-    stay = draws.triage_time + draws.assessment_time
+    """Stay of a patient who never waits: triage (0 for a level 1, classified
+    at the door) and assessment and, with tests, their turnaround and the
+    reassessment (the box is kept while they run)."""
+    stay = triage_duration(draws.level, draws.triage_time) + draws.assessment_time
     if draws.needs_tests:
         stay += draws.test_turnaround + draws.reassessment_time
     return stay
@@ -357,8 +363,8 @@ def _held_intervals(d: PatientDraws) -> dict[str, list[tuple[float, float]]]:
     """Ages, in minutes since the arrival, at which a patient who never waits
     holds each pool. The box is held from the end of the triage to the
     departure; a doctor, during the assessment and, with tests, during the
-    reassessment that follows the results."""
-    triaged = d.triage_time
+    reassessment that follows the results. A level 1 holds no nurse."""
+    triaged = triage_duration(d.level, d.triage_time)
     assessed = triaged + d.assessment_time
     doctor = [(triaged, assessed)]
     if d.needs_tests:
@@ -367,7 +373,7 @@ def _held_intervals(d: PatientDraws) -> dict[str, list[tuple[float, float]]]:
     stay = total_stay(d)
     return {
         "census": [(0.0, stay)],
-        "enfermeria_triaje": [(0.0, triaged)],
+        "enfermeria_triaje": [(0.0, triaged)],  # empty [0, 0) for a level 1
         "medicos": doctor,
         "boxes": [(triaged, stay)],
     }
@@ -413,6 +419,8 @@ def offered_load_by_pool(
         np.add.at(counts, low, 1)
         np.add.at(counts, high, -1)
         occupancy = np.cumsum(counts)[:-1] / len(draws)
+        if not occupancy.size:  # nobody holds the pool, e.g. only levels 1 at the door
+            occupancy = np.zeros(1)
         out[pool] = _convolve_load(profile, occupancy, horizon)
     return out
 
@@ -471,7 +479,7 @@ def _exact_infinite_capacity(run: _Run) -> int:
             continue
         if episode.departure is None:
             continue
-        t = episode.arrival + draws.triage_time
+        t = episode.arrival + triage_duration(draws.level, draws.triage_time)
         t += draws.assessment_time
         if draws.needs_tests:
             t += draws.test_turnaround

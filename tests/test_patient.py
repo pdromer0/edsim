@@ -135,7 +135,7 @@ def test_paciente_con_pruebas(center):
     assert trace(events) == [
         ("patient_arrived", 10.0, {}),
         ("patient_registered", 10.0, {}),
-        ("triage_started", 10.0, {}),
+        ("triage_started", 10.0, {"circuito": "enfermeria"}),
         ("triage_completed", 15.0, {"nivel": 5}),
         ("box_assigned", 15.0, {"box": 1}),
         ("assessment_started", 15.0, {"tipo": "inicial", "pool": "medicos", "box": 1}),
@@ -158,7 +158,7 @@ def test_paciente_sin_pruebas(center):
     assert trace(events) == [
         ("patient_arrived", 10.0, {}),
         ("patient_registered", 10.0, {}),
-        ("triage_started", 10.0, {}),
+        ("triage_started", 10.0, {"circuito": "enfermeria"}),
         ("triage_completed", 15.0, {"nivel": 2}),
         ("box_assigned", 15.0, {"box": 1}),
         ("assessment_started", 15.0, {"tipo": "inicial", "pool": "medicos", "box": 1}),
@@ -246,6 +246,8 @@ def test_cola_de_triaje_fifo(center):
 def test_triaje_fifo_sin_mirar_el_nivel(center):
     # El nivel se sortea al llegar, pero no se conoce hasta el triaje: con una enfermera,
     # tres llegadas en el mismo instante y dos después se triajan por orden de llegada.
+    # Los niveles 2 a 5 siguen en FIFO entre sí; el nivel 1 (EP-000001) se clasifica en
+    # la puerta al llegar, en 10, sin enfermera (tarea 4.1).
     one_nurse = dataclasses.replace(center, triage_nurses=(1, 1, 1))
     levels = [5, 1, 3, 2, 4]
     times = [10.0, 10.0, 10.0, 11.0, 12.0]
@@ -256,8 +258,14 @@ def test_triaje_fifo_sin_mirar_el_nivel(center):
 
     events, run, _ = simulate(one_nurse, patients)
 
-    starts = [(e.episode_id, e.sim_time) for e in events if e.event_type == "triage_started"]
-    assert starts == [(f"EP-{i:06d}", 10.0 + 5 * i) for i in range(5)]
+    starts = {e.episode_id: e.sim_time for e in events if e.event_type == "triage_started"}
+    assert starts == {
+        "EP-000000": 10.0,
+        "EP-000001": 10.0,  # puerta
+        "EP-000002": 15.0,
+        "EP-000003": 20.0,
+        "EP-000004": 25.0,
+    }
     assert_valid(events, one_nurse, run)
 
 
@@ -271,7 +279,7 @@ def test_nada_en_el_instante_del_horizonte(center):
     assert trace(events) == [
         ("patient_arrived", 1435.0, {}),
         ("patient_registered", 1435.0, {}),
-        ("triage_started", 1435.0, {}),
+        ("triage_started", 1435.0, {"circuito": "enfermeria"}),
     ]
     assert run.inside == 1
     assert len(run.episodes) == 1

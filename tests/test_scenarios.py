@@ -49,10 +49,11 @@ def test_tres_boxes_reduce_el_centro(center):
     assert s.center.boxes == 3 and s.center.triage_nurses == (3, 3, 3)
     assert s.center.doctors == center.doctors
     assert s.days == 1
-    assert [a.time for a in s.arrivals] == [0.0, 1.0, 2.0, 10.0, 15.0]
+    # P5 llega en 20 desde la tarea 4.1 (en el hito 3, en 15 con triaje hasta 20).
+    assert [a.time for a in s.arrivals] == [0.0, 1.0, 2.0, 10.0, 20.0]
     assert [a.arrival_id for a in s.arrivals] == list(range(5))
     # El muestreador devuelve los sorteos de cada llegada, por su número.
-    assert s.sampler(ArrivalRecord(4, 15.0)) == THREE_BOXES_PATIENTS[4][1]
+    assert s.sampler(ArrivalRecord(4, 20.0)) == THREE_BOXES_PATIENTS[4][1]
     assert [d.level for _, d in THREE_BOXES_PATIENTS] == [3, 4, 5, 2, 1]
 
 

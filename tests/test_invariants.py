@@ -50,7 +50,7 @@ def journey(
     rows = [
         (t, "patient_arrived", {}),
         (t, "patient_registered", {}),
-        (t, "triage_started", {}),
+        (t, "triage_started", {"circuito": "enfermeria"}),
     ]
     t += 5
     rows += [
@@ -404,7 +404,7 @@ def _out(t: float) -> list[tuple]:
 _PREFIX = [
     (0.0, "patient_arrived", {}),
     (0.0, "patient_registered", {}),
-    (0.0, "triage_started", {}),
+    (0.0, "triage_started", {"circuito": "enfermeria"}),
     (5.0, "triage_completed", {"nivel": 3}),
     _box(5.0),
 ]
@@ -460,7 +460,7 @@ def displacer(td: float, arrival_id: int = L) -> list[Row]:
     rows = [
         (t0, "patient_arrived", {}),
         (t0, "patient_registered", {}),
-        (t0, "triage_started", {}),
+        (t0, "triage_started", {"circuito": "enfermeria"}),
         (td, "triage_completed", {"nivel": 1}),
         _box(td),
         _start(td, "inicial"),
@@ -676,6 +676,38 @@ def test_enfermeras_por_encima_de_la_plantilla(center):
     assert nurses[0].sim_time == 2.0
 
 
+def door_journey(arrival_id: int, t0: float, *, box: int) -> list[Row]:
+    """Un nivel 1 clasificado en la puerta en t0: box y médico al llegar, 20 minutos."""
+    rows = [
+        (t0, "patient_arrived", {}),
+        (t0, "patient_registered", {}),
+        (t0, "triage_started", {"circuito": "puerta"}),
+        (t0, "triage_completed", {"nivel": 1}),
+        (t0, "box_assigned", {"box": box}),
+        (t0, "assessment_started", {"tipo": "inicial", "pool": "medicos", "box": box}),
+        (t0 + 20, "assessment_ended", {"tipo": "inicial", "interrumpida": False}),
+        (t0 + 20, "disposition_decided", {"destino": "ingreso"}),
+        (t0 + 20, "patient_departed", {"destino": "ingreso"}),
+    ]
+    return [(time, arrival_id, event_type, payload) for time, event_type, payload in rows]
+
+
+def test_el_triaje_de_puerta_no_ocupa_enfermera(center):
+    # Una enfermera, triando a A de 0 a 5. L (nivel 1) se clasifica en la puerta en 2:
+    # no cuenta como enfermera. Dos médicos: L 2-22 y A 5-25.
+    wider = dataclasses.replace(center, doctors=(2, 2, 2))
+    events = build(journey(0, 0.0, box=1, tests=False), door_journey(1, 2.0, box=2), staff=(1, 2))
+
+    assert check_invariants(events, wider) == []
+
+
+def test_el_triaje_de_puerta_antes_de_la_plantilla_no_cuenta(center):
+    # Sin staffing_changed de enfermería: un triaje de enfermería lo señala, uno de puerta no.
+    events = build(door_journey(0, 2.0, box=1), staff=None)
+    messages = [v.message for v in violations(events, center, "capacity")]
+    assert not any("enfermeria_triaje" in m for m in messages)
+
+
 def test_dos_valoraciones_caben_con_plantilla_2(center):
     wider = dataclasses.replace(center, doctors=(2, 1, 1))
     events = build(journey(0, 0.0, box=1), journey(1, 10.0, box=2, tests=False), staff=(1, 2))
@@ -783,7 +815,7 @@ def stay_in_box(
     rows = [
         (t0, "patient_arrived", {}),
         (t0, "patient_registered", {}),
-        (t0, "triage_started", {}),
+        (t0, "triage_started", {"circuito": "enfermeria"}),
         (t0 + 5, "triage_completed", {"nivel": level}),
         (box_time, "box_assigned", {"box": box}),
         (start, "assessment_started", {"tipo": "inicial", "pool": "medicos", "box": box}),

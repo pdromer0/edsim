@@ -123,6 +123,13 @@ def _spec(source_system: str, patient: bool = True, **payload: Check) -> EventSp
     return EventSpec(source_system, patient, MappingProxyType(payload))
 
 
+DOOR = "puerta"
+"""``circuito`` of a triage done at the door: a level 1, without a nurse and
+with duration 0 (ADR candidate 39, docs/specs/hito-4.md)."""
+
+NURSE = "enfermeria"
+"""``circuito`` of a triage done by a triage nurse: every level but 1."""
+
 _TIPO = _choice("inicial", "reevaluacion")
 _BOX = _int_range(1)
 _DESTINO = _choice("alta", "ingreso")
@@ -131,7 +138,7 @@ CATALOG: Mapping[str, EventSpec] = MappingProxyType(
     {
         "patient_arrived": _spec("admision"),
         "patient_registered": _spec("admision"),
-        "triage_started": _spec("triaje"),
+        "triage_started": _spec("triaje", circuito=_choice(DOOR, NURSE)),
         "triage_completed": _spec("triaje", nivel=_int_range(1, 5)),
         "box_assigned": _spec("his", box=_BOX),
         "patient_displaced": _spec("his", box=_BOX, desalojado_por=_episode),
@@ -150,7 +157,8 @@ CATALOG: Mapping[str, EventSpec] = MappingProxyType(
         ),
     }
 )
-"""Event types of milestone 3, in the order of the specification."""
+"""Event types of milestone 3, in the order of the specification, with the
+``circuito`` of ``triage_started`` of task 4.1."""
 
 
 def _check_arrival_id(arrival_id: object) -> int:
@@ -547,7 +555,25 @@ def from_json(line: str) -> Event:
         if unknown:
             problems.append(f"unknown keys: {', '.join(unknown)}")
         raise ValueError(f"envelope: {'; '.join(problems)}")
-    return Event(**data)
+    return Event(**_upgrade(data))
+
+
+def _upgrade(data: dict) -> dict:
+    """Fill in what logs written before task 4.1 do not have.
+
+    Their ``triage_started`` has no ``circuito``: every triage went through a
+    nurse then, so the value is ``NURSE``. Only reading tolerates it;
+    ``EventLog.emit`` and ``Event`` still require the key. The version stays
+    1 (docs/specs/hito-4.md, task 4.1).
+    """
+    payload = data["payload"]
+    if (
+        data["event_type"] == "triage_started"
+        and isinstance(payload, dict)
+        and "circuito" not in payload
+    ):
+        data = {**data, "payload": {**payload, "circuito": NURSE}}
+    return data
 
 
 def read_events(path: str | Path) -> Iterator[Event]:

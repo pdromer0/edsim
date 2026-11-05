@@ -17,7 +17,7 @@ def patient(number, arrival, door, stay, *, level=2, displacements=0, admitted=F
     """Build milestone events; displacement events test folding, not invariants."""
     rows = [
         (arrival, number, "patient_arrived", {}),
-        (arrival, number, "triage_started", {}),
+        (arrival, number, "triage_started", {"circuito": "enfermeria"}),
         (arrival, number, "triage_completed", {"nivel": level}),
         (arrival, number, "box_assigned", {"box": 1}),
         (

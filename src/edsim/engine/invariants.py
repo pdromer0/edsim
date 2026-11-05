@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.engine.center import CenterConfig
-from edsim.engine.events import Event
+from edsim.engine.events import DOOR, Event
 from edsim.engine.ground_truth import GroundTruth
 
 
@@ -332,6 +332,9 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
       More busy than the staff after a staff goes down is not a violation:
       nobody is interrupted, the reservations wait for them to finish. Only
       a start is checked.
+
+      A triage with ``circuito`` ``DOOR`` (a level 1 classified at the door)
+      uses no nurse, so neither it nor its ``triage_completed`` counts.
     """
     name = "capacity"
     center = context.center
@@ -341,6 +344,7 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
     out: list[Violation] = []
     occupant: dict[int, str] = {}
     box_of: dict[str, int] = {}
+    at_the_door: set[str] = set()
 
     def start(e: Event, pool: _StaffPool) -> None:
         if pool.staff is None and not pool.unstaffed_reported:
@@ -385,8 +389,12 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                         )
                     )
                 pool.staff = e.payload["nueva"]
+            case "triage_started" if e.payload["circuito"] == DOOR:
+                at_the_door.add(episode)
             case "triage_started":
                 start(e, nurses)
+            case "triage_completed" if episode in at_the_door:
+                at_the_door.discard(episode)
             case "triage_completed":
                 nurses.busy -= 1
             case "assessment_started":

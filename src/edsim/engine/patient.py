@@ -7,9 +7,10 @@ instant, and that is where each transition emits its event, with
 
 The resources are held in different stretches of the stay: the triage nurse
 during the triage, the box from ``box_assigned`` to ``patient_departed``, and
-a doctor only during each assessment. While the tests are pending, the patient
-keeps the box and frees the doctor; that is why the box is usually the
-bottleneck.
+a doctor only during each assessment. A level 1 is classified at the door,
+without a nurse and in the instant it arrives (docs/specs/hito-4.md). While
+the tests are pending, the patient keeps the box and frees the doctor; that is
+why the box is usually the bottleneck.
 
 Boxes and doctors go by ``priority_key`` = (level, arrival). A level 1 can
 displace a patient of a higher level from its box: the displaced patient gets
@@ -31,8 +32,8 @@ from functools import partial
 import simpy
 from simpy.resources.resource import Preempted
 
-from edsim.engine.clinical import PatientDraws
-from edsim.engine.events import EventLog, episode_id
+from edsim.engine.clinical import PatientDraws, classified_at_the_door
+from edsim.engine.events import DOOR, NURSE, EventLog, episode_id
 from edsim.engine.resources import (
     TRIAGE_PRIORITY,
     Holder,
@@ -110,12 +111,18 @@ def patient(
     emit("patient_arrived", env.now)
     emit("patient_registered", env.now)
 
-    # The same priority for every patient: FIFO (see TRIAGE_PRIORITY).
-    with pools.nurses.request(priority=TRIAGE_PRIORITY) as nurse:
-        yield nurse
-        emit("triage_started", env.now)
-        yield env.timeout(draws.triage_time)
+    if classified_at_the_door(draws.level):
+        # Classified at the door (ADR candidate 39): no nurse and no triage time;
+        # the drawn triage_time is not used. Same events, in the same instant.
+        emit("triage_started", env.now, circuito=DOOR)
         emit("triage_completed", env.now, nivel=draws.level)
+    else:
+        # The same priority for every patient: FIFO (see TRIAGE_PRIORITY).
+        with pools.nurses.request(priority=TRIAGE_PRIORITY) as nurse:
+            yield nurse
+            emit("triage_started", env.now, circuito=NURSE)
+            yield env.timeout(draws.triage_time)
+            emit("triage_completed", env.now, nivel=draws.level)
 
     holder = Holder(me, arrival_id, draws.level)
     stay = _Stay(Stage.INITIAL, draws.assessment_time)

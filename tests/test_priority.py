@@ -142,7 +142,8 @@ def test_no_se_traspasa_un_box_libre():
 # ocupan los tres boxes; P4 (nivel 2) espera; P5 (nivel 1) desaloja a P3 en plena
 # valoración. P4 recibe el box antes que P3, y P3 reanuda con el tiempo que le faltaba.
 # P1 box 1 de 5 a 65; P2 box 2 de 6 a 66; P3 box 3 en 7, valoración 7-47; P4 espera box
-# desde 15; P5 termina el triaje en 20.
+# desde 15; P5 llega en 20 y se clasifica en la puerta (tarea 4.1). En el hito 3 llegaba
+# en 15 y terminaba el triaje en 20: los instantes desde el 20 son los mismos.
 
 
 @pytest.fixture(scope="module")
@@ -155,11 +156,15 @@ def three_boxes_run(center):
 
 
 def test_tres_boxes_desalojo_en_plena_valoracion(three_boxes_run):
-    # En 20 los tres boxes tienen nivel > 1: P5 echa al de clave mayor, P3 (5, 2), que
-    # lleva 13 de sus 40 minutos. Primero el desalojado, luego la concesión.
+    # P5 llega en 20 y se clasifica en la puerta, sin enfermera y en el mismo instante.
+    # Los tres boxes tienen nivel > 1: P5 echa al de clave mayor, P3 (5, 2), que lleva 13
+    # de sus 40 minutos. Primero el desalojado, luego la concesión.
     events, _, _ = three_boxes_run
 
     assert at(events, 20.0) == [
+        ("EP-000004", "patient_arrived", {}),
+        ("EP-000004", "patient_registered", {}),
+        ("EP-000004", "triage_started", {"circuito": "puerta"}),
         ("EP-000004", "triage_completed", {"nivel": 1}),
         ("EP-000002", "assessment_ended", ended("inicial", cut=True)),
         ("EP-000002", "patient_displaced", {"box": 3, "desalojado_por": "EP-000004"}),
@@ -189,7 +194,7 @@ def test_tres_boxes_p3_reanuda_con_lo_que_le_faltaba(three_boxes_run):
     assert trace(events, 2) == [
         ("patient_arrived", 2.0, {}),
         ("patient_registered", 2.0, {}),
-        ("triage_started", 2.0, {}),
+        ("triage_started", 2.0, {"circuito": "enfermeria"}),
         ("triage_completed", 7.0, {"nivel": 5}),
         ("box_assigned", 7.0, {"box": 3}),
         ("assessment_started", 7.0, started("inicial", 3)),
@@ -216,13 +221,14 @@ def test_tres_boxes_p3_reanuda_con_lo_que_le_faltaba(three_boxes_run):
 
 
 def test_desalojo_durante_las_pruebas(center):
-    # Un box. A valorado de 5 a 25 pide pruebas (resultado en 85). L (nivel 1) lo
-    # desaloja en 30 y sale en 90. El resultado llega en 85, con A esperando box; al
-    # recuperarlo en 90 pasa directo a la reevaluación (90-100).
+    # Un box. A valorado de 5 a 25 pide pruebas (resultado en 85). L (nivel 1) llega en
+    # 30, se clasifica en la puerta y lo desaloja en 30; sale en 90. El resultado llega
+    # en 85, con A esperando box; al recuperarlo en 90 pasa directo a la reevaluación
+    # (90-100).
     one_box = dataclasses.replace(center, boxes=1)
     patients = [
         (0.0, draws(3, 5, 20, needs_tests=True)),
-        (25.0, draws(1, 5, 60)),
+        (30.0, draws(1, 5, 60)),
     ]
 
     events, run = simulate(one_box, patients)
@@ -245,14 +251,14 @@ def test_desalojo_durante_las_pruebas(center):
 
 def test_desalojo_esperando_medico(center):
     # Dos boxes y un médico. B (nivel 4) se valora de 5 a 45. A (nivel 5) tiene el box 2
-    # en 6 y espera médico. L (nivel 1) termina el triaje en 10 y echa a A, la clave
+    # en 6 y espera médico. L (nivel 1) llega en 10, se clasifica en la puerta y echa a A, la clave
     # mayor: A cancela su petición de médico sin valorarse. En 45, el médico va a L
     # (45-75) y el box 1 de B a A, que espera médico hasta 75 y se valora de 75 a 95.
     small = dataclasses.replace(center, boxes=2, doctors=(1, 1, 1))
     patients = [
         (0.0, draws(4, 5, 40)),
         (1.0, draws(5, 5, 20)),
-        (5.0, draws(1, 5, 30)),
+        (10.0, draws(1, 5, 30)),
     ]
 
     events, run = simulate(small, patients)
@@ -274,14 +280,14 @@ def test_desalojo_esperando_medico(center):
 
 
 def test_dos_desalojos_del_mismo_paciente(center):
-    # Un box. A (nivel 3) se valora desde 5 (40 minutos). L1 lo echa en 12 (faltan 33)
-    # y sale en 32; A vuelve en 32 y L2 lo echa en 40 (faltan 25); L2 sale en 60 y A
-    # termina en 85.
+    # Un box. A (nivel 3) se valora desde 5 (40 minutos). L1 llega en 12 y lo echa (faltan
+    # 33) y sale en 32; A vuelve en 32 y L2, que llega en 40, lo echa (faltan 25); L2 sale
+    # en 60 y A termina en 85. Los niveles 1 se clasifican en la puerta.
     one_box = dataclasses.replace(center, boxes=1)
     patients = [
         (0.0, draws(3, 5, 40)),
-        (7.0, draws(1, 5, 20)),
-        (35.0, draws(1, 5, 20)),
+        (12.0, draws(1, 5, 20)),
+        (40.0, draws(1, 5, 20)),
     ]
 
     events, run = simulate(one_box, patients)
@@ -305,8 +311,14 @@ def test_dos_desalojos_del_mismo_paciente(center):
 
 
 def test_un_nivel_1_no_desaloja_a_otro(center):
-    # Un box. L1b llega en 1, termina el triaje en 3 y ocupa el box hasta 33. L1a llegó
-    # antes (0) pero termina el triaje en 10: su clave es menor, y aun así espera.
+    # Un box. L1a llega en 0, se clasifica en la puerta y ocupa el box hasta 20. L1b llega
+    # en 1 y espera el box sin desalojar a otro nivel 1; lo recibe en 20.
+    #
+    # En el hito 3 el caso era más fuerte: L1a llegaba antes que L1b pero terminaba el
+    # triaje después, y esperaba aunque su clave era menor. Con la clasificación en la
+    # puerta (tarea 4.1) los niveles 1 piden box en orden de llegada y ese caso ya no
+    # ocurre en el motor; should_displace lo sigue cubriendo en
+    # test_solo_el_nivel_1_desaloja_y_solo_a_niveles_mayores.
     one_box = dataclasses.replace(center, boxes=1)
     patients = [
         (0.0, draws(1, 10, 20)),
@@ -316,8 +328,8 @@ def test_un_nivel_1_no_desaloja_a_otro(center):
     events, run = simulate(one_box, patients)
 
     assert not any(e.event_type == "patient_displaced" for e in events)
-    assert trace(events, 1)[4][:2] == ("box_assigned", 3.0)
-    assert trace(events, 0)[4][:2] == ("box_assigned", 33.0)
+    assert trace(events, 0)[4][:2] == ("box_assigned", 0.0)
+    assert trace(events, 1)[4][:2] == ("box_assigned", 20.0)
     assert_valid(events, one_box, run)
 
 

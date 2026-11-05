@@ -42,7 +42,7 @@ import numpy as np
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.center import N_LEVELS, CenterConfig
-from edsim.engine.events import Event
+from edsim.engine.events import DOOR, Event
 from edsim.engine.shifts import MINUTES_PER_HOUR, shift_at
 from edsim.queueing.analysis import sample_step, step_time_average
 from edsim.queueing.mm1 import time_in_window
@@ -247,6 +247,13 @@ _DELTAS: dict[str, dict[str, int]] = {
     "patient_departed": {"census": -1, "boxes_busy": -1},
 }
 
+# A triage at the door (a level 1) leaves the triage queue and joins the box
+# queue, but takes no nurse.
+_DOOR_DELTAS: dict[str, dict[str, int]] = {
+    "triage_started": {"waiting_triage": -1},
+    "triage_completed": {"waiting_box": 1},
+}
+
 _STAFF_CURVE = {"enfermeria_triaje": "nurses_staff", "medicos": "doctors_staff"}
 
 CURVES = (
@@ -337,11 +344,18 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
     index = {name: i for i, name in enumerate(CURVES)}
     times = [0.0]  # the instants, with 0 so that every curve starts there
     changes: list[tuple[int, int, int]] = []  # (position in times, curve, delta)
+    at_the_door: set[str] = set()
     for e in events:
         if e.event_type == "staffing_changed":
             change = {
                 _STAFF_CURVE[e.payload["recurso"]]: e.payload["nueva"] - e.payload["anterior"]
             }
+        elif e.event_type == "triage_started" and e.payload["circuito"] == DOOR:
+            at_the_door.add(e.episode_id)
+            change = _DOOR_DELTAS["triage_started"]
+        elif e.event_type == "triage_completed" and e.episode_id in at_the_door:
+            at_the_door.discard(e.episode_id)
+            change = _DOOR_DELTAS["triage_completed"]
         else:
             change = _DELTAS.get(e.event_type)
             if change is None:
@@ -647,7 +661,8 @@ class UtilizationIdentity:
 def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tuple[float, float]]]:
     """The service intervals of each pool, in the order they end.
 
-    - Triage nurses: ``triage_started`` to ``triage_completed``.
+    - Triage nurses: ``triage_started`` to ``triage_completed``, except the
+      triages at the door, which take no nurse.
     - Doctors: ``assessment_started`` to ``assessment_ended``.
     - Boxes: ``box_assigned`` to ``patient_departed`` or ``patient_displaced``.
 
@@ -659,6 +674,8 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
     open_since: dict[tuple[str, str], float] = {}
     for e in events:
         episode, kind = e.episode_id, e.event_type
+        if kind == "triage_started" and e.payload["circuito"] == DOOR:
+            continue  # its triage_completed then finds nothing open
         if kind in opening:
             open_since[(opening[kind], episode)] = e.sim_time
         elif kind == "box_assigned":

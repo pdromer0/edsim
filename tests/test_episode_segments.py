@@ -33,7 +33,7 @@ def trace_events(trace):
 INTERRUPTED = (
     ("patient_arrived", 0, {}),
     ("patient_registered", 0, {}),
-    ("triage_started", 2, {}),
+    ("triage_started", 2, {"circuito": "enfermeria"}),
     ("triage_completed", 5, {"nivel": 3}),
     ("box_assigned", 8, {"box": 1}),
     ("assessment_started", 10, {"tipo": "inicial", "pool": "medicos", "box": 1}),
@@ -48,7 +48,7 @@ INTERRUPTED = (
 
 TESTS_IN_QUEUE = (
     ("patient_arrived", 0, {}),
-    ("triage_started", 0, {}),
+    ("triage_started", 0, {"circuito": "enfermeria"}),
     ("triage_completed", 5, {"nivel": 3}),
     ("box_assigned", 5, {"box": 1}),
     ("assessment_started", 5, {"tipo": "inicial", "pool": "medicos", "box": 1}),

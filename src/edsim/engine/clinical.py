@@ -93,6 +93,21 @@ def cumulative_shares(shares: Sequence[float]) -> tuple[float, ...]:
     return tuple(float(x) for x in cum)
 
 
+def classified_at_the_door(level: int) -> bool:
+    """Whether a patient of this assigned level skips the triage nurse.
+
+    A level 1 is classified at the door and goes straight to a box (ADR
+    candidate 39): its triage lasts 0 and its drawn ``triage_time`` is not used,
+    like the turnaround of a patient without tests.
+    """
+    return level == 1
+
+
+def triage_duration(level: int, triage_time: float) -> float:
+    """Minutes of triage the patient actually spends: 0 at the door."""
+    return 0.0 if classified_at_the_door(level) else triage_time
+
+
 @dataclass(frozen=True, slots=True)
 class PatientDraws:
     """What a patient draws on arrival; the hidden truth of the episode.
@@ -101,7 +116,8 @@ class PatientDraws:
 
     Attributes:
         level: Triage level, 1 (most urgent) to 5.
-        triage_time: Duration of the triage, in minutes.
+        triage_time: Duration of the triage, in minutes; drawn always, not
+            used by a level 1 (see ``classified_at_the_door``).
         assessment_time: Duration of the first assessment.
         reassessment_time: Duration of the reassessment, used only if the
             patient has tests.

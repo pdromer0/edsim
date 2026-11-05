@@ -30,9 +30,10 @@ DAYS = 3
 # Huella SHA-256 de eventos.jsonl con el centro y el perfil de ejemplo, semilla 2026
 # y 3 días. Se regenera a propósito cuando cambia el orden de servicio, explicando el
 # cambio en el commit; nunca para que un test pase. Regenerada en la tarea 3.4
-# (médicos por prioridad y 3 desalojos) y en la 3.5 (turnos: 14 staffing_changed y
-# menos plantilla de noche).
-FINGERPRINT = "452f7d08345d19c6e0ee9b290fe185044d182dbb27b9105d67fde6913b820800"
+# (médicos por prioridad y 3 desalojos), en la 3.5 (turnos: 14 staffing_changed y
+# menos plantilla de noche) y en la 4.1 (nivel 1 en la puerta y circuito en
+# triage_started; el ground truth no cambia).
+FINGERPRINT = "7032351637aedb05f72ffebf37831d3a706dc9f78f24a86e58682b5b479be2cc"
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +86,8 @@ def expected_trace(truth: EpisodeTruth, t0: float) -> list[tuple[str, float]]:
     """
     t = t0
     trace = [("patient_arrived", t), ("patient_registered", t), ("triage_started", t)]
-    t += truth.triage_time
+    if truth.level != 1:  # un nivel 1 se clasifica en la puerta: triaje de duración 0
+        t += truth.triage_time
     trace += [("triage_completed", t), ("box_assigned", t), ("assessment_started", t)]
     t += truth.assessment_time
     trace.append(("assessment_ended", t))
@@ -115,6 +117,8 @@ def test_capacidad_infinita_sin_esperas(center, profile):
         assert actual == expected[: len(actual)], truth.episode_id
         departed += actual[-1][0] == "patient_departed"
     assert departed > 0.9 * len(result.ground_truth.episodes)
+    # No es vacío para la puerta: la ejecución tiene niveles 1.
+    assert any(truth.level == 1 for truth in result.ground_truth.episodes)
 
 
 # --- Reproducibilidad ----------------------------------------------------------------
