@@ -17,8 +17,9 @@ arrive in the stretch and depart count, the same rule as ``window_metrics``
 """
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
 
@@ -144,6 +145,14 @@ class Compliance:
         return (self.n > 0).sum(axis=0)
 
     @property
+    def pooled_within(self) -> np.ndarray:
+        """Share within the maximum of all the episodes of each level in the
+        stretch, shape ``(5,)``; ``nan`` for a level without patients."""
+        counts = np.rint(np.where(self.n > 0, self.within, 0) * self.n)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return counts.sum(axis=0) / self.n.sum(axis=0)
+
+    @property
     def share_out(self) -> np.ndarray:
         """Share of the days with patients of each level that are out of target;
         ``nan`` for a level without patients in the stretch."""
@@ -203,6 +212,55 @@ def manchester_compliance(
     return Compliance(
         measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
     )
+
+
+# --- Clocks by level ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LevelClocks:
+    """Median and 90th percentile of the three clocks of one level.
+
+    Attributes:
+        level: Triage level, 1 to 5.
+        n: Episodes that arrived in the stretch and departed.
+        median: Median of each name of ``CLOCKS``; ``None`` if ``n`` is 0.
+        p90: 90th percentile, with linear interpolation (``numpy.percentile``,
+            as ``LevelMetrics``); ``None`` if ``n`` is 0.
+    """
+
+    level: int
+    n: int
+    median: Mapping[str, float | None]
+    p90: Mapping[str, float | None]
+
+
+def clock_quantiles(
+    table: Sequence[EpisodeRecord], first_day: int, end_day: int
+) -> tuple[LevelClocks, ...]:
+    """Median and p90 of the clocks A, B and C by level, in days ``[first_day, end_day)``.
+
+    The level 1 is reported with these alone: its maximum is 0, so a share of
+    compliance would always be 0 % (docs/specs/hito-4.md).
+
+    Raises:
+        ValueError: If the days are not valid.
+    """
+    first_day, end_day = _check_days(first_day, end_day)
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    out = []
+    for level in range(1, N_LEVELS + 1):
+        episodes = [e for e in done if e.level == level]
+        median: dict[str, float | None] = {}
+        p90: dict[str, float | None] = {}
+        for name in CLOCKS:
+            values = np.array([getattr(e, name) for e in episodes], dtype=float)
+            median[name] = float(np.median(values)) if values.size else None
+            p90[name] = float(np.percentile(values, 90)) if values.size else None
+        out.append(
+            LevelClocks(level, len(episodes), MappingProxyType(median), MappingProxyType(p90))
+        )
+    return tuple(out)
 
 
 # --- Pretriage ---------------------------------------------------------------------------

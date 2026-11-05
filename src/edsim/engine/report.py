@@ -33,6 +33,16 @@ from edsim.engine.analysis import SHIFTS, LevelMetrics, RunAnalysis, StepCurves,
 from edsim.engine.center import CenterConfig
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
+from edsim.engine.targets import (
+    CLOCKS,
+    COMPLIANCE_TARGET,
+    PRETRIAGE_LONG_WAIT,
+    PRETRIAGE_MAX_WAIT,
+    PRETRIAGE_TARGET,
+    clock_quantiles,
+    manchester_compliance,
+    pretriage,
+)
 from edsim.engine.validation import (
     HOURS,
     LITTLE_TOLERANCE,
@@ -128,6 +138,14 @@ POOL_LABELS = {
 SHIFT_LABELS = {"morning": "mañana", "afternoon": "tarde", "night": "noche"}
 LITTLE_LABELS = {"system": "sistema", "triage_queue": "cola de triaje", "box_queue": "cola de box"}
 
+CLOCK_LABELS = {
+    "door_to_doctor": "A llegada",
+    "triage_start_to_doctor": "B triaje",
+    "classified_to_doctor": "C clasif.",
+}
+"""Short labels of the three clocks in the summary of the CLI. The app keeps
+``SUMMARY_MEASURES`` until task 4.8b."""
+
 MAX_VIOLATIONS_SHOWN = 10
 
 _LEVEL_WIDTH = 7
@@ -140,6 +158,65 @@ def _level_row(label: str, m: LevelMetrics) -> str:
         mean, p90 = m.mean[name], m.p90[name]
         cells.append("—" if mean is None else f"{mean:.1f} / {p90:.1f}")
     return f"{label:<{_LEVEL_WIDTH}}{m.n:>6}" + "".join(f"{c:>{_CELL_WIDTH}}" for c in cells)
+
+
+_CLOCK_LABEL_WIDTH = 13
+
+
+def _share(value: float) -> str:
+    return f"{100 * value:.1f} %"
+
+
+def _clock_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
+    """Median / p90 of the three clocks by level, with the Manchester compliance (C)."""
+    clocks = clock_quantiles(table, first_day, end_day)
+    compliance = manchester_compliance(table, first_day, end_day)
+    lines = [
+        "Relojes hasta el médico por nivel, en minutos (mediana / p90)",
+        "A desde la llegada, B desde el inicio del triaje, C desde la clasificación",
+        f"Cumplimiento Manchester con C (días fuera: menos del {100 * COMPLIANCE_TARGET:.0f} %"
+        " dentro del máximo); el nivel 1, solo con su tiempo",
+        f"{'':<{_CLOCK_LABEL_WIDTH}}{'n':>6}"
+        + "".join(f"{CLOCK_LABELS[name]:>{_CELL_WIDTH}}" for name in CLOCKS)
+        + f"{'máx.':>7}{'cumple C':>11}{'días fuera C':>14}",
+    ]
+    for c in clocks:
+        k = c.level - 1
+        cells = [
+            "—" if c.median[name] is None else f"{c.median[name]:.1f} / {c.p90[name]:.1f}"
+            for name in CLOCKS
+        ]
+        if c.level == 1 or not c.n:
+            within = out = "—"
+        else:
+            within = _share(compliance.pooled_within[k])
+            out = f"{compliance.out[:, k].sum()} de {compliance.days_with_patients[k]}"
+        lines.append(
+            f"{f'nivel {c.level}':<{_CLOCK_LABEL_WIDTH}}{c.n:>6}"
+            + "".join(f"{cell:>{_CELL_WIDTH}}" for cell in cells)
+            + f"{compliance.max_wait[k]:>7.0f}{within:>11}{out:>14}"
+        )
+    return lines
+
+
+def _pretriage_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
+    """The pretriage by level, 2 to 5, and all of them, with the days out."""
+    p = pretriage(table, first_day, end_day)
+    lines = [
+        f"Pretriaje (de la llegada al inicio del triaje), sin el nivel 1: ≤ {PRETRIAGE_MAX_WAIT:g}"
+        f" min (objetivo {100 * PRETRIAGE_TARGET:.0f} %) y > {PRETRIAGE_LONG_WAIT:g} min",
+        f"{'':<{_CLOCK_LABEL_WIDTH}}{'n':>6}"
+        f"{f'≤ {PRETRIAGE_MAX_WAIT:g} min':>11}{f'> {PRETRIAGE_LONG_WAIT:g} min':>11}"
+        f"{'días fuera':>14}",
+    ]
+    for g, group in enumerate(p.groups):
+        label = "niveles 2-5" if group is None else f"nivel {group}"
+        n = p.pooled_n[g]
+        within = _share(p.pooled_within[g]) if n else "—"
+        over = _share(p.pooled_over[g]) if n else "—"
+        out = f"{p.out[:, g].sum()} de {p.days_with_patients[g]}" if n else "—"
+        lines.append(f"{label:<{_CLOCK_LABEL_WIDTH}}{n:>6}{within:>11}{over:>11}{out:>14}")
+    return lines
 
 
 def _violation_lines(violations: Sequence[Violation]) -> list[str]:
@@ -165,6 +242,9 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
       window and depart: their number and the mean / p90 of the triage, box
       and doctor waits, door to doctor and the stay, in minutes. A level
       without episodes shows ``—``.
+    - The three clocks to the doctor by level (median / p90) and the
+      Manchester compliance with clock C; the level 1 only with its times.
+    - The pretriage by level, 2 to 5, against its standard.
     - Occupancy of each pool in each shift: busy over the staff in force.
     - Little's law for the system and the triage and box queues.
     - The invariants: 0 violations, or how many by check and the first ten.
@@ -190,6 +270,10 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
     ]
     lines += [_level_row(str(lv.level), lv) for lv in m.by_level]
     lines.append(_level_row("total", m.overall))
+
+    first_day, end_day = int(m.start // MINUTES_PER_DAY), int(m.end // MINUTES_PER_DAY)
+    lines += ["", *_clock_lines(table, first_day, end_day)]
+    lines += ["", *_pretriage_lines(table, first_day, end_day)]
 
     lines += [
         "",

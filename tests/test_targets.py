@@ -14,6 +14,7 @@ from edsim.engine.targets import (
     PRETRIAGE_LONG_WAIT,
     PRETRIAGE_MAX_WAIT,
     PRETRIAGE_TARGET,
+    clock_quantiles,
     daily_waits,
     manchester_compliance,
     pretriage,
@@ -227,3 +228,38 @@ def test_pretriaje_con_otras_normas():
 def test_pretriaje_argumentos(kwargs):
     with pytest.raises(ValueError):
         pretriage(pretriage_table(), 0, 2, **kwargs)
+
+
+# --- Relojes por nivel ------------------------------------------------------------------
+
+
+def test_mediana_y_p90_de_los_tres_relojes():
+    # Nivel 3: A = 10, 20, 30 y 40 con pretriaje 2 y triaje 5 (B = A − 2, C = A − 7).
+    # Mediana de A 25 y p90 37 (interpolación lineal: 30 + 0,7 · 10). Un nivel 1 en la
+    # puerta (A = B = C = 1). El que sigue dentro no cuenta.
+    table = [record(i, 10 * i, 3, 10.0 * (i + 1), pretriage=2.0, triage=5.0) for i in range(4)]
+    table += [record(9, 100, 1, 1.0), record(10, 200, 3, 99.0, departed=False)]
+
+    by_level = clock_quantiles(table, 0, 1)
+
+    assert [c.level for c in by_level] == [1, 2, 3, 4, 5]
+    three = by_level[2]
+    assert three.n == 4
+    assert three.median == {
+        "door_to_doctor": 25.0,
+        "triage_start_to_doctor": 23.0,
+        "classified_to_doctor": 18.0,
+    }
+    assert three.p90["door_to_doctor"] == pytest.approx(37.0)
+    assert three.p90["classified_to_doctor"] == pytest.approx(30.0)
+    assert by_level[0].n == 1 and by_level[0].median["classified_to_doctor"] == 1.0
+    assert by_level[1].n == 0 and by_level[1].median["door_to_doctor"] is None
+
+
+def test_cumplimiento_acumulado_en_el_tramo():
+    # Nivel 3: día 0 con 9 de 10 dentro, día 1 con 8 de 10: 17 de 20.
+    table = [record(i, 10 + i, 3, 70.0 if i == 0 else 20.0) for i in range(10)]
+    table += [record(10 + i, DAY + 10 + i, 3, 70.0 if i < 2 else 20.0) for i in range(10)]
+    c = manchester_compliance(table, 0, 2)
+    assert c.pooled_within[2] == pytest.approx(17 / 20)
+    assert np.isnan(c.pooled_within[0])
