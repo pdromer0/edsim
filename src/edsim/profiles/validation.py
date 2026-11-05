@@ -1,12 +1,20 @@
 """Statistical checks of the mix of age bands and reasons, without the engine.
 
 For each context, the sampler draws many patients at one time of that context,
-and the frequency of each category (4 bands and 17 reasons, the reasons
-marginal over the bands) is compared with its exact probability from the
-profiles, with a chi-square test of one degree of freedom. The reasons are
-tested one by one, and not with a single chi-square of 16 degrees of freedom,
-so that a failure names the category and the power of each test can be
-stated as «a share p0 that becomes p1».
+and the frequency of each category is compared with its exact probability
+from the profiles, with a chi-square test of one degree of freedom. There are
+89 categories per context:
+
+- the 4 age bands;
+- the 17 reasons, marginal over the bands;
+- the 17 reasons within each band (68), among the patients of that band: the
+  reason must be drawn with the patient's own band. A sampler that drew the
+  reason with another band would keep the marginal mix and fail only here.
+
+Each category is tested on its own, and not with one chi-square of many
+degrees of freedom, so that a failure names the category and the power of
+each test can be stated as «a share p0 that becomes p1». The tests within a
+band are conditional on the number of patients drawn in it.
 
 All tests use ``ALPHA = 0.01`` split with Bonferroni among the contexts and
 the categories, so that a correct sampler fails the whole check 1 % of the
@@ -36,8 +44,8 @@ from edsim.seeds import child_streams
 ALPHA = 0.01
 """Level of the whole check: a correct sampler fails it 1 % of the times."""
 
-N_CATEGORIES = N_BANDS + len(REASON_KEYS)
-"""Categories tested in each context: 4 bands and 17 reasons."""
+N_CATEGORIES = N_BANDS + len(REASON_KEYS) + N_BANDS * len(REASON_KEYS)
+"""Categories tested in each context: 4 bands, 17 reasons and 17 reasons in each band."""
 
 MIN_EXPECTED = 5
 """Fewest expected patients in a category, in and out of it, for the chi-square."""
@@ -70,6 +78,19 @@ def detectable_share(p0: float, n: int, alpha: float, power: float = POWER) -> f
         return stats.norm.sf((limit - (p1 - p0)) / np.sqrt(p1 * (1 - p1) / n)) - power
 
     return float(optimize.brentq(gap, p0 + 1e-12, 1 - 1e-12))
+
+
+def detection_power(p0: float, p1: float, n: int, alpha: float) -> float:
+    """Power of a two-sided test of level ``alpha`` against a share ``p1`` instead of ``p0``.
+
+    Uses the same normal approximation as ``detectable_share``, counting both
+    tails: the probability that ``k/n`` falls outside the acceptance region of
+    ``p0`` when the true share is ``p1``.
+    """
+    z = stats.norm.ppf(1 - alpha / 2)
+    limit = z * np.sqrt(p0 * (1 - p0) / n)
+    sd = np.sqrt(p1 * (1 - p1) / n)
+    return float(stats.norm.sf((p0 + limit - p1) / sd) + stats.norm.cdf((p0 - limit - p1) / sd))
 
 
 def _category(name: str, observed: int, n: int, p: float, alpha: float) -> ValidationResult:
@@ -110,7 +131,7 @@ def check_mixing(
 
     Each context draws ``patients`` patients at ``context_time``, with its own
     child of ``seed``, and compares the count of each category with its exact
-    probability. Each test has level ``ALPHA / (contexts * 21)``.
+    probability. Each test has level ``ALPHA / (contexts * 89)``.
 
     Args:
         profiles: The profiles that give the hypothesis.
@@ -123,8 +144,9 @@ def check_mixing(
 
     Returns:
         A result with one detail per context, each with one detail per
-        category. Its statistic is the number of failing contexts and its
-        p-value, the smallest of all.
+        category: ``banda_80_99``, ``disnea`` and ``banda_80_99/disnea``.
+        Its statistic is the number of failing contexts and its p-value, the
+        smallest of all.
 
     Raises:
         ValueError: If ``patients`` is too small for some category to have
@@ -144,19 +166,35 @@ def check_mixing(
         )
         arrival = _Arrival(context_time(start_date, profiles.shift_band_starts, ctx))
         draws = [sampler(arrival) for _ in range(patients)]
-        bands = np.bincount([d.person.band for d in draws], minlength=N_BANDS)
-        reasons = np.bincount(
-            [REASON_KEYS.index(d.reason) for d in draws], minlength=len(REASON_KEYS)
+        joint = np.zeros((N_BANDS, len(REASON_KEYS)), dtype=np.int64)
+        np.add.at(
+            joint, ([d.person.band for d in draws], [REASON_KEYS.index(d.reason) for d in draws]), 1
         )
+        bands, reasons = joint.sum(axis=1), joint.sum(axis=0)
 
         p_band = band_probabilities(profiles.population, ctx)
-        p_reason = sum(p_band[b] * reason_probabilities(profiles, ctx, b) for b in range(N_BANDS))
-        tests = tuple(
-            _category(_band_name(profiles, b), int(bands[b]), patients, float(p_band[b]), alpha)
-            for b in range(N_BANDS)
-        ) + tuple(
-            _category(key, int(reasons[i]), patients, float(p_reason[i]), alpha)
-            for i, key in enumerate(REASON_KEYS)
+        p_within = [reason_probabilities(profiles, ctx, b) for b in range(N_BANDS)]
+        p_reason = sum(p_band[b] * p_within[b] for b in range(N_BANDS))
+        tests = (
+            tuple(
+                _category(_band_name(profiles, b), int(bands[b]), patients, float(p_band[b]), alpha)
+                for b in range(N_BANDS)
+            )
+            + tuple(
+                _category(key, int(reasons[i]), patients, float(p_reason[i]), alpha)
+                for i, key in enumerate(REASON_KEYS)
+            )
+            + tuple(
+                _category(
+                    f"{_band_name(profiles, b)}/{key}",
+                    int(joint[b, i]),
+                    int(bands[b]),
+                    float(p_within[b][i]),
+                    alpha,
+                )
+                for b in range(N_BANDS)
+                for i, key in enumerate(REASON_KEYS)
+            )
         )
         worst = min(t.p_value for t in tests)
         details.append(
