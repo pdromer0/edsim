@@ -138,6 +138,9 @@ def test_comprobaciones_registradas():
         "capacity",
         "nobody_jumps_the_queue",
         "displacement",
+        "door",
+        "schema_version",
+        "clinical",
     ]
 
 
@@ -455,12 +458,12 @@ DISPLACED_STAYS = {
 
 
 def displacer(td: float, arrival_id: int = L) -> list[Row]:
-    """El nivel 1: triaje de td-5 a td, box 1 en td, valoración de 20 y salida."""
-    t0 = td - 5
+    """El nivel 1: llega en td y se clasifica en la puerta, box 1 en td, valoración de 20
+    y salida. Desde la tarea 4.1 un nivel 1 no pasa por la enfermera (invariante door)."""
     rows = [
-        (t0, "patient_arrived", {}),
-        (t0, "patient_registered", {}),
-        (t0, "triage_started", {"circuito": "enfermeria"}),
+        (td, "patient_arrived", {}),
+        (td, "patient_registered", {}),
+        (td, "triage_started", {"circuito": "puerta"}),
         (td, "triage_completed", {"nivel": 1}),
         _box(td),
         _start(td, "inicial"),
@@ -1018,11 +1021,20 @@ def test_el_nivel_1_recibe_el_box_en_otro_instante(one_box):
     assert "12" in late.message
 
 
+_ARRIVAL_AND_TRIAGE = (
+    "patient_arrived",
+    "patient_registered",
+    "triage_started",
+    "triage_completed",
+)
+
+
 def test_el_nivel_1_no_recibe_el_box(one_box):
     rows = [
         r
         for r in displaced_stay("valoracion")
-        if not (r[1] == L and r[0] >= 12 and r[2] != "triage_completed")
+        # L se queda en su llegada y su triaje de puerta (en 12): nunca recibe el box.
+        if not (r[1] == L and r[0] >= 12 and r[2] not in _ARRIVAL_AND_TRIAGE)
     ]
 
     found = violations(build(rows), one_box, "displacement")
@@ -1058,3 +1070,218 @@ def test_nivel_1_esperando_con_todos_los_boxes_de_nivel_1(roomy):
     events = build(stay_in_box(0, 0.0, 1, 5.0, 1), stay_in_box(9, 5.0, 1, 25.0, 1))
 
     assert violations(events, one_box, "displacement") == []
+
+
+# --- Puerta, versión única y verdad clínica (tarea 4.5a) ------------------------------
+
+
+def door_triage(arrival_id: int, t0: float, *, level: int = 1, delay: float = 0.0) -> list[Row]:
+    """Llegada y triaje de puerta (sin enfermera), con el nivel y el retraso dados."""
+    rows = [
+        (t0, "patient_arrived", {}),
+        (t0, "patient_registered", {}),
+        (t0 + delay, "triage_started", {"circuito": "puerta"}),
+        (t0 + delay, "triage_completed", {"nivel": level}),
+    ]
+    return [(time, arrival_id, event_type, payload) for time, event_type, payload in rows]
+
+
+def with_level(rows: list[Row], level: int) -> list[Row]:
+    return [
+        (t, a, name, {"nivel": level} if name == "triage_completed" else payload)
+        for t, a, name, payload in rows
+    ]
+
+
+def test_puerta_valida(center):
+    assert violations(build(door_triage(0, 10.0)), center, "door") == []
+
+
+def test_puerta_con_nivel_2(center):
+    (v,) = violations(build(door_triage(0, 10.0, level=2)), center, "door")
+    assert "at the door with nivel 2" in v.message and v.episode_id == "EP-000000"
+
+
+def test_nivel_1_por_enfermeria(center):
+    (v,) = violations(build(with_level(journey(0, 0.0), 1)), center, "door")
+    assert "level 1 triaged by a nurse" in v.message
+
+
+def test_puerta_en_otro_instante_que_la_llegada(center):
+    found = violations(build(door_triage(0, 10.0, delay=2.0)), center, "door")
+    assert [v.message.split(" at the door")[0] for v in found] == [
+        "triage_started",
+        "triage_completed",
+    ]
+
+
+def test_enfermeria_que_empieza_en_la_llegada_es_valida(center):
+    # Con una enfermera libre, el triaje de enfermería empieza en el instante de la
+    # llegada: no es un triaje de puerta y no es una violación.
+    events = build(journey(0, 0.0))
+    arrived, _, started = events[2:5]
+    assert started.payload["circuito"] == "enfermeria" and started.sim_time == arrived.sim_time
+    assert violations(events, center, "door") == []
+
+
+def test_versiones_mezcladas(center):
+    events = two_patients()
+    last = events[-1]
+    mixed = [*events[:-1], dataclasses.replace(last, schema_version=2)]
+
+    assert violations(events, center, "schema_version") == []
+    (v,) = violations(mixed, center, "schema_version")
+    assert v.event_id == last.event_id
+    assert "schema_version 2 in a log of version 1" in v.message
+
+
+def test_log_vacio_sin_version(center):
+    assert violations([], center, "schema_version") == []
+
+
+# La verdad clínica: un log de la versión 2 del motor con dos pacientes a mano, uno con
+# analítica y radiografía de mañana (la radiografía alterada) y otro sin ronda.
+
+
+@pytest.fixture(scope="module")
+def clinical_run():
+    from clinical_factory import clinical_log, example_profiles, hand_patient, ordered_of
+
+    from edsim.arrivals.thinning import DayRecord
+    from edsim.engine.engine import run_engine
+
+    profiles = example_profiles()
+    patients = [
+        hand_patient(
+            profiles,
+            level=3,
+            reason="dolor_abdominal",
+            age=70,
+            ambulance=True,
+            ordered=ordered_of("analitica", "radiografia"),
+            abnormal=(False, True, False, False),
+        ),
+        hand_patient(profiles, level=1, reason="parada", age=88, female=False),
+    ]
+    arrivals = [ArrivalRecord(0, 600.0), ArrivalRecord(1, 610.0)]
+    log, sink = clinical_log()
+    run = run_engine(load_center(EXAMPLE), arrivals, lambda a: patients[a.arrival_id], log, 1)
+    day = DayRecord(
+        day=0, date=START, day_effect=1.0, expected=2.0, bound=1.0, candidates=2, accepted=2
+    )
+    return sink.events, GroundTruth(episodes=run.episodes, days=(day,)), profiles
+
+
+def clinical_violations(events, ground_truth=None, profiles=None):
+    return violations(
+        events, load_center(EXAMPLE), "clinical", ground_truth=ground_truth, profiles=profiles
+    )
+
+
+def replaced(events, event_type, episode="EP-000000", **changes):
+    """El log con un evento cambiado: el primero de ese tipo y episodio."""
+    i = next(
+        k for k, e in enumerate(events) if e.event_type == event_type and e.episode_id == episode
+    )
+    return [*events[:i], dataclasses.replace(events[i], **changes), *events[i + 1 :]]
+
+
+def test_log_clinico_valido(clinical_run):
+    events, ground_truth, profiles = clinical_run
+    assert {e.schema_version for e in events} == {2}
+    assert [e.event_type for e in events].count("test_resulted") == 1
+    assert (
+        check_invariants(events, load_center(EXAMPLE), ground_truth=ground_truth, profiles=profiles)
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload", "key"),
+    [
+        ("patient_arrived", {"medio": "propios_medios"}, "medio"),
+        ("patient_registered", {"edad": 71, "sexo": "mujer"}, "edad"),
+        ("patient_registered", {"edad": 70, "sexo": "hombre"}, "sexo"),
+        ("triage_completed", {"nivel": 2, "motivo": "dolor_abdominal"}, "nivel"),
+        ("triage_completed", {"nivel": 3, "motivo": "digestivo"}, "motivo"),
+        ("test_ordered", {"pruebas": ["analitica"]}, "pruebas"),
+    ],
+)
+def test_cada_campo_clinico_contra_la_verdad(clinical_run, event_type, payload, key):
+    events, ground_truth, profiles = clinical_run
+    broken = replaced(events, event_type, payload=payload)
+
+    found = clinical_violations(broken, ground_truth, profiles)
+    assert any(v.message.startswith(f"{key} ") for v in found), found
+    assert clinical_violations(events, ground_truth, profiles) == []
+
+
+def test_resultados_contra_la_verdad(clinical_run):
+    events, ground_truth, profiles = clinical_run
+    broken = replaced(
+        events,
+        "test_resulted",
+        payload={"resultados": {"analitica": "normal", "radiografia": "normal"}},
+    )
+
+    (v,) = clinical_violations(broken, ground_truth, profiles)
+    assert v.message.startswith("resultados ") and "in the truth" in v.message
+
+
+def test_resultados_distintos_de_las_pruebas_sin_verdad(clinical_run):
+    # Del log solo: el resultado lleva los tipos del pedido del episodio.
+    events, _, _ = clinical_run
+    broken = replaced(events, "test_resulted", payload={"resultados": {"analitica": "normal"}})
+
+    assert clinical_violations(events) == []
+    (v,) = clinical_violations(broken)
+    assert "but the tests ordered were ['analitica', 'radiografia']" in v.message
+
+
+@pytest.mark.parametrize(("shift", "fails"), [(1e-6, True), (1e-10, False)])
+def test_respuesta_con_tolerancia(clinical_run, shift, fails):
+    # Pedido a las 10:20 (mañana): la ronda dura la radiografía o la analítica con
+    # factor 1, la más lenta; un desvío de 1e-6 min es una violación, uno de 1e-10 no.
+    events, ground_truth, profiles = clinical_run
+    resulted = next(e for e in events if e.event_type == "test_resulted")
+    broken = replaced(events, "test_resulted", sim_time=resulted.sim_time + shift)
+
+    found = clinical_violations(broken, ground_truth, profiles)
+    assert bool(found) is fails
+    if fails:
+        assert "with the shift band of the order" in found[0].message
+
+
+def test_sin_perfiles_no_se_comprueba_la_respuesta(clinical_run):
+    events, ground_truth, profiles = clinical_run
+    resulted = next(e for e in events if e.event_type == "test_resulted")
+    broken = replaced(events, "test_resulted", sim_time=resulted.sim_time + 1.0)
+
+    assert clinical_violations(broken, ground_truth) == []
+    assert clinical_violations(broken, ground_truth, profiles) != []
+
+
+def test_log_clinico_con_verdad_provisional(clinical_run):
+    events, ground_truth, _ = clinical_run
+    provisional = GroundTruth(
+        episodes=tuple(
+            dataclasses.replace(e, clinical=None, test_turnaround=60.0)
+            for e in ground_truth.episodes
+        ),
+        days=ground_truth.days,
+    )
+
+    (v,) = clinical_violations(events, provisional)
+    assert v.message == "a log of version 2 with a provisional ground truth"
+
+
+def test_log_provisional_con_verdad_clinica(clinical_run):
+    _, ground_truth, _ = clinical_run
+    events = build(journey(0, 600.0), journey(1, 610.0, box=2, tests=False))
+
+    (v,) = clinical_violations(events, ground_truth)
+    assert v.message == "a log of version 1 with a clinical ground truth"
+
+
+def test_un_log_provisional_no_tiene_comprobacion_clinica(center):
+    assert clinical_violations(two_patients(), truth((0, 0.0), (1, 30.0))) == []

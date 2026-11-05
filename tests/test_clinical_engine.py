@@ -23,6 +23,7 @@ from edsim.engine.clinical_sampler import ClinicalSampler
 from edsim.engine.engine import N_CLINICAL_STREAMS, run_engine, simulate_ed
 from edsim.engine.events import CATALOG_V2, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
+from edsim.engine.invariants import check_invariants
 from edsim.engine.report import RunParameters, write_episodes_csv
 from edsim.profiles.config import load_profiles
 from edsim.profiles.context import context_indices
@@ -379,3 +380,56 @@ def test_el_csv_clinico_no_existe_todavia(clinical, tmp_path):
     with pytest.raises(NotImplementedError, match="4.5b"):
         write_episodes_csv(result.ground_truth.episodes, path, PARAMETERS)
     assert not path.exists()
+
+
+# --- Invariantes -----------------------------------------------------------------------
+
+CONFIG = Path(__file__).resolve().parents[1] / "config"
+
+
+@pytest.mark.parametrize(
+    ("folder", "center_file", "arrivals_file", "profiles_file"),
+    [
+        (CONFIG, "centro.toml", "llegadas.toml", "perfiles.toml"),
+        (DATA, "centro_ejemplo.toml", "llegadas_ejemplo.toml", "perfiles_ejemplo.toml"),
+    ],
+    ids=["config", "tests-data"],
+)
+def test_invariantes_sin_violaciones_con_el_clinico(
+    folder, center_file, arrivals_file, profiles_file
+):
+    # 14 días con 2 de calentamiento: ninguna invariante violada, con el ground truth,
+    # los procesos vivos y los perfiles (la respuesta de cada ronda con su franja).
+    center = load_center(folder / center_file)
+    profiles = load_profiles(folder / profiles_file)
+    sink = MemorySink()
+    result = simulate_ed(
+        center,
+        load_profile(folder / arrivals_file),
+        14,
+        SEED,
+        sink=sink,
+        warmup_days=2,
+        profiles=profiles,
+    )
+
+    assert (
+        check_invariants(
+            sink.events,
+            center,
+            ground_truth=result.ground_truth,
+            inside=result.inside,
+            profiles=profiles,
+        )
+        == []
+    )
+    # Guardas: hay triajes de puerta, rondas y resultados que comprobar.
+    types = [e.event_type for e in sink.events]
+    assert types.count("test_resulted") > 1000
+    assert (
+        sum(
+            e.event_type == "triage_started" and e.payload["circuito"] == "puerta"
+            for e in sink.events
+        )
+        >= 10
+    )
