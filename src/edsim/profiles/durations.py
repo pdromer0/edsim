@@ -174,12 +174,15 @@ class DurationModel:
         return np.array([r.duration_factor for r in self.profiles.reasons])
 
     def params(self, which: str, k: ArrayLike | None = None):
-        """``mu`` of shape (17, 5) and ``sigma`` of shape (5,) for each reason and level."""
+        """``mu`` and ``sigma`` of shape (17, 5), for each reason and true level.
+
+        Both come from ``duration_params`` with the reason's k, the function of
+        the sampler: the exact values never assume how k acts on the lognormal.
+        """
         pairs = getattr(self.profiles.durations, _FIELDS[which])
         k = self._k() if k is None else np.asarray(k, dtype=float)
-        mu = np.array([[duration_params(*pair, f)[0] for pair in pairs] for f in k])
-        sigma = np.array([duration_params(*pair)[1] for pair in pairs])
-        return mu, sigma
+        params = np.array([[duration_params(*pair, f) for pair in pairs] for f in k])
+        return params[..., 0], params[..., 1]
 
     def _means(self, which: str, k=None) -> NDArray[np.float64]:
         mu, sigma = self.params(which, k)

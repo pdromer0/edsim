@@ -161,6 +161,19 @@ def test_tipos_e_inmutable(example):
 # --- Valores exactos -----------------------------------------------------------
 
 
+@pytest.mark.parametrize("which", [ASSESSMENT, REASSESSMENT])
+def test_lo_exacto_usa_los_parametros_del_muestreador(example, model, which):
+    # Cada (motivo, nivel real) del modelo exacto tiene la μ y la σ que usa el
+    # muestreador (duration_params con su k): lo exacto no da por hecho cómo
+    # actúa k. Lo añadió la versión incorrecta V4 de la tarea 4.4, que se veía en
+    # los p90 porque σ se tomaba sin k.
+    mu, sigma = model.params(which)
+    pairs = getattr(example.durations, "assessment" if which == ASSESSMENT else "reassessment")
+    for i, r in enumerate(example.reasons):
+        for n, pair in enumerate(pairs):
+            assert (mu[i, n], sigma[i, n]) == duration_params(*pair, r.duration_factor)
+
+
 def test_reparto_de_motivo_y_nivel(example, model):
     # Sus filas suman el reparto de motivos del año; sus columnas, el real.
     arrivals = load_profile(ARRIVALS)
