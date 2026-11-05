@@ -107,9 +107,9 @@ Un factor solo se escribe si hay una razón clínica, que va en un comentario al
 
 Cada paciente tiene una gravedad real G que el hospital nunca ve; la enfermera clasifica G + ε, y los cinco niveles son cuatro umbrales sobre esa escala (decisión candidata 38).
 
-**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia, la mezcla de un año del perfil de llegadas: 0 es la gravedad media de un adulto. Más G es más grave. Los valores por motivo son orientativos, respetan el orden de la columna «Gravedad típica» del catálogo (un test lo comprueba) y se desplazan y escalan en común para que la mezcla tenga media 0 y desviación 1: x′ = (x + 0,104) / 1,065 (por_edad y desviación solo se dividen), con media 0,0014 y desviación 1,0002 al redondear. Un desplazamiento y una escala comunes no cambian ningún nivel, porque los umbrales se mueven con ellos.
+**Gravedad** (flujo 7, una normal z por paciente): `G = media_motivo + por_edad[b] + desviacion_motivo × z`. G se mide en desviaciones típicas de la población de referencia, la mezcla de un año del perfil de llegadas: 0 es la gravedad media de un adulto. Más G es más grave. Los valores por motivo son orientativos, respetan el orden de la columna «Gravedad típica» del catálogo (un test lo comprueba) y se desplazan y escalan en común para que la mezcla tenga media 0 y desviación 1: x′ = (x + 0,104) / 1,065 (por\_edad y desviación solo se dividen), con media 0,0014 y desviación 1,0002 al redondear. Un desplazamiento y una escala comunes no cambian ningún nivel, porque los umbrales se mueven con ellos.
 
-| Motivo | Gravedad típica (catálogo) | media | desviación | por_edad (15–44, 45–64, 65–79, 80–99) | G media del año | Razón clínica (orientativa) |
+| Motivo | Gravedad típica (catálogo) | media | desviación | por\_edad (15–44, 45–64, 65–79, 80–99) | G media del año | Razón clínica (orientativa) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Parada / crítico | Muy alta | 3,38 | 0,38 | — | 3,38 | Compromiso vital a cualquier edad (3,5 y 0,4 antes de la transformación) |
 | Disnea | Media–alta | 0,94 | 0,85 | −0,38 / 0 / 0,19 / 0,38 | 1,07 | Asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores |
@@ -133,13 +133,13 @@ Los «Variable» tienen más desviación que la mediana de los 17 motivos (0,75)
 
 **Límite conocido: no todas las paradas van a la puerta.** El catálogo da un 0,5 % de paradas y el objetivo de nivel 1 asignado es un 0,4 %, así que, aunque el nivel 1 fuera solo de paradas, una de cada cinco no cabría en él. Con los valores de la tabla, el 62,4 % de las paradas tiene nivel real 1 y el 53,1 % recibe nivel 1 asignado y va a la puerta (unas 292 de 550 al año); las demás reciben nivel 2 y hacen cola en el triaje. El 74,1 % de los niveles 1 reales son paradas; el resto, sobre todo disnea (12,2 %) y neurológico (9,5 %). Con la parada en 2,94 y 0,47 (la primera versión de la tarea 4.3), solo el 34,5 % iba a la puerta. Subir más la parada no resuelve el límite: los umbrales se derivan para el 0,4 %, y c₁ sube con ella.
 
-**Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales. El nivel k es el intervalo (c_k, c_{k−1}]: un valor justo en un umbral se queda en el nivel menos urgente.
+**Triaje** (flujo 1, una normal zₑ por paciente): `ε = sesgo + ruido × zₑ`. El nivel asignado es G + ε cortada por los umbrales c₁ > c₂ > c₃ > c₄ (nivel 1 si supera c₁, nivel 5 si queda por debajo de c₄). El nivel real es G cortada por los mismos umbrales. El nivel k es el intervalo (c\_k, c\_{k−1}\]: un valor justo en un umbral se queda en el nivel menos urgente.
 
 **Umbrales derivados y escritos.** Los umbrales se calculan para que el reparto *asignado*, sobre la mezcla de G + ε de un año del perfil de llegadas, sea el objetivo del TOML (adultos de Emergencias 2013: 0,4 / 12,1 / 33,6 / 52,6 / 1,4 %, que suman 100,1 por el redondeo y se normalizan). El cálculo es exacto: una raíz por umbral sobre una suma de normales, una por motivo y banda de edad. Como los pesos base, `thresholds_for(...)` se ejecuta una vez y su resultado se escribe en el TOML con el comando en un comentario; un test comprueba que los escritos siguen siendo los derivados. **No se recalculan al cargar los perfiles**: un escenario con más gravedad (un brote de gripe, un accidente con múltiples víctimas) debe dar más niveles urgentes, y si los umbrales se recalcularan el reparto volvería al objetivo y el shock desaparecería. Con la disnea ×1,5 y los umbrales del perfil base, el nivel 2 asignado pasa del 12,09 % al 13,10 %. El reparto objetivo se cumple por construcción solo en el perfil base. Como el ruido ensancha la distribución observada, el reparto real es más estrecho que el asignado: el ruido «inventa» niveles 1 y 5.
 
 **Calibración del error.** Con G normal estándar y el reparto de adultos, un ruido de 0,32 y un sesgo de −0,08 dan un 10,2 % de infratriaje y un 6,2 % de sobretriaje, cerca del dato más reciente, de Asturias (10,1 % y 6,3 %). Un ruido simétrico sin sesgo daría más sobretriaje que infratriaje. Con esos valores, el 31 % de los niveles 1 reales se asigna como 2 y el 17 % de los niveles 5 reales sube a 4: los errores se concentran en los niveles raros, de franjas estrechas.
 
-| Nivel real \\ asignado (%) | 1 | 2 | 3 | 4 | 5 |
+| Nivel real \\ asignado (%), G normal estándar | 1 | 2 | 3 | 4 | 5 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 69,1 | 30,9 | 0 | 0 | 0 |
 | 2 | 1,3 | 76,5 | 22,2 | 0 | 0 |
@@ -159,7 +159,7 @@ Valores exactos, por integración, con G normal estándar. La versión anterior 
 | 4 | 0 | 0 | 7,7 | 90,6 | 1,7 |
 | 5 | 0 | 0 | 0 | 19,5 | 80,5 |
 
-Umbrales [3,260; 1,140; −0,044; −2,163]; reparto real 0,42 / 12,46 / 35,81 / 50,65 / 0,65 % frente al asignado 0,40 / 12,09 / 33,55 / 52,56 / 1,40 %.
+Umbrales \[3,260; 1,140; −0,044; −2,163\]; reparto real 0,42 / 12,46 / 35,81 / 50,65 / 0,65 % frente al asignado 0,40 / 12,09 / 33,55 / 52,56 / 1,40 %.
 
 **Asignado frente a real.** La prioridad de box y médico usa el nivel asignado, que es lo que sabe el hospital. Las duraciones y las pruebas usan la gravedad real, porque el médico atiende al paciente que tiene delante. Así, un 2 infratriado como 4 espera como un 4 pero necesita lo que necesita un 2: es el mecanismo que hace peligroso el infratriaje.
 
@@ -793,3 +793,81 @@ Población: `reparto_edad = [38, 22, 22, 18]` (calibrado en el total de ≥65), 
 - Para la 4.3: el esquema crece con `gravedad` por motivo y con `[triaje]`. Los pesos base no cambian, porque la gravedad no altera el motivo.
 - Para la 4.5: `person_from_draws` recalcula los pesos de banda en cada paciente (unos 120 µs por paciente). Sobra con 300 pacientes al día, pero conviene precalcularlos, como los de motivo, si las réplicas crecen.
 - Para la 4.5: las categorías dentro de una banda se condicionan a los pacientes que salieron en ella, que son aleatorios. Con 20.000 pacientes el menor esperado es 7,1; con muchos menos, el error de `MIN_EXPECTED` dependería del sorteo.
+
+### Tarea 4.3: gravedad latente y triaje
+
+**Qué se hizo**
+
+PR #42 (rama `feat/h4-triaje`), fusionado por Pedro con *squash and merge*: siete commits del plan y dos de la revisión del PR, por la gravedad de la parada. No toca el motor: el muestreador de gravedad y triaje se une a `PersonReasonSampler` en el `ClinicalSampler` de la tarea 4.5.
+
+- **Esquema.** Cada motivo lleva `gravedad = { media, por_edad, desviacion }` (`por_edad` es opcional). `[triaje]` tiene `reparto_objetivo` (suma 100 ± 0,5 y se normaliza), `infratriaje`, `sobretriaje`, `ruido`, `sesgo` y `umbrales`.
+- **`severity.py`, todo exacto.** `SeverityMixture` agrupa 68 componentes (motivo × banda), con los pesos de un año de `reason_band_mass` y los momentos en forma cerrada. Contiene `assigned_shares` y `real_shares` (sumas de Φ); `thresholds_for` (una raíz por umbral); `triage_matrix` (Gauss-Legendre de 96 nodos, comprobada contra `quad` a 1e-11); `triage_error_for` (`scipy.optimize.root`, 1 s); y las funciones puras `severity_from_draw`, `triage_from_draws` y `triage_quality`.
+- **Muestreo.** `SeverityTriageSampler`, con los flujos 7 y 1, devuelve `SeverityAndTriage` (z, G, nivel asignado y real, calidad y salto).
+- **Validación.** `check_triage` sortea un año (109.542 pacientes, unos 10 s) y prueba 30 categorías: el reparto asignado y las 25 casillas de la matriz. Usa el χ² o, con menos de 5 esperados, la binomial exacta, con Bonferroni a 0,01/30.
+- **Configuración.** La tabla de gravedad (en «Gravedad latente y triaje»); el ruido (0,333) y el sesgo (−0,081), calibrados; los umbrales \[3,260; 1,140; −0,044; −2,163\], derivados.
+- **Especificación.** Umbrales derivados y escritos, valores exactos con G normal estándar y con la mezcla real, tabla de gravedad y límite de las paradas.
+- 1.911 tests en la suite completa (7 min 12 s); 1.891 rápidos; 241 de la app, sin cambios.
+
+**Conceptos**
+
+- **Una mezcla de normales se calcula exacta.** El reparto es una suma de Φ, cada umbral una raíz y la matriz una integral en una dimensión por componente. Lo exacto es la hipótesis de las pruebas estadísticas.
+- **Una simulación no es un valor exacto.** La tabla de la especificación salía de un millón de pacientes, y la fila del nivel 1 (unos 3400) tenía 0,8 puntos de error de muestreo.
+- **La escala de G.** Un desplazamiento y una escala comunes no cambian ningún nivel, porque los umbrales se mueven con ellos, pero fijan la unidad del ruido y de los odds ratios de la 4.4.
+- **Derivar y escribir frente a recalcular.** Lo que se recalcula al cargar absorbe los shocks: con los umbrales escritos, la disnea ×1,5 sube el nivel 2 asignado del 12,09 % al 13,10 %; recalculados, volvería al 12,09 %.
+- **Dos parámetros, dos objetivos.** El ruido sube los dos errores y el sesgo los reparte entre infratriaje y sobretriaje: el problema es identificable.
+- **El χ² es una aproximación; la binomial, exacta.** Con menos de 5 esperados se usa la binomial, que vale con cualquier número y detecta pacientes donde el modelo casi no permite ninguno.
+- **Un borde de medida cero solo lo ve un test a mano** (V8).
+
+**Decisiones**
+
+- Los umbrales se derivan una vez y se escriben; no se recalculan al cargar (cambia el texto de la decisión 38).
+- El reparto objetivo guarda el dato publicado (suma 100,1) y el código lo normaliza, con una tolerancia de ±0,5.
+- Los tests usan los valores exactos (10,16 % de infratriaje, 6,21 % de sobretriaje, 30,92 % de niveles 1 reales asignados como 2), y la especificación se corrigió. Los objetivos de calibración siguen siendo los de Asturias (10,1 % y 6,3 %).
+- Las casillas con menos de 5 esperados usan la binomial exacta; las 30 categorías entran en Bonferroni.
+- Convención del corte: el nivel k es (c\_k, c\_{k−1}\]; un valor justo en un umbral se queda en el nivel menos urgente.
+- La calidad del triaje va en español, como `circuito`, y el salto es |asignado − real|.
+- Parada con media 3,5 y desviación 0,4 (antes de la transformación), tras la revisión del PR: con 2,94 y 0,47, el 65 % de las paradas hacía cola en el triaje.
+
+**Resultados**
+
+| Comprobación | Valor |
+| --- | --- |
+| Calibración con la mezcla real | Ruido 0,333 y sesgo −0,081; con los escritos, 10,10 % de infratriaje y 6,28 % de sobretriaje |
+| Reparto real frente al asignado | 0,42 / 12,46 / 35,81 / 50,65 / 0,65 % frente a 0,40 / 12,09 / 33,55 / 52,56 / 1,40 %: el ruido inventa sobre todo niveles 5 |
+| Paradas (2,94 / 0,47 → 3,5 / 0,4) | Nivel real 1: 37,6 → 62,4 %; a la puerta: 34,5 → 53,1 % (unas 292 de 550 al año) |
+| Nivel real 1 por motivo | Parada 74,1 %, disnea 12,2 %, neurológico 9,5 % (antes 49,7 / 23,9 / 16,5 %) |
+| Mayores de 80 frente a 15–44 | G media 0,43 frente a −0,29; nivel 2 asignado 22,2 % frente a 5,7 %; infratriaje 11,5 % frente a 9,1 % |
+| Shock (disnea ×1,5) | Nivel 2 asignado del 12,09 % al 13,10 % |
+| Potencia de `check_triage` en un año (80 %) | Asignado 1: 0,40 → 0,49 %; real 1 → asignado 2: 0,113 → 0,164 %; real 3 → asignado 2: 2,14 → 2,35 % |
+| Detección | Ruido 0,40 frente a 0,333: la casilla real 3 → asignado 2 sube del 2,14 al 2,80 %, con una potencia del 99,4 % con 20.000 pacientes. Ruido 1,5: falla la casilla binomial real 3 → asignado 1 |
+| Tiempos | `triage_error_for` 1 s; matriz en milisegundos; `check_triage` 10 s en un año y 3 s con 20.000 |
+
+**Comprobación con versiones incorrectas** (temporales; primera versión del PR)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Umbrales sobre G | Fallan la reproducción, el asignado con los recalculados y «escritos = recalculados»; pasan `check_triage` y el shock | Exacta: 10 fallos |
+| V2. Nivel real con G + ε | Fallan el borde a mano, números comunes y `check_triage` | 7 fallos: también «detecta un salto imposible», escrito después del plan |
+| V3. Sesgo con el signo invertido | Fallan el borde a mano y `check_triage` | Exacta: 3 fallos |
+| V4. Umbrales recalculados al cargar | Fallan el shock y los valores literales; pasa «escritos = recalculados» | 6 fallos: más otro de literales, la potencia escrita y un reparto degenerado que deja de cargar |
+| V5. Un solo flujo para G y ε | Fallan el consumo fijo y `check_triage` | Exacta: 3 fallos |
+| V6. Mezcla sin la edad | Fallan «escritos = recalculados», el asignado con los escritos y `check_triage` | 12 fallos: más los que comparan con valores exactos medidos |
+| V7. Infra y sobre intercambiados | Fallan la calidad a mano, la reproducción y la calibración | 11 fallos: más la definición a mano, la desigualdad sin sesgo y el sesgo, que sale positivo |
+| V8. `<` en lugar de `<=` en el corte | Solo los bordes a mano | Exacta: 6 fallos |
+
+Ninguna predicción de fallo quedó sin cumplirse; las sorpresas fueron fallos de más, todos explicados.
+
+**Lecciones aprendidas**
+
+- **Los ajustes de la aprobación se perdían en el diálogo.** En Claude Code, «Yes, and use auto mode» aprueba sin texto; el texto va con «No, keep planning». Por eso se perdieron en la 4.1, la 4.2 y la 4.3. Desde la 4.4: con ajustes, «No, keep planning» y el texto; cuando el plan los recoge, «Yes, and use auto mode».
+- **Saber de dónde sale una cifra antes de probarla con una tolerancia estrecha.** La tabla de la especificación era de Monte Carlo y el agente lo detectó al reproducirla.
+- **Los tests con valores exactos medidos ven cualquier cambio** en la mezcla o en una definición, no solo los que comparan con lo recalculado (fallos de más en V4, V6 y V7).
+- **Un modelo puede pasar todos los tests y ser clínicamente raro.** Las comprobaciones clínicas del PR mostraron que dos de cada tres paradas hacían cola en el triaje.
+- **Recalcular al cargar también rompe perfiles degenerados:** con el reparto \[0, 0, 100, 0, 0\], dos umbrales coinciden y el perfil no carga.
+- **El hook Stop ejecutó los tests con una versión incorrecta aplicada.** Falló el test esperado y no hubo daño, pero las versiones incorrectas deben aplicarse y deshacerse dentro del mismo turno.
+
+**Pendiente**
+
+- Para la 4.4: `duracion` de `[triaje]` (mediana 5 y p90 10 minutos, niveles 2 a 5) entra en el esquema con `[duraciones]` y las pruebas, que usan la gravedad real y el nivel real.
+- Para la 4.5: unir `PersonReasonSampler` y `SeverityTriageSampler` en el `ClinicalSampler`; la prioridad usa el nivel asignado; el ground truth lleva z, G, nivel real, calidad y salto.
+- Para la 4.5 y el notebook 04: medir la espera de las paradas que reciben nivel 2 (el 47 %), el coste del límite conocido.
