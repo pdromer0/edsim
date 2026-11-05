@@ -1,4 +1,9 @@
-"""Waits by day and level, and the days out of the Manchester maximum times.
+"""Waits by day and level, the days out of the Manchester maximum times and the pretriage.
+
+The Manchester compliance is measured with a clock to the doctor, C (from
+the classification) by default; the pretriage, from the arrival to the start
+of the triage, has its own indicator, without the level 1, classified at the
+door (docs/specs/hito-4.md, "Relojes y cumplimiento").
 
 An average over weeks hides the bad days: near saturation the waits grow in a
 non-linear way, so a center with a mean occupancy of 70 % can have a few days
@@ -197,4 +202,161 @@ def manchester_compliance(
     out = (n > 0) & ~(within >= target)
     return Compliance(
         measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
+    )
+
+
+# --- Pretriage ---------------------------------------------------------------------------
+
+PRETRIAGE_MAX_WAIT = 10.0
+"""Maximum minutes from the arrival to the start of the triage: the standard
+"admission to triage in less than 10 minutes" (docs/specs/hito-4.md)."""
+
+PRETRIAGE_TARGET = 0.85
+"""Share of the patients of a day that must start the triage within
+``PRETRIAGE_MAX_WAIT``; a day below it is out of target."""
+
+PRETRIAGE_LONG_WAIT = 5.0
+"""A pretriage above it counts in the TECLA indicator of the SAS (share of
+patients waiting more than 5 minutes to be classified)."""
+
+PRETRIAGE_GROUPS: tuple[int | None, ...] = (2, 3, 4, 5, None)
+"""Columns of ``Pretriage``: levels 2 to 5 and, as ``None``, all of them. A
+level 1 is classified at the door and does not count."""
+
+
+def _check_minutes(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value >= 0:
+        raise ValueError(f"{name} must be a number >= 0, got {value!r}")
+    return float(value)
+
+
+@dataclass(frozen=True)
+class Pretriage:
+    """The pretriage (``triage_wait``) by day and level, levels 2 to 5.
+
+    Every array has one row per day and one column per group of
+    ``PRETRIAGE_GROUPS``: levels 2, 3, 4 and 5, and the four together.
+
+    Attributes:
+        days: Day of each row, counted from day 0 of the run.
+        groups: ``PRETRIAGE_GROUPS``.
+        n: Episodes of each day and group.
+        n_within: Of them, how many started the triage within ``max_wait``
+            (exactly at the maximum complies).
+        n_over: How many waited more than ``long_wait``.
+        max_wait: The maximum pretriage, in minutes.
+        long_wait: The threshold of the long waits, in minutes.
+        target: Share of ``n_within`` required.
+    """
+
+    days: np.ndarray
+    groups: tuple[int | None, ...]
+    n: np.ndarray
+    n_within: np.ndarray
+    n_over: np.ndarray
+    max_wait: float
+    long_wait: float
+    target: float
+
+    @property
+    def within(self) -> np.ndarray:
+        """Share within ``max_wait``; ``nan`` without episodes."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return self.n_within / self.n
+
+    @property
+    def over(self) -> np.ndarray:
+        """Share above ``long_wait``; ``nan`` without episodes."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return self.n_over / self.n
+
+    @property
+    def out(self) -> np.ndarray:
+        """Whether the day is out of target: ``within`` below ``target``.
+        ``False`` without episodes."""
+        return (self.n > 0) & ~(self.within >= self.target)
+
+    @property
+    def days_with_patients(self) -> np.ndarray:
+        """Days with some episode of each group."""
+        return (self.n > 0).sum(axis=0)
+
+    @property
+    def share_out(self) -> np.ndarray:
+        """Share of the days with patients that are out of target; ``nan``
+        for a group without patients in the stretch."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return self.out.sum(axis=0) / self.days_with_patients
+
+    @property
+    def pooled_n(self) -> np.ndarray:
+        """Episodes of each group in the whole stretch."""
+        return self.n.sum(axis=0)
+
+    @property
+    def pooled_within(self) -> np.ndarray:
+        """Share within ``max_wait`` of all the episodes of the stretch."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return self.n_within.sum(axis=0) / self.pooled_n
+
+    @property
+    def pooled_over(self) -> np.ndarray:
+        """Share above ``long_wait`` of all the episodes of the stretch."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return self.n_over.sum(axis=0) / self.pooled_n
+
+
+def pretriage(
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    *,
+    max_wait: float = PRETRIAGE_MAX_WAIT,
+    long_wait: float = PRETRIAGE_LONG_WAIT,
+    target: float = PRETRIAGE_TARGET,
+) -> Pretriage:
+    """The pretriage indicator by day and level, without the level 1.
+
+    The same rule of days as ``manchester_compliance`` (task 3.8): the day of
+    an episode is the day of its arrival, and only the episodes that arrive
+    in the stretch and depart count.
+
+    Args:
+        table: The episodes of the log, from ``episode_table``.
+        first_day: First day, such as the warm-up days.
+        end_day: Day after the last, such as the horizon in days.
+        max_wait: Maximum pretriage, in minutes.
+        long_wait: Threshold of the long waits, in minutes.
+        target: Share of the patients required, in (0, 1].
+
+    Raises:
+        ValueError: If the days, the minutes or ``target`` are not valid.
+    """
+    first_day, end_day = _check_days(first_day, end_day)
+    max_wait = _check_minutes("max_wait", max_wait)
+    long_wait = _check_minutes("long_wait", long_wait)
+    if not 0 < target <= 1:
+        raise ValueError(f"target must be in (0, 1], got {target!r}")
+
+    values = _by_day_and_level(table, "triage_wait", first_day, end_day)
+    shape = (end_day - first_day, len(PRETRIAGE_GROUPS))
+    n = np.zeros(shape, dtype=np.int64)
+    n_within = np.zeros(shape, dtype=np.int64)
+    n_over = np.zeros(shape, dtype=np.int64)
+    for d, day in enumerate(values):
+        for g, level in enumerate(PRETRIAGE_GROUPS):
+            levels = range(2, N_LEVELS + 1) if level is None else (level,)
+            waits = np.array([w for lv in levels for w in day[lv - 1]], dtype=float)
+            n[d, g] = waits.size
+            n_within[d, g] = np.sum(waits <= max_wait)
+            n_over[d, g] = np.sum(waits > long_wait)
+    return Pretriage(
+        days=np.arange(first_day, end_day),
+        groups=PRETRIAGE_GROUPS,
+        n=n,
+        n_within=n_within,
+        n_over=n_over,
+        max_wait=max_wait,
+        long_wait=long_wait,
+        target=float(target),
     )

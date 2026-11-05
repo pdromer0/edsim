@@ -11,8 +11,12 @@ from edsim.engine.analysis import EpisodeRecord
 from edsim.engine.targets import (
     COMPLIANCE_TARGET,
     MANCHESTER_MAX_WAIT,
+    PRETRIAGE_LONG_WAIT,
+    PRETRIAGE_MAX_WAIT,
+    PRETRIAGE_TARGET,
     daily_waits,
     manchester_compliance,
+    pretriage,
 )
 
 DAY = 1440.0
@@ -159,3 +163,67 @@ def test_cumplimiento_solo_con_un_reloj(measure):
 def test_cumplimiento_argumentos(kwargs):
     with pytest.raises(ValueError):
         manchester_compliance(TABLE, 1, 3, **kwargs)
+
+
+# --- Pretriaje ------------------------------------------------------------------------
+
+
+def test_normas_del_pretriaje():
+    assert (PRETRIAGE_MAX_WAIT, PRETRIAGE_TARGET, PRETRIAGE_LONG_WAIT) == (10.0, 0.85, 5.0)
+
+
+def pretriage_table():
+    # Día 0: nivel 3 con pretriajes 2, 5, 10 y 12 (≤ 10: 3 de 4 = 75 %, fuera; > 5: 2,
+    # 50 %); nivel 4 con 4 y 6 (≤ 10: 100 %; > 5: 50 %). Un nivel 1 en la puerta (0) no
+    # cuenta. Día 1: un nivel 2 con 11 (fuera) y uno de nivel 5 que sigue dentro (no
+    # cuenta). Total 2-5 del día 0: 5 de 6 dentro = 83,3 %, fuera; > 5: 3 de 6.
+    rows = [
+        record(0, 10, 3, 30.0, pretriage=2.0),
+        record(1, 20, 3, 30.0, pretriage=5.0),
+        record(2, 30, 3, 30.0, pretriage=10.0),
+        record(3, 40, 3, 30.0, pretriage=12.0),
+        record(4, 50, 4, 30.0, pretriage=4.0),
+        record(5, 60, 4, 30.0, pretriage=6.0),
+        record(6, 70, 1, 1.0),
+        record(7, DAY + 10, 2, 30.0, pretriage=11.0),
+        record(8, DAY + 20, 5, 30.0, pretriage=1.0, departed=False),
+    ]
+    return rows
+
+
+def test_pretriaje_por_dia_y_nivel():
+    p = pretriage(pretriage_table(), 0, 2)
+
+    assert p.groups == (2, 3, 4, 5, None)
+    assert p.n.tolist() == [[0, 4, 2, 0, 6], [1, 0, 0, 0, 1]]
+    assert p.within[0, 1] == 0.75 and p.within[0, 2] == 1.0
+    assert p.within[0, 4] == pytest.approx(5 / 6)
+    assert p.over[0, 1] == 0.5 and p.over[0, 2] == 0.5 and p.over[0, 4] == 0.5
+    assert p.within[1, 0] == 0.0 and p.over[1, 0] == 1.0
+    assert np.isnan(p.within[1, 1]) and np.isnan(p.over[0, 0])
+    assert p.out.tolist() == [[False, True, False, False, True], [True, False, False, False, True]]
+    assert p.days_with_patients.tolist() == [1, 1, 1, 0, 2]
+    assert p.share_out[4] == 1.0 and p.share_out[2] == 0.0 and np.isnan(p.share_out[3])
+
+
+def test_pretriaje_acumulado_en_el_tramo():
+    # Sobre los dos días: 7 pacientes de niveles 2 a 5, 5 dentro de 10 y 4 por encima de 5.
+    p = pretriage(pretriage_table(), 0, 2)
+    assert p.pooled_n.tolist() == [1, 4, 2, 0, 7]
+    assert p.pooled_within[4] == pytest.approx(5 / 7)
+    assert p.pooled_over[4] == pytest.approx(4 / 7)
+    assert np.isnan(p.pooled_within[3])
+
+
+def test_pretriaje_con_otras_normas():
+    p = pretriage(pretriage_table(), 0, 1, max_wait=12.0, long_wait=10.0, target=0.7)
+    assert p.within[0, 1] == 1.0 and p.over[0, 1] == 0.25 and not p.out[0, 4]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"target": 0}, {"target": 1.5}, {"max_wait": -1}, {"long_wait": -1}],
+)
+def test_pretriaje_argumentos(kwargs):
+    with pytest.raises(ValueError):
+        pretriage(pretriage_table(), 0, 2, **kwargs)
