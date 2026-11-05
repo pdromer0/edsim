@@ -37,7 +37,7 @@ def test_carga(path):
 def test_valores_del_ejemplo(example):
     assert example.population.band_shares == (38.0, 22.0, 22.0, 18.0)
     assert example.population.ambulance_pct == (6.0, 10.0, 21.0, 34.0)
-    assert example.reason("disnea").base_weight == 7.327
+    assert example.reason("disnea").base_weight == 7.388
     assert example.reason("disnea").age_factors == (0.4, 0.8, 1.8, 2.4)
     # Motivos sin factores: todos valen 1.
     for key in ("dolor_abdominal", "digestivo", "otros"):
@@ -48,7 +48,7 @@ def test_valores_del_ejemplo(example):
 @FILES
 def test_reparto_global_dentro_de_medio_punto(path):
     # Con los pesos base escritos (redondeados a 3 decimales), el reparto de un año
-    # queda a menos de 0,5 puntos del catálogo; en la tarea 4.2, a 0,0006.
+    # queda a menos de 0,5 puntos del catálogo; en la tarea 4.2, a 0,00065.
     shares = global_reason_shares(load_profiles(path), load_profile(ARRIVALS[path]))
     deviation = 100 * np.abs(shares - catalog_shares())
 
@@ -62,7 +62,8 @@ def test_pesos_escritos_iguales_a_los_derivados(path):
     derived = base_weights_for(profiles, load_profile(ARRIVALS[path]))
 
     for r in profiles.reasons:
-        assert r.base_weight == pytest.approx(derived[r.key], abs=5e-4), r.key
+        # Con 3 decimales el redondeo llega a 5e-4 (0,000486 en la tarea 4.2): margen de 1e-3.
+        assert r.base_weight == pytest.approx(derived[r.key], abs=1e-3), r.key
 
 
 @FILES

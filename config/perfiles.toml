@@ -41,7 +41,7 @@ ambulancia = [6, 10, 21, 34]
 
 [motivos.traumatismo]
 nombre = "Traumatismo / musculoesquelético"
-peso_base = 19.594                  # derivado
+peso_base = 19.670                  # derivado
 edad = [1.3, 1.0, 0.7, 0.8]         # orientativo: deporte, trabajo y tráfico en jóvenes; caídas con fractura en ≥80
 franja = [1.0, 1.1, 0.8]            # orientativo: accidentes ligados a la actividad diurna
 dia = [1.0, 1.2]                    # orientativo: deporte y ocio de fin de semana
@@ -49,87 +49,89 @@ estacion = [0.9, 1.0, 1.1, 1.0]     # orientativo: más actividad al aire libre 
 
 [motivos.dolor_abdominal]
 nombre = "Dolor abdominal"
-peso_base = 10.626                  # derivado; sin factores: todas las edades, sin patrón claro
+peso_base = 10.673                  # derivado; sin factores: todas las edades, sin patrón claro
 
 [motivos.fiebre]
 nombre = "Fiebre / infección"
-peso_base = 8.303                   # derivado
+peso_base = 8.340                   # derivado
 estacion = [1.4, 1.0, 0.7, 1.0]     # orientativo: gripe y VRS en invierno
 
 [motivos.disnea]
 nombre = "Disnea / respiratorio"
-peso_base = 7.327                   # derivado
+peso_base = 7.388                   # derivado
 edad = [0.4, 0.8, 1.8, 2.4]         # orientativo: EPOC e insuficiencia cardiaca en mayores
 franja = [1.0, 1.0, 1.2]            # orientativo: disnea paroxística nocturna de la insuficiencia cardiaca
 estacion = [1.5, 1.0, 0.7, 1.0]     # orientativo: infecciones respiratorias de invierno
 
 [motivos.malestar]
 nombre = "Malestar general / debilidad"
-peso_base = 5.566                   # derivado
+peso_base = 5.611                   # derivado
 edad = [0.5, 0.9, 1.8, 2.5]         # orientativo: fragilidad y pluripatología
 
 [motivos.dolor_toracico]
 nombre = "Dolor torácico"
-peso_base = 5.296                   # derivado
+peso_base = 5.327                   # derivado
 edad = [0.6, 1.3, 1.4, 1.2]         # orientativo: cardiopatía isquémica de 45 a 79; en ≥80 se presenta atípica
 estacion = [1.1, 1.0, 0.9, 1.0]     # orientativo: más síndromes coronarios en invierno
 
 [motivos.neurologico]
 nombre = "Neurológico"
-peso_base = 4.943                   # derivado
+peso_base = 4.975                   # derivado
 edad = [0.7, 1.0, 1.5, 1.7]         # orientativo: el ictus aumenta con la edad
 
 [motivos.sincope]
 nombre = "Síncope / mareo"
-peso_base = 3.761                   # derivado
+peso_base = 3.787                   # derivado
 edad = [0.7, 0.8, 1.5, 2.0]         # orientativo: ortostatismo, fármacos y arritmias en mayores
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: calor, deshidratación e hipotensión en verano
 
 [motivos.urologico]
 nombre = "Urológico / renal"
-peso_base = 3.984                   # derivado
-edad = [1.1, 1.1, 0.9, 0.8]         # orientativo: cólico renal en la edad media
+peso_base = 3.919                   # derivado
+edad = [1.0, 1.1, 1.0, 1.1]         # orientativo: cólico renal en la edad media; retención de orina, sondas e ITU complicada en ≥80
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: cólico renal por deshidratación con el calor
 
 [motivos.cutaneo]
 nombre = "Cutáneo / alergia"
-peso_base = 4.327                   # derivado
+peso_base = 4.136                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable, no se acude de madrugada
+dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [0.9, 1.2, 1.2, 0.9]     # orientativo: alergias estacionales, picaduras y quemaduras solares
 
 [motivos.orl]
 nombre = "ORL / oftalmológico"
-peso_base = 4.443                   # derivado
+peso_base = 4.247                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable
+dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [1.2, 1.0, 0.9, 1.0]     # orientativo: otitis y faringitis de invierno
 
 [motivos.digestivo]
 nombre = "Digestivo"
-peso_base = 4.250                   # derivado; sin factores: variable, sin patrón claro
+peso_base = 4.269                   # derivado; sin factores: variable, sin patrón claro
 
 [motivos.psiquiatrico]
 nombre = "Psiquiátrico"
-peso_base = 3.033                   # derivado
+peso_base = 3.040                   # derivado
 edad = [1.4, 1.0, 0.5, 0.4]         # orientativo: crisis de ansiedad y debuts en jóvenes
 franja = [1.0, 1.0, 1.3]            # orientativo: crisis y agitación nocturnas
 
 [motivos.palpitaciones]
 nombre = "Palpitaciones / arritmia"
-peso_base = 2.048                   # derivado
+peso_base = 2.060                   # derivado
 edad = [0.7, 1.1, 1.5, 1.3]         # orientativo: fibrilación auricular con la edad
 
 [motivos.intoxicacion]
 nombre = "Intoxicación"
-peso_base = 1.338                   # derivado
+peso_base = 1.342                   # derivado
 edad = [2.0, 0.8, 0.3, 0.2]         # orientativo: alcohol y drogas en jóvenes
 franja = [1.0, 1.0, 1.8]            # orientativo: ocio nocturno
 dia = [1.0, 1.7]                    # orientativo: fin de semana; noche × fin de semana = 3,06 (el «×3» de la especificación)
 
 [motivos.parada]
 nombre = "Parada / crítico"
-peso_base = 0.534                   # derivado
+peso_base = 0.539                   # derivado
 edad = [0.2, 0.8, 1.8, 2.5]         # orientativo: muerte súbita y parada en mayores
 
 [motivos.otros]
 nombre = "Otros"
-peso_base = 10.626                  # derivado; sin factores: cajón de sastre
+peso_base = 10.673                  # derivado; sin factores: cajón de sastre
