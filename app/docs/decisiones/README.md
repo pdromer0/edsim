@@ -47,4 +47,6 @@ Qué se gana, qué se pierde y qué queda pendiente.
 
 ## Índice
 
-Sin ADR todavía; se escribirán al cerrar la fase 1 en A.8.
+- [APP-0001. Interfaz Streamlit sin API](APP-0001-interfaz-streamlit-sin-api.md)
+- [APP-0002. Paquete de app en un workspace de uv](APP-0002-paquete-app-en-workspace-uv.md)
+- [APP-0003. Codex para la fase 1](APP-0003-codex-para-la-fase-1.md)

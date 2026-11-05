@@ -70,3 +70,6 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0028. Ground truth del motor en ficheros aparte del log](0028-ground-truth-del-motor-aparte.md)
 - [0029. Calentamiento y horizonte en días completos](0029-calentamiento-y-horizonte-en-dias-completos.md)
 - [0030. Validación del motor por niveles, al nivel 0,01](0030-validacion-del-motor-por-niveles.md)
+- [0031. App web incremental](0031-app-web-incremental.md)
+- [0032. Ejecuciones en carpetas reproducibles](0032-ejecuciones-en-carpetas-reproducibles.md)
+- [0033. Variantes TOML con comentarios](0033-variantes-toml-con-comentarios.md)

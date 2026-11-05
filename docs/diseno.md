@@ -217,9 +217,9 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 | `patient_arrived` | Cruza la puerta | Medio de llegada |
 | `patient_registered` | Admisión | Edad, sexo |
 | `triage_started` / `triage_completed` | Triaje | Nivel, motivo |
-| box\_assigned | Entra en un box (también al reanudar tras un desalojo) | Box |
-| patient\_displaced | Un nivel 1 le quita el box | Box, episodio que desaloja |
-| assessment\_started / assessment\_ended | Valoración médica y reevaluación | Tipo (inicial o reevaluación), pool y box; al terminar, si se interrumpió |
+| `box_assigned` | Entra en un box (también al reanudar tras un desalojo) | Box |
+| `patient_displaced` | Un nivel 1 le quita el box | Box, episodio que desaloja |
+| `assessment_started` / `assessment_ended` | Valoración médica y reevaluación | Tipo (inicial o reevaluación), pool y box; al terminar, si se interrumpió |
 | `test_ordered` / `test_resulted` | Pruebas | Tipo, resultado normal o alterado |
 | `disposition_decided` | Decisión de destino | Destino |
 | `bed_requested` / `bed_assigned` | Boarding | Servicio |
@@ -434,6 +434,8 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 
 La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al cerrar el hito 3, una tarea pequeña en los hitos siguientes y la aplicación completa después del hito 6 o de la v0. Decisión y especificación de la fase 1: App web — fase 1.
 
+Estado de la fase 1 (4 de noviembre de 2026): seis páginas hechas en las tareas A.0 a A.7; queda el cierre, la A.8, con las ADR 31 a 33 y APP-0001 a APP-0003 y la etiqueta `app-v0.1.0`.
+
 ## Metodología de trabajo con Claude Code y Cursor
 
 Claude Code escribe el código; Pedro dirige, pregunta y revisa. Cada hito sigue el mismo ciclo, con el aprendizaje como prioridad.
@@ -527,6 +529,9 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 28 | Ground truth en ficheros aparte (episodios y días); el log no lleva campos fuera del catálogo, y un test lo comprueba | Verdad oculta separada; evita data leakage; validación con valores conocidos |
 | 29 | Calentamiento y horizonte en días completos (2 y 14 por defecto); en batch el log es completo y las métricas usan la ventana | Régimen periódico sin estado estacionario; invariantes válidas en todo el fichero |
 | 30 | Validación del motor por niveles: invariantes, leyes operacionales, M/G/1 y Mₜ/G/∞ de referencia, condiciones extremas y huella de regresión, al nivel 0,01 | Sin fórmula cerrada para el sistema completo, cada tipo de comprobación cubre errores que los otros no ven |
+| 31 | App incremental: fase 1 en Streamlit al cerrar el hito 3, una tarea de app en los hitos siguientes y la aplicación completa (API y frontend propio) después del hito 6 o de la v0 | Ver el modelo pronto sin rehacer la app cuando cambien el paciente, los eventos y la arquitectura |
+| 32 | Una ejecución es una carpeta resultados/ejecuciones/\<run\_id>/ con el log, el ground truth, la copia de la configuración y run.json, escrita por simulate\_run desde la CLI y desde la app | Los ficheros son la verdad, sin base de datos; cada ejecución se puede reproducir |
+| 33 | Las variantes del centro se escriben con tomlkit conservando los comentarios, en resultados/variantes/; config/ guarda solo lo que se versiona a mano | Los comentarios explican cada clave; las pruebas no ensucian el repositorio |
 
 ### Preguntas resueltas
 

@@ -445,24 +445,37 @@ Las tareas A.1 a A.8 empiezan cuando exista la etiqueta `v0.3-hito3`; la A.0 pue
 
 Orden: A.1, A.2a y A.2b primero, porque todo lo demás lee ejecuciones del catálogo. A.3, A.4 y A.5 pueden ir en cualquier orden. A.6 usa los KPIs de A.4, y A.7 va al final por ser la más grande.
 
+**Detalles de la A.8** (decididos el 4 de noviembre de 2026, con lo aprendido en las A.0 a A.7):
+
+- **Qué es:** una tarea de documentación y cierre, sin código nuevo salvo el título de la app. No es crítica: sin `@codex review`. Si la revisión de la A.7 pide un `fix(app)`, va en su propio PR antes de la A.8.
+- **Primer commit, las exportaciones:** esta pestaña en `app/docs/specs/fase-1.md` y la pestaña de diseño en `docs/diseno.md`, que el chat pone antes al día (decisiones 31 a 33 en el registro y estado de la app en la hoja de ruta). La de la app se comprueba contando el encabezado en negrita de estos detalles, que debe aparecer una vez (el texto plano aparece dos veces, porque la pestaña lo cita); la de diseño, buscando el texto de la decisión 33.
+- **ADR del núcleo 0031 a 0033** en `docs/decisiones/`, con su índice. Mismo formato que la 0030 (estado, fecha, contexto, decisión, alternativas y consecuencias), con las consecuencias medidas y enlaces al anexo de la tarea que las mide: 60 días y 81,4 MB en la 0032, escritura sin sobrescribir con `os.link` en la 0033.
+- **ADR de la app APP-0001 a APP-0003** en `app/docs/decisiones/`, con su índice. Las consecuencias recogen lo que costó cada decisión: cachés, fragmentos y límites de AppTest en la APP-0001; un solo `uv.lock` y el `uv sync --all-packages` en la APP-0002; sandbox, reglas, hooks y la comparación del diario en la APP-0003.
+- **Diario de la fase** en `app/docs/diario/fase-1.md`: una entrada por tarea A.0 a A.7 con el formato del README, escrita desde la sección «Notas para el diario» de los PR #28 a #38 y desde este anexo. Después, una sección «Codex frente a Claude Code» que compara con el diario del hito 3: plan y preguntas, permisos y sandbox, errores y correcciones tras la revisión, hallazgos de `@codex review`, tiempo y consumo. Termina con «Reflexiones de Pedro» vacía, que escribe él.
+- **README de la app** (`app/README.md`): qué es, cómo arrancarla, las seis páginas, `EDSIM_EJECUCIONES`, tests rápidos y completos, la frontera con el núcleo y enlaces a la especificación, las ADR y el diario. El README raíz añade una línea que remite a él.
+- **Retoques pendientes:** la regla de las marcas `slow` en `app/AGENTS.md`, y «EDsim Lab» como título de la pestaña del navegador con `st.set_page_config`.
+- **Criterios de aceptación:** el PR trae una tabla con cada criterio y su evidencia: el test que lo cubre, por nombre, o la comprobación manual que hace Pedro en el navegador. El agente no marca como cumplido lo que no ha comprobado.
+- **Último commit, la exportación final** de esta pestaña, con el anexo de la A.8 escrito en el chat durante la revisión y los criterios marcados.
+- **Etiqueta:** tras la fusión, `app-v0.1.0` anotada sobre el commit de `main`, que crea y sube Pedro (o el agente con su permiso).
+
 ## Criterios de aceptación
 
-- [ ] `uv run --package edsim-app edsim-app` abre la app en `http://localhost:8501` y las seis páginas funcionan con una ejecución de 14 días.
-- [ ] Desde la app se edita el centro, se guarda una variante, se ve la carga prevista y se simula sin tocar la terminal.
-- [ ] Una ejecución de la app y otra de `edsim motor simular` con los mismos parámetros tienen el mismo log.
-- [ ] Resultados muestra los mismos KPIs, ocupaciones y errores de Little que el resumen de la CLI.
-- [ ] Cualquier episodio tiene su línea temporal, con tramos contiguos que suman su estancia.
-- [ ] Comparar detecta el emparejamiento y, con una ejecución consigo misma, da cero en todo.
-- [ ] Los contadores del replay coinciden con `step_curves` en todos los minutos de una ejecución de prueba.
-- [ ] Se cumplen los objetivos de rendimiento, o la tarea A.2a deja medido y justificado otro límite.
-- [ ] El núcleo no importa Streamlit, pandas ni `edsim_app`, y un test lo comprueba.
-- [ ] CI en verde con los jobs `tests` y `tests-app`.
+- [x] `uv run --package edsim-app edsim-app` abre la app en `http://localhost:8501` y las seis páginas funcionan con una ejecución de 14 días.
+- [x] Desde la app se edita el centro, se guarda una variante, se ve la carga prevista y se simula sin tocar la terminal.
+- [x] Una ejecución de la app y otra de `edsim motor simular` con los mismos parámetros tienen el mismo log.
+- [x] Resultados muestra los mismos KPIs, ocupaciones y errores de Little que el resumen de la CLI.
+- [x] Cualquier episodio tiene su línea temporal, con tramos contiguos que suman su estancia.
+- [x] Comparar detecta el emparejamiento y, con una ejecución consigo misma, da cero en todo.
+- [x] Los contadores del replay coinciden con `step_curves` en todos los minutos de una ejecución de prueba.
+- [x] Se cumplen los objetivos de rendimiento, o la tarea A.2a deja medido y justificado otro límite.
+- [x] El núcleo no importa Streamlit, pandas ni `edsim_app`, y un test lo comprueba.
+- [x] CI en verde con los jobs `tests` y `tests-app`.
 
 ## Preguntas abiertas
 
-- ¿Nombre de la app en la interfaz: «EDsim» a secas o algo como «EDsim Lab»?
+- Resuelta antes de la A.8: la app se llama «EDsim Lab», título de la pestaña del navegador.
 - Resuelta en la A.2a: límite de 60 días por ejecución y 14 por defecto, con las medidas del anexo.
-- ¿La página Resultados reutiliza las gráficas de matplotlib de la CLI o se rehacen todas en Altair? La propuesta es Altair, por la interactividad.
+- Resuelta en la A.4: todas las gráficas de la app se hacen en Altair, por la interactividad; las de matplotlib siguen solo en la CLI y los notebooks.
 
 ## Anexo: guía de referencia de la fase 1
 
@@ -1092,7 +1105,7 @@ Con 60 días, el `Styler` se lleva 2,08 s de los 2,39 s de una recarga con la ta
 
 ### Tarea A.6: página Comparar
 
-PR #37 (rama `feat/app-comparar`), implementado con Codex (codex-cli 0.166.0), revisado el 4 de noviembre de 2026 y pendiente de que Pedro lo fusione con *squash and merge*. Seis commits: especificación, emparejamiento comprobado, comparación de indicadores y episodios, selección y resumen, paciente a paciente con enlace a la ficha, y una corrección de formatos e histogramas tras la revisión (1dc0081). Tarea no crítica: sin `@codex review`.
+PR #37 (rama `feat/app-comparar`), implementado con Codex (codex-cli 0.166.0), revisado y fusionado por Pedro el 4 de noviembre de 2026 (a7aea24) con *squash and merge*. Seis commits: especificación, emparejamiento comprobado, comparación de indicadores y episodios, selección y resumen, paciente a paciente con enlace a la ficha, y una corrección de formatos e histogramas tras la revisión (1dc0081). Tarea no crítica: sin `@codex review`.
 
 **Qué se hizo**
 
@@ -1175,3 +1188,183 @@ La primera entrada con 60 días es casi toda leer dos logs; no se fijó un lími
 - Marcar `slow` los AppTest que simulan o miden, para aligerar las suites rápidas.
 - Paleta fija de colores por nivel, que la especificación pide y aún no existe.
 - Botón «Ver en el replay» en la ficha de Episodios.
+
+### Tarea A.7: página Replay
+
+PR #38 (rama `feat/app-replay`), implementado con Codex (codex-cli 0.166.0), revisado y fusionado por Pedro el 4 de noviembre de 2026 (d9e6c6f) con *squash and merge*. Siete commits: especificación (49da0cd), marcas `slow` (b29c2b2), reductor de ubicación compartido (6a64e31), índice del replay (b6e2786), plano y paleta (bc77365), página con reproducción (a984f11) y «Ver en el replay» desde la ficha (d3a93be). Tarea no crítica: sin `@codex review`. El motor y los seis ficheros de una ejecución no cambian.
+
+**Qué se hizo**
+
+- **Antes de nada, tests más rápidos:** `conftest.py` marca `slow` los AppTest que simulan (por fichero y *fixture*) y `test_smoke.py` deja seis humos rápidos. La suite rápida de la app pasó de 116,7 s a 30,2 s.
+- **`runs/_location.py`:** un reductor puro, `LocationState.apply(evento)`, que dice dónde está un paciente. Lo comparten la ficha de Episodios y el replay. Va en un commit `refactor` aparte: los 17 tests del núcleo y los 24 AppTest de la A.5 pasan sin tocarlos (SHA-256 comprobados).
+- **`runs/replay.py`:** `build_replay_index` hace una pasada binaria validada y guarda una foto del estado antes de cada frontera de 60 minutos (pacientes con nivel, estado, box y pruebas pendientes; plantilla; salidas y desalojos de la última hora; últimos 15 eventos), con la posición en bytes y la línea física. `read_replay_state` parte de la foto y lee y valida como mucho una hora; si el fichero cambió de tamaño, error. `replay_counts` lee las curvas. Todos los tipos son inmutables, y `edsim.runs` reexporta también `shift_at`.
+- **`plan.py`:** SVG puro y escapado. Colas con hasta 30 fichas y «+N más» sobre el total de las curvas, puestos de triaje y médicos, rejilla de boxes, salidas de la última hora, «Terminando atención» cuando la plantilla baja y quedan ocupados de más, y el paciente elegido en violeta.
+- **`palette.py`:** la paleta de Manchester en un solo sitio, usada por el plano y por la gráfica de esperas de Resultados.
+- **Página Replay:** controles fuera del fragmento; plano y barra de estado en un `st.fragment` con `run_every` de 1 s. La posición es el origen más los segundos transcurridos por la velocidad, con un reloj monotónico. Un día extra, «Fin de ejecución», muestra a los que siguen dentro en el horizonte. Debajo, el censo del día, los últimos 15 eventos y los pacientes dentro con botón a su ficha. Posición, velocidad y resaltado se guardan por ejecución; salir de Replay o cambiar de ejecución pausa.
+- **Episodios:** «Ver en el replay» abre la llegada exacta, pausada y resaltada, con segundos si la llegada no cae en un minuto entero.
+
+**Cambios respecto al plan y a la especificación**
+
+- El boceto `ReplayIndex.from_events(events).state_at(t)` pasa a dos funciones, `build_replay_index` y `read_replay_state`: el índice solo guarda datos y se comparte en la caché sin riesgo.
+- La foto de la hora h contiene los eventos anteriores a h, y leer t aplica los de su hora hasta t inclusive. Así no hay casos ambiguos en las horas exactas, el minuto 0 ni el horizonte.
+- Las marcas `slow` viven en `conftest.py`, no en cada test, para no tocar los ficheros de la A.5.
+- Un desalojo reciente se marca dos veces: borde discontinuo en el box que perdió y contorno rojo en el paciente desalojado.
+- La barra de estado añade triaje y médicos (ocupados / plantilla), y el selector de día el «Fin de ejecución».
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| Puntos de control | Guardar el estado completo cada cierto tiempo evita reconstruir desde el principio: cualquier minuto cuesta una foto más, como mucho, una hora de eventos. Se paga en memoria |
+| Reductor puro | Una función (estado, evento) → estado nuevo, sin efectos. Una sola definición de «dónde está el paciente» para la ficha y el plano |
+| Indicadores, no etiquetas | La ubicación visible no basta para continuar: tras un desalojo el laboratorio sigue y las pruebas pendientes son independientes del box |
+| Dos fuentes y un control cruzado | Los contadores salen de las curvas y las fichas del índice; un test los compara en todos los minutos, así que el replay también valida el log |
+| Reloj anclado | La posición se calcula desde un origen y el tiempo transcurrido, no sumando un paso en cada tic, que acumularía retrasos |
+| Fragmento con `run_every` | Solo se vuelve a ejecutar una parte de la página; la gráfica y las tablas se actualizan al pausar |
+| Lectura acotada y validada | Leer una hora por fotograma mantiene el tiempo constante con 14 o 60 días; comprobar el tamaño del fichero detecta un log cambiado tras indexarlo |
+
+**Medidas** (medianas de tres procesos, ejecutados en secuencia; 189 fotogramas por caso)
+
+| Medida | 14 días | 60 días |
+| --- | --- | --- |
+| Leer `RunResults` | 0,91 s | 4,82 s |
+| Construir el índice validado | 1,41 s | 6,02 s |
+| Primera entrada completa | 2,56 s | 11,16 s |
+| Recarga | 0,04 s | 0,04 s |
+| Fotograma, mediana | 10,3 ms | 10,8 ms |
+| Fotograma, máximo | 28,0 ms | 16,2 ms |
+| Memoria del índice | 6,2 MiB | 26,9 MiB |
+| Memoria de resultados e índice | 9,7 MiB | 42,2 MiB |
+| Memoria del proceso | 303 MiB | 466 MiB |
+
+Ninguna muestra se acercó al límite de 200 ms, fijado antes de medir. La primera entrada con 60 días lee y valida el log dos veces, una para los resultados y otra para el índice. Con cuatro entradas en caché, los índices de 60 días retienen unos 108 MiB.
+
+**Versiones incorrectas temporales** (las 16 las detecta su test)
+
+| Mutación | Resultado |
+| --- | --- |
+| Tiempo estricto (< t) | El minuto 0 no incluye sus eventos |
+| Sin foto de partida | Se pierde el paciente llegado en la hora 0 |
+| Hora equivocada | Falta un resultado de pruebas de 85 |
+| Contar en el plano | Totales de 40 en lugar de 41 y 42 |
+| Cola de box por llegada | El nivel más urgente no queda primero |
+| Cola sin límite | 40 fichas en lugar de 30 |
+| Borde permanente | La marca de desalojo sigue a los 61 minutos |
+| Mismo borde en box y paciente | Falta el borde discontinuo del box antiguo |
+| Posiciones en caracteres | Un acento desplaza las posiciones en bytes |
+| Alinear y después sumar | +10 desde 10:23:18 da 10:34 en lugar de 10:33 |
+| Detalles dentro del fragmento | Tres recálculos de los detalles durante la reproducción |
+| Deslizador activo | Se puede mover durante la reproducción |
+| Seguir al navegar | La reproducción sigue activa al salir a Episodios |
+| Puestos de más | Tres puestos vigentes con plantilla de dos |
+| Horizonte como último minuto | 4.319 en lugar de 4.320 |
+| Redondear la llegada hacia arriba | Desaparece un episodio que llega y sale en el mismo minuto |
+
+**Comprobaciones**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Suite completa del núcleo | 1.423 tests en 303 s |
+| App completa | 241 tests en 133 s |
+| Suites rápidas | Núcleo, 1.405 tests en 105 s (18 excluidos); app, 124 tests en 35 s (117 excluidos) |
+| Marcas `slow` | App rápida de 203 tests en 116,7 s a 101 tests en 30,2 s (108 excluidos, con los seis humos nuevos) |
+| Notebooks en modo rápido | 3 en 38 s |
+| Replay frente a curvas | Coinciden en todos los minutos de la ejecución de prueba (criterio de aceptación) |
+
+**Revisión del PR** (en el chat, sobre el diff completo; sin ejecutar los tests, porque el entorno del chat no tenía acceso a PyPI)
+
+Sin hallazgos que bloqueen la fusión. Cuatro observaciones menores:
+
+- **Gráfica de esperas de Resultados:** el color pasa a ser el nivel, que ya está en el eje X, y las tres series (media, p90 y máximo) solo se distinguen por la forma. El amarillo del nivel 3 se ve poco sobre blanco. Revisar en el navegador.
+- **Marcas `slow` implícitas:** dependen del nombre del fichero y de la *fixture* en `conftest.py`, así que un test que simule en un fichero nuevo no se marca solo. La regla se documenta en `app/AGENTS.md`.
+- **`ReplayIndex`:** las fotos son un campo con `repr`, así que imprimir el índice volcaría decenas de MiB; bastaría `field(repr=False)`.
+- **Importación dentro de `open_episode_replay`:** no hay ciclo que la justifique.
+
+**Lecciones aprendidas**
+
+- Guardar la foto antes de la frontera y aplicar los eventos ≤ t elimina los casos ambiguos de las horas exactas, el minuto 0 y el horizonte.
+- Un estado que se reanuda necesita todos sus indicadores, no la etiqueta que se ve: el laboratorio sigue aunque el paciente pierda el box.
+- Con dos fuentes independientes (curvas e índice), el replay se convierte en un control cruzado del log, pero no sustituye a los casos escritos a mano.
+- Un refactor en su propio commit, con los tests anteriores sin tocar, demuestra que no cambia el comportamiento.
+- Acelerar la suite antes de la tarea más grande bajó cada parada del hook de unos 4 minutos a unos 2,5.
+- Las marcas fuera del test son cómodas, pero invisibles para quien añade el siguiente.
+
+**Pendiente para la tarea A.8**
+
+- Hecho: prueba en el navegador y fusión del PR #38, sin correcciones.
+- Decidir si la gráfica de esperas necesita un `fix(app)` (contraste del amarillo y series solo por forma).
+- Documentar en `app/AGENTS.md` la regla de las marcas `slow`.
+- Para fases siguientes: la doble lectura del log en la primera entrada del Replay, el `Styler` de Episodios (2 s al filtrar con 60 días) y el adaptador de fragmentos en AppTest, que depende de Streamlit 1.66.1.
+
+### Tarea A.8: cierre de la fase 1
+
+PR #39 (rama `docs/app-cierre`), implementado con Codex (codex-cli 0.166.0) y revisado el 4 de noviembre de 2026; pendiente de las correcciones de la revisión, de la exportación final y de que Pedro lo fusione con *squash and merge*. Seis commits: exportaciones, ADR del núcleo, ADR de la app, diario, README y marcas `slow` con el título; el séptimo será la exportación final de esta pestaña. Tarea no crítica: sin `@codex review`.
+
+**Qué se hizo**
+
+- **Exportaciones** de esta pestaña y de la de diseño, tal cual (SHA-256 `a60107ed…` de `fase-1.md` y `3bb8b4bb…` de `diseno.md`).
+- **ADR del núcleo 0031 a 0033** (app incremental, ejecuciones en carpetas reproducibles, variantes TOML con comentarios) y **de la app APP-0001 a APP-0003** (Streamlit sin API, paquete en el workspace de uv, Codex para la fase 1), con sus índices. Cada alternativa y cada consecuencia enlaza al PR o al anexo que la midió.
+- **Diario de la fase** (`app/docs/diario/fase-1.md`): una entrada por tarea, de A.0 a A.7, desde las «Notas para el diario» de los PR #28 a #38. El PR #28 no tenía esa sección y su entrada sale del cuerpo y del anexo. Después, «Codex frente a Claude Code» en cinco dimensiones, con hechos enlazados y las ausencias de datos dichas como tales, y «Reflexiones de Pedro» vacía.
+- **README de la app** (`app/README.md`), con una línea en el README raíz.
+- **`app/AGENTS.md`:** la regla de las marcas `slow`. Qué ficheros examina `conftest.py`, cuándo hace falta una marca explícita (como el `pytestmark` de `test_replay.py`) y cómo comprobar los dos conjuntos con `--collect-only`.
+- **Título «EDsim Lab»** con `st.set_page_config` en `main.py`, sin test: se comprueba en el navegador.
+
+**Cambios respecto al plan y a la especificación**
+
+- La comprobación de la exportación daba 2 en lugar de 1, porque estos detalles citaban literalmente el texto que contaban. Se cuenta el encabezado en negrita, y los detalles ya no citan el texto.
+
+**Conceptos**
+
+| Concepto | Qué hay que entender |
+| --- | --- |
+| ADR al cierre | Escrita al final, la decisión ya puede registrar lo que costó: alternativas probadas y consecuencias medidas, no solo lo que se planeó |
+| Criterio de reparto | Una decisión va a la serie del componente al que obliga: el formato de ejecución es del núcleo aunque lo pidiera la app |
+| Hechos frente a impresiones | La comparación entre agentes solo afirma lo que consta con enlace; la falta de un dato se dice y no se rellena |
+| Comparar exige medir igual | Sin registros homogéneos de tiempo y consumo no hay conclusión de productividad: había que decidir antes qué anotar en ambos |
+| Evidencia de un criterio | Cada criterio de aceptación se apoya en un test con nombre o en una comprobación manual de Pedro, nunca en «se supone» |
+
+**Criterios de aceptación y su evidencia**
+
+| Criterio | Evidencia |
+| --- | --- |
+| La app arranca y las seis páginas funcionan con 14 días | Humos de `app/tests/test_smoke.py` y prueba de Pedro en el navegador en cada tarea |
+| Editar, guardar, prever y simular sin terminal | AppTest de Simular (lentos) y prueba de Pedro en la A.3b |
+| Mismo log desde la app y desde la CLI | `test_cli_and_service_share_artifact_format` y la caracterización de la CLI |
+| Resultados igual que el resumen de la CLI | `test_selected_header_kpis_waits_and_cli_numbers` y `test_occupancy_and_little_equal_independent_analysis_and_cli` |
+| Línea temporal con tramos que suman la estancia | `test_all_real_episodes_cover_their_stay_and_match_engine_timeline` |
+| Comparar consigo misma da cero | `test_self_comparison_has_zero_differences_and_all_equal` |
+| Replay igual que las curvas en todos los minutos | `test_every_minute_matches_curves_full_fold_and_cards` |
+| Rendimiento | Medidas de los anexos A.2a (límite de 60 días justificado) y A.7 (fotogramas por debajo de 200 ms) |
+| Frontera del núcleo | `test_core_imports_without_ui_dependencies`, `test_core_has_no_ui_imports_including_inside_functions` y el job `tests` sin la app |
+| CI en verde | Jobs `tests` y `tests-app` en cada PR, incluido el #39 |
+
+**Comprobaciones de la revisión**
+
+| Comprobación | Resultado |
+| --- | --- |
+| Enlaces relativos y anclas en los 12 ficheros nuevos o cambiados | Ninguno roto |
+| Encabezado de los detalles de la A.8 en la exportación | 1 |
+| Exportaciones frente a lo que trajo Pedro | Entran tal cual; solo cambian esos dos ficheros fuera de los nuevos |
+| Cifras de las ADR frente al anexo | Coinciden (por ejemplo 81,4 MB, 12,4 s y 3,82 s con 60 días) |
+
+**Revisión del PR**
+
+Sin errores de fondo. Dos correcciones antes de la exportación final y dos comprobaciones:
+
+- **Diario, entrada de la A.7:** la frase que dice que el anexo aún describe la espera deja de ser cierta con la exportación final; se quita.
+- **README de la app:** enlaza a `AGENTS.md#pruebas-y-convenciones`, pero la regla vive en su propio apartado, `#selección-de-tests-slow`.
+- **Título:** Pedro comprueba en el navegador que la pestaña dice «EDsim Lab».
+- **Permisos de las exportaciones (previo a la A.8):** `diseno.md`, `fase-1.md` y `hito-0.md` a `hito-3.md` están en el repositorio con modo 755 porque se copian desde Windows. Se corrige con `chmod 644` en el commit final, y conviene añadirlo a la rutina de copia.
+
+**Lecciones aprendidas**
+
+- Una comprobación que se cita a sí misma cambia su propio resultado: la especificación debe describir la comprobación, no copiar el texto que cuenta.
+- Las ADR del final salen mejores si cada PR deja sus notas: la única entrada sin notas propias es la de la A.0.
+- Para comparar dos herramientas hay que decidir al principio qué se anota en las dos; sin eso, el diario solo puede decir lo que falta.
+- Copiar ficheros desde Windows arrastra permisos que Git registra.
+
+**Pendiente tras la fase 1**
+
+- Etiqueta `app-v0.1.0` sobre el commit de `main` tras la fusión, y «Reflexiones de Pedro» en el diario.
+- Para la fase siguiente: la doble lectura del log en la primera entrada del Replay, el `Styler` de Episodios, el adaptador de fragmentos de AppTest y la revisión visual de la gráfica de esperas.
+- Hito 4 con Claude Code, con su tarea de app y los hallazgos del hito 3 sobre el triaje y el centro provisional.
