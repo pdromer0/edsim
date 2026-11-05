@@ -213,3 +213,26 @@ def test_csv_structure_failures(truth_copy, kind):
     path.write_bytes(b"".join(rows))
     with pytest.raises(RunReadError, match="ground_truth_episodios.csv"):
         read_run_episode_truth(store, "sample")
+
+
+DOOR = (
+    ("patient_arrived", 3, {}),
+    ("patient_registered", 3, {}),
+    ("triage_started", 3, {"circuito": "puerta"}),
+    ("triage_completed", 3, {"nivel": 1}),
+    ("box_assigned", 3, {"box": 1}),
+    ("assessment_started", 3, {"tipo": "inicial", "pool": "medicos", "box": 1}),
+    ("assessment_ended", 33, {"tipo": "inicial", "interrumpida": False}),
+    ("disposition_decided", 33, {"destino": "ingreso"}),
+    ("patient_departed", 33, {"destino": "ingreso"}),
+)
+
+
+def test_triage_at_the_door_leaves_the_drawn_triage_unused():
+    # A level 1 classified at the door (task 4.1): its drawn triage of 5 minutes is not
+    # used, so it is not a mismatch with the 0 observed; the other stages still match.
+    truth = EpisodeTruth("EP-000000", 0, 3, 1, 5, 30, 10, False, 60, True)
+    rows = comparisons(DOOR, 60, truth)
+    assert rows["triage_time"].status == "unused"
+    assert rows["assessment_time"].status == "match"
+    assert "mismatch" not in {row.status for row in rows.values()}

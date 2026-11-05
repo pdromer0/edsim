@@ -17,13 +17,19 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git pull *)",
-      "Bash(gh pr create *)"
-    ],
-    "ask": [
-      "Bash(git push *)"
+      "Bash(gh pr create *)",
+      "Bash(git push -u origin feat/*)",
+      "Bash(git push -u origin docs/*)",
+      "Bash(git branch -D *)"
     ],
     "deny": [
       "Bash(gh pr merge *)",
+      "Bash(git push *--force*)",
+      "Bash(git push *-f *)",
+      "Bash(git push *-f)",
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push * *:main*)",
       "Read(./.env)"
     ]
   },

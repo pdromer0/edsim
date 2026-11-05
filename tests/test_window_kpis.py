@@ -17,7 +17,7 @@ def patient(number, arrival, door, stay, *, level=2, displacements=0, admitted=F
     """Build milestone events; displacement events test folding, not invariants."""
     rows = [
         (arrival, number, "patient_arrived", {}),
-        (arrival, number, "triage_started", {}),
+        (arrival, number, "triage_started", {"circuito": "enfermeria"}),
         (arrival, number, "triage_completed", {"nivel": level}),
         (arrival, number, "box_assigned", {"box": 1}),
         (
@@ -107,6 +107,25 @@ def test_manchester_integer_counts_exact_threshold_immediate_and_weighted_days(s
             assert level.exceeded == 0
             assert level.exceeded_share is level.share_out is None
     assert len(empty) == 3
+
+
+def test_manchester_of_the_app_still_uses_door_to_doctor():
+    # Level 2 (maximum 10): arrives 1500, triage 1502-1507, doctor at 1512. Clock A is
+    # 12 (exceeded), clock C only 5. The app keeps clock A until task 4.8a.
+    events = build(
+        [
+            (1500, 0, "patient_arrived", {}),
+            (1502, 0, "triage_started", {"circuito": "enfermeria"}),
+            (1507, 0, "triage_completed", {"nivel": 2}),
+            (1507, 0, "box_assigned", {"box": 1}),
+            (1512, 0, "assessment_started", {"tipo": "inicial", "pool": "medicos", "box": 1}),
+            (1600, 0, "patient_departed", {"destino": "alta"}),
+        ]
+    )
+    result = window_compliance(episode_table(events), 1, 2)
+    assert result.daily.measure == "door_to_doctor"
+    level_2 = result.by_level[1]
+    assert (level_2.n, level_2.exceeded, level_2.share_out) == (1, 1, 1.0)
 
 
 def test_public_exports():

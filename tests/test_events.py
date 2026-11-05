@@ -31,7 +31,7 @@ RUN = "r2026"
 SAMPLES = {
     "patient_arrived": {},
     "patient_registered": {},
-    "triage_started": {},
+    "triage_started": {"circuito": "enfermeria"},
     "triage_completed": {"nivel": 3},
     "box_assigned": {"box": 7},
     "patient_displaced": {"box": 7, "desalojado_por": "EP-000140"},
@@ -508,3 +508,42 @@ def test_read_events_rechaza_json_invalido(tmp_path):
 
     with pytest.raises(ValueError, match=r"eventos\.jsonl:1"):
         list(read_events(path))
+
+
+# --- circuito de triage_started (tarea 4.1) -------------------------------------------
+
+
+def test_circuito_de_triaje():
+    # Puerta para el nivel 1 y enfermería para los demás; nada más.
+    log = EventLog(RUN, START, MemorySink())
+    for circuito in ("puerta", "enfermeria"):
+        assert log.emit("triage_started", 1.0, arrival_id=0, circuito=circuito)
+    with pytest.raises(ValueError, match=r"triage_started: missing payload keys: circuito"):
+        log.emit("triage_started", 1.0, arrival_id=0)
+    with pytest.raises(ValueError, match=r"triage_started: payload circuito"):
+        log.emit("triage_started", 1.0, arrival_id=0, circuito="box")
+
+
+def test_lee_un_log_anterior_sin_circuito(tmp_path):
+    # Antes de la tarea 4.1 triage_started no tenía payload: todos los triajes eran de
+    # enfermería. Leerlo da circuito "enfermeria"; la versión del esquema sigue en 1.
+    sink = MemorySink()
+    EventLog(RUN, START, sink).emit("triage_started", 2.0, arrival_id=0, circuito="enfermeria")
+    line = json.loads(to_json(sink.events[0]))
+    line["payload"] = {}
+    path = tmp_path / "eventos.jsonl"
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    (event,) = read_events(path)
+
+    assert event == sink.events[0]
+    assert event.payload == {"circuito": "enfermeria"} and event.schema_version == 1
+
+
+def test_solo_la_lectura_admite_triage_started_sin_circuito():
+    # La construcción directa sigue exigiendo la clave: la tolerancia es de from_json.
+    event = EventLog(RUN, START, MemorySink()).emit(
+        "triage_started", 2.0, arrival_id=0, circuito="enfermeria"
+    )
+    with pytest.raises(ValueError, match=r"missing payload keys: circuito"):
+        dataclasses.replace(event, payload={})

@@ -12,7 +12,9 @@ still alive in SimPy). Comparing with them is what makes conservation a real
 check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
-Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
+Task 4.1 adds the triage queue to "nobody jumps the queue" and leaves the
+triages at the door (a level 1, without a nurse) out of the capacity of the
+nurses. Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
 are edges of ``TRANSITIONS``, ``patient_displaced`` frees the box in the
 capacity check, and two checks follow the priority (level, arrival):
 "nobody jumps the queue" and displacement. Task 3.5 compares the doctors and
@@ -26,7 +28,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.engine.center import CenterConfig
-from edsim.engine.events import Event
+from edsim.engine.events import DOOR, Event
 from edsim.engine.ground_truth import GroundTruth
 
 
@@ -332,6 +334,9 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
       More busy than the staff after a staff goes down is not a violation:
       nobody is interrupted, the reservations wait for them to finish. Only
       a start is checked.
+
+      A triage with ``circuito`` ``DOOR`` (a level 1 classified at the door)
+      uses no nurse, so neither it nor its ``triage_completed`` counts.
     """
     name = "capacity"
     center = context.center
@@ -341,6 +346,7 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
     out: list[Violation] = []
     occupant: dict[int, str] = {}
     box_of: dict[str, int] = {}
+    at_the_door: set[str] = set()
 
     def start(e: Event, pool: _StaffPool) -> None:
         if pool.staff is None and not pool.unstaffed_reported:
@@ -385,8 +391,12 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                         )
                     )
                 pool.staff = e.payload["nueva"]
+            case "triage_started" if e.payload["circuito"] == DOOR:
+                at_the_door.add(episode)
             case "triage_started":
                 start(e, nurses)
+            case "triage_completed" if episode in at_the_door:
+                at_the_door.discard(episode)
             case "triage_completed":
                 nurses.busy -= 1
             case "assessment_started":
@@ -448,7 +458,14 @@ def _keys(events: Sequence[Event]) -> dict[str, tuple[int, float]]:
 def check_nobody_jumps_the_queue(
     events: Sequence[Event], context: InvariantContext
 ) -> list[Violation]:
-    """Boxes and doctors go by the key (level, arrival).
+    """Boxes and doctors go by the key (level, arrival); the triage nurses, FIFO.
+
+    The triage nurse goes by arrival, without the level, which is not known
+    yet: when an episode starts a triage with ``circuito`` ``NURSE``, no
+    other episode waiting for a triage since an earlier instant than it is
+    still waiting. Everyone waits from ``patient_arrived`` to its
+    ``triage_started``. A triage at the door (a level 1) is not checked: it
+    takes no nurse, and the level 1 goes ahead of the queue by design.
 
     When an episode gets a box (``box_assigned``) or a doctor
     (``assessment_started``), no other episode waiting for that resource
@@ -468,6 +485,7 @@ def check_nobody_jumps_the_queue(
     keys = _keys(events)
     out: list[Violation] = []
     waiting: dict[str, dict[str, float]] = {"box": {}, "doctor": {}}  # episode → since
+    waiting_triage: dict[str, float] = {}  # episode → arrival
     has_box: set[str] = set()
     to_assess: set[str] = set()  # an assessment is next in the box
 
@@ -487,9 +505,29 @@ def check_nobody_jumps_the_queue(
                 )
                 return
 
+    def check_triage(e: Event) -> None:
+        mine = waiting_triage[e.episode_id]
+        for other, since in waiting_triage.items():
+            if since < mine:
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"{e.episode_id} (arrived at {mine!r}) got a triage while "
+                        f"{other} waited for one since {since!r}",
+                    )
+                )
+                return
+
     for e in events:
         episode = e.episode_id
         match e.event_type:
+            case "patient_arrived":
+                waiting_triage.setdefault(episode, e.sim_time)
+            case "triage_started":
+                if e.payload["circuito"] != DOOR and episode in waiting_triage:
+                    check_triage(e)
+                waiting_triage.pop(episode, None)
             case "triage_completed":
                 waiting["box"][episode] = e.sim_time
                 to_assess.add(episode)

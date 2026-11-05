@@ -39,7 +39,7 @@ def test_simulate_cli_characterization(tmp_path, monkeypatch):
     )
     assert output.is_dir()
     expected = {
-        "eventos.jsonl": "04adc9e2fcfab280a1aa83593e387dad66beab158047638e0757203539fbd047",
+        "eventos.jsonl": "220eb8c619ba9b90b33dc666610b75dd3dae65d24035e0ba26fc87b9028c80a2",
         "ground_truth_episodios.csv": (
             "55a623b9532566fa7de183e580b4a60e798c80fcb9ddbc6b33ea3d50162697f9"
         ),

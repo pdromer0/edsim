@@ -110,13 +110,15 @@ THREE_BOXES_PATIENTS: tuple[tuple[float, PatientDraws], ...] = (
     (1.0, hand_draws(4, 5, 60)),  # P2, EP-000001: box 2 from 6 to 66
     (2.0, hand_draws(5, 5, 40)),  # P3, EP-000002: box 3 at 7, assessment 7-47
     (10.0, hand_draws(2, 5, 20)),  # P4, EP-000003: waits for a box from 15
-    (15.0, hand_draws(1, 5, 30, admitted=True)),  # P5, EP-000004: triaged at 20
+    (20.0, hand_draws(1, 5, 30, admitted=True)),  # P5, EP-000004: at the door at 20
 )
 """The patients of the three-box scenario.
 
 P1 (level 3), P2 (level 4) and P3 (level 5) take the three boxes; P4 (level 2)
-waits; P5 (level 1) ends its triage at 20 and displaces P3, the highest key,
-13 minutes into its 40-minute assessment. P5 leaves at 50 and its box goes to
+waits; P5 (level 1) arrives at 20, is classified at the door in that instant
+(task 4.1; it arrived at 15 and was triaged until 20 in milestone 3, so every
+other instant is the same) and displaces P3, the highest key, 13 minutes into
+its 40-minute assessment. P5 leaves at 50 and its box goes to
 P4, not to P3, who arrived earlier; P3 gets box 1 when P1 leaves at 65 and
 resumes with the 27 minutes it had left, until 92.
 """

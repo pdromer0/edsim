@@ -62,11 +62,12 @@ def test_recorrido_con_espera_de_box(three):
 
 
 def test_recorrido_con_pruebas_fuera_del_box(center):
-    # Un box. A se valora 5-25 y pide pruebas (resultado en 85); L lo desaloja en 30 y
-    # sale en 90. Los resultados llegan con A esperando box: un solo tramo 30-90.
+    # Un box. A se valora 5-25 y pide pruebas (resultado en 85); L (nivel 1) llega en 30,
+    # se clasifica en la puerta, lo desaloja y sale en 90. Los resultados llegan con A
+    # esperando box: un solo tramo 30-90.
     one_box = dataclasses.replace(center, boxes=1)
     s = Scenario(
-        one_box, ((0.0, hand_draws(3, 5, 20, needs_tests=True)), (25.0, hand_draws(1, 5, 60)))
+        one_box, ((0.0, hand_draws(3, 5, 20, needs_tests=True)), (30.0, hand_draws(1, 5, 60)))
     )
     events = run_scenario(s).events
     assert episode_timeline(events, "EP-000000", DAY) == (
@@ -76,8 +77,8 @@ def test_recorrido_con_pruebas_fuera_del_box(center):
         Segment("waiting_box", 30.0, 90.0),
         Segment("reassessment", 90.0, 100.0),
     )
-    # L no espera enfermera: su triaje va de 25 a 30.
-    assert episode_timeline(events, "EP-000001", DAY)[0] == Segment("triage", 25.0, 30.0)
+    # L no espera enfermera ni tiene triaje: su triaje de duración 0 no deja tramo.
+    assert episode_timeline(events, "EP-000001", DAY) == (Segment("assessment", 30.0, 90.0),)
 
 
 def test_recorrido_con_espera_de_triaje_y_de_medico(center):

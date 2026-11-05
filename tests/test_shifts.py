@@ -529,11 +529,27 @@ def drops_with_more_busy(events: list[Event]) -> int:
 
 
 def test_triaje_en_orden_de_llegada(real):
+    # Los triajes de enfermería van en orden de llegada, con los cambios de turno. Los
+    # niveles 1 se clasifican en la puerta al llegar, delante de quien espera enfermera.
     events, _ = run(*real, days=7, seed=2026)
 
-    arrived = [ep for ep, _ in starts(events, "patient_arrived")]
-    triaged = [ep for ep, _ in starts(events, "triage_started")]
-    assert triaged == arrived[: len(triaged)]
+    arrival = dict(starts(events, "patient_arrived"))
+    door = {
+        e.episode_id
+        for e in events
+        if e.event_type == "triage_started" and e.payload["circuito"] == "puerta"
+    }
+    nurse_triaged = [ep for ep, _ in starts(events, "triage_started") if ep not in door]
+    arrived = [ep for ep in arrival if ep not in door]
+    assert nurse_triaged == arrived[: len(nurse_triaged)]
+
+    door_starts = [(ep, t) for ep, t in starts(events, "triage_started") if ep in door]
+    assert door_starts and all(t == arrival[ep] for ep, t in door_starts)
+    # No es vacío: algún nivel 1 se clasificó mientras otro, llegado antes, esperaba.
+    first_start = dict(starts(events, "triage_started"))
+    assert any(
+        arrival[other] < arrival[ep] < first_start[other] for ep in door for other in arrived
+    )
 
 
 def test_otra_plantilla_por_turno_mismo_ground_truth(real):

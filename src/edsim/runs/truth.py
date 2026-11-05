@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from edsim.engine.events import Event, episode_id
+from edsim.engine.events import DOOR, Event, episode_id
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.report import EPISODE_COLUMNS, PARAMETER_COLUMNS
 from edsim.runs.episodes import EpisodeSegments
@@ -118,7 +118,8 @@ def compare_episode_truth(
     A finished duration matches within absolute 1e-8 minutes, relative zero.
     A started stage is partial until its non-interrupted end; partial work
     exceeding its draw plus tolerance is a mismatch. Never-started stages
-    are pending; reassessment and turnaround without tests are unused.
+    are pending; reassessment and turnaround without tests are unused, and so
+    is the triage time of a triage at the door (``circuito`` ``puerta``).
     """
     if (
         not events
@@ -171,6 +172,8 @@ def compare_episode_truth(
         )
         return duration(field, state, started, finished, drawn, unused)
 
+    started = by_type.get("triage_started", ())
+    at_the_door = any(event.payload["circuito"] == DOOR for event in started)
     triage = by_type.get("triage_completed", ())
     decision = by_type.get("disposition_decided", ())
     level = triage[-1].payload["nivel"] if triage else None
@@ -187,9 +190,10 @@ def compare_episode_truth(
         duration(
             "triage_time",
             "triage",
-            bool(by_type.get("triage_started")),
+            bool(started),
             bool(triage),
             truth.triage_time,
+            at_the_door,
         ),
         assessment("inicial", "assessment_time", "assessment", truth.assessment_time),
         assessment(

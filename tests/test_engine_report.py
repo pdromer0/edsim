@@ -34,6 +34,7 @@ from edsim.engine.report import (
     write_episodes_csv,
     write_ground_truth_days_csv,
 )
+from edsim.engine.targets import clock_quantiles, manchester_compliance, pretriage
 
 DATA = Path(__file__).parent / "data"
 EXAMPLE_CENTER = DATA / "centro_ejemplo.toml"
@@ -70,6 +71,14 @@ def run(center):
 
 def lines_starting(text, start):
     return [line for line in text.splitlines() if line.startswith(start)]
+
+
+def section(text, title):
+    """Las líneas del bloque que empieza por ``title``, hasta la línea en blanco."""
+    lines = text.splitlines()
+    first = next(i for i, line in enumerate(lines) if line.startswith(title))
+    end = next((i for i in range(first, len(lines)) if not lines[i]), len(lines))
+    return "\n".join(lines[first:end])
 
 
 # --- Resumen de una ejecución ---------------------------------------------------------
@@ -121,6 +130,52 @@ def test_resumen_nivel_sin_episodios(run):
     (row,) = lines_starting(text, "1      ")
     assert row.split()[1] == "0"
     assert row.count("—") == 5
+
+
+def test_resumen_tres_relojes_y_cumplimiento_con_c(run):
+    _, analysis = run
+    text = format_run_summary(analysis, [])
+    clocks = clock_quantiles(analysis.table, WARMUP, DAYS)
+    compliance = manchester_compliance(analysis.table, WARMUP, DAYS)
+
+    assert compliance.measure == "classified_to_doctor"
+    block = section(text, "Relojes hasta el médico")
+    for c in clocks:
+        (row,) = lines_starting(block, f"nivel {c.level} ")
+        assert row.split()[2] == str(c.n)
+        k = c.level - 1
+        if c.n:
+            for name in ("door_to_doctor", "triage_start_to_doctor", "classified_to_doctor"):
+                assert f"{c.median[name]:.1f} / {c.p90[name]:.1f}" in row, name
+        if c.level == 1:
+            # Nivel 1 solo con su tiempo: su máximo es 0 y el porcentaje sería siempre 0 %.
+            assert "%" not in row and row.endswith("—")
+        elif c.n:
+            days = compliance.days_with_patients[k]
+            assert f"{100 * compliance.pooled_within[k]:.1f} %" in row
+            assert row.endswith(f"{compliance.out[:, k].sum()} de {days}")
+    # No es vacío: hay niveles 1 y niveles con cumplimiento en la ventana.
+    assert clocks[0].n > 0 and clocks[2].n > 0
+
+
+def test_resumen_pretriaje(run):
+    _, analysis = run
+    text = format_run_summary(analysis, [])
+    p = pretriage(analysis.table, WARMUP, DAYS)
+
+    block = section(text, "Pretriaje")
+    title = block.splitlines()[0]
+    assert "85 %" in title and "10 min" in title and "5 min" in title
+    labels = ("nivel 2", "nivel 3", "nivel 4", "nivel 5", "niveles 2-5")
+    rows = block.splitlines()[2:]
+    assert not lines_starting(block, "nivel 1") and p.pooled_n[-1] > 0
+    for g, (label, row) in enumerate(zip(labels, rows, strict=True)):
+        assert row.startswith(label)
+        assert row.split()[-8] == str(p.pooled_n[g])
+        if p.pooled_n[g]:
+            assert f"{100 * p.pooled_within[g]:.1f} %" in row
+            assert f"{100 * p.pooled_over[g]:.1f} %" in row
+            assert row.endswith(f"{p.out[:, g].sum()} de {p.days_with_patients[g]}")
 
 
 def test_resumen_ocupacion_y_little(run):

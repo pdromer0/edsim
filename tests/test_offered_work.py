@@ -44,7 +44,8 @@ def default_work(center, profile):
 
 def occupations(draws):
     """Derive continuous and one-minute occupation from the clinical timeline."""
-    triage = np.array([d.triage_time for d in draws])
+    # A level 1 is classified at the door: no nurse time (task 4.1).
+    triage = np.array([0.0 if d.level == 1 else d.triage_time for d in draws])
     assessment = np.array([d.assessment_time for d in draws])
     reassessment = np.array([d.reassessment_time for d in draws])
     turnaround = np.array([d.test_turnaround for d in draws])

@@ -75,7 +75,7 @@ def tiny_log(tmp_path, replay_run):
 TRACE = (
     ("staffing_changed", 0, None, {"recurso": "medicos", "anterior": 0, "nueva": 2}),
     ("patient_arrived", 0, 0, {}),
-    ("triage_started", 0, 0, {}),
+    ("triage_started", 0, 0, {"circuito": "enfermeria"}),
     ("triage_completed", 5, 0, {"nivel": 3}),
     ("box_assigned", 5, 0, {"box": 1}),
     ("assessment_started", 5, 0, {"tipo": "inicial", "pool": "medicos", "box": 1}),

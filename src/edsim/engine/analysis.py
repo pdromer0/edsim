@@ -42,7 +42,7 @@ import numpy as np
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.center import N_LEVELS, CenterConfig
-from edsim.engine.events import Event
+from edsim.engine.events import DOOR, Event
 from edsim.engine.shifts import MINUTES_PER_HOUR, shift_at
 from edsim.queueing.analysis import sample_step, step_time_average
 from edsim.queueing.mm1 import time_in_window
@@ -79,8 +79,13 @@ class EpisodeRecord:
         initial_doctor_wait: Time holding a box and waiting for a doctor
             before the first ``assessment_started``, from the first
             ``box_assigned`` on.
-        door_to_doctor: From the arrival to the first ``assessment_started``,
-            the KPI of the Manchester maximum times.
+        door_to_doctor: From the arrival to the first ``assessment_started``
+            (clock A, comparable with the TPAM of the SAS).
+        triage_start_to_doctor: From ``triage_started`` to the first
+            ``assessment_started`` (clock B, comparable with the TEA of the SAS).
+        classified_to_doctor: From ``triage_completed``, when the level is
+            assigned, to the first ``assessment_started`` (clock C, the one of
+            the Manchester compliance; docs/specs/hito-4.md).
     """
 
     episode_id: str
@@ -99,6 +104,8 @@ class EpisodeRecord:
     doctor_wait: float | None
     initial_doctor_wait: float | None
     door_to_doctor: float | None
+    triage_start_to_doctor: float | None
+    classified_to_doctor: float | None
 
     @property
     def stay(self) -> float | None:
@@ -134,6 +141,12 @@ class _Episode:
             self.doctor_wait += now - self.waiting_doctor_since
             self.waiting_doctor_since = None
 
+    def since(self, start: float | None) -> float | None:
+        """From ``start`` to the first assessment; ``None`` until it happens."""
+        if self.first_assessment is None or start is None:
+            return None
+        return self.first_assessment - start
+
     def record(self) -> EpisodeRecord:
         departed = self.departure is not None
         return EpisodeRecord(
@@ -152,9 +165,9 @@ class _Episode:
             box_wait=self.box_wait if departed else None,
             doctor_wait=self.doctor_wait if departed else None,
             initial_doctor_wait=self.initial_doctor_wait,
-            door_to_doctor=(
-                None if self.first_assessment is None else self.first_assessment - self.arrival
-            ),
+            door_to_doctor=self.since(self.arrival),
+            triage_start_to_doctor=self.since(self.triage_start),
+            classified_to_doctor=self.since(self.triage_end),
         )
 
 
@@ -232,6 +245,13 @@ _DELTAS: dict[str, dict[str, int]] = {
     "assessment_started": {"doctors_busy": 1},
     "assessment_ended": {"doctors_busy": -1},
     "patient_departed": {"census": -1, "boxes_busy": -1},
+}
+
+# A triage at the door (a level 1) leaves the triage queue and joins the box
+# queue, but takes no nurse.
+_DOOR_DELTAS: dict[str, dict[str, int]] = {
+    "triage_started": {"waiting_triage": -1},
+    "triage_completed": {"waiting_box": 1},
 }
 
 _STAFF_CURVE = {"enfermeria_triaje": "nurses_staff", "medicos": "doctors_staff"}
@@ -324,11 +344,18 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
     index = {name: i for i, name in enumerate(CURVES)}
     times = [0.0]  # the instants, with 0 so that every curve starts there
     changes: list[tuple[int, int, int]] = []  # (position in times, curve, delta)
+    at_the_door: set[str] = set()
     for e in events:
         if e.event_type == "staffing_changed":
             change = {
                 _STAFF_CURVE[e.payload["recurso"]]: e.payload["nueva"] - e.payload["anterior"]
             }
+        elif e.event_type == "triage_started" and e.payload["circuito"] == DOOR:
+            at_the_door.add(e.episode_id)
+            change = _DOOR_DELTAS["triage_started"]
+        elif e.event_type == "triage_completed" and e.episode_id in at_the_door:
+            at_the_door.discard(e.episode_id)
+            change = _DOOR_DELTAS["triage_completed"]
         else:
             change = _DELTAS.get(e.event_type)
             if change is None:
@@ -356,9 +383,12 @@ MEASURES = (
     "doctor_wait",
     "initial_doctor_wait",
     "door_to_doctor",
+    "triage_start_to_doctor",
+    "classified_to_doctor",
     "stay",
 )
-"""Per-episode values summarized by level: the waits and the stay."""
+"""Per-episode values summarized by level: the waits, the three clocks to the
+doctor and the stay."""
 
 SHIFTS = ("morning", "afternoon", "night")
 """Shifts in the order of the configuration (``turnos.inicio``)."""
@@ -631,7 +661,8 @@ class UtilizationIdentity:
 def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tuple[float, float]]]:
     """The service intervals of each pool, in the order they end.
 
-    - Triage nurses: ``triage_started`` to ``triage_completed``.
+    - Triage nurses: ``triage_started`` to ``triage_completed``, except the
+      triages at the door, which take no nurse.
     - Doctors: ``assessment_started`` to ``assessment_ended``.
     - Boxes: ``box_assigned`` to ``patient_departed`` or ``patient_displaced``.
 
@@ -643,6 +674,8 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
     open_since: dict[tuple[str, str], float] = {}
     for e in events:
         episode, kind = e.episode_id, e.event_type
+        if kind == "triage_started" and e.payload["circuito"] == DOOR:
+            continue  # its triage_completed then finds nothing open
         if kind in opening:
             open_since[(opening[kind], episode)] = e.sim_time
         elif kind == "box_assigned":
