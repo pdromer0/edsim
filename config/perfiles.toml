@@ -174,8 +174,18 @@ reparto_objetivo = [0.4, 12.1, 33.6, 52.6, 1.4]
 # (calibrado): concordancia del Manchester en Asturias, Enfermería Clínica 2026.
 infratriaje = 10.1
 sobretriaje = 6.3
-# Provisional: se calibran con triage_error_for en el paso siguiente.
-ruido = 0.32
-sesgo = -0.08
-# Provisional: se derivan con thresholds_for en el paso siguiente.
-umbrales = [2.70, 1.13, 0.02, -2.42]
+# Ruido (desviación del error de la enfermera, en unidades de G) y sesgo
+# (negativo: tiende a infratriar), calibrados para dar el infratriaje y el
+# sobretriaje de arriba sobre la mezcla de G de un año, redondeados a 3 decimales:
+#   triage_error_for(load_profiles("config/perfiles.toml"), load_profile("config/llegadas.toml"))
+# (edsim.profiles.severity). Con G normal estándar, la especificación daba 0,32 y
+# -0,08; la mezcla de motivos y edades no es normal y pide algo más de ruido.
+ruido = 0.335                       # calibrado
+sesgo = -0.082                      # calibrado
+# Umbrales c1 > c2 > c3 > c4 sobre G + ε (derivado): dan reparto_objetivo como
+# reparto asignado de un año con el ruido y el sesgo escritos, redondeados a 3
+# decimales: thresholds_for(perfiles, llegadas). No se recalculan al cargar: un
+# escenario con más gravedad (gripe, accidente múltiple) debe dar más niveles
+# urgentes, y no volver al reparto objetivo. Si cambia la gravedad, un factor o
+# el ruido, hay que volver a calcularlos (lo comprueba un test).
+umbrales = [3.088, 1.149, -0.044, -2.178]   # derivado

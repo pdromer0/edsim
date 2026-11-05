@@ -10,6 +10,15 @@ from edsim.arrivals.profile import load_profile
 from edsim.profiles.config import REASON_KEYS, REASONS, ClinicalProfiles, load_profiles
 from edsim.profiles.mixing import base_weights_for, catalog_shares, global_reason_shares
 from edsim.profiles.population import global_band_shares, share_65_plus
+from edsim.profiles.severity import (
+    assigned_shares,
+    reason_year_means,
+    severity_mixture,
+    thresholds_for,
+    triage_error_for,
+    triage_error_rates,
+    triage_matrix,
+)
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
@@ -21,9 +30,25 @@ ARRIVALS = {
 FILES = pytest.mark.parametrize("path", [EXAMPLE, REAL], ids=["ejemplo", "real"])
 
 
+# Grupos de la columna «Gravedad típica» del catálogo de docs/diseno.md, de más a
+# menos grave. Los motivos «variable» no tienen sitio en el orden.
+SEVERITY_GROUPS = (
+    ("parada",),  # muy alta
+    ("disnea", "dolor_toracico"),  # media-alta
+    ("dolor_abdominal", "malestar", "sincope", "psiquiatrico", "palpitaciones"),  # media
+    ("fiebre", "urologico"),  # baja-media
+    ("traumatismo", "cutaneo", "orl", "otros"),  # baja
+)
+VARIABLE = ("neurologico", "digestivo", "intoxicacion")
+
+
 @pytest.fixture(scope="module")
 def example() -> ClinicalProfiles:
     return load_profiles(EXAMPLE)
+
+
+def mixture_of(path):
+    return severity_mixture(load_profiles(path), load_profile(ARRIVALS[path]))
 
 
 @FILES
@@ -39,6 +64,11 @@ def test_valores_del_ejemplo(example):
     assert example.population.ambulance_pct == (6.0, 10.0, 21.0, 34.0)
     assert example.reason("disnea").base_weight == 7.388
     assert example.reason("disnea").age_factors == (0.4, 0.8, 1.8, 2.4)
+    assert example.reason("disnea").severity.mean == 0.95
+    assert example.reason("parada").severity.age_shift == (0.0,) * 4
+    # Derivados y calibrados escritos: cargar no los recalcula.
+    assert example.triage.thresholds == (3.088, 1.149, -0.044, -2.178)
+    assert (example.triage.noise, example.triage.bias) == (0.335, -0.082)
     # Motivos sin factores: todos valen 1.
     for key in ("dolor_abdominal", "digestivo", "otros"):
         r = example.reason(key)
@@ -102,3 +132,105 @@ def test_ambulancia_en_mayores_de_65(path):
     older = (shares[2:] * pct[2:]).sum() / shares[2:].sum()
 
     assert older == pytest.approx(27, abs=0.5)
+
+
+# --- Gravedad y triaje -----------------------------------------------------------
+
+
+@FILES
+def test_mezcla_de_gravedad_de_media_0_y_desviacion_1(path):
+    # La tabla de gravedad se desplazó y escaló para esto (ver el comentario del TOML).
+    m = mixture_of(path)
+
+    assert m.mean == pytest.approx(0, abs=0.05)
+    assert m.sd == pytest.approx(1, abs=0.05)
+
+
+@FILES
+def test_reparto_asignado_con_los_umbrales_recalculados(path):
+    profiles = load_profiles(path)
+    t = profiles.triage
+    thresholds = thresholds_for(profiles, load_profile(ARRIVALS[path]))
+
+    shares = assigned_shares(mixture_of(path), thresholds, t.noise, t.bias)
+
+    np.testing.assert_allclose(shares, t.target_shares, atol=1e-9)
+
+
+@FILES
+def test_reparto_asignado_con_los_umbrales_escritos(path):
+    # Redondeados a 3 decimales: a menos de 0,05 puntos del objetivo (0,007 en la 4.3).
+    t = load_profiles(path).triage
+    shares = assigned_shares(mixture_of(path), t.thresholds, t.noise, t.bias)
+
+    np.testing.assert_allclose(100 * shares, 100 * np.array(t.target_shares), atol=0.05)
+
+
+@FILES
+def test_infra_y_sobretriaje_en_su_objetivo(path):
+    # Con los valores escritos: 10,11 % y 6,30 % en la 4.3.
+    t = load_profiles(path).triage
+    under, over = triage_error_rates(triage_matrix(mixture_of(path), t.thresholds, t.noise, t.bias))
+
+    assert 100 * under == pytest.approx(t.under_pct, abs=0.05)
+    assert 100 * over == pytest.approx(t.over_pct, abs=0.05)
+
+
+@FILES
+def test_umbrales_escritos_iguales_a_los_derivados(path):
+    # Si cambia la gravedad, un factor, el ruido o el sesgo sin volver a
+    # ejecutar thresholds_for, falla. Con 3 decimales, el redondeo llega a 5e-4.
+    profiles = load_profiles(path)
+    derived = thresholds_for(profiles, load_profile(ARRIVALS[path]))
+
+    np.testing.assert_allclose(profiles.triage.thresholds, derived, atol=1e-3)
+
+
+@FILES
+def test_ruido_y_sesgo_escritos_iguales_a_los_calibrados(path):
+    profiles = load_profiles(path)
+    noise, bias = triage_error_for(profiles, load_profile(ARRIVALS[path]))
+
+    assert profiles.triage.noise == pytest.approx(noise, abs=1e-3)
+    assert profiles.triage.bias == pytest.approx(bias, abs=1e-3)
+
+
+@FILES
+def test_orden_clinico_de_gravedad(path):
+    # La G media de cada motivo en el año (con su mezcla de edades) respeta el
+    # orden de los grupos del catálogo: el menos grave de un grupo está por
+    # encima del más grave del siguiente.
+    means = dict(zip(REASON_KEYS, reason_year_means(mixture_of(path)), strict=True))
+
+    for upper, lower in zip(SEVERITY_GROUPS, SEVERITY_GROUPS[1:], strict=False):
+        assert min(means[k] for k in upper) > max(means[k] for k in lower), (upper, lower)
+
+
+@FILES
+def test_los_variables_tienen_mas_desviacion(path):
+    sds = {r.key: r.severity.sd for r in load_profiles(path).reasons}
+    median = float(np.median(list(sds.values())))
+
+    assert all(sds[k] > median for k in VARIABLE), (median, {k: sds[k] for k in VARIABLE})
+
+
+def test_shock_con_los_umbrales_escritos(tmp_path):
+    # Protege la decisión de escribir los umbrales: un escenario con la disnea
+    # ×1,5 (peso base 7,388 → 11,082) se carga con los umbrales del perfil base,
+    # y la proporción asignada de nivel 2 sube del 12,09 % al 13,09 %. Si los
+    # umbrales se recalcularan al cargar, volvería al 12,09 % y el shock
+    # desaparecería.
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert text.count("peso_base = 7.388") == 1
+    shocked = tmp_path / "perfiles_gripe.toml"
+    shocked.write_text(text.replace("peso_base = 7.388", "peso_base = 11.082"), encoding="utf-8")
+    profiles = load_profiles(shocked)
+    t = profiles.triage
+    arrivals = load_profile(ARRIVALS[EXAMPLE])
+
+    base = assigned_shares(mixture_of(EXAMPLE), t.thresholds, t.noise, t.bias)
+    shock = assigned_shares(severity_mixture(profiles, arrivals), t.thresholds, t.noise, t.bias)
+
+    assert 100 * base[1] == pytest.approx(12.0947, abs=1e-4)
+    assert 100 * shock[1] == pytest.approx(13.0853, abs=1e-4)
+    assert 100 * shock[0] == pytest.approx(0.4270, abs=1e-4)  # también más niveles 1
