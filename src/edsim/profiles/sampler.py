@@ -54,9 +54,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from edsim.profiles.config import REASON_KEYS, ClinicalProfiles
-from edsim.profiles.context import ArrivalContext, arrival_context
+from edsim.profiles.context import ArrivalContext, all_contexts, arrival_context
 from edsim.profiles.durations import PatientDurations, draw_durations_standard, durations_from_draws
-from edsim.profiles.mixing import gumbel_max, reason_weight_table
+from edsim.profiles.mixing import band_weights, gumbel_max, reason_weight_table
 from edsim.profiles.population import Person, draw_person_standard, person_from_draws
 from edsim.profiles.severity import severity_from_draw, triage_from_draws, triage_quality
 from edsim.profiles.workup import Workup, draw_workup_standard, older_bands, workup_from_draws
@@ -132,8 +132,10 @@ class PersonReasonSampler:
         self._population_rng, self._reason_rng = (np.random.default_rng(s) for s in streams)
         self._profiles = profiles
         self._start_date = start_date
-        # Weights of every reason for every band and context, computed once.
+        # Weights of every reason for every band and context, and of every band
+        # for every context, computed once.
         self._weights = reason_weight_table(profiles)
+        self._band_weights = {c: band_weights(profiles.population, c) for c in all_contexts()}
 
     def __call__(self, arrival: ArrivalRecord) -> PersonAndReason:
         """Person and reason of the patient of ``arrival``, the next one in arrival order."""
@@ -142,7 +144,9 @@ class PersonReasonSampler:
         person_draws = draw_person_standard(self._population_rng)
         reason_draws = draw_reason_standard(self._reason_rng)
 
-        person = person_from_draws(self._profiles.population, ctx, person_draws)
+        person = person_from_draws(
+            self._profiles.population, ctx, person_draws, self._band_weights[ctx]
+        )
         weights = self._weights[:, person.band, ctx.shift_band, ctx.day_type, ctx.season]
         reason = REASON_KEYS[gumbel_max(weights, reason_draws)]
         return PersonAndReason(context=ctx, person=person, reason=reason)
