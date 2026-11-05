@@ -171,6 +171,19 @@ def test_tabla_instantes_y_esperas(two_patients):
     assert b.stay == 45.0
 
 
+def test_tres_relojes_hasta_el_medico(two_patients, displaced):
+    # Reloj A desde la llegada, B desde el inicio del triaje y C desde la clasificación.
+    # A: llega, empieza y termina el triaje en 100, 100 y 110; médico en 110.
+    # B: 105, 110 y 120; médico en 130. P (desalojo): 0, 0 y 5; médico en 10.
+    a, b = episode_table(two_patients)
+    p, _ = episode_table(displaced)
+
+    assert (a.door_to_doctor, a.triage_start_to_doctor, a.classified_to_doctor) == (10, 10, 0)
+    assert (b.door_to_doctor, b.triage_start_to_doctor, b.classified_to_doctor) == (25, 20, 10)
+    # La primera valoración, no la reanudación tras el desalojo (35).
+    assert (p.door_to_doctor, p.triage_start_to_doctor, p.classified_to_doctor) == (10, 10, 5)
+
+
 def test_tabla_con_desalojo_suma_las_vueltas(displaced):
     p, q = episode_table(displaced)
 
@@ -264,6 +277,9 @@ def test_lo_que_corta_el_horizonte_es_none():
     assert t.box_wait is None and t.doctor_wait is None
     assert t.first_assessment is None and t.initial_doctor_wait is None
     assert t.door_to_doctor is None
+    # Los tres relojes esperan a la primera valoración, aunque haya triaje.
+    assert t.triage_start_to_doctor is None and t.classified_to_doctor is None
+    assert s.triage_start_to_doctor is None and s.classified_to_doctor is None
 
 
 def test_tabla_en_orden_de_llegada(two_patients):
@@ -365,6 +381,8 @@ def test_medidas_por_episodio():
         "doctor_wait",
         "initial_doctor_wait",
         "door_to_doctor",
+        "triage_start_to_doctor",
+        "classified_to_doctor",
         "stay",
     )
 
@@ -380,6 +398,8 @@ def test_metricas_por_nivel_y_totales(two_patients, center):
     assert m.overall.p90["triage_wait"] == pytest.approx(4.5)  # entre 0 y 5, interpolación lineal
     assert m.overall.mean["doctor_wait"] == 5.0
     assert m.overall.mean["door_to_doctor"] == 17.5  # (10 + 25) / 2
+    assert m.overall.mean["triage_start_to_doctor"] == 15.0  # (10 + 20) / 2
+    assert m.overall.mean["classified_to_doctor"] == 5.0  # (0 + 10) / 2
 
     by_level = {lm.level: lm for lm in m.by_level}
     assert sorted(by_level) == [1, 2, 3, 4, 5]

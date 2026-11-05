@@ -79,8 +79,13 @@ class EpisodeRecord:
         initial_doctor_wait: Time holding a box and waiting for a doctor
             before the first ``assessment_started``, from the first
             ``box_assigned`` on.
-        door_to_doctor: From the arrival to the first ``assessment_started``,
-            the KPI of the Manchester maximum times.
+        door_to_doctor: From the arrival to the first ``assessment_started``
+            (clock A, comparable with the TPAM of the SAS).
+        triage_start_to_doctor: From ``triage_started`` to the first
+            ``assessment_started`` (clock B, comparable with the TEA of the SAS).
+        classified_to_doctor: From ``triage_completed``, when the level is
+            assigned, to the first ``assessment_started`` (clock C, the one of
+            the Manchester compliance; docs/specs/hito-4.md).
     """
 
     episode_id: str
@@ -99,6 +104,8 @@ class EpisodeRecord:
     doctor_wait: float | None
     initial_doctor_wait: float | None
     door_to_doctor: float | None
+    triage_start_to_doctor: float | None
+    classified_to_doctor: float | None
 
     @property
     def stay(self) -> float | None:
@@ -134,6 +141,12 @@ class _Episode:
             self.doctor_wait += now - self.waiting_doctor_since
             self.waiting_doctor_since = None
 
+    def since(self, start: float | None) -> float | None:
+        """From ``start`` to the first assessment; ``None`` until it happens."""
+        if self.first_assessment is None or start is None:
+            return None
+        return self.first_assessment - start
+
     def record(self) -> EpisodeRecord:
         departed = self.departure is not None
         return EpisodeRecord(
@@ -152,9 +165,9 @@ class _Episode:
             box_wait=self.box_wait if departed else None,
             doctor_wait=self.doctor_wait if departed else None,
             initial_doctor_wait=self.initial_doctor_wait,
-            door_to_doctor=(
-                None if self.first_assessment is None else self.first_assessment - self.arrival
-            ),
+            door_to_doctor=self.since(self.arrival),
+            triage_start_to_doctor=self.since(self.triage_start),
+            classified_to_doctor=self.since(self.triage_end),
         )
 
 
@@ -356,9 +369,12 @@ MEASURES = (
     "doctor_wait",
     "initial_doctor_wait",
     "door_to_doctor",
+    "triage_start_to_doctor",
+    "classified_to_doctor",
     "stay",
 )
-"""Per-episode values summarized by level: the waits and the stay."""
+"""Per-episode values summarized by level: the waits, the three clocks to the
+doctor and the stay."""
 
 SHIFTS = ("morning", "afternoon", "night")
 """Shifts in the order of the configuration (``turnos.inicio``)."""

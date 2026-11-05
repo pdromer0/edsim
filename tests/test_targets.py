@@ -37,6 +37,8 @@ def record(n: int, arrival: float, level: int, door: float, *, departed: bool = 
         doctor_wait=0.0 if departed else None,
         initial_doctor_wait=0.0,
         door_to_doctor=door,
+        triage_start_to_doctor=door,  # triaje desde la llegada
+        classified_to_doctor=door - 5,  # clasificado 5 minutos después
     )
 
 
