@@ -17,7 +17,7 @@ from edsim.runs import RunInfo, RunStore, validate_run_id
 @pytest.fixture
 def info():
     return RunInfo(
-        format_version=1,
+        format_version=2,
         run_id="r2026",
         created_at="2026-11-03T12:00:00+00:00",
         origin="cli",
@@ -77,7 +77,10 @@ def test_metadata_roundtrip(info, tmp_path):
     assert loaded == info
     loaded.write(second)
     assert first.read_bytes() == second.read_bytes()
-    assert json.loads(first.read_text()) == dataclasses.asdict(info)
+    # El provisional no escribe las claves nulas de los perfiles clínicos.
+    expected = dataclasses.asdict(info)
+    del expected["clinical_profiles_path"], expected["clinical_profiles_fingerprint"]
+    assert json.loads(first.read_text()) == expected
     assert "arrivals_per_day" not in json.loads(first.read_text())
 
 
@@ -93,8 +96,12 @@ def test_arrivals_per_day_uses_observation_window(info, days, warmup, arrivals, 
 @pytest.mark.parametrize(
     "change",
     [
-        {"format_version": 2},
+        {"format_version": 3},
         {"format_version": True},
+        {"format_version": 1},
+        {"model": "otro"},
+        {"model": "clinico"},
+        {"clinical_profiles_fingerprint": None},
         {"created_at": "2026-11-03T12:00:00"},
         {"origin": "other"},
         {"days": 0},
@@ -141,10 +148,10 @@ def test_catalog_valid_invalid_hidden_and_occupied(info, tmp_path):
     corrupt = store.root / "corrupt"
     corrupt.mkdir()
     (corrupt / "run.json").write_text("{broken")
-    wrong = dataclasses.replace(info, run_id="wrong", format_version=1)
+    wrong = dataclasses.replace(info, run_id="wrong")
     directory = save_info(store.root, wrong)
     (directory / "run.json").write_text(
-        json.dumps(dataclasses.asdict(wrong) | {"format_version": 2})
+        json.dumps(json.loads((directory / "run.json").read_text()) | {"format_version": 3})
     )
     mismatch = store.root / "mismatch"
     mismatch.mkdir()
@@ -533,6 +540,9 @@ def test_cli_and_service_share_artifact_format(simulate, tmp_path, monkeypatch):
     cli_info = RunInfo.read(cli_output / "run.json")
     equal_fields = (
         "format_version",
+        "model",
+        "clinical_profiles_path",
+        "clinical_profiles_fingerprint",
         "run_id",
         "edsim_version",
         "seed",
@@ -707,3 +717,163 @@ def test_run_json_de_la_version_1_de_referencia():
     assert (info.run_id, info.seed, info.days, info.warmup_days) == ("referencia-v1", 7, 2, 1)
     assert (info.center_fingerprint, info.profile_fingerprint) == ("5b86440058ee", "63d0ae1fb4f0")
     assert len(json.loads(RUN_V1.read_text())) == 16
+    # Una versión 1 es siempre del modelo provisional, sin perfiles clínicos.
+    assert info.model == "provisional"
+    assert not info.is_clinical
+    assert info.clinical_profiles_path is info.clinical_profiles_fingerprint is None
+
+
+def test_la_version_1_se_lee_pero_no_se_escribe(tmp_path):
+    info = RunInfo.read(RUN_V1)
+
+    with pytest.raises(ValueError, match="only format_version 2"):
+        info.write(tmp_path / "run.json")
+    assert not (tmp_path / "run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"model": "provisional"},
+        {"clinical_profiles_path": "p.toml", "clinical_profiles_fingerprint": "abc"},
+    ],
+)
+def test_la_version_1_no_admite_claves_de_la_2(extra, tmp_path):
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(json.loads(RUN_V1.read_text()) | extra))
+
+    with pytest.raises(ValueError, match="unexpected"):
+        RunInfo.read(path)
+
+
+V2_KEYS = [*json.loads(RUN_V1.read_text()), "model"]
+"""Las claves de la versión 2 del provisional: las 16 de la 1, en su orden, y el modelo."""
+
+
+@pytest.fixture
+def clinical_info(info):
+    return dataclasses.replace(
+        info,
+        model="clinico",
+        clinical_profiles_path="config/perfiles.toml",
+        clinical_profiles_fingerprint="fedcba987654",
+    )
+
+
+def test_ida_y_vuelta_de_la_version_2_provisional(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+
+    data = json.loads(path.read_text())
+    assert list(data) == V2_KEYS
+    assert (data["format_version"], data["model"]) == (2, "provisional")
+    assert RunInfo.read(path) == info
+
+
+def test_ida_y_vuelta_de_la_version_2_clinica(clinical_info, tmp_path):
+    path = tmp_path / "run.json"
+    clinical_info.write(path)
+
+    data = json.loads(path.read_text())
+    assert list(data) == [*V2_KEYS, "clinical_profiles_path", "clinical_profiles_fingerprint"]
+    assert data["model"] == "clinico"
+    assert data["clinical_profiles_path"] == "config/perfiles.toml"
+    assert data["clinical_profiles_fingerprint"] == "fedcba987654"
+    loaded = RunInfo.read(path)
+    assert loaded == clinical_info
+    assert loaded.is_clinical
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"format_version": 3}, "format_version"),
+        ({"format_version": "2"}, "format_version"),
+        ({"model": None}, "missing"),
+        ({"clinical_profiles_fingerprint": None}, "missing"),
+        ({"extra": 1}, "unexpected"),
+    ],
+)
+def test_version_2_clinica_rechaza_claves_o_valores_invalidos(
+    clinical_info, tmp_path, change, message
+):
+    # None en el cambio quiere decir «quitar la clave»: los valores por defecto del
+    # dataclass nunca rellenan una clave que falta.
+    path = tmp_path / "run.json"
+    clinical_info.write(path)
+    data = json.loads(path.read_text())
+    for key, value in change.items():
+        if value is None:
+            del data[key]
+        else:
+            data[key] = value
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match=message):
+        RunInfo.read(path)
+
+
+def test_version_2_provisional_sin_modelo_es_un_error(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+    data = json.loads(path.read_text())
+    del data["model"]
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="missing"):
+        RunInfo.read(path)
+
+
+def test_version_2_provisional_con_perfiles_es_un_error(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+    data = json.loads(path.read_text()) | {
+        "clinical_profiles_path": "p.toml",
+        "clinical_profiles_fingerprint": "abc",
+    }
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="unexpected"):
+        RunInfo.read(path)
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"format_version": 1}, "format_version 1 has no clinical model"),
+        ({"clinical_profiles_path": None}, "clinical_profiles_path"),
+        ({"clinical_profiles_fingerprint": ""}, "clinical_profiles_fingerprint"),
+        ({"model": "otro"}, "model"),
+    ],
+)
+def test_el_modelo_explica_los_campos_opcionales(clinical_info, change, message):
+    with pytest.raises(ValueError, match=message):
+        dataclasses.replace(clinical_info, **change)
+
+
+def test_el_provisional_no_lleva_perfiles(info):
+    with pytest.raises(ValueError, match="None with model provisional"):
+        dataclasses.replace(info, clinical_profiles_fingerprint="abc")
+
+
+def test_archivo_de_una_ejecucion_clinica_con_siete_ficheros(clinical_info, tmp_path):
+    info = dataclasses.replace(clinical_info, run_id="clinica")
+    directory = save_info(tmp_path, info)
+    names = {
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    for name in names:
+        (directory / name).write_text(f"contenido de {name}\n")
+    store = RunStore(tmp_path)
+
+    assert set(store.run_files("clinica")) == names | {"run.json"}
+    with ZipFile(BytesIO(store.archive("clinica"))) as archive:
+        assert sorted(archive.namelist()) == sorted(names | {"run.json"})
+        for name in names | {"run.json"}:
+            assert archive.read(name) == (directory / name).read_bytes()
+    assert store.read_file("clinica", "perfiles.toml") == b"contenido de perfiles.toml\n"

@@ -20,7 +20,7 @@ from edsim.engine.events import JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
 from edsim.engine.report import RunParameters, write_episodes_csv, write_ground_truth_days_csv
 from edsim.runs.identifiers import validate_run_id
-from edsim.runs.store import RunInfo
+from edsim.runs.store import FORMAT_VERSION, RunInfo
 
 
 class RunConfigurationError(ValueError):
@@ -167,7 +167,7 @@ def simulate_run(
         )
         analysis = analyze_run(events, center_config, days, warmup_days)
         info = RunInfo(
-            format_version=1,
+            format_version=FORMAT_VERSION,
             run_id=run_id,
             created_at=created_at.isoformat(),
             origin=origin,

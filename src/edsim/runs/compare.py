@@ -56,11 +56,15 @@ _PAIRING_FIELDS = ("seed", "profile_fingerprint", "days", "warmup_days")
 
 @dataclass(frozen=True, slots=True)
 class MetadataDifference:
-    """One changed RunInfo field, without formatting or normalization."""
+    """One changed RunInfo field, without formatting or normalization.
+
+    ``None`` is the value of a clinical field (``clinical_profiles_path`` and
+    ``clinical_profiles_fingerprint``) in a run of the provisional model.
+    """
 
     field: str
-    a: int | float | str
-    b: int | float | str
+    a: int | float | str | None
+    b: int | float | str | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,12 @@
-"""Versioned run metadata and the on-disk catalog."""
+"""Versioned run metadata and the on-disk catalog.
+
+``run.json`` has two format versions. Version 1 (application phase 1) has 16
+keys and only the provisional model existed. Version 2 (task 4.5b) adds
+``model``, ``"provisional"`` or ``"clinico"``, and, only with the clinical
+model, the original path and the fingerprint of the clinical profiles
+(``perfiles.toml``). New runs always write version 2; version 1 is only read,
+as a provisional run.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,7 @@ import json
 import math
 import shutil
 import stat
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -23,11 +31,31 @@ _RUN_FILES = (
     "ground_truth_episodios.csv",
     "ground_truth_dias.csv",
 )
+_PROFILES_FILE = "perfiles.toml"
+"""The copy of the clinical profiles, only in runs of the clinical model."""
+
+FORMAT_VERSION = 2
+"""The version of ``run.json`` that new runs write."""
+
+RUN_MODELS = ("provisional", "clinico")
+"""The patient models of a run: the provisional one of milestone 3 or the clinical one."""
+
+type RunModel = Literal["provisional", "clinico"]
+
+_CLINICAL_FIELDS = ("clinical_profiles_path", "clinical_profiles_fingerprint")
 
 
 @dataclass(frozen=True, slots=True)
 class RunInfo:
-    """The complete metadata stored in run.json, without transient results."""
+    """The complete metadata stored in run.json, without transient results.
+
+    ``model`` explains the two optional fields: with ``"clinico"`` they are the
+    original path and the fingerprint of the clinical profiles, and with
+    ``"provisional"`` they are ``None``. ``profile_path`` and
+    ``profile_fingerprint`` are those of the arrival profile, in both models.
+    ``format_version`` is the version of the file it was read from: 1 only
+    with the provisional model.
+    """
 
     format_version: int
     run_id: str
@@ -45,6 +73,9 @@ class RunInfo:
     invariant_violations: int
     window_arrivals: int
     simulation_seconds: float
+    model: RunModel = "provisional"
+    clinical_profiles_path: str | None = None
+    clinical_profiles_fingerprint: str | None = None
 
     @property
     def arrivals_per_day(self) -> float:
@@ -52,8 +83,20 @@ class RunInfo:
         return self.window_arrivals / (self.days - self.warmup_days)
 
     def __post_init__(self) -> None:
-        if type(self.format_version) is not int or self.format_version != 1:
+        if type(self.format_version) is not int or self.format_version not in (1, 2):
             raise ValueError(f"unsupported format_version: {self.format_version!r}")
+        if self.model not in RUN_MODELS:
+            raise ValueError(f"model must be one of {RUN_MODELS}, got {self.model!r}")
+        if self.model == "clinico":
+            if self.format_version == 1:
+                raise ValueError("format_version 1 has no clinical model")
+            for name in _CLINICAL_FIELDS:
+                if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                    raise ValueError(f"{name} must be a non-empty string with model clinico")
+        else:
+            for name in _CLINICAL_FIELDS:
+                if getattr(self, name) is not None:
+                    raise ValueError(f"{name} must be None with model provisional")
         validate_run_id(self.run_id)
         for name in (
             "created_at",
@@ -83,23 +126,57 @@ class RunInfo:
         ):
             raise ValueError("simulation_seconds must be finite and non-negative")
 
+    @property
+    def is_clinical(self) -> bool:
+        """Whether the run used the clinical model, with a copy of ``perfiles.toml``."""
+        return self.model == "clinico"
+
     @classmethod
     def read(cls, path: str | Path) -> Self:
-        """Read metadata, rejecting incomplete or unsupported records."""
+        """Read metadata, rejecting incomplete or unsupported records.
+
+        The keys must be exactly those of the version: defaults never fill a
+        missing key. Version 1 is read as the provisional model.
+        """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("run.json must contain an object")
-        try:
-            return cls(**data)
-        except TypeError as error:
-            raise ValueError(f"invalid run.json fields: {error}") from error
+        version = data.get("format_version")
+        if type(version) is not int or version not in (1, 2):
+            raise ValueError(f"unsupported format_version: {version!r}")
+        expected = set(_V1_KEYS)
+        if version == 2:
+            expected.add("model")
+            if data.get("model") == "clinico":
+                expected.update(_CLINICAL_FIELDS)
+        if data.keys() != expected:
+            missing, extra = sorted(expected - data.keys()), sorted(data.keys() - expected)
+            raise ValueError(
+                f"invalid run.json fields for format_version {version}: "
+                f"missing {missing}, unexpected {extra}"
+            )
+        return cls(**data)
 
     def write(self, path: str | Path) -> None:
-        """Write all metadata in a stable UTF-8 representation."""
+        """Write version 2 in a stable UTF-8 representation, without null keys.
+
+        Raises:
+            ValueError: If the metadata is of version 1, which is only read.
+        """
+        if self.format_version != FORMAT_VERSION:
+            raise ValueError(f"only format_version {FORMAT_VERSION} is written")
+        data = asdict(self)
+        if not self.is_clinical:
+            for name in _CLINICAL_FIELDS:
+                del data[name]
         Path(path).write_text(
-            json.dumps(asdict(self), ensure_ascii=False, allow_nan=False, indent=2) + "\n",
+            json.dumps(data, ensure_ascii=False, allow_nan=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+
+_V1_KEYS = tuple(f.name for f in fields(RunInfo))[:16]
+"""The 16 keys of version 1, which version 2 keeps in the same order."""
 
 
 class RunStore:
@@ -175,9 +252,18 @@ class RunStore:
         """Delete an occupied directory only after validating its containment."""
         shutil.rmtree(self._path(run_id))
 
+    def run_files(self, run_id: str) -> tuple[str, ...]:
+        """The persisted files of a run: six, and ``perfiles.toml`` with the clinical model."""
+        # The model comes from run.json, a regular file before reading it, never a FIFO.
+        clinical = RunInfo.read(self._file(run_id, "run.json")).is_clinical
+        return (*_RUN_FILES, _PROFILES_FILE) if clinical else _RUN_FILES
+
     def archive(self, run_id: str) -> bytes:
-        """Zip the six persisted files, rejecting symlinks and non-regular entries."""
-        files = [self._file(run_id, name) for name in _RUN_FILES]
+        """Zip the persisted files, rejecting symlinks and non-regular entries.
+
+        Six files, and seven with the clinical model (``perfiles.toml``).
+        """
+        files = [self._file(run_id, name) for name in self.run_files(run_id)]
         buffer = BytesIO()
         with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
             for path in files:
@@ -186,7 +272,7 @@ class RunStore:
 
     def _file(self, run_id: str, filename: str) -> Path:
         """Resolve one regular format file before opening it, including FIFOs."""
-        if filename not in _RUN_FILES:
+        if filename not in (*_RUN_FILES, _PROFILES_FILE):
             raise ValueError(f"unknown run filename: {filename!r}")
         path = self._path(run_id) / filename
         if not stat.S_ISREG(path.lstat().st_mode):
@@ -194,5 +280,5 @@ class RunStore:
         return path
 
     def read_file(self, run_id: str, filename: str) -> bytes:
-        """Read one of the six format files, rejecting links and other entries."""
+        """Read one of the format files, rejecting links and other entries."""
         return self._file(run_id, filename).read_bytes()
