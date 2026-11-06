@@ -42,6 +42,7 @@ from edsim.engine.report import (
     plot_waits_by_level,
 )
 from edsim.engine.validation import check_engine_validation_counts, validate_engine
+from edsim.profiles.config import load_profiles
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
 from edsim.runs import simulate_run, validate_run_id
@@ -271,6 +272,12 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
     return center, profile
 
 
+def _model_line(args: argparse.Namespace) -> str:
+    if args.perfiles is None:
+        return "Modelo provisional"
+    return f"Modelo clínico · perfiles {args.perfiles} (huella {args.huella_perfiles})"
+
+
 def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     run_id = default_run_id(args.semilla) if args.run_id is None else args.run_id
     try:
@@ -283,12 +290,15 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     if out_dir.exists() or out_dir.is_symlink():
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
     _load_engine_configs(args, parser)
+    if args.perfiles is not None:
+        _, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
     try:
         check_horizon(args.dias, args.calentamiento)
     except ValueError as error:
         parser.error(str(error))
     print(
-        f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
+        f"{_engine_header(args)}\n{_model_line(args)}"
+        f"\n{args.dias} días ({args.calentamiento} de calentamiento)"
         f" · semilla {args.semilla} · run_id {run_id}\n",
         flush=True,
     )
@@ -302,6 +312,7 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
             warmup_days=args.calentamiento,
             run_id=run_id,
             origin="cli",
+            profiles=args.perfiles,
         )
     except FileExistsError:
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
@@ -526,9 +537,17 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"Simula N días y guarda en el directorio de salida {EVENTS_FILE} (el "
         f"log de eventos), {EPISODES_CSV} y {GROUND_TRUTH_DAYS_CSV} (el ground truth). "
         "Comprueba las invariantes e imprime un resumen derivado del log. Termina con "
-        "código 1 si alguna invariante falla.",
+        "código 1 si alguna invariante falla. Con --perfiles, simula el modelo clínico y "
+        "guarda también una copia de los perfiles; sin la opción, el modelo provisional.",
     )
     _add_engine_options(simulate)
+    simulate.add_argument(
+        "--perfiles",
+        default=None,
+        metavar="FICHERO",
+        help="perfiles clínicos en TOML, como config/perfiles.toml; sin la opción, el modelo "
+        "provisional del hito 3",
+    )
     simulate.add_argument(
         "--dias",
         type=int,

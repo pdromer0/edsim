@@ -822,3 +822,69 @@ def test_simulate_destination_race_is_usage_error(tmp_path, monkeypatch, capsys)
         main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
     assert error.value.code == 2
     assert "ya existe" in capsys.readouterr().err
+
+
+# --- motor simular --perfiles (tarea 4.5b) ------------------------------------------------
+
+PROFILES = Path(__file__).parent / "data" / "perfiles_ejemplo.toml"
+
+
+def test_simular_con_perfiles_dice_el_modelo_y_la_huella(tmp_path, capsys):
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["motor", "simular", *SIMULATE_ARGS, "--perfiles", str(PROFILES), "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    header = out.splitlines()[:3]
+    assert (
+        header[1] == f"Modelo clínico · perfiles {PROFILES} (huella {config_fingerprint(PROFILES)})"
+    )
+    assert header[2] == "2 días (1 de calentamiento) · semilla 7 · run_id r7"
+    assert out.rstrip().endswith(str(out_dir / "ground_truth_dias.csv"))
+    assert (out_dir / "perfiles.toml").read_bytes() == PROFILES.read_bytes()
+
+
+def test_simular_sin_perfiles_dice_el_modelo_provisional(tmp_path, capsys):
+    code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
+
+    assert code == 0
+    assert capsys.readouterr().out.splitlines()[1] == "Modelo provisional"
+    assert not (tmp_path / "salida" / "perfiles.toml").exists()
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "toml", "validation"])
+def test_simular_con_perfiles_invalidos_es_un_error_de_uso(kind, tmp_path, capsys, monkeypatch):
+    profiles = tmp_path / "perfiles.toml"
+    if kind == "directory":
+        profiles.mkdir()
+    elif kind == "toml":
+        profiles.write_text("[roto")
+    elif kind == "validation":
+        profiles.write_text("desconocida = 1\n")
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    out_dir = tmp_path / "salida"
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "motor",
+                "simular",
+                *SIMULATE_ARGS,
+                "--perfiles",
+                str(profiles),
+                "--salida",
+                str(out_dir),
+            ]
+        )
+    captured = capsys.readouterr()
+
+    assert exit_info.value.code == 2
+    assert f"--perfiles {profiles}" in captured.err
+    assert captured.out == ""
+    assert not out_dir.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == (
+        [] if kind == "missing" else ["perfiles.toml"]
+    )

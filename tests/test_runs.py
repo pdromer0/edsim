@@ -1035,3 +1035,36 @@ def test_simulate_run_guarda_las_violaciones_de_la_respuesta(simulate, tmp_path,
     assert turnaround
     assert result.info.invariant_violations == len(result.violations) > 0
     assert RunInfo.read(tmp_path / "run" / "run.json").invariant_violations > 0
+
+
+def test_la_cli_y_simulate_run_dan_el_mismo_log_con_perfiles(simulate, tmp_path, monkeypatch):
+    from edsim.cli import main
+
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    result = simulate(profiles=PROFILES)
+    cli_output = tmp_path / "cli"
+    arguments = ["--centro", "tests/data/centro_ejemplo.toml"]
+    arguments += ["--llegadas", "tests/data/llegadas_ejemplo.toml", "--perfiles", PROFILES]
+    arguments += ["--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+    arguments += ["--run-id", "test-run", "--salida", str(cli_output)]
+
+    assert main(["motor", "simular", *arguments]) == 0
+    for name in (
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+    ):
+        assert (cli_output / name).read_bytes() == (tmp_path / "run" / name).read_bytes(), name
+    cli_info = RunInfo.read(cli_output / "run.json")
+    assert (
+        dataclasses.replace(
+            cli_info,
+            created_at=result.info.created_at,
+            origin="app",
+            simulation_seconds=result.info.simulation_seconds,
+        )
+        == result.info
+    )
