@@ -396,14 +396,14 @@ Fuera de la calibración del hito 4, a propósito (decisión candidata 34): el p
 
 **El nivel 3, de ajuste a comprobación** (6 de noviembre, tarea 4.6b). Con prioridad estricta en un solo grupo de médicos, el nivel 3 casi no espera box ni médico (reloj C de 4,4 min) y las esperas recaen en los niveles 4 y 5, así que ninguna plantilla de la regla lleva su reloj A por encima de 22,9 min (horquilla 45–75) y los dos objetivos del reloj A no se pueden cumplir a la vez. En los hospitales reales los niveles 4 y 5 suelen tener circuito propio y el nivel 3 compite con el 2: es una discrepancia estructural, y el objetivo pasó a comprobación después de medir la sensibilidad (regla 5), no antes.
 
-**Resultados de la calibración** (tarea 4.6b; tablas, comandos y tiempos en el [registro de calibración](../calibracion/registro.md)). La sensibilidad confirma la separación de los mandos: con la misma semilla, el pretriaje es el mismo, bit a bit, con cualquier plantilla de médicos mientras no haya censurados, y la enfermería no mueve la espera desde la clasificación.
+**Resultados de la calibración** (tarea 4.6b; tablas, comandos y tiempos en el [registro de calibración](https://github.com/pdromer0/edsim/blob/main/docs/calibracion/registro.md)). La sensibilidad confirma la separación de los mandos: con la misma semilla, el pretriaje es el mismo, bit a bit, con cualquier plantilla de médicos mientras no haya censurados, y la enfermería no mueve la espera desde la clasificación.
 
 | Mando | Antes | Después (u) | KPI con la semilla 2026 | Con la semilla 2027 |
 | --- | --- | --- | --- | --- |
-| Enfermería de triaje | [3, 3, 2] | **[3, 2, 1]** (0,795–0,8325) | Pretriaje 1,37 → 10,65 min [8,92; 12,37] | 11,99 [9,71; 14,26] |
-| Médicos | [12, 12, 7] | **[12, 11, 5]** (0,81–0,8475) | Reloj A, niveles 2 a 5: 25,0 → 54,5 min [47,0; 62,1] | 49,9 [41,9; 57,9] |
+| Enfermería de triaje | \[3, 3, 2\] | **\[3, 2, 1\]** (0,795–0,8325) | Pretriaje 1,37 → 10,65 min \[8,92; 12,37\] | 11,99 \[9,71; 14,26\] |
+| Médicos | \[12, 12, 7\] | **\[12, 11, 5\]** (0,81–0,8475) | Reloj A, niveles 2 a 5: 25,0 → 54,5 min \[47,0; 62,1\] | 49,9 \[41,9; 57,9\] |
 
-Con [3, 2, 1] solo esa plantilla de enfermería pasa el pretriaje (con [3, 3, 1], 5,0 min; con [2, 2, 1], 26,8). Con esa enfermería, pasan el reloj A de los niveles 2 a 5 las plantillas de médicos de `[13, 13, 5]` a `[12, 11, 5]` (35,0 a 54,5 min); con un médico menos de noche, 88 min. Las comprobaciones con 2027: porcentaje sobre Manchester con el reloj A, 20,0 % (horquilla 10–30; el nivel 2 queda por encima en el 57 % de sus pacientes y aporta 7,5 puntos); pretriaje de más de 5 minutos, 39,4 % (30–60); el nivel 3, 24,2 min, fuera, por la discrepancia. Sin censurados en ninguna réplica. El centro cumplidor (`config/centro_cumplidor.toml`) tiene los médicos `[15, 15, 6]` (u de 0,625 a 0,635): días fuera de Manchester con el reloj C de 0,8 / 0 / 10,0 / 10,0 % en los niveles 2 a 5, y reloj A de los niveles 2 a 5 de 23,5 min, por debajo de la horquilla, como se espera de un centro que cumple. Con la plantilla calibrada, el pretriaje de noche es de 18,6 min de media (p90 58,9): la regla reparte con la carga media del turno, y a las 22 h la carga de enfermería es de 1,21 para una enfermera (ver el registro).
+Con \[3, 2, 1\] solo esa plantilla de enfermería pasa el pretriaje (con \[3, 3, 1\], 5,0 min; con \[2, 2, 1\], 26,8). Con esa enfermería, pasan el reloj A de los niveles 2 a 5 las plantillas de médicos de `[13, 13, 5]` a `[12, 11, 5]` (35,0 a 54,5 min); con un médico menos de noche, 88 min. Las comprobaciones con 2027: porcentaje sobre Manchester con el reloj A, 20,0 % (horquilla 10–30; el nivel 2 queda por encima en el 57 % de sus pacientes y aporta 7,5 puntos); pretriaje de más de 5 minutos, 39,4 % (30–60); el nivel 3, 24,2 min, fuera, por la discrepancia. Sin censurados en ninguna réplica. El centro cumplidor (`config/centro_cumplidor.toml`) tiene los médicos `[15, 15, 6]` (u de 0,625 a 0,635): días fuera de Manchester con el reloj C de 0,8 / 0 / 10,0 / 10,0 % en los niveles 2 a 5, y reloj A de los niveles 2 a 5 de 23,5 min, por debajo de la horquilla, como se espera de un centro que cumple. Con la plantilla calibrada, el pretriaje de noche es de 18,6 min de media (p90 58,9): la regla reparte con la carga media del turno, y a las 22 h la carga de enfermería es de 1,21 para una enfermera (ver el registro).
 
 ## Ficheros de configuración
 
@@ -480,7 +480,7 @@ enlace = "https://www.sspa.juntadeandalucia.es/..."
 nota = "Incluye menores de 15 años"
 ```
 
-Reglas de `objetivos.toml` (tarea 4.6b): claves desconocidas prohibidas y errores con la clave completa (`objetivos.<nombre>.<clave>`); `medida`, `niveles`, `estadistico`, `horquilla`, `uso`, `fuente` y `enlace` obligatorias. `estadistico` es `"media"` o `"porcentaje_sobre_umbral"`; con el porcentaje, `umbral` es obligatorio (minutos o `"manchester"`, el máximo del nivel asignado de cada paciente; cuenta quien queda estrictamente por encima) y la horquilla va en [0, 100]; con la media, `umbral` no se admite. La horquilla exige mínimo < máximo. `referencia` es opcional (el SAS no da una cifra única para los niveles 2 a 5) y, si está, cae dentro de la horquilla; `nota` es opcional. `uso` es `"ajuste"` o `"comprobacion"`. Lo que busca la elección es la referencia o, sin ella, el centro de la horquilla (`Target.aim`).
+Reglas de `objetivos.toml` (tarea 4.6b): claves desconocidas prohibidas y errores con la clave completa (`objetivos.<nombre>.<clave>`); `medida`, `niveles`, `estadistico`, `horquilla`, `uso`, `fuente` y `enlace` obligatorias. `estadistico` es `"media"` o `"porcentaje_sobre_umbral"`; con el porcentaje, `umbral` es obligatorio (minutos o `"manchester"`, el máximo del nivel asignado de cada paciente; cuenta quien queda estrictamente por encima) y la horquilla va en \[0, 100\]; con la media, `umbral` no se admite. La horquilla exige mínimo < máximo. `referencia` es opcional (el SAS no da una cifra única para los niveles 2 a 5) y, si está, cae dentro de la horquilla; `nota` es opcional. `uso` es `"ajuste"` o `"comprobacion"`. Lo que busca la elección es la referencia o, sin ella, el centro de la horquilla (`Target.aim`).
 
 ## Salidas: CLI
 
@@ -575,7 +575,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
 | Motor | Asignación de flujos con sorteos a mano; consumo fijo con generadores instrumentados; el motor como tubería del `ClinicalSampler`; respuesta con la franja del pedido (75 / 82,5 / 67,5; 84 de noche; 260 a las 7:59; pedido a las 15:10 de una llegada a las 14:00); destino con el nivel asignado; payloads del catálogo 2 en un escenario a mano, sin campos ocultos; invariantes `door`, `schema_version` y `clinical`, y cero violaciones en 14 días; huellas del modelo provisional (sin cambios) y del clínico (log y ground truth) |
 | Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
-| Calibración (tarea 4.6b) | `objetivos.toml` real y sus errores con la clave completa; cargas con `config/` (a 1e-3), regla a mano (`u` = 0,60 → `[3, 3, 2]`; 0,80 → `[12, 12, 5]` en médicos…) y las listas de plantillas distintas; IC a mano (10, 12, 14: media dentro de [6, 15] e IC de 9,94, no pasa; t₉ = 2,262); días fuera (5, 8, 16, 10 → 50 %); media diaria por paciente; ventana sin calentamiento; umbral de Manchester en el borde; desglose por nivel; pureza de la evaluación; vaciado a mano (una llegada en el minuto 1430 que sale después de la ventana) y su espía; el pretriaje igual con otros médicos (igualdad exacta) y distinto con otra enfermería; semillas de ajuste y de comprobación distintas; sensibilidad corta con un espía de la plantilla de cada candidato; elección y cumplidor a mano (el centro de la horquilla sin referencia); CLI con códigos 0, 1 y 2 sin ficheros; centros calibrado y cumplidor desde la regla con sus u. Slow: la fila corta del registro |
+| Calibración (tarea 4.6b) | `objetivos.toml` real y sus errores con la clave completa; cargas con `config/` (a 1e-3), regla a mano (`u` = 0,60 → `[3, 3, 2]`; 0,80 → `[12, 12, 5]` en médicos…) y las listas de plantillas distintas; IC a mano (10, 12, 14: media dentro de \[6, 15\] e IC de 9,94, no pasa; t₉ = 2,262); días fuera (5, 8, 16, 10 → 50 %); media diaria por paciente; ventana sin calentamiento; umbral de Manchester en el borde; desglose por nivel; pureza de la evaluación; vaciado a mano (una llegada en el minuto 1430 que sale después de la ventana) y su espía; el pretriaje igual con otros médicos (igualdad exacta) y distinto con otra enfermería; semillas de ajuste y de comprobación distintas; sensibilidad corta con un espía de la plantilla de cada candidato; elección y cumplidor a mano (el centro de la horquilla sin referencia); CLI con códigos 0, 1 y 2 sin ficheros; centros calibrado y cumplidor desde la regla con sus u. Slow: la fila corta del registro |
 | CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso. `motor simular --perfiles`: caracterización con los argumentos de la del provisional (log igual al de `simulate_ed` y CSV de días con la huella del provisional), la CLI y `simulate_run` dan el mismo log, y código 2 con perfiles que no existen o no son válidos. `perfiles validar`: tabla y gráficas con un contexto (rápido), código 1 con el sesgo del triaje desplazado en el muestreador (`sampled_profiles`), código 2 sin ficheros y los valores por defecto con `config/` (slow) |
 | Sala de resultados (tarea 4.6a) | Escenario a mano (un box, tres niveles 4): el motor lo escribe evento a evento, A ocupa el box 20 + 10 minutos, vuelve por delante de C con su clave, y esperas, curvas, Little y utilización exactas; quién deja el box (nivel 3, infratriado, sobretriado, nivel 4 sin pruebas); el provisional con `[4, 5]`, igual y con su huella; números comunes con y sin sala y con otra plantilla; una copia de `centro.toml` sin la clave da el log de antes; la clave y sus errores; catálogo 3 literal y lectura de las versiones 1, 2 y 3; violaciones a mano de las invariantes nuevas; Replay y Episodios sin dos pacientes en un box; 14 días con `config/`: cero violaciones, utilización exacta y la cola de box contada por dos caminos |
 | Ejecuciones (tarea 4.5b) | Ida y vuelta del CSV clínico con `==` y tipos exactos; cabecera literal y fila a mano; `run.json` v1 de `tests/data` y v2 con los dos modelos; `simulate_run` pasa los perfiles a `check_invariants` (espía y comportamiento); `pairing_blockers` con los dos modelos |
@@ -1433,3 +1433,79 @@ Codex dejó dos comentarios. P2, un fallo real: `_variant_bytes` editaba las lis
 - Tarea 4.6b: calibrar la plantilla con la sala. Habrá que quitar médicos. El pretriaje depende de la enfermería de triaje, y el único mando de la decisión 41 no lo mueve: hay que decidirlo antes de calibrar.
 - Medida de las esperas de las paradas por enfermería del anexo 4.5a (10,5 / 19,4 / 32,2 min): de la llegada al inicio del triaje salen 1,4 / 4,7 / 23,4 con la misma población. Hay que medir de la llegada a la clasificación y corregir el texto.
 - Tareas 4.8a y 4.8b: Episodios y Replay con los dos tramos de box, un estado y una etiqueta propios de la sala, y `initial_box_wait` y `results_box_wait` en las tablas de la app.
+
+### Tarea 4.6b: calibración de la enfermería de triaje y de los médicos
+
+**Qué se hizo**
+
+PR #48 (rama `feat/h4-calibracion`), fusionado con *squash and merge* sin cambios de la revisión: catorce commits en dos fases. En la A, el código y todas las medidas, sin tocar `config/centro.toml`. En la B, la plantilla escrita, después de fusionar el PR #47 de Codex, que desacopló de la plantilla los tests de `app/tests` en su zona (conservando los valores a mano que no dependen de `[recursos]`). Codex trabajó en un worktree aparte, en paralelo. El motor no cambia.
+
+- `src/edsim/calibration/`: `targets.py` (`objetivos.toml`, `Target`, `load_targets`), `staffing.py` (regla de la plantilla equivalente), `evaluate.py` (réplicas con día de vaciado, horquillas, días fuera, sensibilidad, elección y cumplidor) y `report.py` (tablas y CSV).
+- CLI: `edsim calibracion evaluar` y `edsim calibracion sensibilidad --mando`.
+- `config/objetivos.toml` (cinco objetivos con su fuente), `config/centro.toml` con la plantilla calibrada y `config/centro_cumplidor.toml`.
+- `docs/calibracion/registro.md`: parámetro, antes, después, KPI, motivo y todas las tablas con su comando.
+- Lo que dependía de la plantilla del hito 3 queda fijado a ella: las simulaciones provisionales usan `tests/data/centro_ejemplo.toml`, y el notebook 03 usa `dataclasses.replace` (mismas 23 salidas y los mismos hashes de sus 16 imágenes).
+- Anexo 4.5a corregido: aquella cifra de las paradas era el reloj A.
+
+**Conceptos**
+
+- **Un número por mando.** Personal del turno = ⌈carga del turno / u⌉: la búsqueda es de una dimensión y se explica sola. La carga es el personal que la demanda tendría ocupado sin colas.
+- **Mandos separables.** El pretriaje ocurre antes del médico, así que con la misma semilla cambiar médicos no cambia ni un pretriaje: se comprueba con igualdad exacta, también en las réplicas de verdad.
+- **Censura al final de la ventana.** Los que llegan al final y siguen dentro son los que más esperan; un día de vaciado los deja salir y se mide solo a los llegados en la ventana.
+- **Horquilla e intervalo.** Un objetivo pasa si la media cae dentro y el IC no es más ancho que la horquilla; con 10 réplicas, t₉ = 2,262.
+- **Ajuste y comprobación.** Se elige con una semilla y se comprueba con otra; una comprobación nunca elige.
+- **Un objetivo que ningún mando mueve no se calibra.** La regla 5 lo convierte en comprobación, con la causa escrita, sin esconder que falla.
+- **El trabajo se conserva.** Los médicos ocupados son 7,0 de media con cualquier plantilla sin censurados: cambiar la plantilla cambia las esperas, no la carga.
+
+**Decisiones**
+
+- Decisión 41 revisada (6 de noviembre): dos mandos con objetivos separados, la enfermería de triaje contra el pretriaje y, con ella fija, los médicos contra el reloj A.
+- Las plantillas candidatas salen solo de la regla, con u de 0,55 a 0,99 en pasos de 0,0025.
+- Elección entre las que pasan: la más cercana a la referencia del objetivo que decide o, sin ella, al centro de la horquilla (52,5 min en los niveles 2 a 5).
+- El reloj A del nivel 3 pasa a comprobación después de medir la sensibilidad, por una discrepancia estructural (prioridad estricta en un solo grupo de médicos).
+- Semillas 2026 (ajuste) y 2027 (comprobación); 10 réplicas de 14 días con 2 de calentamiento y uno de vaciado.
+- Cumplidor: la misma enfermería y los médicos de la regla con el u más alto que deja como mucho un 10 % de días fuera de Manchester (reloj C) en cada nivel 2 a 5.
+
+**Resultados**
+
+| Medida | Antes | Después |
+| --- | --- | --- |
+| Enfermería de triaje | \[3, 3, 2\] | \[3, 2, 1\] (u de 0,795 a 0,8325) |
+| Médicos | \[12, 12, 7\] | \[12, 11, 5\] (u de 0,81 a 0,8475); cumplidor \[15, 15, 6\] |
+| Pretriaje medio, niveles 2 a 5 (6–15) | 1,37 min | 10,65 \[8,92; 12,37\] con 2026; 11,99 con 2027 |
+| Reloj A, niveles 2 a 5 (35–70) | 25,0 min | 54,5 \[47,0; 62,1\] con 2026; 49,9 con 2027 |
+| Reloj A, nivel 3 (comprobación, 45–75) | 10,3 min | 22,9 y 24,2: fuera, por la discrepancia |
+| % sobre Manchester con el reloj A (10–30) | 9,0 % | 21,1 y 20,0 % (el nivel 2 aporta 7,5 puntos) |
+| % con pretriaje de más de 5 min (30–60) | 9,3 % | 40,0 y 39,4 % |
+| Ocupación por turno (mañana, tarde, noche) | — | Enfermería 59 / 78 / 63 %; médicos 76 / 82 / 85 % |
+| Reloj A medio por nivel 2 / 3 / 4 / 5 | — | 17,4 / 18,5 / 57,7 / 107,3 min (p90 43 / 43 / 181 / 376) |
+| Días fuera de Manchester (C), de 12, niveles 2 a 5 | — | Calibrado 0 / 1 / 6 / 6; cumplidor 0 / 0 / 2 / 1 |
+| Tests | 2.427 (2.404 rápidos) | 2.539 en 8 min 7 s (2.515 rápidos en 5 min 7 s); 241 de la app con la plantilla nueva |
+| Coste | — | Una réplica de 15 días, unos 2 s; una evaluación de 10 réplicas, 1 min 50 s; las sensibilidades, 5 min 44 s y 15 min 20 s |
+
+El anticipo del chat para la enfermería, con una simulación aparte de la cola de triaje, se cumplió dentro del 15 % en tres plantillas (10,4 frente a 10,65 en la elegida) y se apartó un 36 % en \[2, 2, 1\], cerca de la saturación y con el factor de enero. Ninguna cola crece de un día al siguiente. `edsim motor validar` pasa sus 11 comprobaciones con los valores por defecto.
+
+**Comprobación de las versiones incorrectas**
+
+Trece, aplicadas y deshechas en el mismo turno. Diez exactas (V2 a V7, V9, V11 a V13, esta última «sin día de vaciado», añadida en la aprobación). V1 (`round` en lugar de `ceil`) no se cumplió en un caso: con u = 0,85 `round` también da \[2, 2, 1\]. V8 y V10 fallaron en más tests de los previstos, y tras pasar el nivel 3 a comprobación el test de la elección de médicos ya no veía la V10: se reforzó con una plantilla que no pasa más cerca del centro de la horquilla. La tabla completa está en «Tests y validación».
+
+**Revisión**
+
+Se fusionó sin cambios. Quedó un detalle sin arreglar: `compliant_staffing` compara con 0,10 una media de decimales, y el cumplidor elegido está justo en el borde (10,0 % de días fuera en los niveles 4 y 5). Con 12 de 120 días, la media puede salir 0,1000000001 en unos 3 de cada 10.000 repartos de esos días: hoy elige bien, pero conviene decidirlo con enteros.
+
+**Lecciones aprendidas**
+
+- Un objetivo que ningún mando puede mover se descubre midiendo la sensibilidad antes de ajustar: por eso existe la regla 5.
+- Una referencia independiente (la simulación aparte de la cola de triaje) anticipa el resultado y detecta errores gruesos antes del motor.
+- Una comprobación que decide el ajuste deja de comprobar: la elección tiene que usar solo los objetivos de ajuste.
+- Dos agentes en paralelo necesitan carpetas distintas (un worktree por agente), o uno ve los cambios del otro.
+- Una cifra sin su medida escrita confunde durante semanas: la del anexo 4.5a era el reloj A con la etiqueta de otro.
+- Un umbral «como mucho» con una plantilla justo en el borde se decide con enteros, no con decimales.
+
+**Pendiente**
+
+- Menor: el cumplidor decidido con enteros (`compliant_staffing`).
+- Pretriaje de noche: con una enfermera desde las 22 h, cuando aún llegan 12,6 pacientes por hora, los llegados a medianoche esperan 35,3 min de media (p90 79,8). Turnos escalonados por mando, para versiones posteriores.
+- Circuitos separados para los niveles 4 y 5 (consultas o vía rápida): es lo que permitiría calibrar el nivel 3, y reduciría las esperas de los niveles 4 y 5 (p90 de 181 y 376 min). Por decidir.
+- Tarea 4.7: el notebook 04 con el centro calibrado, el cumplidor y la sensibilidad.
+- Tarea 4.9: el centro de ejemplo de los tests provisionales se retira cuando `centro.toml` pierda sus secciones provisionales.
