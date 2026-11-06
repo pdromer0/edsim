@@ -254,7 +254,7 @@ Tres reglas: orden fijo y número fijo de sorteos por flujo, salga lo que salga;
 | `test_ordered` | `pruebas` | Lista no vacía de tipos, en el orden de `TEST_TYPES` y sin repetir, como `["analitica", "ecg"]` |
 | `test_resulted` | `resultados` | Objeto con los mismos tipos que el `test_ordered` del episodio, cada uno `"normal"` o `"alterado"`, como `{"analitica": "alterado", "ecg": "normal"}` |
 
-En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con las claves en el orden de `TEST_TYPES`: el evento sigue inmutable, comparable con `==` y con pickle y deepcopy, y la ida y vuelta por JSONL da el mismo evento. Cada `test_resulted` se lee solo, sin buscar su pedido. Un log lleva una sola versión, la de su `EventLog(..., schema_version=...)`; `read_events` valida cada evento con el catálogo de su versión, y `_upgrade` (el `circuito` de los logs anteriores a la 4.1) solo actúa en la versión 1. Ningún catálogo lleva G, z, nivel real, calidad, salto, banda ni respuestas; un test lo comprueba.
+En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con las claves en el orden de `TEST_TYPES`: el evento sigue inmutable, comparable con `==` y con pickle y deepcopy, y la ida y vuelta por JSONL da el mismo evento. Cada `test_resulted` se lee solo, sin buscar su pedido. Un log lleva una sola versión, la de su `EventLog(..., schema_version=...)`; `read_events` valida cada evento con el catálogo de su versión, y `_upgrade` (el `circuito` de los logs anteriores a la 4.1) solo actúa en la versión 1. Ningún catálogo lleva G, z, nivel real, calidad, salto, banda ni respuestas; un test lo comprueba. Los valores aceptados (los 17 motivos, los medios, los sexos, los tipos de prueba y los resultados) están fijados en un test literal: cambiar cualquiera exige una versión 3 del catálogo.
 
 **Cambios en el motor**, pequeños y explícitos; la lógica de colas, recursos y turnos no cambia:
 
@@ -267,9 +267,9 @@ En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con
 
 - `door`, con los dos modelos: un triaje con `circuito: "puerta"` va con un `triage_completed` de nivel 1, y al revés; en la puerta, `triage_started` y `triage_completed` ocurren en el instante de la llegada. Lo contrario no se exige: un triaje de enfermería también puede empezar al llegar, si hay una enfermera libre.
 - `schema_version`: una sola versión en el log.
+- `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
 
 **Logs anteriores a la tarea 4.1.** `_upgrade` los lee con `circuito: "enfermeria"` en todos sus triajes, también en los de sus niveles 1, porque entonces el nivel 1 pasaba por la enfermera. Si se recalculan sus invariantes con las reglas de hoy, `door` marca cada uno de esos niveles 1. Es lo esperado: esas ejecuciones guardaron 0 violaciones en `run.json` con las reglas de su momento, y `runs/results.py` solo recalcula las invariantes de una ejecución que guardó alguna, así que en la app no cambian.
-- `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
 
 **Ground truth de episodios.** `EpisodeTruth` gana un campo `clinical` (`None` con el provisional, sin otros cambios) con la verdad clínica, `ClinicalTruth`, compuesta de los resultados congelados de los muestreadores de `profiles/`:
 
@@ -1057,3 +1057,103 @@ Una predicción fallida (V4) destapó un error real del modelo exacto; las demá
 - **Para la 4.5:** unir los tres muestreadores en el `ClinicalSampler`. El motor aplica `turnaround_shift_factors` con la franja del momento del pedido y llama a `round_turnaround`; `None` equivale a `needs_tests=False`. La reevaluación solo se usa si hay ronda, y el triaje no se usa en el nivel 1. Payloads `pruebas` y `resultados`; ground truth con las pruebas pedidas, su resultado y su respuesta por tipo. `perfiles validar` incluye `check_workup` y `check_durations`.
 - **Para la 4.6:** la carga del médico es un 5 % mayor que en el modelo provisional (32,38 frente a 30,84 min por paciente); la plantilla lo absorberá.
 - **Mejora menor:** separar en dos el test de la regla de los k (la regla y el literal).
+
+### Tarea 4.5a: el ClinicalSampler en el motor
+
+**Qué se hizo**
+
+PR #44 (rama `feat/h4-muestreador`), fusionado con *squash and merge*: catorce commits, diez del plan y cuatro de la revisión, con revisión de Codex (tarea crítica). La 4.5 se partió en dos: esta lleva el muestreador al motor y la 4.5b, el guardado y la CLI. Por primera vez el motor simula pacientes con perfil, y el camino del modelo provisional no cambia ni un bit.
+
+- `engine/clinical_sampler.py`: `ClinicalSampler` (flujos 1 a 7 de `child_streams(seed, 8)`, repartidos en `[5, 6]`, `[7, 1]`, `[3, 2]` y el 4 para el destino), `ClinicalTruth`, `ClinicalDraws`, `TurnaroundShifts` y `admitted_from_draw` (destino con el nivel asignado). Vive en el motor porque necesita `PatientDraws` y el destino de `CenterConfig`.
+- `PatientDraws` gana `clinical` (`None` con el provisional) y `test_turnaround` pasa a `float | None`: con el clínico es `None`, sin valor inventado. Un `__post_init__` exige un modelo u otro y `needs_tests` = hay ronda.
+- `patient.py`: rama explícita. Sin `clinical`, el código del hito 3; con él, payloads clínicos y la respuesta de la ronda calculada al pedir, con la franja de ese instante.
+- `simulate_ed(..., profiles=None)`: con perfiles, ocho flujos, el `ClinicalSampler` y un log de la versión 2; con `profiles` y `sampler` a la vez, error de uso.
+- `events.py`: un catálogo por versión (`CATALOGS`, `SCHEMA_VERSIONS`); `SCHEMA_VERSION` desaparece. Versión 2: `medio`, `edad`, `sexo`, `motivo`, `pruebas` (tupla) y `resultados` (mapping de solo lectura); las comprobaciones devuelven el valor normalizado y `_plain` los convierte para JSON y pickle.
+- `invariants.py`: `door` (los dos modelos), `schema_version` y `clinical` (payloads frente a la verdad y respuesta de cada ronda frente a la franja del pedido, calculada aparte, a 1e-8 min).
+- `EpisodeTruth.clinical`; `write_episodes_csv` rechaza episodios clínicos hasta la 4.5b.
+- Refactor de rendimiento en `profiles/`: `arrival_context` con aritmética de Python (bit a bit igual que `context_indices`, con un test en los bordes) y pesos de banda precalculados.
+- Revisión: test literal de los valores del catálogo 2; nota sobre los logs anteriores a la 4.1; convención de idioma de los tests en `AGENTS.md`, `app/AGENTS.md` y una nota a la ADR 0015.
+
+**Conceptos**
+
+- **Inyección de dependencias.** El motor depende de un contrato, `sampler(arrival) → PatientDraws`, no de un modelo: cambiar el muestreador no toca colas, boxes ni turnos.
+- **Un valor que depende de la simulación.** La respuesta de la ronda no se conoce al llegar: se sortea la base (factor 1) y el motor la transforma en el instante del pedido. Los números aleatorios comunes se mantienen: con otra plantilla, el paciente k tiene los mismos sorteos, pero si su pedido cruza las 15:00 su ronda dura otra cosa, y eso es correcto.
+- **Lo que ve el hospital y lo que no.** El log lleva lo registrable (medio, edad, sexo, motivo, nivel asignado, pruebas y resultados); G, nivel real, calidad, z, banda y respuestas base van solo al ground truth. El catálogo cerrado y un test de claves prohibidas evitan la fuga de datos.
+- **Versionar el esquema.** Una versión por log; la 1 sigue intacta para el provisional. Cambiar los valores aceptados de la versión 2 exige una versión 3.
+- **El motor como tubería.** El test de cableado más fuerte no es estadístico: el ground truth de `simulate_ed` es idéntico al del `ClinicalSampler` aplicado a `iter_arrivals` con los mismos flujos.
+- **Referencias independientes.** El motor calcula la franja con la versión escalar y la invariante y los tests con `context_indices`: dos cálculos que se vigilan entre sí.
+
+**Decisiones**
+
+- Partir la 4.5 en 4.5a (motor) y 4.5b (guardado y CLI); `run.json` versión 2 se adelanta de la 4.8a a la 4.5b.
+- Catálogo versionado con `schema_version`: 1 para el provisional y 2 para el clínico, una versión por log.
+- `PatientDraws.clinical` opcional y `test_turnaround=None` con el clínico; la respuesta con la franja del pedido.
+- `ClinicalTruth` por composición de los dataclasses de `profiles/`. Guarda la z y los 12 sorteos de las pruebas; los 7 + 17 de persona y motivo y los 3 de duraciones se reconstruyen con la semilla.
+- Huella del ground truth clínico: una línea JSON por episodio (`asdict`, `separators=(",", ":")`) y un test de tipos exactos con `type(x)`, recursivo, porque `np.float64` es subclase de `float`.
+- `door` como invariante general: la equivalencia puerta ⇔ nivel 1 asignado, y la condición de tiempo en un solo sentido.
+- Idioma de los tests, cada zona con su práctica: `tests/` en español y `app/tests/` en inglés (nota a la ADR 0015).
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Tests | 2.235 en la suite completa (7 min 30 s) y 2.213 rápidos al abrir el PR (2.098 y 2.076 antes); 241 de la app, sin cambios; más el literal del catálogo 2 en la revisión |
+| Huellas del provisional | Sin cambios (log del motor y los tres ficheros de la caracterización) |
+| Huellas del clínico | Log `1ee7e1ba…` y ground truth `c4f2c069…` (ejemplo, semilla 2026, 3 días, 1.101 episodios) |
+| Coste por paciente (14 días, config/) | Provisional 252–264 µs y clínico 486–522 µs (1,93–1,98 veces; 2,46 antes de optimizar). El `ClinicalSampler` cuesta 136 µs; el motor con los sorteos hechos, 288 µs frente a 192 |
+| Recuentos de las guardas | V1: la franja de la llegada cambia la respuesta de 137 pacientes en 3 días y 346 en 14; V7: 4 y 38 |
+
+**Comprobaciones clínicas** (14 días, 2 de calentamiento, config/, semilla 2026; provisional → clínico)
+
+| Indicador | Provisional | Clínico |
+| --- | --- | --- |
+| Tiempo de box por paciente sin esperas | 73,4 min | 91,2 min (+24,2 %; el chat estimó +21 % con factor 1) |
+| Carga del médico por paciente | 30,71 min | 32,80 min (+6,8 %) |
+| Boxes ocupados: media y pico (de 30) | 16,58 y 30 | 21,00 y 30 |
+| Médicos ocupados: media y pico | 6,57 y 12 | 7,01 y 12 |
+| Censo: media y pico | 18,99 y 62 | 27,47 y 78 |
+| Espera de box, niveles 3 / 4 / 5 | 0,9 / 6,9 / 16,2 min | 2,9 / 36,0 / 87,5 min |
+| Espera de médico, niveles 4 / 5 | 3,9 / 15,1 min | 8,1 / 15,6 min |
+| Reloj C, nivel 4 (% dentro; días fuera de 12) | 99,5 %; 0 | 82,4 %; 5 |
+| Reloj C, nivel 5 | 97,6 %; 1 | 88,0 %; 3 |
+| Pretriaje ≤ 10 min (niveles 2 a 5) | 96,7 % | 96,6 % |
+
+Repartos: 2 de 21 motivos fuera del IC al 95 % frente a lo exacto de esos 14 días (lo esperado por azar es uno); bandas dentro; niveles y pruebas, 3 de 15 fuera frente al año, que no es la referencia de 14 días de enero. Reloj C por nivel real con el clínico: 75,0 / 94,8 / 95,6 / 83,7 / 86,4 %. Respuesta de la ronda por franja del pedido (media / mediana / p90): mañana 78,0 / 56,7 / 158,4; tarde 81,6 / 61,8 / 164,7; noche 80,8 / 55,4 / 174,1 min.
+
+Paradas en 60 días: 120 de 19.499 llegadas. 67 asignadas nivel 1 (puerta) y 53 nivel 2 (enfermería); 81 de nivel real 1 y 39 de nivel real 2. Las de la puerta esperan 0,6 min de media (p90 1,8); las de la enfermería, 10,5 min hasta el triaje (p90 19,4; máximo 32,2) y 3,2 min con el reloj C.
+
+**Comprobación de las versiones incorrectas** (temporales, con predicción firme)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Franja de la llegada en el pedido | Fallan la respuesta con otra plantilla, el pedido a las 15:10, `clinical` en 14 días (las dos configuraciones) y la huella del log | Exacta; la huella del ground truth pasa |
+| V2. Destino con el nivel real | Fallan la asignación de flujos y las dos huellas; pasa el destino a mano (función pura) | Exacta |
+| V3. Flujos 7 y 1 intercambiados | Fallan la asignación de flujos y las dos huellas; pasa la estadística | Exacta |
+| V4. Pruebas y duraciones solo si no es de puerta | Fallan la asignación de flujos, el consumo fijo y las dos huellas | Exacta |
+| V5. `child_streams(seed, 8)` también sin perfiles | No falla nada (los cinco primeros hijos son iguales) | Exacta; un primer intento mal aplicado se repitió |
+| V6. `gravedad` en el catálogo 2 | Fallan el literal del catálogo, los payloads a mano, las claves prohibidas y la huella; pasan las invariantes | Fallaron los previstos y además 2 de invariantes y eventos a mano: sin claves opcionales, la clave nueva pasa a ser obligatoria |
+| V7. Factor del tipo de mayor base sobre la máxima de las bases | Falla solo el caso de las 22:00 (84) y pasa el de las 15:00; fallan la respuesta con otra plantilla, `clinical` y la huella | Exacta |
+| V8. Puerta con el nivel real | Fallan los payloads a mano, `door` en 14 días (3 + 2 pacientes) y la huella (el 256) | Exacta |
+| V9. `resultados` también de las no pedidas | Fallan los payloads a mano, `clinical` y la huella; pasan las invariantes | Fallaron los previstos y además 11 de invariantes: sus datos de prueba los genera el motor, que ya escribe un log roto |
+| V10. Sin factor de franja | Fallan cuatro casos a mano (15:00, las dos de las 22:00 y 07:59), el pedido a las 15:10, la respuesta con otra plantilla, `clinical` y la huella | Exacta |
+
+Ninguna predicción falló por un hueco de cobertura: V6 y V9 fallaron en más tests de los previstos, no en menos.
+
+**Lecciones aprendidas**
+
+- Lo que depende del instante de la simulación no se sortea al llegar: se sortea lo estándar y se transforma cuando se conoce el instante.
+- Los sorteos comunes no implican resultados idénticos: la misma persona puede tener otra ronda si cambia la hora del pedido.
+- La igualdad bit a bit con el muestreador directo prueba el cableado mejor que cualquier χ².
+- Una referencia de test tiene que ser independiente del código; si comparte la función, comparte el error.
+- Una predicción puede fallar por «pasan»: un fixture generado por el motor arrastra el error a tests que no lo prueban, y un catálogo cerrado convierte cualquier clave nueva en obligatoria.
+- Cambiar el tipo de una constante con el mismo nombre rompe en silencio; un nombre nuevo hace que lo antiguo falle al importar.
+- Un revisor automático aplica las reglas al pie de la letra: hay que escribir la práctica real, y comprobar todas las zonas antes de escribirla (`app/tests/` estaba en inglés).
+- Pasar todos los tests no es ser clínicamente creíble: los boxes saturados y las paradas en la cola del triaje salieron de las comprobaciones clínicas.
+- Optimizar solo con una medida y un umbral fijados antes, y sin cambiar ningún valor.
+
+**Pendiente**
+
+- Tarea 4.5b: CSV del ground truth clínico, `simulate_run` con perfiles (y `profiles` a `check_invariants`, con un test), `run.json` versión 2, `motor simular --perfiles` y `perfiles validar`.
+- Decisión abierta para la 4.6: los boxes pasan a ser el cuello de botella (tiempo de box +24 %, nivel 4 con 5 días fuera de 12). La plantilla de médicos (decisión 41) puede no bastar: calibrar también los boxes, revisar los porcentajes orientativos de pruebas (72,8 % frente al 55,4 % del provisional) o adelantar una zona de espera de resultados.
+- Decisión abierta para la 4.6: el 44 % de las paradas recibe nivel 2 y espera en la cola del triaje (hasta 32 min), y un tercio tiene nivel real 2. Opciones: puerta por motivo, más gravedad y menos dispersión para la parada, o aceptarlo hasta el circuito de críticos de la v1.
+- Tarea 4.8a: la app serializa el payload con `json.dumps(dict(...))`, que no admite `resultados`; una ejecución antigua como dato de prueba debe ser posterior a la 4.1.
