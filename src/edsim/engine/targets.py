@@ -26,6 +26,7 @@ import numpy as np
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.analysis import MEASURES, EpisodeRecord, completed_in_window
 from edsim.engine.center import N_LEVELS
+from edsim.engine.ground_truth import GroundTruth
 
 MANCHESTER_MAX_WAIT: tuple[float, ...] = (0.0, 10.0, 60.0, 120.0, 240.0)
 """Maximum time to medical attention by triage level, 1 to 5, in minutes.
@@ -60,9 +61,17 @@ def _check_days(first_day: object, end_day: object) -> tuple[int, int]:
 
 
 def _by_day_and_level(
-    table: Sequence[EpisodeRecord], measure: str, first_day: int, end_day: int
+    table: Sequence[EpisodeRecord],
+    measure: str,
+    first_day: int,
+    end_day: int,
+    level_of: Mapping[str, int] | None = None,
 ) -> list[list[list[float]]]:
-    """The values of ``measure``, by day of the stretch and level."""
+    """The values of ``measure``, by day of the stretch and level.
+
+    The level is the episode's own, the assigned one; with ``level_of``, the
+    one it gives to each ``episode_id``, such as the true level.
+    """
     out: list[list[list[float]]] = [
         [[] for _ in range(N_LEVELS)] for _ in range(first_day, end_day)
     ]
@@ -71,8 +80,15 @@ def _by_day_and_level(
         value = getattr(e, measure)
         if value is None:
             raise ValueError(f"{e.episode_id} departed without a {measure}")
-        out[math.floor(e.arrival / MINUTES_PER_DAY) - first_day][e.level - 1].append(value)
+        level = e.level if level_of is None else _level_in(level_of, e.episode_id)
+        out[math.floor(e.arrival / MINUTES_PER_DAY) - first_day][level - 1].append(value)
     return out
+
+
+def _level_in(level_of: Mapping[str, int], episode_id: str) -> int:
+    if episode_id not in level_of:
+        raise ValueError(f"{episode_id} is not in the ground truth")
+    return level_of[episode_id]
 
 
 @dataclass(frozen=True)
@@ -211,6 +227,141 @@ def manchester_compliance(
     out = (n > 0) & ~(within >= target)
     return Compliance(
         measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
+    )
+
+
+# --- Compliance by true level (only with the ground truth) ------------------------------
+
+
+def true_levels(ground_truth: GroundTruth) -> Mapping[str, int]:
+    """The true level of each episode of the ground truth, by ``episode_id``.
+
+    Raises:
+        ValueError: If an episode has no clinical truth (the provisional
+            model has no true level apart from the assigned one).
+    """
+    out = {}
+    for e in ground_truth.episodes:
+        if e.clinical is None:
+            raise ValueError(
+                f"{e.episode_id} has no clinical truth: the true level needs the clinical model"
+            )
+        out[e.episode_id] = e.clinical.triage.true_level
+    return MappingProxyType(out)
+
+
+def true_level_compliance(
+    table: Sequence[EpisodeRecord],
+    ground_truth: GroundTruth,
+    first_day: int,
+    end_day: int,
+    *,
+    measure: str = COMPLIANCE_MEASURE,
+    max_wait: Sequence[float] = MANCHESTER_MAX_WAIT,
+    target: float = COMPLIANCE_TARGET,
+) -> Compliance:
+    """``manchester_compliance`` with the true level of each patient instead of the assigned one.
+
+    The same rule, with the true level both to group the patients and to
+    choose their maximum: an undertriaged level 2 assigned as 3 that sees a
+    doctor in 30 minutes complies with its assigned level (60) and not with
+    its true one (10). The difference with the observable compliance is the
+    cost of the undertriage measured in time (docs/specs/hito-4.md, "Relojes
+    y cumplimiento"). It needs the ground truth: it never goes into the log
+    nor into the observable KPIs.
+
+    Args:
+        table: The episodes of the log, from ``episode_table``.
+        ground_truth: The ground truth of the same run, with the clinical
+            model.
+        first_day: First day, such as the warm-up days.
+        end_day: Day after the last, such as the horizon in days.
+        measure: The clock, a name of ``CLOCKS``.
+        max_wait: Maximum time of each level, 1 to 5.
+        target: Share of the patients required, in (0, 1].
+
+    Raises:
+        ValueError: As ``manchester_compliance``, or if an episode has no
+            clinical truth or a counted episode is not in the ground truth.
+    """
+    if measure not in CLOCKS:
+        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
+    first_day, end_day = _check_days(first_day, end_day)
+    max_wait = tuple(float(m) for m in max_wait)
+    if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
+        raise ValueError(f"max_wait must be {N_LEVELS} values >= 0, got {max_wait}")
+    if not 0 < target <= 1:
+        raise ValueError(f"target must be in (0, 1], got {target!r}")
+
+    values = _by_day_and_level(table, measure, first_day, end_day, true_levels(ground_truth))
+    n = np.array([[len(v) for v in day] for day in values], dtype=np.int64)
+    within = np.array(
+        [
+            [np.mean(np.array(v) <= max_wait[k]) if v else np.nan for k, v in enumerate(day)]
+            for day in values
+        ],
+        dtype=float,
+    )
+    out = (n > 0) & ~(within >= target)
+    return Compliance(
+        measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
+    )
+
+
+@dataclass(frozen=True)
+class TrueLevelWaits:
+    """One measure of the episodes of a stretch, with their assigned and true levels.
+
+    Attributes:
+        measure: A name of ``MEASURES``.
+        episode_ids: The episodes, in the order of the table.
+        assigned: Their assigned level, the one of the log.
+        true: Their true level, from the ground truth.
+        values: The measure of each one.
+    """
+
+    measure: str
+    episode_ids: tuple[str, ...]
+    assigned: np.ndarray
+    true: np.ndarray
+    values: np.ndarray
+
+
+def true_level_waits(
+    table: Sequence[EpisodeRecord],
+    ground_truth: GroundTruth,
+    measure: str,
+    first_day: int,
+    end_day: int,
+) -> TrueLevelWaits:
+    """One measure with both levels of each episode, in days ``[first_day, end_day)``.
+
+    Only the episodes that arrive in the stretch and depart count
+    (``completed_in_window``); each is paired with its truth by
+    ``episode_id``.
+
+    Raises:
+        ValueError: If ``measure`` is unknown, the days are not valid, an
+            episode has no clinical truth or a counted one is not in the
+            ground truth.
+    """
+    if measure not in MEASURES:
+        raise ValueError(f"measure must be one of {MEASURES}, got {measure!r}")
+    first_day, end_day = _check_days(first_day, end_day)
+    level_of = true_levels(ground_truth)
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    values = []
+    for e in done:
+        value = getattr(e, measure)
+        if value is None:
+            raise ValueError(f"{e.episode_id} departed without a {measure}")
+        values.append(value)
+    return TrueLevelWaits(
+        measure=measure,
+        episode_ids=tuple(e.episode_id for e in done),
+        assigned=np.array([e.level for e in done], dtype=np.int64),
+        true=np.array([_level_in(level_of, e.episode_id) for e in done], dtype=np.int64),
+        values=np.array(values, dtype=float),
     )
 
 
