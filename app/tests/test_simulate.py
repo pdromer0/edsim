@@ -74,23 +74,17 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
                 assert app.number_input(key=f"edit_recursos.{key}_{index}").value == count
         else:
             assert app.number_input(key=f"edit_recursos.{key}_None").value == value
-    shares = center_template["triaje"]["reparto_niveles"]
-    total = sum(shares)
-    assert f"Suma del reparto: {total:.1f}".replace(".", ",") in visible
-    expected = {}
-    for label, probabilities in (
-        ("Pruebas globales", center_template["pruebas"]["probabilidad"]),
-        ("Ingreso global", center_template["destino"]["probabilidad_ingreso"]),
-    ):
-        percentage = 100 * sum(s / total * p for s, p in zip(shares, probabilities, strict=True))
-        expected[label] = f"{percentage:.3f} %".replace(".", ",")
-    assert {metric.label: metric.value for metric in app.metric} == expected
+    assert "Suma del reparto: 100,0" in visible
+    assert {metric.label: metric.value for metric in app.metric} == {
+        "Pruebas globales": "55,410 %",
+        "Ingreso global": "12,843 %",
+    }
 
 
-def test_multiple_errors_disable_saving_and_show_each_diagnostic(center_template):
+def test_multiple_errors_disable_saving_and_show_each_diagnostic():
     app = open_simulation()
     edit(app, "recursos.medicos", 0, 0)
-    edit(app, "duraciones.triaje", 1, center_template["duraciones"]["triaje"][0] / 2)
+    edit(app, "duraciones.triaje", 1, 4.0)
     app.text_input(key="variant_name_widget").set_value("invalid").run()
     assert not app.exception
     assert any("recursos.medicos[0] must be at least 1" in e.value for e in app.error)
@@ -556,15 +550,8 @@ def test_change_list_names_fields_and_formats_staff_and_normalized_shares(center
     edited_doctors[1] += 3
     app = open_simulation()
     edit(app, "recursos.medicos", 1, edited_doctors[1])
-    shares = center_template["triaje"]["reparto_niveles"]
-    edited_shares = shares.copy()
-    donor = max(range(len(shares)), key=shares.__getitem__)
-    receiver = (donor + 1) % len(shares)
-    delta = shares[donor] / 1000
-    edited_shares[donor] -= delta
-    edited_shares[receiver] += delta
-    edit(app, "triaje.reparto_niveles", donor, edited_shares[donor])
-    edit(app, "triaje.reparto_niveles", receiver, edited_shares[receiver])
+    edit(app, "triaje.reparto_niveles", 0, 0.4)
+    edit(app, "triaje.reparto_niveles", 2, 33.5)
     visible = [item.value for item in app.markdown]
     assert (
         f"**Médicos** · `recursos.medicos`: {expected_sequence(doctors)} → "
@@ -572,8 +559,7 @@ def test_change_list_names_fields_and_formats_staff_and_normalized_shares(center
     ) in visible
     assert (
         "**Reparto de triaje (pesos)** · `triaje.reparto_niveles`: "
-        f"{expected_sequence([value / sum(shares) for value in shares])} → "
-        f"{expected_sequence([value / sum(edited_shares) for value in edited_shares])}"
+        "[0,003; 0,121; 0,336; 0,526; 0,014] → [0,004; 0,121; 0,335; 0,526; 0,014]"
     ) in visible
 
 
