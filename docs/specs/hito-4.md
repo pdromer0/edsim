@@ -267,6 +267,8 @@ En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con
 
 - `door`, con los dos modelos: un triaje con `circuito: "puerta"` va con un `triage_completed` de nivel 1, y al revés; en la puerta, `triage_started` y `triage_completed` ocurren en el instante de la llegada. Lo contrario no se exige: un triaje de enfermería también puede empezar al llegar, si hay una enfermera libre.
 - `schema_version`: una sola versión en el log.
+
+**Logs anteriores a la tarea 4.1.** `_upgrade` los lee con `circuito: "enfermeria"` en todos sus triajes, también en los de sus niveles 1, porque entonces el nivel 1 pasaba por la enfermera. Si se recalculan sus invariantes con las reglas de hoy, `door` marca cada uno de esos niveles 1. Es lo esperado: esas ejecuciones guardaron 0 violaciones en `run.json` con las reglas de su momento, y `runs/results.py` solo recalcula las invariantes de una ejecución que guardó alguna, así que en la app no cambian.
 - `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
 
 **Ground truth de episodios.** `EpisodeTruth` gana un campo `clinical` (`None` con el provisional, sin otros cambios) con la verdad clínica, `ClinicalTruth`, compuesta de los resultados congelados de los muestreadores de `profiles/`:
@@ -285,7 +287,7 @@ En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con
 
 **Huellas.** Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito, y no cambiaron en la 4.5a. El modelo clínico tiene sus propias huellas desde la tarea 4.5a, con el centro, las llegadas y los perfiles de ejemplo, semilla 2026 y 3 días: la del log y la del ground truth, una línea JSON por episodio (`json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":"))`, con el `EpisodeTruth` entero). Se regeneran solo con un cambio a propósito de los muestreadores o de `ClinicalTruth`, explicado en el commit; el formato estable del ground truth será el CSV de la tarea 4.5b.
 
-**Pendiente para la tarea 4.5b.** `simulate_run` debe pasar `profiles` a `check_invariants`: sin ellos, la comprobación de la respuesta de la ronda no se hace. La 4.5b añade un test que lo vigile. La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: la 4.8a tendrá que usar `to_json` o un payload plano.
+**Pendiente para la tarea 4.5b.** `simulate_run` debe pasar `profiles` a `check_invariants`: sin ellos, la comprobación de la respuesta de la ronda no se hace. La 4.5b añade un test que lo vigile. La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: la 4.8a tendrá que usar `to_json` o un payload plano. Si la 4.8a guarda una ejecución antigua como dato de prueba, debe ser posterior a la tarea 4.1 o tener en cuenta que `door` marca sus niveles 1 (ver «Logs anteriores a la tarea 4.1»).
 
 ## Relojes y cumplimiento
 
