@@ -1,6 +1,7 @@
 """Isolate every page from real runs and supply reproducible catalog artifacts."""
 
 import shutil
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -103,6 +104,13 @@ def simulation_files(tmp_path, monkeypatch):
     yield config
     st.cache_data.clear()
     st.cache_resource.clear()
+
+
+@pytest.fixture
+def center_template(simulation_files):
+    """Read the actual isolated center independently of the application loader."""
+    with (simulation_files / "centro.toml").open("rb") as source:
+        return tomllib.load(source)
 
 
 # Collection-time marks preserve the A.5 characterization files byte for byte.
