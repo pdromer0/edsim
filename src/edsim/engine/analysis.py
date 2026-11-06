@@ -26,11 +26,19 @@ The window follows the rules of ``mm1_metrics`` (milestone 1):
 The waits of an episode follow the same rules as the invariant "nobody jumps
 the queue" (``check_nobody_jumps_the_queue``):
 
-- waiting for a box: from ``triage_completed`` and from every
-  ``patient_displaced`` to the next ``box_assigned``;
+- waiting for a box: from ``triage_completed``, from every
+  ``patient_displaced`` and, after the results room, from ``test_resulted``
+  to the next ``box_assigned``;
 - waiting for a doctor: holding a box with an assessment to do, from
   ``box_assigned`` or ``test_resulted`` to ``assessment_started`` or
   ``patient_displaced``.
+
+**Results room** (task 4.6a). ``box_released`` frees the box (``boxes_busy``
+goes down) and the patient waits for its results outside, still in the
+census; with the results it joins the box queue (``waiting_box``) until its
+``box_assigned``. ``box_wait`` stays the total wait for a box, so Little's law
+of the box queue still holds; ``initial_box_wait`` and ``results_box_wait``
+split out the first wait and the one after the room.
 """
 
 import math
@@ -71,8 +79,9 @@ class EpisodeRecord:
         destination: ``alta`` or ``ingreso``.
         displacements: Times the episode was displaced from a box.
         triage_wait: From the arrival to the start of the triage.
-        box_wait: Total time waiting for a box: after the triage and after
-            each displacement. Final only at the departure, ``None`` before.
+        box_wait: Total time waiting for a box: after the triage, after each
+            displacement and after the results room. Final only at the
+            departure, ``None`` before.
         doctor_wait: Total time holding a box and waiting for a doctor, for
             the first assessment, the reassessment and the resumptions after
             a displacement. Final only at the departure, ``None`` before.
@@ -86,6 +95,12 @@ class EpisodeRecord:
         classified_to_doctor: From ``triage_completed``, when the level is
             assigned, to the first ``assessment_started`` (clock C, the one of
             the Manchester compliance; docs/specs/hito-4.md).
+        initial_box_wait: From ``triage_completed`` to the first
+            ``box_assigned``; ``None`` until it happens (task 4.6a).
+        results_box_wait: Time waiting for a box after the results room, from
+            ``test_resulted`` to the ``box_assigned`` of the reassessment; 0 if
+            the patient did not wait outside. Final only at the departure,
+            ``None`` before (task 4.6a).
     """
 
     episode_id: str
@@ -106,6 +121,8 @@ class EpisodeRecord:
     door_to_doctor: float | None
     triage_start_to_doctor: float | None
     classified_to_doctor: float | None
+    initial_box_wait: float | None
+    results_box_wait: float | None
 
     @property
     def stay(self) -> float | None:
@@ -135,6 +152,10 @@ class _Episode:
     waiting_doctor_since: float | None = None
     has_box: bool = False
     to_assess: bool = False  # an assessment is next once in a box
+    initial_box_wait: float | None = None
+    results_box_wait: float = 0.0
+    in_room: bool = False  # waiting for the results outside the box
+    back_from_room: bool = False  # waiting for a box after the results room
 
     def close_doctor_wait(self, now: float) -> None:
         if self.waiting_doctor_since is not None:
@@ -168,6 +189,8 @@ class _Episode:
             door_to_doctor=self.since(self.arrival),
             triage_start_to_doctor=self.since(self.triage_start),
             classified_to_doctor=self.since(self.triage_end),
+            initial_box_wait=self.initial_box_wait,
+            results_box_wait=self.results_box_wait if departed else None,
         )
 
 
@@ -198,11 +221,17 @@ def episode_table(events: Sequence[Event]) -> tuple[EpisodeRecord, ...]:
                 ep.waiting_box_since = now
                 ep.to_assess = True
             case "box_assigned":
+                if ep.waiting_box_since is not None:
+                    wait = now - ep.waiting_box_since
+                    ep.box_wait += wait
+                    if ep.first_box is None:
+                        ep.initial_box_wait = wait
+                    if ep.back_from_room:
+                        ep.results_box_wait += wait
+                    ep.waiting_box_since = None
                 if ep.first_box is None:
                     ep.first_box = now
-                if ep.waiting_box_since is not None:
-                    ep.box_wait += now - ep.waiting_box_since
-                    ep.waiting_box_since = None
+                ep.back_from_room = False
                 ep.has_box = True
                 if ep.to_assess:
                     ep.waiting_doctor_since = now
@@ -218,6 +247,14 @@ def episode_table(events: Sequence[Event]) -> tuple[EpisodeRecord, ...]:
                 ep.to_assess = True
                 if ep.has_box:
                     ep.waiting_doctor_since = now
+                elif ep.in_room:
+                    ep.in_room = False
+                    ep.back_from_room = True
+                    ep.waiting_box_since = now
+            case "box_released":
+                ep.close_doctor_wait(now)
+                ep.has_box = False
+                ep.in_room = True
             case "patient_displaced":
                 ep.close_doctor_wait(now)
                 ep.has_box = False
@@ -252,6 +289,13 @@ _DELTAS: dict[str, dict[str, int]] = {
 _DOOR_DELTAS: dict[str, dict[str, int]] = {
     "triage_started": {"waiting_triage": -1},
     "triage_completed": {"waiting_box": 1},
+}
+
+# Results room (task 4.6a): box_released frees the box, and the results of a
+# patient in the room put it back in the box queue. It stays in the census.
+_ROOM_DELTAS: dict[str, dict[str, int]] = {
+    "box_released": {"boxes_busy": -1},
+    "test_resulted": {"waiting_box": 1},
 }
 
 _STAFF_CURVE = {"enfermeria_triaje": "nurses_staff", "medicos": "doctors_staff"}
@@ -345,8 +389,15 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
     times = [0.0]  # the instants, with 0 so that every curve starts there
     changes: list[tuple[int, int, int]] = []  # (position in times, curve, delta)
     at_the_door: set[str] = set()
+    in_room: set[str] = set()
     for e in events:
-        if e.event_type == "staffing_changed":
+        if e.event_type == "box_released":
+            in_room.add(e.episode_id)
+            change = _ROOM_DELTAS["box_released"]
+        elif e.event_type == "test_resulted" and e.episode_id in in_room:
+            in_room.discard(e.episode_id)
+            change = _ROOM_DELTAS["test_resulted"]
+        elif e.event_type == "staffing_changed":
             change = {
                 _STAFF_CURVE[e.payload["recurso"]]: e.payload["nueva"] - e.payload["anterior"]
             }
@@ -380,6 +431,8 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
 MEASURES = (
     "triage_wait",
     "box_wait",
+    "initial_box_wait",
+    "results_box_wait",
     "doctor_wait",
     "initial_doctor_wait",
     "door_to_doctor",
@@ -664,7 +717,8 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
     - Triage nurses: ``triage_started`` to ``triage_completed``, except the
       triages at the door, which take no nurse.
     - Doctors: ``assessment_started`` to ``assessment_ended``.
-    - Boxes: ``box_assigned`` to ``patient_departed`` or ``patient_displaced``.
+    - Boxes: ``box_assigned`` to ``patient_departed``, ``patient_displaced``
+      or ``box_released``.
 
     Intervals still open at the end of the log end at ``horizon``.
     """
@@ -680,7 +734,7 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
             open_since[(opening[kind], episode)] = e.sim_time
         elif kind == "box_assigned":
             open_since[("boxes", episode)] = e.sim_time
-        elif kind in closing or kind in ("patient_departed", "patient_displaced"):
+        elif kind in closing or kind in ("patient_departed", "patient_displaced", "box_released"):
             pool = closing.get(kind, "boxes")
             start = open_since.pop((pool, episode), None)
             if start is not None:
