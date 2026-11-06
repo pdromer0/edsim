@@ -507,6 +507,57 @@ class SensitivityRow:
         return max(r.censored_share for r in self.replicas)
 
 
+def evaluate_staffings(
+    center: CenterConfig,
+    arrival_profile: ArrivalProfile,
+    profiles: ClinicalProfiles,
+    targets: Sequence[Target],
+    knob: str,
+    staffings: Sequence[RuleStaffing],
+    *,
+    replicas: int,
+    days: int,
+    warmup_days: int,
+    seed: int | np.random.SeedSequence,
+    on_row: Callable[[SensitivityRow], None] | None = None,
+) -> tuple[SensitivityRow, ...]:
+    """Evaluate the given staffings of ``knob``, in their order, the other knob fixed.
+
+    Each one is simulated with the same replications (the same seed), so the
+    rows differ only in the staff. ``sensitivity`` gives it every staffing of
+    the rule; a subset, such as the staffings around the chosen one, costs
+    less.
+
+    Args:
+        staffings: The staffings to evaluate, such as some of ``rule_staffings``.
+        on_row: Called with each row as soon as it is evaluated, such as a
+            progress line of the CLI.
+
+    Raises:
+        ValueError: If ``knob`` is unknown.
+    """
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    rows = []
+    for staffing in staffings:
+        candidate = candidate_center(center, knob, staffing.staff)
+        reduced = simulate_replicas(
+            candidate,
+            arrival_profile,
+            profiles,
+            targets,
+            replicas=replicas,
+            days=days,
+            warmup_days=warmup_days,
+            seed=seed,
+        )
+        row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
+        rows.append(row)
+        if on_row is not None:
+            on_row(row)
+    return tuple(rows)
+
+
 def sensitivity(
     center: CenterConfig,
     arrival_profile: ArrivalProfile,
@@ -526,32 +577,28 @@ def sensitivity(
     """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
 
     The staffings come from ``rule_staffings`` with the loads of the knob and
-    the shifts of ``center``; each one is simulated with the same replications
-    (the same seed), so the rows differ only in the staff.
+    the shifts of ``center``, and ``evaluate_staffings`` simulates each one
+    with the same replications (the same seed), so the rows differ only in
+    the staff.
 
     Args:
         on_row: Called with each row as soon as it is evaluated, such as a
             progress line of the CLI.
     """
     loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
-    rows = []
-    for staffing in rule_staffings(loads, u_min, u_max, step):
-        candidate = candidate_center(center, knob, staffing.staff)
-        reduced = simulate_replicas(
-            candidate,
-            arrival_profile,
-            profiles,
-            targets,
-            replicas=replicas,
-            days=days,
-            warmup_days=warmup_days,
-            seed=seed,
-        )
-        row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
-        rows.append(row)
-        if on_row is not None:
-            on_row(row)
-    return tuple(rows)
+    return evaluate_staffings(
+        center,
+        arrival_profile,
+        profiles,
+        targets,
+        knob,
+        rule_staffings(loads, u_min, u_max, step),
+        replicas=replicas,
+        days=days,
+        warmup_days=warmup_days,
+        seed=seed,
+        on_row=on_row,
+    )
 
 
 def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow | None:
