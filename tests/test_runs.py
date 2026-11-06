@@ -10,6 +10,8 @@ from zipfile import ZipFile
 import numpy as np
 import pytest
 
+from edsim.arrivals.profile import load_profile
+from edsim.engine.center import load_center
 from edsim.engine.engine import default_run_id
 from edsim.runs import RunInfo, RunStore, validate_run_id
 
@@ -453,6 +455,7 @@ def test_service_saves_violations_and_checks_ground_truth(simulate, tmp_path, mo
     assert calls[0][1] == {
         "ground_truth": engine_results[0].ground_truth,
         "inside": engine_results[0].inside,
+        "profiles": None,
     }
 
 
@@ -588,7 +591,7 @@ def test_service_missing_input_cleans_temporary(simulate, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("argument", ["center", "profile"])
+@pytest.mark.parametrize("argument", ["center", "profile", "profiles"])
 @pytest.mark.parametrize("kind", ["missing", "directory", "unreadable", "toml", "validation"])
 def test_configuration_failures_keep_their_cause(simulate, tmp_path, monkeypatch, argument, kind):
     from edsim.runs import RunConfigurationError
@@ -877,3 +880,158 @@ def test_archivo_de_una_ejecucion_clinica_con_siete_ficheros(clinical_info, tmp_
         for name in names | {"run.json"}:
             assert archive.read(name) == (directory / name).read_bytes()
     assert store.read_file("clinica", "perfiles.toml") == b"contenido de perfiles.toml\n"
+
+
+# --- simulate_run con perfiles clínicos (tarea 4.5b) ----------------------------------------
+
+PROFILES = "tests/data/perfiles_ejemplo.toml"
+
+
+def test_simulacion_clinica_metadatos_y_copias(simulate, tmp_path):
+    from edsim.arrivals.report import config_fingerprint
+    from edsim.engine.report import CLINICAL_EPISODE_COLUMNS
+
+    result = simulate(profiles=PROFILES)
+    output = tmp_path / "run"
+    info = RunInfo.read(output / "run.json")
+
+    assert info == result.info
+    assert (info.format_version, info.model) == (2, "clinico")
+    assert info.clinical_profiles_path == PROFILES
+    assert (output / "perfiles.toml").read_bytes() == Path(PROFILES).read_bytes()
+    assert info.clinical_profiles_fingerprint == config_fingerprint(output / "perfiles.toml")
+    # Las huellas del centro y de las llegadas no dependen del modelo.
+    assert info.profile_path == "tests/data/llegadas_ejemplo.toml"
+    assert info.invariant_violations == len(result.violations) == 0
+    assert {p.name for p in output.iterdir()} == {
+        "run.json",
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    header = (output / "ground_truth_episodios.csv").read_text().splitlines()[0]
+    assert tuple(header.split(",")) == CLINICAL_EPISODE_COLUMNS
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())
+
+
+def test_simulacion_clinica_es_la_de_simulate_ed(simulate, tmp_path):
+    # El log y el ground truth guardados son los de simulate_ed con los mismos argumentos.
+    from edsim.engine.engine import simulate_ed
+    from edsim.engine.events import JsonlSink
+    from edsim.engine.report import read_episodes_csv
+    from edsim.profiles.config import load_profiles
+
+    simulate(profiles=PROFILES)
+    path = tmp_path / "eventos.jsonl"
+    with JsonlSink(path) as sink:
+        expected = simulate_ed(
+            load_center("tests/data/centro_ejemplo.toml"),
+            load_profile("tests/data/llegadas_ejemplo.toml"),
+            2,
+            7,
+            sink=sink,
+            warmup_days=1,
+            run_id="test-run",
+            profiles=load_profiles(PROFILES),
+        )
+
+    assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == path.read_bytes()
+    episodes = read_episodes_csv(tmp_path / "run" / "ground_truth_episodios.csv")
+    assert episodes == expected.ground_truth.episodes
+    assert all(e.clinical is not None for e in episodes)
+
+
+def test_reproducir_desde_la_copia_con_perfiles(simulate, tmp_path):
+    simulate(profiles=PROFILES)
+    saved = tmp_path / "run"
+    simulate(
+        center=saved / "centro.toml",
+        profile=saved / "llegadas.toml",
+        profiles=saved / "perfiles.toml",
+        output_dir=tmp_path / "reproduced",
+    )
+
+    from edsim.engine.report import read_episodes_csv
+
+    reproduced = tmp_path / "reproduced"
+    assert (saved / "eventos.jsonl").read_bytes() == (reproduced / "eventos.jsonl").read_bytes()
+    # Los CSV llevan las rutas de procedencia, que aquí cambian; los episodios, no.
+    assert read_episodes_csv(saved / "ground_truth_episodios.csv") == read_episodes_csv(
+        reproduced / "ground_truth_episodios.csv"
+    )
+
+
+def test_perfiles_desde_la_copia_aunque_cambie_el_original(simulate, tmp_path, monkeypatch):
+    from edsim.runs import service
+
+    original = tmp_path / "perfiles.toml"
+    original.write_bytes(Path(PROFILES).read_bytes())
+    baseline = tmp_path / "baseline"
+    simulate(profiles=original, output_dir=baseline)
+    copyfile = service._copy_configuration
+    copied = []
+
+    def copy_then_modify(source, destination):
+        result = copyfile(source, destination)
+        copied.append(Path(destination).name)
+        if Path(source) == original:
+            # Más ruido de triaje: otro reparto de niveles asignados, otro log.
+            original.write_text(original.read_text().replace("ruido = 0.333", "ruido = 0.9"))
+        return result
+
+    monkeypatch.setattr(service, "_copy_configuration", copy_then_modify)
+    simulate(profiles=original)
+
+    assert copied == ["centro.toml", "llegadas.toml", "perfiles.toml"]
+    assert "ruido = 0.9" in original.read_text()
+    assert "ruido = 0.333" in (tmp_path / "run" / "perfiles.toml").read_text()
+    assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == (
+        baseline / "eventos.jsonl"
+    ).read_bytes()
+
+
+def test_simulate_run_pasa_los_perfiles_a_las_invariantes(simulate, monkeypatch):
+    # Espía: check_invariants recibe el mismo objeto de perfiles que simulate_ed, el
+    # cargado de la copia, junto al ground truth.
+    from edsim.profiles.config import load_profiles
+    from edsim.runs import service
+
+    real_engine, real_check = service.simulate_ed, service.check_invariants
+    engine_profiles, check_kwargs = [], []
+
+    def engine(*args, **kwargs):
+        engine_profiles.append(kwargs["profiles"])
+        return real_engine(*args, **kwargs)
+
+    def check(events, center, **kwargs):
+        check_kwargs.append(kwargs)
+        return real_check(events, center, **kwargs)
+
+    monkeypatch.setattr(service, "simulate_ed", engine)
+    monkeypatch.setattr(service, "check_invariants", check)
+    simulate(profiles=PROFILES)
+
+    assert len(engine_profiles) == len(check_kwargs) == 1
+    assert check_kwargs[0]["profiles"] is engine_profiles[0]
+    assert engine_profiles[0] == load_profiles(PROFILES)
+    assert check_kwargs[0]["ground_truth"] is not None
+
+
+def test_simulate_run_guarda_las_violaciones_de_la_respuesta(simulate, tmp_path, monkeypatch):
+    # Comportamiento: si el motor alarga cada ronda un minuto, solo la comprobación de la
+    # respuesta con los perfiles lo ve (la base del ground truth no cambia).
+    from edsim.engine.clinical_sampler import ClinicalDraws
+
+    real = ClinicalDraws.round_turnaround
+    monkeypatch.setattr(ClinicalDraws, "round_turnaround", lambda self, t: real(self, t) + 1.0)
+    result = simulate(profiles=PROFILES)
+
+    turnaround = [
+        v for v in result.violations if v.check == "clinical" and "turnaround" in v.message
+    ]
+    assert turnaround
+    assert result.info.invariant_violations == len(result.violations) > 0
+    assert RunInfo.read(tmp_path / "run" / "run.json").invariant_violations > 0

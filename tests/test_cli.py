@@ -550,7 +550,11 @@ def test_simular_comprueba_las_invariantes_con_el_ground_truth(tmp_path, monkeyp
     ((checked, checked_center, kwargs),) = calls
     assert checked == events
     assert checked_center == center
-    assert kwargs == {"ground_truth": result.ground_truth, "inside": result.inside}
+    assert kwargs == {
+        "ground_truth": result.ground_truth,
+        "inside": result.inside,
+        "profiles": None,
+    }
 
 
 def small_engine_validation_with(validation, passed):
