@@ -637,8 +637,9 @@ def _add_calibration_options(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=FIT_SEED,
         metavar="N",
-        help="semilla maestra: la de ajuste es 2026 y la de comprobación, 2027 (por defecto: "
-        "%(default)s)",
+        help="semilla maestra: la de ajuste es 2026; la de comprobación, 2027, que puede vetar "
+        "la plantilla elegida y no elegirla; y 2028, la comprobación independiente después de "
+        "un veto (por defecto: %(default)s)",
     )
     parser.add_argument(
         "--salida",

@@ -33,6 +33,13 @@ the window (with the patients who arrived that day); a day is out if that
 value is outside the band. The share of days out is the mean between
 replications of each replication's share.
 
+**The check seed may veto, never choose** (decision 41, revised in task 4.6c).
+``choose_staffing`` takes the staffings that pass the fit targets with the fit
+seed in the order of the choice; with ``check`` it skips each one whose fit
+targets fail with the check seed, and chooses the first that passes with both.
+Once the check seed has vetoed, the independent check of the staffing chosen is
+``CONFIRMATION_SEED``.
+
 **The compliant center** is decided with whole days (task 4.6c): the days out
 of Manchester with clock C summed over the replications against the days with
 patients summed over them, ``out ≤ share · days`` with an exact fraction. It is
@@ -84,7 +91,12 @@ FIT_SEED = 2026
 """Seed of the fit (rule 3: different seeds to fit and to check)."""
 
 CHECK_SEED = 2027
-"""Seed of the check of the fitted staffing; never used to choose it."""
+"""Seed of the check of the fitted staffing: it may veto the choice, never make it
+(decision 41, revised in task 4.6c; ``choose_staffing`` with ``check``)."""
+
+CONFIRMATION_SEED = 2028
+"""Seed of the independent check once the check seed has taken part in the choice
+(task 4.6c: it vetoed the nurses chosen with the fit seed)."""
 
 CONFIDENCE = 0.95
 """Confidence of the interval of rule 4."""
@@ -694,24 +706,64 @@ def sensitivity(
     )
 
 
-def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow | None:
-    """Among the rows that pass every fit target of ``knob``, the one whose mean
-    of the choosing target is closest to its aim (``Target.aim``: the reference,
-    or the centre of the band without one); on a tie, the smaller staff. ``None``
-    if none passes: the choice is never forced.
+def passes_fit(row: SensitivityRow, knob: str) -> bool:
+    """Whether ``row`` passes every fit target of ``knob`` (rule 4)."""
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    names, _ = KNOB_TARGETS[knob]
+    return all(row.result(name).passed for name in names)
+
+
+def choice_order(rows: Sequence[SensitivityRow], knob: str) -> tuple[SensitivityRow, ...]:
+    """The rows that pass every fit target of ``knob``, in the order of the choice:
+    the mean of the choosing target closest to its aim (``Target.aim``: the
+    reference, or the centre of the band without one) first; on a tie, the smaller
+    staff first.
     """
     if knob not in KNOBS:
         raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    names, chooser = KNOB_TARGETS[knob]
-    passing = [row for row in rows if all(row.result(name).passed for name in names)]
-    if not passing:
-        return None
+    _, chooser = KNOB_TARGETS[knob]
 
     def distance(row: SensitivityRow) -> tuple[float, int]:
         r = row.result(chooser)
         return abs(r.mean - r.target.aim), sum(row.staffing.staff)
 
-    return min(passing, key=distance)
+    return tuple(sorted((row for row in rows if passes_fit(row, knob)), key=distance))
+
+
+def choose_staffing(
+    rows: Sequence[SensitivityRow],
+    knob: str,
+    *,
+    check: Callable[[SensitivityRow], SensitivityRow] | None = None,
+) -> SensitivityRow | None:
+    """Among the rows that pass every fit target of ``knob``, the one whose mean
+    of the choosing target is closest to its aim (``choice_order``). ``None`` if
+    none passes: the choice is never forced.
+
+    With ``check``, the check seed may veto (decision 41, revised in task 4.6c):
+    the candidates are taken in the order of the choice, and the first whose
+    check also passes every fit target is chosen. The check never chooses: a row
+    that fails with the fit seed is not a candidate, whatever its check.
+
+    Args:
+        rows: The staffings evaluated with the fit seed.
+        check: The same staffing as the given row evaluated with the check seed,
+            such as ``evaluate_staffings`` with ``CHECK_SEED``. It is called only
+            until a candidate passes, in the order of the choice.
+
+    Raises:
+        ValueError: If ``knob`` is unknown, or ``check`` returns another staff.
+    """
+    for row in choice_order(rows, knob):
+        if check is None:
+            return row
+        checked = check(row)
+        if checked.staffing.staff != row.staffing.staff:
+            raise ValueError(f"the check of {row.staffing.staff} is of {checked.staffing.staff}")
+        if passes_fit(checked, knob):
+            return row
+    return None
 
 
 def complies(

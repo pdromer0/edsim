@@ -9,7 +9,10 @@ import pytest
 from edsim.arrivals.profile import load_profile
 from edsim.calibration import evaluate
 from edsim.calibration.evaluate import (
+    CHECK_SEED,
     COMPLIANCE_SHARE_OUT,
+    CONFIRMATION_SEED,
+    FIT_SEED,
     KNOB_TARGETS,
     ReplicaValues,
     SensitivityRow,
@@ -116,6 +119,94 @@ def test_empate_la_de_menos_personal():
         row((3, 3, 1), 0.7, [result(PRETRIAGE, 13.4)]),
     ]
     assert choose_staffing(rows, NURSES).staffing.staff == (3, 3, 1)
+
+
+# --- Veto de la semilla de comprobación (decisión 41, revisada en la tarea 4.6c) ------------
+
+
+def nurse_rows():
+    """La sensibilidad de la enfermería con la semilla de ajuste, como en la 4.6c: [3, 3, 1]
+    no pasa, y entre las que pasan [2, 2, 1] (a 0,8 de 12,4) gana a [3, 2, 1] (a 5,6)."""
+    return [
+        row((3, 3, 1), 0.65, [result(PRETRIAGE, 3.5, passed=False)]),
+        row((3, 2, 1), 0.80, [result(PRETRIAGE, 6.8)]),
+        row((2, 2, 1), 0.85, [result(PRETRIAGE, 13.2)]),
+    ]
+
+
+def checker(by_staff, calls):
+    """La comprobación a mano: la misma plantilla con otra semilla, sacada de ``by_staff``;
+    apunta en ``calls`` cada plantilla por la que se pregunta."""
+
+    def check(r: SensitivityRow) -> SensitivityRow:
+        calls.append(r.staffing.staff)
+        return by_staff[r.staffing.staff]
+
+    return check
+
+
+def test_la_comprobacion_veta_y_se_elige_la_siguiente():
+    # Con la semilla de comprobación, [2, 2, 1] no pasa (15,2) y [3, 2, 1] sí (7,9): se
+    # descarta [2, 2, 1] y se toma la siguiente de la regla. [3, 3, 1] pasaría la
+    # comprobación, pero no pasa el ajuste: la comprobación veta, no elige.
+    rows = nurse_rows()
+    assert choose_staffing(rows, NURSES).staffing.staff == (2, 2, 1)  # sin veto
+    checked = {
+        (3, 3, 1): row((3, 3, 1), 0.65, [result(PRETRIAGE, 12.4)]),
+        (3, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)]),
+        (2, 2, 1): row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)]),
+    }
+    calls = []
+    chosen = choose_staffing(rows, NURSES, check=checker(checked, calls))
+    assert chosen is rows[1]
+    assert calls == [(2, 2, 1), (3, 2, 1)]
+
+
+def test_sin_veto_la_comprobacion_no_cambia_la_eleccion():
+    rows = nurse_rows()
+    checked = {staff: row(staff, 0.8, [result(PRETRIAGE, 9.0)]) for staff in [(2, 2, 1)]}
+    calls = []
+    assert choose_staffing(rows, NURSES, check=checker(checked, calls)) is rows[2]
+    assert calls == [(2, 2, 1)]  # la comprobación se pide solo hasta que una pasa
+
+
+def test_si_ninguna_pasa_con_las_dos_semillas_no_se_elige():
+    rows = nurse_rows()
+    checked = {
+        (3, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 5.1, passed=False)]),
+        (2, 2, 1): row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)]),
+    }
+    calls = []
+    assert choose_staffing(rows, NURSES, check=checker(checked, calls)) is None
+    assert calls == [(2, 2, 1), (3, 2, 1)]
+
+
+def test_el_veto_de_los_medicos_mira_sus_objetivos_de_ajuste():
+    # La de 54,5 gana con el ajuste; con la comprobación su reloj A no pasa y se toma la de
+    # 43,8. El nivel 3 de la comprobación no pasa en ninguna y no veta: no es de ajuste.
+    rows = [
+        row((12, 12, 5), 0.80, [result(CLOCK_A, 43.8), result(LEVEL_3, 22.0)]),
+        row((12, 11, 5), 0.85, [result(CLOCK_A, 54.5), result(LEVEL_3, 22.9)]),
+    ]
+    checked = {
+        (12, 12, 5): row((12, 12, 5), 0.80, [result(CLOCK_A, 45.0), result(LEVEL_3, 23.0, False)]),
+        (12, 11, 5): row((12, 11, 5), 0.85, [result(CLOCK_A, 71.0, False), result(LEVEL_3, 24.0)]),
+    }
+    chosen = choose_staffing(rows, DOCTORS, check=checker(checked, []))
+    assert chosen.staffing.staff == (12, 12, 5)
+
+
+def test_tres_semillas_distintas():
+    # La de ajuste elige, la de comprobación puede vetar y, después de un veto, la de
+    # confirmación es la comprobación independiente.
+    assert (FIT_SEED, CHECK_SEED, CONFIRMATION_SEED) == (2026, 2027, 2028)
+
+
+def test_la_comprobacion_tiene_que_ser_de_la_misma_plantilla():
+    rows = nurse_rows()
+    wrong = {(2, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)])}
+    with pytest.raises(ValueError, match="the check of \\(2, 2, 1\\) is of \\(3, 2, 1\\)"):
+        choose_staffing(rows, NURSES, check=checker(wrong, []))
 
 
 def test_el_cumplidor_es_el_de_u_mas_alto_con_todos_los_niveles_al_10_por_ciento():
