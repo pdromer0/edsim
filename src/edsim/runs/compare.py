@@ -51,7 +51,15 @@ _DRAW_FIELDS: tuple[DrawField, ...] = (
     "test_turnaround",
     "admitted",
 )
-_PAIRING_FIELDS = ("seed", "profile_fingerprint", "days", "warmup_days")
+_PAIRING_FIELDS = (
+    "seed",
+    "profile_fingerprint",
+    "days",
+    "warmup_days",
+    "model",
+    "clinical_profiles_fingerprint",
+)
+"""Fields that must match for the same patients: the model and its profiles last (task 4.5b)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +114,12 @@ def _metadata_differences(a: RunResults, b: RunResults) -> tuple[MetadataDiffere
 
 
 def pairing_blockers(a: RunResults, b: RunResults) -> tuple[MetadataDifference, ...]:
-    """Return changed seed, profile fingerprint, days or warm-up, in that order.
+    """Return changed seed, profile fingerprint, days, warm-up, model or clinical profiles.
 
-    An empty tuple is configuration compatibility, not verified pairing.
+    In that order. Two runs of different models, or with clinical profiles of
+    different fingerprints, are never the same patients: the clinical model
+    draws other streams. An empty tuple is configuration compatibility, not
+    verified pairing; pairing two clinical runs is checked in task 4.8a.
     """
     return tuple(
         MetadataDifference(name, getattr(a.info, name), getattr(b.info, name))
