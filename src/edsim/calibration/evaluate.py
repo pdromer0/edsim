@@ -30,6 +30,7 @@ replications of each replication's share.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,7 +40,18 @@ import numpy as np
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY
-from edsim.calibration.targets import Target
+from edsim.calibration.staffing import (
+    DOCTORS,
+    KNOBS,
+    NURSES,
+    U_MAX,
+    U_MIN,
+    U_STEP,
+    RuleStaffing,
+    knob_loads,
+    rule_staffings,
+)
+from edsim.calibration.targets import FIT, Target
 from edsim.checks import check_count
 from edsim.engine.analysis import EpisodeRecord, completed_in_window, episode_table
 from edsim.engine.center import N_LEVELS, CenterConfig
@@ -417,3 +429,162 @@ def simulate_replicas(
             replica_values(replica_table(run, days, warmup_days), targets, warmup_days, days)
         )
     return tuple(out)
+
+
+# --- Sensitivity and choice -------------------------------------------------------------------
+
+KNOB_TARGETS: Mapping[str, tuple[tuple[str, ...], str]] = MappingProxyType(
+    {
+        NURSES: (("pretriaje_medio",), "pretriaje_medio"),
+        DOCTORS: (("tiempo_medico_niveles_2_5", "tiempo_medico_nivel_3"), "tiempo_medico_nivel_3"),
+    }
+)
+"""The fit targets of each knob, and the one whose reference chooses among the
+staffings that pass (ADR candidate 41, revised)."""
+
+_CENTER_FIELD = {NURSES: "triage_nurses", DOCTORS: "doctors"}
+
+
+def candidate_center(center: CenterConfig, knob: str, staff: Sequence[int]) -> CenterConfig:
+    """``center`` with the staff of ``knob`` replaced; the other knob as it is."""
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    return dataclasses.replace(center, **{_CENTER_FIELD[knob]: tuple(staff)})
+
+
+def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
+    """Check that the targets have the fit targets of ``knob``, with the reference
+    of the one that chooses, before simulating anything.
+
+    Raises:
+        ValueError: If a target is missing, is not of fit, or the choosing one
+            has no reference.
+    """
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    by_name = {t.name: t for t in targets}
+    names, chooser = KNOB_TARGETS[knob]
+    for name in names:
+        if name not in by_name:
+            raise ValueError(f"the knob {knob} needs the target objetivos.{name}")
+        if by_name[name].use != FIT:
+            raise ValueError(f"objetivos.{name} must be of use {FIT!r} to fit {knob}")
+    if by_name[chooser].reference is None:
+        raise ValueError(f"objetivos.{chooser}.referencia is needed to choose {knob}")
+
+
+@dataclass(frozen=True, slots=True)
+class SensitivityRow:
+    """One staffing of the rule, evaluated.
+
+    Attributes:
+        staffing: The staff and its interval of u.
+        center: The center simulated, with that staff.
+        results: One result per target.
+        replicas: The reduced replications.
+    """
+
+    staffing: RuleStaffing
+    center: CenterConfig
+    results: tuple[TargetResult, ...]
+    replicas: tuple[ReplicaValues, ...]
+
+    def result(self, name: str) -> TargetResult:
+        for r in self.results:
+            if r.target.name == name:
+                return r
+        raise KeyError(name)
+
+    @property
+    def compliance_out(self) -> tuple[float, ...]:
+        return mean_compliance_out(self.replicas)
+
+    @property
+    def max_censored_share(self) -> float:
+        return max(r.censored_share for r in self.replicas)
+
+
+def sensitivity(
+    center: CenterConfig,
+    arrival_profile: ArrivalProfile,
+    profiles: ClinicalProfiles,
+    targets: Sequence[Target],
+    knob: str,
+    *,
+    replicas: int,
+    days: int,
+    warmup_days: int,
+    seed: int | np.random.SeedSequence,
+    u_min: float = U_MIN,
+    u_max: float = U_MAX,
+    step: float = U_STEP,
+    on_row: Callable[[SensitivityRow], None] | None = None,
+) -> tuple[SensitivityRow, ...]:
+    """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
+
+    The staffings come from ``rule_staffings`` with the loads of the knob and
+    the shifts of ``center``; each one is simulated with the same replications
+    (the same seed), so the rows differ only in the staff.
+
+    Args:
+        on_row: Called with each row as soon as it is evaluated, such as a
+            progress line of the CLI.
+    """
+    loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
+    rows = []
+    for staffing in rule_staffings(loads, u_min, u_max, step):
+        candidate = candidate_center(center, knob, staffing.staff)
+        reduced = simulate_replicas(
+            candidate,
+            arrival_profile,
+            profiles,
+            targets,
+            replicas=replicas,
+            days=days,
+            warmup_days=warmup_days,
+            seed=seed,
+        )
+        row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
+        rows.append(row)
+        if on_row is not None:
+            on_row(row)
+    return tuple(rows)
+
+
+def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow | None:
+    """Among the rows that pass every fit target of ``knob``, the one whose mean
+    of the choosing target is closest to its reference; on a tie, the smaller
+    staff. ``None`` if none passes: the choice is never forced.
+    """
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    names, chooser = KNOB_TARGETS[knob]
+    passing = [row for row in rows if all(row.result(name).passed for name in names)]
+    if not passing:
+        return None
+
+    def distance(row: SensitivityRow) -> tuple[float, int]:
+        r = row.result(chooser)
+        if r.target.reference is None:
+            raise ValueError(f"objetivos.{chooser}.referencia is needed to choose {knob}")
+        return abs(r.mean - r.target.reference), sum(row.staffing.staff)
+
+    return min(passing, key=distance)
+
+
+def compliant_staffing(
+    rows: Sequence[SensitivityRow],
+    *,
+    levels: Sequence[int] = COMPLIANCE_LEVELS,
+    max_share_out: float = COMPLIANCE_SHARE_OUT,
+) -> SensitivityRow | None:
+    """The row of highest u (the smallest staff) whose levels all have, on mean
+    between replications, at most ``max_share_out`` of days out of Manchester
+    with clock C. ``None`` if none.
+    """
+    passing = [
+        row
+        for row in rows
+        if all(row.compliance_out[level - 1] <= max_share_out for level in levels)
+    ]
+    return max(passing, key=lambda row: row.staffing.u_high, default=None)
