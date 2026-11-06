@@ -21,7 +21,7 @@ MAIN = Path(edsim_app.__file__).with_name("main.py")
         ("replay", "Replay"),
     ],
 )
-def test_page_with_short_run(catalog, page, title):
+def test_page_with_short_run(catalog, page, title, center_template):
     app = AppTest.from_file(MAIN, default_timeout=30)
     app.query_params["run"] = "older"
     app.session_state["compare_a"] = "older"
@@ -37,7 +37,10 @@ def test_page_with_short_run(catalog, page, title):
     elif page == "results":
         assert any(item.label == "Censo medio" for item in app.metric)
     elif page == "simulate":
-        assert app.number_input(key="edit_recursos.boxes_None").value == 30
+        assert (
+            app.number_input(key="edit_recursos.boxes_None").value
+            == center_template["recursos"]["boxes"]
+        )
     else:
         assert app.header[0].value == "older"
         assert app.get("html") and app.get("vega_lite_chart")

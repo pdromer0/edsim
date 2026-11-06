@@ -1,5 +1,6 @@
 """Exercise simulation editing through the real navigation entrypoint."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,26 @@ from edsim.runs import RunConfigurationError, read_center_values, write_variant
 from edsim_app import defaults
 
 MAIN = Path(edsim_app.__file__).resolve().with_name("main.py")
+
+
+def expected_sequence(values):
+    """Spell out the Spanish separators and decimal commas expected in the UI."""
+    return "[" + "; ".join(f"{value:.15g}".replace(".", ",") for value in values) + "]"
+
+
+def replace_raw_value(source, key, replacement, index=None):
+    """Replace one actual TOML value while retaining all surrounding bytes."""
+    pattern = rb"(?m)^" + key.encode() + rb"[ \t]*=[ \t]*(\[[^\]\r\n]*\]|[^ \t#\r\n]+)"
+    matches = list(re.finditer(pattern, source))
+    assert len(matches) == 1
+    match = matches[0]
+    start, end = match.span(1)
+    if index is not None:
+        token = list(re.finditer(rb"[^,\[\]\s]+", match[1]))[index]
+        start, end = start + token.start(), start + token.end()
+    changed = source[:start] + replacement.encode() + source[end:]
+    assert changed != source
+    return changed
 
 
 def open_simulation():
@@ -36,7 +57,7 @@ def named_variant(name="night", *, comment=False):
     return path
 
 
-def test_all_widget_types_are_fixed_and_base_numbers_visible():
+def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
     app = open_simulation()
     for widget in app.number_input:
         integer = widget.key.startswith(("edit_turnos.", "edit_recursos.")) or widget.key in (
@@ -46,6 +67,13 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible():
         assert type(widget.value) is (int if integer else float)
         assert widget.proto.format == ("%d" if integer else "%.15g")
     visible = " ".join(item.value for item in app.markdown)
+    for key in ("medicos", "enfermeria_triaje", "boxes"):
+        value = center_template["recursos"][key]
+        if isinstance(value, list):
+            for index, count in enumerate(value):
+                assert app.number_input(key=f"edit_recursos.{key}_{index}").value == count
+        else:
+            assert app.number_input(key=f"edit_recursos.{key}_None").value == value
     assert "Suma del reparto: 100,0" in visible
     assert {metric.label: metric.value for metric in app.metric} == {
         "Pruebas globales": "55,410 %",
@@ -66,32 +94,41 @@ def test_multiple_errors_disable_saving_and_show_each_diagnostic():
     assert not (defaults.VARIANTS_DIR / "invalid.toml").exists()
 
 
-def test_change_list_and_save_preserve_only_edited_bytes_from_source():
+def test_change_list_and_save_preserve_only_edited_bytes_from_source(center_template):
+    doctors = center_template["recursos"]["medicos"]
+    edited_doctors = doctors.copy()
+    edited_doctors[1] += 3
     source = named_variant(comment=True)
     before = source.read_bytes()
     app = open_simulation()
     app.selectbox(key="source_widget").select(str(source)).run()
-    edit(app, "recursos.medicos", 1, 15)
+    edit(app, "recursos.medicos", 1, edited_doctors[1])
     assert any(
-        "**Médicos** · `recursos.medicos`: [12; 12; 7] → [12; 15; 7]" in x.value
+        (
+            f"**Médicos** · `recursos.medicos`: {expected_sequence(doctors)} → "
+            f"{expected_sequence(edited_doctors)}"
+        )
+        in x.value
         for x in app.markdown
     )
     app.text_input(key="variant_name_widget").set_value("edited").run()
     app.button(key="save_variant").click().run()
     assert not app.exception
-    assert (defaults.VARIANTS_DIR / "edited.toml").read_bytes() == before.replace(
-        b"medicos = [12, 12, 7]", b"medicos = [12, 15, 7]"
+    assert (defaults.VARIANTS_DIR / "edited.toml").read_bytes() == replace_raw_value(
+        before, "medicos", str(edited_doctors[1]), index=1
     )
     assert source.read_bytes() == before
     assert any("Todos los cambios están guardados" in x.value for x in app.caption)
     assert app.selectbox(key="source_widget").value == str(defaults.VARIANTS_DIR / "edited.toml")
 
 
-def test_overwrite_cancel_confirm_and_edit_cancels_pending_confirmation():
+def test_overwrite_cancel_confirm_and_edit_cancels_pending_confirmation(center_template):
+    boxes = center_template["recursos"]["boxes"]
+    edited_boxes = boxes + 1
     destination = named_variant()
     before = destination.read_bytes()
     app = open_simulation()
-    edit(app, "recursos.boxes", None, 31)
+    edit(app, "recursos.boxes", None, edited_boxes)
     app.text_input(key="variant_name_widget").set_value("night").run()
     app.button(key="save_variant").click().run()
     assert destination.read_bytes() == before
@@ -100,59 +137,65 @@ def test_overwrite_cancel_confirm_and_edit_cancels_pending_confirmation():
     assert destination.read_bytes() == before
     assert not any(b.key == "confirm_overwrite" for b in app.button)
     app.button(key="save_variant").click().run()
-    edit(app, "recursos.boxes", None, 32)
+    edit(app, "recursos.boxes", None, boxes + 2)
     assert not any(b.key == "confirm_overwrite" for b in app.button)
     assert destination.read_bytes() == before
     app.button(key="save_variant").click().run()
     app.button(key="confirm_overwrite").click().run()
     assert not app.exception
-    assert destination.read_bytes() == before.replace(b"boxes = 30", b"boxes = 32")
+    assert destination.read_bytes() == replace_raw_value(before, "boxes", str(boxes + 2))
 
 
-def test_draft_survives_navigation_and_raw_equivalent_edit_is_unsaved():
+def test_draft_survives_navigation_and_raw_equivalent_edit_is_unsaved(center_template):
+    doctors = center_template["recursos"]["medicos"][0]
+    edited_doctors = doctors + 1
     app = open_simulation()
-    edit(app, "recursos.medicos", 0, 13)
+    edit(app, "recursos.medicos", 0, edited_doctors)
     app.switch_page("views/runs.py").run()
     assert app.title[0].value == "Ejecuciones"
     app.switch_page("views/simulate.py").run()
     assert not app.exception
-    assert app.number_input(key="edit_recursos.medicos_0").value == 13
+    assert app.number_input(key="edit_recursos.medicos_0").value == edited_doctors
     assert any("Cambios sin guardar" in x.value for x in app.caption)
-    edit(app, "recursos.medicos", 0, 12)
+    edit(app, "recursos.medicos", 0, doctors)
     assert any("Todos los cambios están guardados" in x.value for x in app.caption)
 
 
-def test_switching_dirty_source_requires_confirmation_or_cancel():
+def test_switching_dirty_source_requires_confirmation_or_cancel(center_template):
+    boxes = center_template["recursos"]["boxes"]
+    edited_boxes = boxes + 1
     destination = named_variant()
     app = open_simulation()
-    edit(app, "recursos.boxes", None, 31)
+    edit(app, "recursos.boxes", None, edited_boxes)
     app.selectbox(key="source_widget").select(str(destination)).run()
     assert any("Descartarlos" in x.value for x in app.warning)
-    assert app.number_input(key="edit_recursos.boxes_None").value == 31
+    assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
     app.button(key="cancel_source").click().run()
     assert app.selectbox(key="source_widget").value == str(defaults.CENTER_PATH)
-    assert app.number_input(key="edit_recursos.boxes_None").value == 31
+    assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
     app.selectbox(key="source_widget").select(str(destination)).run()
     app.button(key="confirm_source").click().run()
     assert not app.exception
     assert app.selectbox(key="source_widget").value == str(destination)
-    assert app.number_input(key="edit_recursos.boxes_None").value == 30
+    assert app.number_input(key="edit_recursos.boxes_None").value == boxes
 
 
 @pytest.mark.parametrize("removed", [False, True])
-def test_external_source_change_or_removal_blocks_save(removed):
+def test_external_source_change_or_removal_blocks_save(removed, center_template):
+    boxes = center_template["recursos"]["boxes"]
+    edited_boxes = boxes + 1
     source = named_variant()
     app = open_simulation()
     app.selectbox(key="source_widget").select(str(source)).run()
-    edit(app, "recursos.boxes", None, 31)
+    edit(app, "recursos.boxes", None, edited_boxes)
     if removed:
         source.unlink()
     else:
-        source.write_bytes(source.read_bytes().replace(b"boxes = 30", b"boxes = 35"))
+        source.write_bytes(replace_raw_value(source.read_bytes(), "boxes", str(boxes + 5)))
     app.run()
     assert not app.exception
     assert any("El origen ha cambiado" in x.value for x in app.warning)
-    assert app.number_input(key="edit_recursos.boxes_None").value == 31
+    assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
     assert app.button(key="save_variant").disabled
     assert app.button(key="simulate_run").disabled
 
@@ -168,7 +211,9 @@ def test_invalid_or_reserved_variant_name_blocks_save(name):
         assert "reservado al centro base" in app.error[0].value
 
 
-def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(monkeypatch):
+def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
+    monkeypatch, center_template
+):
     import os
     from unittest.mock import Mock
 
@@ -176,6 +221,7 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(monkey
     from edsim.runs import center_from_values, load_profile
     from edsim_app.frames import utilization_frame
 
+    edited_doctors = center_template["recursos"]["medicos"][0] + 1
     calculate = Mock(wraps=preview.offered_work)
     monkeypatch.setattr(preview, "offered_work", calculate)
     app = open_simulation()
@@ -188,7 +234,7 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(monkey
     app.selectbox(key="preview_pool").select("boxes").run()
     assert not app.exception
     assert calculate.call_count == 1
-    edit(app, "recursos.medicos", 0, 13)
+    edit(app, "recursos.medicos", 0, edited_doctors)
     assert calculate.call_count == 2
     assert not app.dataframe[0].value.equals(utilization_frame(work))
     before = defaults.PROFILE_PATH.stat()
@@ -200,7 +246,7 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(monkey
     assert not app.exception
     assert calculate.call_count == 3
     values = read_center_values(defaults.CENTER_PATH)
-    values["recursos.medicos"][0] = 13
+    values["recursos.medicos"][0] = edited_doctors
     changed = calculate._mock_wraps(
         center_from_values(values), load_profile(defaults.PROFILE_PATH), 7
     )
@@ -340,13 +386,16 @@ def test_unsaved_changes_block_simulation_even_when_normalized_center_is_unchang
     assert any("Guarda una variante antes de simular" in x.value for x in app.info)
 
 
-def test_real_one_day_simulation_uses_saved_variant_and_opens_results(catalog_root, monkeypatch):
+def test_real_one_day_simulation_uses_saved_variant_and_opens_results(
+    catalog_root, monkeypatch, center_template
+):
     from edsim.runs import RunStore
 
+    edited_doctors = center_template["recursos"]["medicos"][0] + 1
     monkeypatch.setattr(defaults, "SIMULATION_DAYS", 1)
     monkeypatch.setattr(defaults, "SIMULATION_WARMUP_DAYS", 0)
     app = open_simulation()
-    edit(app, "recursos.medicos", 0, 13)
+    edit(app, "recursos.medicos", 0, edited_doctors)
     assert app.button(key="simulate_run").disabled
     app.text_input(key="variant_name_widget").set_value("extra-doctor").run()
     app.button(key="save_variant").click().run()
@@ -471,22 +520,21 @@ def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_ty
 
 
 @pytest.mark.parametrize(
-    "original,replacement,error",
+    "key,index,replacement,error",
     [
-        (b"boxes = 30", b'boxes = "treinta"', "recursos.boxes must be an integer, got 'treinta'"),
-        (b"boxes = 30", b"boxes = 30.5", "recursos.boxes must be an integer, got 30.5"),
-        (b"boxes = 30", b"boxes = true", "recursos.boxes must be an integer, got True"),
-        (b"boxes = 30", b"boxes = 30.0", "recursos.boxes must be an integer, got 30.0"),
-        (b"inicio = [8,", b"inicio = [8.5,", "turnos.inicio[0] must be an integer"),
-        (b"medicos = [12,", b"medicos = [true,", "recursos.medicos[0] must be an integer"),
-        (b"triaje = [5, 10]", b'triaje = ["cinco", 10]', "duraciones.triaje[0]"),
-        (b"probabilidad = [0.95,", b"probabilidad = [true,", "pruebas.probabilidad[0]"),
+        ("boxes", None, '"treinta"', "recursos.boxes must be an integer, got 'treinta'"),
+        ("boxes", None, "30.5", "recursos.boxes must be an integer, got 30.5"),
+        ("boxes", None, "true", "recursos.boxes must be an integer, got True"),
+        ("boxes", None, "30.0", "recursos.boxes must be an integer, got 30.0"),
+        ("inicio", 0, "8.5", "turnos.inicio[0] must be an integer"),
+        ("medicos", 0, "true", "recursos.medicos[0] must be an integer"),
+        ("triaje", 0, '"cinco"', "duraciones.triaje[0]"),
+        ("probabilidad", 0, "true", "pruebas.probabilidad[0]"),
     ],
 )
-def test_unrepresentable_raw_values_stop_before_widgets(original, replacement, error):
+def test_unrepresentable_raw_values_stop_before_widgets(key, index, replacement, error):
     source = defaults.CENTER_PATH.read_bytes()
-    assert source.count(original) == 1
-    changed = source.replace(original, replacement)
+    changed = replace_raw_value(source, key, replacement, index)
     defaults.CENTER_PATH.write_bytes(changed)
     app = open_simulation()
     assert any(error in item.value for item in app.error)
@@ -496,13 +544,19 @@ def test_unrepresentable_raw_values_stop_before_widgets(original, replacement, e
     assert defaults.CENTER_PATH.read_bytes() == changed
 
 
-def test_change_list_names_fields_and_formats_staff_and_normalized_shares():
+def test_change_list_names_fields_and_formats_staff_and_normalized_shares(center_template):
+    doctors = center_template["recursos"]["medicos"]
+    edited_doctors = doctors.copy()
+    edited_doctors[1] += 3
     app = open_simulation()
-    edit(app, "recursos.medicos", 1, 15)
+    edit(app, "recursos.medicos", 1, edited_doctors[1])
     edit(app, "triaje.reparto_niveles", 0, 0.4)
     edit(app, "triaje.reparto_niveles", 2, 33.5)
     visible = [item.value for item in app.markdown]
-    assert "**Médicos** · `recursos.medicos`: [12; 12; 7] → [12; 15; 7]" in visible
+    assert (
+        f"**Médicos** · `recursos.medicos`: {expected_sequence(doctors)} → "
+        f"{expected_sequence(edited_doctors)}"
+    ) in visible
     assert (
         "**Reparto de triaje (pesos)** · `triaje.reparto_niveles`: "
         "[0,003; 0,121; 0,336; 0,526; 0,014] → [0,004; 0,121; 0,335; 0,526; 0,014]"
@@ -510,10 +564,14 @@ def test_change_list_names_fields_and_formats_staff_and_normalized_shares():
 
 
 @pytest.mark.parametrize("failure", ["missing", "toml"])
-def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(failure):
+def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(
+    failure, center_template
+):
+    boxes = center_template["recursos"]["boxes"]
+    edited_boxes = boxes + 1
     destination = named_variant()
     app = open_simulation()
-    edit(app, "recursos.boxes", None, 31)
+    edit(app, "recursos.boxes", None, edited_boxes)
     app.selectbox(key="source_widget").select(str(destination)).run()
     assert app.button(key="confirm_source")
     if failure == "missing":
@@ -526,4 +584,4 @@ def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(fai
     assert not any(button.key == "confirm_source" for button in app.button)
     assert not any("Descartarlos" in item.value for item in app.warning)
     assert app.selectbox(key="source_widget").value == str(defaults.CENTER_PATH)
-    assert app.number_input(key="edit_recursos.boxes_None").value == 31
+    assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
