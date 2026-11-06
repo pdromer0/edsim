@@ -55,7 +55,8 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se ve
 
 ## Convenciones
 
-- Código, nombres y docstrings en inglés.
+- Código, nombres y docstrings del paquete en inglés: `src/` y `app/src/`.
+- Tests, cada zona con su práctica ([ADR 0015](docs/decisiones/0015-idiomas-del-proyecto.md)): los del núcleo (`tests/`) llevan nombres, docstrings y comentarios en español, como material de aprendizaje; los de la app (`app/tests/`), en inglés, como el código de la app. Los identificadores que un test importa del paquete siguen en inglés.
 - Documentación, especificaciones y mensajes de commit en español.
 - Claves de los ficheros de configuración (TOML) en español, como en el diseño.
 - Commits con prefijo `feat`, `fix`, `refactor`, `docs`, `test`, `chore` o `ci`, p. ej. `feat(sim): cola M/M/1 con SimPy`.
@@ -86,6 +87,6 @@ En las revisiones de pull requests, trata como P1:
 - Lógica en la CLI, en los notebooks o en la app que debería vivir en el paquete, con tests.
 - Tests que pasan de forma vacía, sin comprobar que la situación que prueban ocurre de verdad.
 - Código nuevo sin tests en el paquete `edsim` o en la app. Los scripts de herramientas de desarrollo (hooks de `.claude/` y `.codex/`) se verifican a mano y se documenta la comprobación en el PR.
-- Romper la convención de idiomas: código, nombres y docstrings en inglés; documentación, commits y textos de la interfaz en español.
+- Romper la convención de idiomas, es decir, usar en una zona el idioma de la otra: código, nombres y docstrings del paquete (`src/`, `app/src/`) y tests de la app (`app/tests/`) en inglés; tests del núcleo (`tests/`: nombres, docstrings y comentarios), documentación, commits y textos de la interfaz en español. Un test del núcleo en español cumple la convención.
 - Que la app importe algo privado del núcleo o fuera de `__all__` de `edsim.runs`.
 - Que una ejecución se escriba en `resultados/ejecuciones/` sin pasar por `simulate_run`.
