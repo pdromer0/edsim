@@ -1,5 +1,6 @@
 import csv
 import dataclasses
+from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from edsim.engine.engine import simulate_ed
 from edsim.engine.events import MemorySink, read_events
 from edsim.engine.invariants import Violation
 from edsim.engine.report import format_engine_validation, format_run_summary
+from edsim.profiles.config import load_profiles
+from edsim.profiles.context import ArrivalContext
 from edsim.queueing.replications import METRIC_NAMES, compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep
 
@@ -888,3 +891,137 @@ def test_simular_con_perfiles_invalidos_es_un_error_de_uso(kind, tmp_path, capsy
     assert sorted(p.name for p in tmp_path.iterdir()) == (
         [] if kind == "missing" else ["perfiles.toml"]
     )
+
+
+# --- perfiles validar (tarea 4.5b) ----------------------------------------------------------
+
+REPO = Path(__file__).resolve().parents[1]
+PROFILE_PLOTS = (
+    "motivos.png",
+    "triaje.png",
+    "pruebas_por_gravedad.png",
+    "duraciones_por_nivel.png",
+)
+# Las comprobaciones rápidas usan un solo contexto en la mezcla (mañana laborable de
+# invierno) con validate_profiles sustituida en la CLI; --pacientes es el mínimo con
+# margen de los 24 contextos (15 234 con config/), que es el que exige la CLI y basta
+# también para ese contexto (15 081). Con menos, la CLI responde con el código 2.
+MORNING = (ArrivalContext(0, 0, 0),)
+
+
+@pytest.fixture
+def one_context(monkeypatch):
+    """La CLI con validate_profiles de un solo contexto y el mínimo de pacientes con margen."""
+    from edsim.profiles import validation
+
+    monkeypatch.chdir(REPO)
+    patients = validation.mixing_minimum(load_profiles(REPO / "config" / "perfiles.toml"))
+
+    def use(**overrides):
+        monkeypatch.setattr(
+            "edsim.cli.validate_profiles",
+            partial(validation.validate_profiles, contexts=MORNING, **overrides),
+        )
+        return ["--pacientes", str(patients)]
+
+    return use, patients
+
+
+def test_perfiles_validar_imprime_la_tabla_y_guarda_las_graficas(one_context, tmp_path, capsys):
+    use, patients = one_context
+    out_dir = tmp_path / "a" / "b"  # no existe: la CLI debe crearlo
+
+    code = main(["perfiles", "validar", *use(), "--salida", str(out_dir)])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    huella = config_fingerprint("config/perfiles.toml")
+    assert out.startswith(f"Perfiles · config/perfiles.toml (huella {huella})")
+    assert f"{patients} pacientes por contexto en la mezcla · {patients} en la muestra" in out
+    for label in ("Mezcla de motivos", "Triaje", "Pruebas", "Duraciones"):
+        assert any(line.startswith(label) and line.endswith("pasa") for line in out.splitlines())
+    assert "hasta un 4 % de las veces" in out
+    assert "Resultado: pasan las 4 comprobaciones" in out
+    for name in PROFILE_PLOTS:
+        assert (out_dir / name).read_bytes().startswith(b"\x89PNG")
+        assert f"Gráfica: {out_dir / name}" in out
+
+
+def test_perfiles_validar_devuelve_1_si_falla_y_guarda_las_graficas(one_context, tmp_path, capsys):
+    # Un error grande en el muestreador, con el paquete intacto: los pacientes se sortean
+    # con el sesgo del triaje desplazado +1 y la hipótesis es la de los perfiles (el
+    # mecanismo de los tests de potencia, sampled_profiles).
+    use, _ = one_context
+    profiles = load_profiles(REPO / "config" / "perfiles.toml")
+    sampled = dataclasses.replace(
+        profiles, triage=dataclasses.replace(profiles.triage, bias=profiles.triage.bias + 1.0)
+    )
+
+    code = main(["perfiles", "validar", *use(sampled_profiles=sampled), "--salida", str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "Resultado: FALLAN triaje" in out
+    (row,) = [line for line in out.splitlines() if line.startswith("Triaje ")]
+    assert row.endswith("FALLA")
+    for name in PROFILE_PLOTS:
+        assert (tmp_path / name).is_file()
+
+
+@pytest.mark.parametrize(
+    "extra, message",
+    [
+        (["--perfiles", "no-existe.toml"], "--perfiles no-existe.toml"),
+        (["--perfiles", "{bad}"], "--perfiles"),
+        (["--llegadas", "no-existe.toml"], "--llegadas no-existe.toml"),
+        (["--pacientes", "0"], "--pacientes"),
+        (["--pacientes", "15233"], "15233 < 15234"),
+        (["--semilla", "-1"], "--semilla"),
+    ],
+)
+def test_perfiles_validar_errores_de_uso(extra, message, tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(REPO)
+    monkeypatch.setattr("edsim.cli.validate_profiles", lambda *a, **k: pytest.fail("validó"))
+    bad = tmp_path / "malo.toml"
+    bad.write_text("desconocida = 1\n")
+    extra = [str(bad) if x == "{bad}" else x for x in extra]
+    out_dir = tmp_path / "salida"
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["perfiles", "validar", *extra, "--salida", str(out_dir)])
+    captured = capsys.readouterr()
+
+    assert exit_info.value.code == 2
+    assert message in captured.err
+    assert captured.out == ""
+    assert not out_dir.exists()
+
+
+def test_perfiles_validar_con_una_salida_que_es_un_fichero(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(REPO)
+    monkeypatch.setattr("edsim.cli.validate_profiles", lambda *a, **k: pytest.fail("validó"))
+    path = tmp_path / "fichero"
+    path.write_text("no tocar")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["perfiles", "validar", "--salida", str(path)])
+
+    assert exit_info.value.code == 2
+    assert "no es un directorio" in capsys.readouterr().err
+    assert path.read_text() == "no tocar"
+
+
+@pytest.mark.slow
+def test_perfiles_validar_con_los_valores_por_defecto(tmp_path, capsys, monkeypatch):
+    # Criterio de aceptación del hito: perfiles validar pasa con los perfiles reales.
+    monkeypatch.chdir(REPO)
+
+    code = main(["perfiles", "validar", "--salida", str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "20000 pacientes por contexto en la mezcla · 109542 en la muestra del año" in out
+    (mixing,) = [line for line in out.splitlines() if line.startswith("Mezcla de motivos")]
+    assert "480000" in mixing and "2136" in mixing
+    for name in PROFILE_PLOTS:
+        assert (tmp_path / name).is_file()
