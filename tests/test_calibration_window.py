@@ -60,7 +60,7 @@ DAYS, WARMUP, SEED = 2, 1, 7  # réplicas cortas con los datos de ejemplo
 def key(r: ReplicaValues):
     """Todo lo que da una réplica, comparable con ==: repr distingue cada bit y nan == nan."""
     targets = tuple((name, repr(values)) for name, values in sorted(r.targets.items()))
-    return targets, r.arrivals, r.censored, repr(r.compliance_out)
+    return targets, r.arrivals, r.censored, r.compliance_days_out, r.compliance_days
 
 
 # --- Los primeros lunes -------------------------------------------------------------------
@@ -274,7 +274,7 @@ def _target(statistic, threshold=None):
 
 def _replica(value, n, over=()):
     values = TargetValues(value, (value,), tuple(n), tuple(over))
-    return ReplicaValues(MappingProxyType({"t": values}), 100, 0, (math.nan,) * 5)
+    return ReplicaValues(MappingProxyType({"t": values}), 100, 0, (0,) * 5, (0,) * 5)
 
 
 def test_media_por_paciente_de_una_media():

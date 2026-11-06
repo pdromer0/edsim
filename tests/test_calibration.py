@@ -31,6 +31,7 @@ from edsim.engine.center import load_center
 from edsim.engine.clinical import PatientDraws
 from edsim.engine.engine import run_engine
 from edsim.engine.events import EventLog, MemorySink
+from edsim.engine.targets import manchester_compliance
 from edsim.profiles.config import load_profiles
 
 DATA = Path(__file__).resolve().parent / "data"
@@ -87,7 +88,7 @@ def record(episode_id, arrival, level, *, departure=None, **measures) -> Episode
 def replica(name, value, daily=(), n=(), over=()) -> ReplicaValues:
     """Una réplica reducida a mano, con un solo objetivo."""
     values = TargetValues(value, tuple(daily), tuple(n), tuple(over))
-    return ReplicaValues(MappingProxyType({name: values}), 100, 0, (math.nan,) * 5)
+    return ReplicaValues(MappingProxyType({name: values}), 100, 0, (0,) * 5, (0,) * 5)
 
 
 # --- Regla 4: la media y el IC -----------------------------------------------------------
@@ -129,7 +130,8 @@ def test_pasa_con_la_media_dentro_y_el_ic_estrecho_y_falla_con_la_media_fuera():
             ),
             100,
             0,
-            (math.nan,) * 5,
+            (0,) * 5,
+            (0,) * 5,
         )
         for v in (10.0, 10.5, 11.0)
     ]
@@ -251,9 +253,25 @@ def test_cumplimiento_del_cumplidor_con_el_reloj_c():
     table = [
         record("EP-1", 10.0, 2, departure=500.0, door_to_doctor=20.0, classified_to_doctor=5.0)
     ]
-    out = replica_values(table, [target()], 0, 1).compliance_out
+    values = replica_values(table, [target()], 0, 1)
+    assert values.compliance_days_out[1] == 0 and values.compliance_days[1] == 1
+    assert values.compliance_days[2] == 0  # sin pacientes de nivel 3
+    out = values.compliance_out
     assert out[1] == 0.0
     assert math.isnan(out[2])
+
+
+def test_dias_fuera_enteros_y_su_proporcion_como_manchester_compliance(example):
+    # La proporción de días fuera que se guardaba antes (Compliance.share_out) es la de los
+    # días enteros, bit a bit.
+    center, profile, profiles = example
+    run = clinical_run(center, profile, profiles, 7, 1)
+    table = replica_table(run, days=4, warmup_days=1)
+    values = replica_values(table, [target()], 1, 4)
+    compliance = manchester_compliance(table, 1, 4)
+    assert values.compliance_days_out == tuple(int(x) for x in compliance.out.sum(axis=0))
+    assert values.compliance_days == tuple(int(x) for x in compliance.days_with_patients)
+    assert repr(values.compliance_out) == repr(tuple(float(x) for x in compliance.share_out))
 
 
 def test_la_evaluacion_es_una_funcion_pura():

@@ -10,7 +10,6 @@ back to the command that produced it.
 from __future__ import annotations
 
 import csv
-import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -87,6 +86,8 @@ SENSITIVITY_COLUMNS = (
     "u_max",
     "censurados_max",
     *(f"fuera_manchester_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
+    *(f"dias_fuera_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
+    *(f"dias_medidos_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
     "objetivo",
     "media",
     "ic_min",
@@ -271,11 +272,6 @@ def write_levels_csv(
 # --- Sensitivity ------------------------------------------------------------------------------
 
 
-def _share(x: float) -> str:
-    """A share as a percentage; ``—`` for a level without patients."""
-    return f"{'—':>7}" if math.isnan(x) else f"{100 * x:5.1f} %"
-
-
 def _cell_width(target: Target) -> int:
     return max(len(target.name), 12) + 2
 
@@ -286,7 +282,7 @@ def sensitivity_header(targets: Sequence[Target], knob: str) -> str:
     head += "".join(f"{t.name:<{_cell_width(t)}}" for t in targets)
     head += f"{'censurados':>11}"
     if knob == DOCTORS:
-        head += "  fuera de Manchester (C), niveles 2 a 5"
+        head += "  días fuera de Manchester (C) / días medidos, sumados; niveles 2 a 5"
     return head
 
 
@@ -298,8 +294,10 @@ def format_sensitivity_row(row: SensitivityRow, knob: str) -> str:
         line += f"{f'{r.mean:.2f} {_outcome(r.passed)}':<{_cell_width(r.target)}}"
     line += f"{100 * row.max_censored_share:>9.2f} %"
     if knob == DOCTORS:
-        out = row.compliance_out
-        line += "  " + " ".join(_share(out[level - 1]) for level in COMPLIANCE_LEVELS)
+        days = row.compliance_days
+        line += "  " + " ".join(
+            f"{days[level - 1][0]:>4}/{days[level - 1][1]:<4}" for level in COMPLIANCE_LEVELS
+        )
     return line
 
 
@@ -326,12 +324,14 @@ def format_choice(
         if compliant is None:
             lines.append(
                 f"Cumplidor: ninguna plantilla deja los niveles 2 a 5 con un máximo del"
-                f" {100 * COMPLIANCE_SHARE_OUT:g} % de días fuera de Manchester (C)"
+                f" {100 * float(COMPLIANCE_SHARE_OUT):g} % de días fuera de Manchester (C),"
+                " sumados en las réplicas"
             )
         else:
             lines.append(
                 f"Cumplidor (u más alto con los niveles 2 a 5 a un máximo del"
-                f" {100 * COMPLIANCE_SHARE_OUT:g} % de días fuera de Manchester con el reloj C):"
+                f" {100 * float(COMPLIANCE_SHARE_OUT):g} % de días fuera de Manchester con el"
+                " reloj C, días sumados en las réplicas):"
                 f" {_staff(compliant.staffing.staff)} con u de {compliant.staffing.u_low:.4f}"
                 f" a {compliant.staffing.u_high:.4f}"
             )
@@ -353,6 +353,7 @@ def write_sensitivity_csv(
         for row in rows:
             s = row.staffing
             out = row.compliance_out
+            days = row.compliance_days
             for r in row.results:
                 writer.writerow(
                     [
@@ -362,6 +363,8 @@ def write_sensitivity_csv(
                         s.u_high,
                         repr(row.max_censored_share),
                         *(repr(out[level - 1]) for level in COMPLIANCE_LEVELS),
+                        *(days[level - 1][0] for level in COMPLIANCE_LEVELS),
+                        *(days[level - 1][1] for level in COMPLIANCE_LEVELS),
                         r.target.name,
                         repr(r.mean),
                         repr(r.summary.ci_low),

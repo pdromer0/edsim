@@ -32,6 +32,12 @@ arrivals), is reported but never chooses.
 the window (with the patients who arrived that day); a day is out if that
 value is outside the band. The share of days out is the mean between
 replications of each replication's share.
+
+**The compliant center** is decided with whole days (task 4.6c): the days out
+of Manchester with clock C summed over the replications against the days with
+patients summed over them, ``out ≤ share · days`` with an exact fraction. It is
+not the mean of each replication's share when the replications have different
+days with patients of a level, and it does not depend on rounding.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from fractions import Fraction
 from types import MappingProxyType
 
 import numpy as np
@@ -85,8 +92,10 @@ CONFIDENCE = 0.95
 CENSORED_WARNING = 0.001
 """Share of censored patients of a replication above which the CLI warns."""
 
-COMPLIANCE_SHARE_OUT = 0.10
-"""Largest mean share of days out of Manchester (clock C) of the compliant center."""
+COMPLIANCE_SHARE_OUT = Fraction(1, 10)
+"""Largest share of days out of Manchester (clock C) of the compliant center: the
+days out summed over the replications over the days with patients summed over
+them, compared exactly."""
 
 COMPLIANCE_LEVELS = (2, 3, 4, 5)
 """Levels whose compliance the compliant center needs; level 1 has no share."""
@@ -123,20 +132,30 @@ class ReplicaValues:
         targets: The values of each target, by its name.
         arrivals: Episodes that arrived in the window.
         censored: Of them, those without a departure at the end of the horizon.
-        compliance_out: Share of the days of the window out of the Manchester
-            compliance with clock C, per level 1 to 5; ``nan`` for a level
-            without patients.
+        compliance_days_out: Days of the window out of the Manchester
+            compliance with clock C, per level 1 to 5.
+        compliance_days: Days of the window with patients of each level 1 to 5.
     """
 
     targets: Mapping[str, TargetValues]
     arrivals: int
     censored: int
-    compliance_out: tuple[float, ...]
+    compliance_days_out: tuple[int, ...]
+    compliance_days: tuple[int, ...]
 
     @property
     def censored_share(self) -> float:
         """Censored over the arrivals of the window; 0 without arrivals."""
         return self.censored / self.arrivals if self.arrivals else 0.0
+
+    @property
+    def compliance_out(self) -> tuple[float, ...]:
+        """Share of the days with patients out of Manchester (clock C), per level 1
+        to 5; ``nan`` for a level without patients."""
+        return tuple(
+            out / days if days else math.nan
+            for out, days in zip(self.compliance_days_out, self.compliance_days, strict=True)
+        )
 
 
 def _statistic(target: Target, episodes: Sequence[EpisodeRecord]) -> float:
@@ -213,7 +232,8 @@ def replica_values(
         ),
         arrivals=len(arrived),
         censored=sum(e.departure is None for e in arrived),
-        compliance_out=tuple(float(x) for x in compliance.share_out),
+        compliance_days_out=tuple(int(x) for x in compliance.out.sum(axis=0)),
+        compliance_days=tuple(int(x) for x in compliance.days_with_patients),
     )
 
 
@@ -385,6 +405,18 @@ def mean_compliance_out(replicas: Sequence[ReplicaValues]) -> tuple[float, ...]:
     return tuple(float(np.mean([r.compliance_out[k] for r in replicas])) for k in range(N_LEVELS))
 
 
+def compliance_days(replicas: Sequence[ReplicaValues]) -> tuple[tuple[int, int], ...]:
+    """Days out of Manchester (clock C) and days with patients, each summed over the
+    replications, per level 1 to 5."""
+    return tuple(
+        (
+            sum(r.compliance_days_out[k] for r in replicas),
+            sum(r.compliance_days[k] for r in replicas),
+        )
+        for k in range(N_LEVELS)
+    )
+
+
 # --- Simulating -----------------------------------------------------------------------------
 
 Run = Callable[[int], Sequence[Event]]
@@ -549,7 +581,13 @@ class SensitivityRow:
 
     @property
     def compliance_out(self) -> tuple[float, ...]:
+        """Mean between replications of the share of days out of Manchester (C), by level."""
         return mean_compliance_out(self.replicas)
+
+    @property
+    def compliance_days(self) -> tuple[tuple[int, int], ...]:
+        """Days out of Manchester (C) and days with patients, summed, by level."""
+        return compliance_days(self.replicas)
 
     @property
     def max_censored_share(self) -> float:
@@ -676,19 +714,35 @@ def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow
     return min(passing, key=distance)
 
 
+def complies(
+    days: Sequence[tuple[int, int]],
+    levels: Sequence[int] = COMPLIANCE_LEVELS,
+    max_share_out: Fraction = COMPLIANCE_SHARE_OUT,
+) -> bool:
+    """Whether each level has days with patients and at most ``max_share_out`` of
+    them out: ``out ≤ max_share_out · days``, with whole days and an exact fraction.
+
+    Args:
+        days: Days out and days with patients of each level 1 to 5, such as
+            ``compliance_days`` of some replications.
+    """
+    share = Fraction(max_share_out)
+    return all(
+        days[level - 1][1] > 0 and days[level - 1][0] <= share * days[level - 1][1]
+        for level in levels
+    )
+
+
 def compliant_staffing(
     rows: Sequence[SensitivityRow],
     *,
     levels: Sequence[int] = COMPLIANCE_LEVELS,
-    max_share_out: float = COMPLIANCE_SHARE_OUT,
+    max_share_out: Fraction = COMPLIANCE_SHARE_OUT,
 ) -> SensitivityRow | None:
-    """The row of highest u (the smallest staff) whose levels all have, on mean
-    between replications, at most ``max_share_out`` of days out of Manchester
-    with clock C. ``None`` if none.
+    """The row of highest u (the smallest staff) whose levels all have at most
+    ``max_share_out`` of days out of Manchester with clock C: the days out summed
+    over the replications against the days with patients summed over them
+    (``complies``). ``None`` if none.
     """
-    passing = [
-        row
-        for row in rows
-        if all(row.compliance_out[level - 1] <= max_share_out for level in levels)
-    ]
+    passing = [row for row in rows if complies(row.compliance_days, levels, max_share_out)]
     return max(passing, key=lambda row: row.staffing.u_high, default=None)
