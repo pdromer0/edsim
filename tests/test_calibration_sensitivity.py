@@ -17,6 +17,7 @@ from edsim.calibration.evaluate import (
     check_knob_targets,
     choose_staffing,
     compliant_staffing,
+    evaluate_staffings,
     sensitivity,
 )
 from edsim.calibration.staffing import DOCTORS, NURSES, RuleStaffing, nurse_loads, rule_staffings
@@ -182,3 +183,50 @@ def test_sensibilidad_corta_cada_candidato_con_su_plantilla(monkeypatch):
     assert all(r.center.triage_nurses == r.staffing.staff for r in rows)
     pretriage = [r.result("pretriaje_medio").mean for r in rows]
     assert len(set(pretriage)) == len(pretriage)  # cada plantilla da otro pretriaje
+
+
+# --- Plantillas dadas (notebook 04, sección 9) --------------------------------------------
+
+
+def test_plantillas_dadas_en_su_orden_y_cada_una_con_su_plantilla(monkeypatch):
+    center = load_center(DATA / "centro_sala_ejemplo.toml")
+    arrivals = load_profile(DATA / "llegadas_ejemplo.toml")
+    profiles = load_profiles(DATA / "perfiles_ejemplo.toml")
+    targets = load_targets(ROOT / "config" / "objetivos.toml")
+    # Dos plantillas de médicos que no son de la regla, en un orden cualquiera.
+    given = [RuleStaffing((9, 9, 4), 0.80, 0.81), RuleStaffing((14, 13, 5), 0.60, 0.61)]
+
+    simulated = []
+    real = evaluate.simulate_ed
+
+    def spy(sim_center, *args, **kwargs):
+        simulated.append((sim_center.triage_nurses, sim_center.doctors))
+        return real(sim_center, *args, **kwargs)
+
+    monkeypatch.setattr(evaluate, "simulate_ed", spy)
+    seen = []
+    rows = evaluate_staffings(
+        center,
+        arrivals,
+        profiles,
+        targets,
+        DOCTORS,
+        given,
+        replicas=2,
+        days=2,
+        warmup_days=1,
+        seed=7,
+        on_row=seen.append,
+    )
+
+    assert [r.staffing for r in rows] == given
+    assert list(rows) == seen
+    assert simulated == [(center.triage_nurses, s.staff) for s in given for _ in range(2)]
+    assert [r.center.doctors for r in rows] == [(9, 9, 4), (14, 13, 5)]
+
+
+def test_plantillas_dadas_con_un_mando_desconocido():
+    with pytest.raises(ValueError, match="knob must be one of"):
+        evaluate_staffings(
+            None, None, None, (), "boxes", [], replicas=2, days=2, warmup_days=1, seed=7
+        )

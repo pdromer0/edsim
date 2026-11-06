@@ -365,6 +365,42 @@ def true_level_waits(
     )
 
 
+def classified_late(
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    *,
+    max_wait: Sequence[float] = MANCHESTER_MAX_WAIT,
+) -> np.ndarray:
+    """Share of each level already above its maximum, counted from the arrival, when classified.
+
+    For these patients the pretriage and the triage alone, from the arrival to
+    ``triage_end``, take longer than the maximum of their assigned level, so
+    no doctor can make them comply with clock A: with a maximum of 10
+    minutes, level 2 misses it for every patient whose classification comes
+    after minute 10 (exactly at 10 is not late). A level 1 classified at the
+    door is classified on arrival, at 0. The same episodes as
+    ``manchester_compliance``: those who arrive in the stretch and depart.
+
+    Returns:
+        One share per level, 1 to 5; ``nan`` for a level without patients.
+
+    Raises:
+        ValueError: If the days or ``max_wait`` are not valid.
+    """
+    first_day, end_day = _check_days(first_day, end_day)
+    max_wait = tuple(float(m) for m in max_wait)
+    if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
+        raise ValueError(f"max_wait must be {N_LEVELS} values >= 0, got {max_wait}")
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    out = np.full(N_LEVELS, np.nan)
+    for k in range(N_LEVELS):
+        episodes = [e for e in done if e.level == k + 1]
+        if episodes:
+            out[k] = np.mean([e.triage_end - e.arrival > max_wait[k] for e in episodes])
+    return out
+
+
 # --- Clocks by level ---------------------------------------------------------------------
 
 

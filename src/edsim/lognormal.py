@@ -9,6 +9,9 @@ it without importing the engine; ``edsim.engine.clinical`` re-exports it.
 import math
 from statistics import NormalDist
 
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
 Z90 = NormalDist().inv_cdf(0.9)
 """90th percentile of the standard normal, 1.2815515..."""
 
@@ -40,3 +43,22 @@ def lognormal_params(median: float, p90: float) -> tuple[float, float]:
         raise ValueError(f"p90 must be greater than the median, got {p90!r} <= {median!r}")
     mu = math.log(median)
     return mu, (math.log(p90) - mu) / Z90
+
+
+def lognormal_pdf(x: ArrayLike, mu: float, sigma: float) -> NDArray[np.float64]:
+    """Density of the lognormal of ``(mu, sigma)`` at ``x``; 0 where ``x <= 0``.
+
+    ``f(x) = exp(-(ln x - mu)² / (2 sigma²)) / (x sigma sqrt(2 pi))``, with the
+    parameters of ``lognormal_params``.
+
+    Raises:
+        ValueError: If ``sigma`` is not positive.
+    """
+    if not sigma > 0:
+        raise ValueError(f"sigma must be positive, got {sigma!r}")
+    x = np.asarray(x, dtype=float)
+    out = np.zeros_like(x)
+    positive = x > 0
+    z = (np.log(x[positive]) - mu) / sigma
+    out[positive] = np.exp(-0.5 * z**2) / (x[positive] * sigma * math.sqrt(2 * math.pi))
+    return out
