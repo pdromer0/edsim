@@ -59,6 +59,17 @@ the rare true levels 1 and 5 never pass without testing anything.
   assessment and the reassessment per true level (20), and their median per
   reason (34), which tests the factors k directly.
 
+**All of them at once** (``validate_profiles``, for ``edsim perfiles
+validar``). The mix with its own child of the seed and, with the other child,
+one sample of a year for the triage, the tests and the durations: the three
+checks draw the same patients with the same seed, so one draw gives the three
+results of ``check_triage``, ``check_workup`` and ``check_durations``, ``==``,
+and the data of the plots. Each check keeps its ``ALPHA`` with Bonferroni
+within it, so a correct sampler fails some of the four up to 4 % of the times
+(Boole's inequality). ``check_profiles_validation_counts`` refuses, before
+drawing, a number of patients with which a check would fail for lack of
+patients instead of testing something.
+
 **The hypothesis comes from the profiles; the draws, from the sampler.** For
 power tests the patients can be drawn with other profiles
 (``sampled_profiles``), as with the arrivals in ``arrivals.validation``. A
@@ -66,9 +77,11 @@ mistake shared by the sampler and the exact values (such as which bands are
 older) moves both and cannot be seen here: only the values by hand see it.
 """
 
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
+from time import perf_counter
 
 import numpy as np
 from scipy import optimize, stats
@@ -373,7 +386,6 @@ def check_triage(
         else check_count("patients", patients, 1)
     )
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_TRIAGE_CATEGORIES
     start_date = arrival_profile.start_date
 
     context_seed, patient_seed = child_streams(seed, 2)
@@ -395,11 +407,22 @@ def check_triage(
     for c in drawn:
         x = triage(people(arrivals[c]))
         observed[x.true_level - 1, x.level - 1] += 1
+    return _triage_result(profiles, arrival_profile, observed)
 
+
+def exact_triage_matrix(profiles: ClinicalProfiles, arrival_profile: ArrivalProfile) -> np.ndarray:
+    """Exact shares of true (rows) against assigned (columns) level over a year, (5, 5)."""
     t = profiles.triage
-    exact = triage_matrix(
-        severity_mixture(profiles, arrival_profile), t.thresholds, t.noise, t.bias
-    )
+    return triage_matrix(severity_mixture(profiles, arrival_profile), t.thresholds, t.noise, t.bias)
+
+
+def _triage_result(
+    profiles: ClinicalProfiles, arrival_profile: ArrivalProfile, observed: np.ndarray
+) -> ValidationResult:
+    """The 30 categories of ``check_triage`` from the counts of true × assigned level."""
+    patients = int(observed.sum())
+    alpha = ALPHA / N_TRIAGE_CATEGORIES
+    exact = exact_triage_matrix(profiles, arrival_profile)
     assigned, expected_assigned = observed.sum(axis=0), exact.sum(axis=0)
     tests = [
         _category(
@@ -455,6 +478,7 @@ class _Year:
     """The patients drawn for the checks of tests and durations, as arrays."""
 
     severity: np.ndarray
+    level: np.ndarray  # assigned
     true_level: np.ndarray
     under: np.ndarray
     reason: np.ndarray
@@ -504,6 +528,7 @@ def _draw_year(
                 st.severity,
                 st.true_level,
                 st.quality == UNDER,
+                st.level,
                 REASON_KEYS.index(pr.reason),
                 *w.ordered,
                 *w.abnormal,
@@ -518,16 +543,17 @@ def _draw_year(
     k = N_TESTS
     return _Year(
         severity=a[:, 0],
+        level=a[:, 3].astype(int),
         true_level=a[:, 1].astype(int),
         under=a[:, 2].astype(bool),
-        reason=a[:, 3].astype(int),
-        ordered=a[:, 4 : 4 + k].astype(bool),
-        abnormal=a[:, 4 + k : 4 + 2 * k].astype(bool),
-        turnaround=a[:, 4 + 2 * k : 4 + 3 * k],
-        round_turnaround=a[:, 4 + 3 * k],
-        triage=a[:, 5 + 3 * k],
-        assessment=a[:, 6 + 3 * k],
-        reassessment=a[:, 7 + 3 * k],
+        reason=a[:, 4].astype(int),
+        ordered=a[:, 5 : 5 + k].astype(bool),
+        abnormal=a[:, 5 + k : 5 + 2 * k].astype(bool),
+        turnaround=a[:, 5 + 2 * k : 5 + 3 * k],
+        round_turnaround=a[:, 5 + 3 * k],
+        triage=a[:, 6 + 3 * k],
+        assessment=a[:, 7 + 3 * k],
+        reassessment=a[:, 8 + 3 * k],
     )
 
 
@@ -584,20 +610,33 @@ def check_workup(
     """
     patients = _patients(profiles, arrival_profile, patients)
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_WORKUP_CATEGORIES
-
     model = workup_model(profiles, arrival_profile)
+    _check_groups(_workup_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+    return _workup_result(model, year)
+
+
+def _workup_groups(model) -> dict[str, float]:
+    """Exact share of each group a category of ``check_workup`` is conditioned on."""
     levels = real_shares_of(model)
     reasons = model.mixture.weights.sum(axis=1)
     groups = {f"real_{n + 1}": float(levels[n]) for n in range(N_LEVELS)}
     groups |= {key: float(reasons[i]) for i, key in enumerate(REASON_KEYS)}
     groups |= {"infratriaje": model.undertriage_share(), "ronda": model.round_share()}
-    _check_groups(groups, patients)
+    return groups
 
-    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+
+def severity_fifth(model, severity: np.ndarray) -> np.ndarray:
+    """Fifth of G of each patient, 1 the least severe, with the exact edges of ``model``."""
     edges = model.severity_edges(N_SEVERITY_GROUPS)  # decreasing
     # Fifth 1 is the least severe: count the edges at or above each G.
-    fifth = N_SEVERITY_GROUPS - np.searchsorted(-edges[1:-1], -year.severity, side="right")
+    return N_SEVERITY_GROUPS - np.searchsorted(-edges[1:-1], -severity, side="right")
+
+
+def _workup_result(model, year: _Year) -> ValidationResult:
+    """The 134 categories of ``check_workup`` from drawn patients."""
+    alpha = ALPHA / N_WORKUP_CATEGORIES
+    fifth = severity_fifth(model, year.severity)
     order_g = model.order_by_severity(N_SEVERITY_GROUPS)[::-1]
     abnormal_g = model.abnormal_by_severity(N_SEVERITY_GROUPS)[::-1]
 
@@ -696,16 +735,25 @@ def check_durations(
     """
     patients = _patients(profiles, arrival_profile, patients)
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_DURATION_CATEGORIES
-
     model = duration_model(profiles, arrival_profile)
+    _check_groups(_duration_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+    return _durations_result(profiles, model, year)
+
+
+def _duration_groups(model) -> dict[str, float]:
+    """Exact share of each group a category of ``check_durations`` is conditioned on."""
     levels = model.reason_level.sum(axis=0)
     reasons = model.reason_level.sum(axis=1)
     groups = {f"real_{n + 1}": float(levels[n]) for n in range(N_LEVELS)}
     groups |= {key: float(reasons[i]) for i, key in enumerate(REASON_KEYS)}
-    _check_groups(groups, patients)
+    return groups
 
-    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+
+def _durations_result(profiles: ClinicalProfiles, model, year: _Year) -> ValidationResult:
+    """The 64 categories of ``check_durations`` from drawn patients."""
+    patients = year.severity.size
+    alpha = ALPHA / N_DURATION_CATEGORIES
     tests = []
     for (name, q), x in zip(QUANTILES, profiles.triage.duration, strict=True):
         tests.append(_proportion(f"triaje/{name}", (year.triage <= x).sum(), patients, q, alpha))
@@ -733,3 +781,497 @@ def check_durations(
                 )
             )
     return _summary("durations", tests, alpha)
+
+
+# --- All the checks at once: edsim perfiles validar ------------------------------------------
+
+DEFAULT_MIXING_PATIENTS = 20_000
+"""Patients per context of the mix by default, the power of the specification."""
+
+MAX_MIXING_ERROR = 1e-6
+"""Largest accepted chance that ``check_mixing`` stops for lack of patients after drawing.
+
+The categories of the reasons within a band expect ``n_band · p`` patients,
+with the *observed* count of the band, which is random: at the exact minimum
+the check would stop half the times.
+"""
+
+CONFIDENCE = 0.95
+"""Level of the intervals of the plots; the verdict is the table's, with Bonferroni."""
+
+CHECK_NAMES = ("mixing", "triage", "workup", "durations")
+"""The four checks of ``validate_profiles``, in their order."""
+
+
+def _mixing_bands(profiles: ClinicalProfiles, contexts: Sequence[ArrivalContext]):
+    """For each context and band: its share and the smallest min(p, 1 - p) of its reasons."""
+    out = []
+    for ctx in contexts:
+        p_band = band_probabilities(profiles.population, ctx)
+        for b in range(N_BANDS):
+            p = reason_probabilities(profiles, ctx, b)
+            out.append((ctx, b, float(p_band[b]), float(np.minimum(p, 1 - p).min())))
+    return out
+
+
+def mixing_error_probability(
+    profiles: ClinicalProfiles, patients: int, contexts: Sequence[ArrivalContext] | None = None
+) -> float:
+    """Upper bound of the chance that ``check_mixing`` stops for lack of patients.
+
+    A category of a reason within a band stops the check if
+    ``n_band · min(p, 1 - p) < MIN_EXPECTED``, with ``n_band`` binomial of
+    ``patients`` and the share of the band. The bound is the sum over the
+    contexts and the bands (union bound) of ``P(n_band < MIN_EXPECTED / min p)``.
+    """
+    contexts = tuple(all_contexts() if contexts is None else contexts)
+    total = 0.0
+    for _, _, share, p in _mixing_bands(profiles, contexts):
+        fewest = math.ceil(MIN_EXPECTED / p)  # n_band at or above it never stops
+        total += float(stats.binom.cdf(fewest - 1, patients, share))
+    return total
+
+
+def mixing_minimum(
+    profiles: ClinicalProfiles,
+    contexts: Sequence[ArrivalContext] | None = None,
+    max_error: float = MAX_MIXING_ERROR,
+) -> int:
+    """Fewest patients per context with ``mixing_error_probability`` below ``max_error``.
+
+    It is at least the exact minimum, ``MIN_EXPECTED`` expected in every band
+    and reason (13 993 with ``config/perfiles.toml``), plus the margin for the
+    random count of the band (15 234).
+    """
+    contexts = tuple(all_contexts() if contexts is None else contexts)
+    exact = max(
+        math.ceil(MIN_EXPECTED / (share * p))
+        for _, _, share, p in _mixing_bands(profiles, contexts)
+    )
+    low, high = exact, 2 * exact
+    while mixing_error_probability(profiles, high, contexts) >= max_error:
+        high *= 2
+    while low < high:
+        middle = (low + high) // 2
+        if mixing_error_probability(profiles, middle, contexts) < max_error:
+            high = middle
+        else:
+            low = middle + 1
+    return low
+
+
+def year_minimum(profiles: ClinicalProfiles, arrival_profile: ArrivalProfile) -> int:
+    """Fewest patients of the sample of a year for the triage, the tests and the durations.
+
+    Every group expects ``MIN_GROUP_PATIENTS`` (the true level 1 needs about
+    12 000) and every assigned level ``MIN_EXPECTED`` patients, in and out.
+    """
+    groups = _workup_groups(workup_model(profiles, arrival_profile))
+    groups |= _duration_groups(duration_model(profiles, arrival_profile))
+    fewest = max(math.ceil(MIN_GROUP_PATIENTS / v) for v in groups.values())
+    assigned = exact_triage_matrix(profiles, arrival_profile).sum(axis=0)
+    return max(fewest, *(math.ceil(MIN_EXPECTED / min(p, 1 - p)) for p in assigned))
+
+
+def check_profiles_validation_counts(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    patients: int | None = None,
+    contexts: Sequence[ArrivalContext] | None = None,
+) -> tuple[int, int]:
+    """Patients per context of the mix and of the year, checked before drawing.
+
+    Args:
+        patients: Patients of each sample: per context in the mix and in total
+            in the year. ``None`` for the defaults: ``DEFAULT_MIXING_PATIENTS``
+            per context and a year of the arrival profile (``year_patients``).
+
+    Returns:
+        The patients per context of the mix and those of the year.
+
+    Raises:
+        ValueError: If ``patients`` is not a positive integer or is below
+            ``mixing_minimum`` or ``year_minimum``; the message gives the
+            minimum.
+    """
+    if patients is None:
+        mixing, year = DEFAULT_MIXING_PATIENTS, year_patients(profiles, arrival_profile)
+    else:
+        mixing = year = check_count("patients", patients, 1)
+    fewest = mixing_minimum(profiles, contexts)
+    if mixing < fewest:
+        raise ValueError(
+            f"too few patients per context for the mix: {mixing} < {fewest}, the fewest "
+            f"with which it stops for lack of patients with a chance below {MAX_MIXING_ERROR:g}"
+        )
+    fewest = year_minimum(profiles, arrival_profile)
+    if year < fewest:
+        raise ValueError(
+            f"too few patients for the triage, the tests and the durations: {year} < {fewest}"
+        )
+    return mixing, year
+
+
+@dataclass(frozen=True, slots=True)
+class DetectableError:
+    """The error a check sees with a power of 80 %, for one reference category.
+
+    Attributes:
+        category: The reference category, such as ``pedir/analitica/quintil_3``.
+        p0: Its exact share.
+        p1: The share it is detected at (``detectable_share``).
+        patients: The patients of the category's group.
+    """
+
+    category: str
+    p0: float
+    p1: float
+    patients: int
+
+
+def detectable_errors(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    mixing_patients: int,
+    year_patients: int,
+    contexts: Sequence[ArrivalContext] | None = None,
+) -> dict[str, DetectableError]:
+    """The reference error of each check, with the categories of the specification.
+
+    The mix: a reason (``motivo``) of 5 % with the patients of a context. The triage: the
+    assigned level 1. The tests: ordering a blood test in the central fifth of
+    G. The durations: the median of the assessment of true level 3.
+    """
+    n_contexts = len(all_contexts() if contexts is None else contexts)
+    workup = workup_model(profiles, arrival_profile)
+    durations = duration_model(profiles, arrival_profile)
+    level_1 = float(exact_triage_matrix(profiles, arrival_profile).sum(axis=0)[0])
+    central = float(workup.order_by_severity(N_SEVERITY_GROUPS)[::-1][2, 0])
+    in_fifth = round(year_patients / N_SEVERITY_GROUPS)
+    in_level_3 = round(year_patients * float(durations.reason_level.sum(axis=0)[2]))
+    references = {
+        "mixing": ("motivo", 0.05, mixing_patients, ALPHA / (n_contexts * N_CATEGORIES)),
+        "triage": ("asignado_1", level_1, year_patients, ALPHA / N_TRIAGE_CATEGORIES),
+        "workup": ("pedir/analitica/quintil_3", central, in_fifth, ALPHA / N_WORKUP_CATEGORIES),
+        "durations": ("valoracion/real_3/mediana", 0.5, in_level_3, ALPHA / N_DURATION_CATEGORIES),
+    }
+    return {
+        name: DetectableError(category, p0, detectable_share(p0, n, alpha), n)
+        for name, (category, p0, n, alpha) in references.items()
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class CheckOutcome:
+    """One row of ``edsim perfiles validar``.
+
+    Attributes:
+        name: ``mixing``, ``triage``, ``workup`` or ``durations``.
+        result: The ``ValidationResult`` of the check, ``==`` to its ``check_*``.
+        patients: Patients drawn for it: all the contexts of the mix, or the
+            sample of the year (shared by the other three).
+        categories: Categories tested.
+        failures: Categories that fail.
+        alpha: Level of each category, with Bonferroni.
+        detectable: The reference error it sees.
+        seconds: Time of the check; the mix includes its draw, the other three
+            only their evaluation of the shared sample.
+    """
+
+    name: str
+    result: ValidationResult
+    patients: int
+    categories: int
+    failures: int
+    alpha: float
+    detectable: DetectableError
+    seconds: float
+
+    @property
+    def passed(self) -> bool:
+        return self.result.passed
+
+    @property
+    def min_p(self) -> float:
+        """The smallest p-value of its categories."""
+        return float(self.result.p_value)
+
+
+@dataclass(frozen=True, slots=True)
+class ShareComparison:
+    """Exact shares against the observed ones, with their intervals, for a plot.
+
+    Every tuple has one value per label. ``counts`` are the patients of the
+    group of each share: the interval is that of a binomial proportion of
+    ``counts`` patients (Wilson, at ``CONFIDENCE``).
+    """
+
+    title: str
+    labels: tuple[str, ...]
+    exact: tuple[float, ...]
+    observed: tuple[float, ...]
+    low: tuple[float, ...]
+    high: tuple[float, ...]
+    counts: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class QuantileComparison:
+    """Exact quantiles against the observed ones, with their intervals, for a plot.
+
+    The interval is distribution-free, between two order statistics of the
+    sample (``quantile_interval``, at ``CONFIDENCE``).
+    """
+
+    title: str
+    q: float
+    labels: tuple[str, ...]
+    exact: tuple[float, ...]
+    observed: tuple[float, ...]
+    low: tuple[float, ...]
+    high: tuple[float, ...]
+    counts: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProfilesFigures:
+    """What the four plots of ``edsim perfiles validar`` draw.
+
+    Attributes:
+        reasons: The 17 reasons of the sample of the year.
+        triage: P(assigned | true) for each true level, 1 to 5.
+        workup: Ordering each type of test by fifth of G, in the order of
+            ``TEST_TYPES``.
+        durations: Median and p90 of the assessment and the reassessment by
+            true level.
+    """
+
+    reasons: ShareComparison
+    triage: tuple[ShareComparison, ...]
+    workup: tuple[ShareComparison, ...]
+    durations: tuple[QuantileComparison, ...]
+
+
+def share_interval(k: int, n: int, confidence: float = CONFIDENCE) -> tuple[float, float]:
+    """Wilson interval of a binomial proportion ``k / n``."""
+    ci = stats.binomtest(int(k), int(n)).proportion_ci(confidence, method="wilson")
+    return float(ci.low), float(ci.high)
+
+
+def quantile_interval(
+    values: np.ndarray, q: float, confidence: float = CONFIDENCE
+) -> tuple[float, float]:
+    """Distribution-free interval of the ``q`` quantile from order statistics.
+
+    The ranks ``l = B⁻¹(α/2)`` and ``u = B⁻¹(1 - α/2) + 1`` of the binomial of
+    ``n`` and ``q`` (1-based, clipped to 1 and ``n``) give ``[x_(l), x_(u)]``,
+    which covers the quantile with a chance of at least ``confidence``.
+    """
+    x = np.sort(np.asarray(values, dtype=float))
+    n = x.size
+    alpha = 1 - confidence
+    low = int(stats.binom.ppf(alpha / 2, n, q))
+    high = int(stats.binom.ppf(1 - alpha / 2, n, q)) + 1
+    return float(x[max(low, 1) - 1]), float(x[min(high, n) - 1])
+
+
+def _shares(title, labels, exact, hits, counts) -> ShareComparison:
+    intervals = [share_interval(k, n) for k, n in zip(hits, counts, strict=True)]
+    return ShareComparison(
+        title=title,
+        labels=tuple(labels),
+        exact=tuple(float(p) for p in exact),
+        observed=tuple(float(k / n) for k, n in zip(hits, counts, strict=True)),
+        low=tuple(low for low, _ in intervals),
+        high=tuple(high for _, high in intervals),
+        counts=tuple(int(n) for n in counts),
+    )
+
+
+def _figures(profiles, arrival_profile, workup, durations, year: _Year) -> ProfilesFigures:
+    n = year.severity.size
+    reasons = _shares(
+        "Motivos de consulta",
+        REASON_KEYS,
+        workup.mixture.weights.sum(axis=1),
+        np.bincount(year.reason, minlength=len(REASON_KEYS)),
+        [n] * len(REASON_KEYS),
+    )
+    exact = exact_triage_matrix(profiles, arrival_profile)
+    observed = np.zeros((N_LEVELS, N_LEVELS), dtype=np.int64)
+    np.add.at(observed, (year.true_level - 1, year.level - 1), 1)
+    levels = [f"asignado_{j + 1}" for j in range(N_LEVELS)]
+    triage = tuple(
+        _shares(
+            f"Nivel real {i + 1}",
+            levels,
+            exact[i] / exact[i].sum(),
+            observed[i],
+            [observed[i].sum()] * N_LEVELS,
+        )
+        for i in range(N_LEVELS)
+    )
+    fifth = severity_fifth(workup, year.severity)
+    order = workup.order_by_severity(N_SEVERITY_GROUPS)[::-1]
+    in_fifth = [int((fifth == q + 1).sum()) for q in range(N_SEVERITY_GROUPS)]
+    fifths = [f"quintil_{q + 1}" for q in range(N_SEVERITY_GROUPS)]
+    tests = tuple(
+        _shares(
+            key,
+            fifths,
+            order[:, t],
+            [int(year.ordered[fifth == q + 1, t].sum()) for q in range(N_SEVERITY_GROUPS)],
+            in_fifth,
+        )
+        for t, key in enumerate(TEST_TYPES)
+    )
+    quantiles = []
+    for which, values in ((ASSESSMENT, year.assessment), (REASSESSMENT, year.reassessment)):
+        for name, q in QUANTILES:
+            groups = [values[year.true_level == level] for level in range(1, N_LEVELS + 1)]
+            intervals = [quantile_interval(g, q) for g in groups]
+            quantiles.append(
+                QuantileComparison(
+                    title=f"{which}/{name}",
+                    q=q,
+                    labels=tuple(f"real_{level}" for level in range(1, N_LEVELS + 1)),
+                    exact=tuple(
+                        float(durations.quantile(which, q, level=level))
+                        for level in range(1, N_LEVELS + 1)
+                    ),
+                    observed=tuple(float(np.quantile(g, q)) for g in groups),
+                    low=tuple(low for low, _ in intervals),
+                    high=tuple(high for _, high in intervals),
+                    counts=tuple(g.size for g in groups),
+                )
+            )
+    return ProfilesFigures(reasons=reasons, triage=triage, workup=tests, durations=tuple(quantiles))
+
+
+@dataclass(frozen=True, slots=True)
+class ProfilesValidation:
+    """The outcome of ``validate_profiles``: the four rows and the data of the plots.
+
+    Attributes:
+        checks: Mix, triage, tests and durations, in that order.
+        year_patients: Patients of the sample of the year.
+        year_seconds: Time of drawing that sample, once.
+        figures: The data of the four plots.
+    """
+
+    checks: tuple[CheckOutcome, ...]
+    year_patients: int
+    year_seconds: float
+    figures: ProfilesFigures
+
+    @property
+    def passed(self) -> bool:
+        return all(c.passed for c in self.checks)
+
+    def check(self, name: str) -> CheckOutcome:
+        """The row of one check, by name."""
+        (outcome,) = (c for c in self.checks if c.name == name)
+        return outcome
+
+
+def _failures(result: ValidationResult) -> int:
+    """Failing leaf categories: those of each context in the mix, or the details."""
+    leaves = [x for d in result.details for x in (d.details or (d,))]
+    return sum(not x.passed for x in leaves)
+
+
+def validate_profiles(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    seed: int | np.random.SeedSequence,
+    patients: int | None = None,
+    contexts: Sequence[ArrivalContext] | None = None,
+    sampled_profiles: ClinicalProfiles | None = None,
+    timer: Callable[[], float] = perf_counter,
+) -> ProfilesValidation:
+    """Run the four checks of the sampler, drawing the year once.
+
+    The mix is ``check_mixing`` with child 0 of ``seed``; the triage, the
+    tests and the durations evaluate one sample of a year drawn with child 1,
+    so each result is ``==`` to the one of ``check_triage``, ``check_workup``
+    and ``check_durations`` with that child and the same patients.
+
+    Args:
+        profiles: The profiles that give the hypothesis.
+        arrival_profile: The arrival profile: the start date and the weight of
+            each context.
+        seed: Master seed.
+        patients: Patients per context in the mix and in total in the year;
+            ``None`` for the defaults (see ``check_profiles_validation_counts``).
+        contexts: Contexts of the mix; the 24 by default.
+        sampled_profiles: Profiles the patients are drawn with; ``profiles``
+            by default. Only for power tests.
+        timer: Clock of the times, injected in tests.
+
+    Raises:
+        ValueError: As ``check_profiles_validation_counts``, before drawing.
+    """
+    contexts = tuple(all_contexts() if contexts is None else contexts)
+    mixing_n, year_n = check_profiles_validation_counts(
+        profiles, arrival_profile, patients, contexts
+    )
+    sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
+    mixing_seed, year_seed = child_streams(seed, 2)
+    detectable = detectable_errors(profiles, arrival_profile, mixing_n, year_n, contexts)
+
+    start = timer()
+    mixing = check_mixing(
+        profiles,
+        arrival_profile.start_date,
+        seed=mixing_seed,
+        patients=mixing_n,
+        contexts=contexts,
+        sampled_profiles=sampled_profiles,
+    )
+    mixing_end = timer()
+    year = _draw_year(sampled_profiles, arrival_profile, year_seed, year_n)
+    year_end = timer()
+    observed = np.zeros((N_LEVELS, N_LEVELS), dtype=np.int64)
+    np.add.at(observed, (year.true_level - 1, year.level - 1), 1)
+    triage = _triage_result(profiles, arrival_profile, observed)
+    triage_end = timer()
+    workup = workup_model(profiles, arrival_profile)
+    workup_result = _workup_result(workup, year)
+    workup_end = timer()
+    durations = duration_model(profiles, arrival_profile)
+    durations_result = _durations_result(profiles, durations, year)
+    durations_end = timer()
+
+    rows = (
+        (
+            "mixing",
+            mixing,
+            len(contexts) * mixing_n,
+            len(contexts) * N_CATEGORIES,
+            start,
+            mixing_end,
+        ),
+        ("triage", triage, year_n, N_TRIAGE_CATEGORIES, year_end, triage_end),
+        ("workup", workup_result, year_n, N_WORKUP_CATEGORIES, triage_end, workup_end),
+        ("durations", durations_result, year_n, N_DURATION_CATEGORIES, workup_end, durations_end),
+    )
+    checks = tuple(
+        CheckOutcome(
+            name=name,
+            result=result,
+            patients=n,
+            categories=categories,
+            failures=_failures(result),
+            alpha=ALPHA / categories,
+            detectable=detectable[name],
+            seconds=end - begin,
+        )
+        for name, result, n, categories, begin, end in rows
+    )
+    return ProfilesValidation(
+        checks=checks,
+        year_patients=year_n,
+        year_seconds=year_end - mixing_end,
+        figures=_figures(profiles, arrival_profile, workup, durations, year),
+    )

@@ -3,12 +3,12 @@
 Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
 ``simulate_arrivals``, ``validate_arrivals``, ``simulate_run``,
-``validate_engine``) and hands the results to the report modules for the
-tables, the CSV files and the plots.
+``validate_engine``, ``validate_profiles``) and hands the results to the
+report modules for the tables, the CSV files and the plots.
 
-Exit codes: 0 if all goes well; 1 if ``llegadas validar`` or ``motor
-validar`` runs and some check fails, or ``motor simular`` finds a broken
-invariant (the files are written anyway, to find out why); 2 for usage
+Exit codes: 0 if all goes well; 1 if ``llegadas validar``, ``motor validar``
+or ``perfiles validar`` runs and some check fails, or ``motor simular`` finds a
+broken invariant (the files are written anyway, to find out why); 2 for usage
 errors, including a missing or invalid configuration, invalid limits or a
 ``--salida`` that is not a directory, before anything is printed or computed
 and before any file is created.
@@ -42,6 +42,13 @@ from edsim.engine.report import (
     plot_waits_by_level,
 )
 from edsim.engine.validation import check_engine_validation_counts, validate_engine
+from edsim.profiles.config import load_profiles
+from edsim.profiles.report import FALSE_ALARM, PLOTS, format_profiles_validation
+from edsim.profiles.validation import (
+    DEFAULT_MIXING_PATIENTS,
+    check_profiles_validation_counts,
+    validate_profiles,
+)
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
 from edsim.runs import simulate_run, validate_run_id
@@ -67,6 +74,9 @@ CENSUS_PLOT = "censo.png"
 WAITS_PLOT = "esperas_por_nivel.png"
 MG1_PLOT = "mg1.png"
 HOURLY_CENSUS_PLOT = "censo_por_hora.png"
+
+DEFAULT_PROFILES = "config/perfiles.toml"
+PROFILE_PLOTS = tuple(name for name, _ in PLOTS)
 
 
 def parse_rhos(text: str) -> tuple[float, ...]:
@@ -271,6 +281,12 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
     return center, profile
 
 
+def _model_line(args: argparse.Namespace) -> str:
+    if args.perfiles is None:
+        return "Modelo provisional"
+    return f"Modelo clínico · perfiles {args.perfiles} (huella {args.huella_perfiles})"
+
+
 def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     run_id = default_run_id(args.semilla) if args.run_id is None else args.run_id
     try:
@@ -283,12 +299,15 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     if out_dir.exists() or out_dir.is_symlink():
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
     _load_engine_configs(args, parser)
+    if args.perfiles is not None:
+        _, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
     try:
         check_horizon(args.dias, args.calentamiento)
     except ValueError as error:
         parser.error(str(error))
     print(
-        f"{_engine_header(args)}\n{args.dias} días ({args.calentamiento} de calentamiento)"
+        f"{_engine_header(args)}\n{_model_line(args)}"
+        f"\n{args.dias} días ({args.calentamiento} de calentamiento)"
         f" · semilla {args.semilla} · run_id {run_id}\n",
         flush=True,
     )
@@ -302,6 +321,7 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
             warmup_days=args.calentamiento,
             run_id=run_id,
             origin="cli",
+            profiles=args.perfiles,
         )
     except FileExistsError:
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
@@ -340,6 +360,39 @@ def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     print()
     for name, fig in figures:
         fig.savefig(out_dir / name, dpi=150)
+        print(f"Gráfica: {out_dir / name}")
+    return 0 if validation.passed else 1
+
+
+def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
+    profiles, huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
+    arrival_profile, huella_llegadas = _load_file(args.llegadas, "--llegadas", load_profile, parser)
+    if args.semilla < 0:
+        parser.error(f"--semilla debe ser un entero no negativo; se recibió {args.semilla}")
+    try:
+        mixing, year = check_profiles_validation_counts(profiles, arrival_profile, args.pacientes)
+    except ValueError as error:
+        parser.error(f"--pacientes: {error}")
+    print(
+        f"Perfiles · {args.perfiles} (huella {huella_perfiles})"
+        f" · llegadas {args.llegadas} (huella {huella_llegadas})\n"
+        f"{mixing} pacientes por contexto en la mezcla · {year} en la muestra del año"
+        f" · semilla {args.semilla}\n\n"
+        "Validando el muestreador: mezcla de motivos, triaje, pruebas y duraciones. Con los"
+        " valores por defecto tarda unos 30 segundos.\n",
+        flush=True,
+    )
+    validation = validate_profiles(
+        profiles, arrival_profile, seed=args.semilla, patients=args.pacientes
+    )
+    print(format_profiles_validation(validation))
+
+    # The plots are written even if a check fails: they help to find out why.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print()
+    for name, plot in PLOTS:
+        plot(validation.figures).savefig(out_dir / name, dpi=150)
         print(f"Gráfica: {out_dir / name}")
     return 0 if validation.passed else 1
 
@@ -404,7 +457,7 @@ def _add_output_options(parser: argparse.ArgumentParser, *, output_help: str | N
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the ``edsim`` parser with its ``mm1``, ``llegadas`` and ``motor`` subcommands."""
+    """Build the ``edsim`` parser: ``mm1``, ``llegadas``, ``motor`` and ``perfiles``."""
     parser = argparse.ArgumentParser(
         prog="edsim",
         description="Simulador de urgencias hospitalarias que genera datos "
@@ -526,9 +579,17 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"Simula N días y guarda en el directorio de salida {EVENTS_FILE} (el "
         f"log de eventos), {EPISODES_CSV} y {GROUND_TRUTH_DAYS_CSV} (el ground truth). "
         "Comprueba las invariantes e imprime un resumen derivado del log. Termina con "
-        "código 1 si alguna invariante falla.",
+        "código 1 si alguna invariante falla. Con --perfiles, simula el modelo clínico y "
+        "guarda también una copia de los perfiles; sin la opción, el modelo provisional.",
     )
     _add_engine_options(simulate)
+    simulate.add_argument(
+        "--perfiles",
+        default=None,
+        metavar="FICHERO",
+        help="perfiles clínicos en TOML, como config/perfiles.toml; sin la opción, el modelo "
+        "provisional del hito 3",
+    )
     simulate.add_argument(
         "--dias",
         type=int,
@@ -571,6 +632,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_engine_output_options(engine_validate)
     engine_validate.set_defaults(handler=_validate_engine, subparser=engine_validate)
+
+    profiles = commands.add_parser(
+        "perfiles",
+        help="perfiles clínicos: validación del muestreador",
+        description="Perfiles clínicos de los pacientes (hito 4).",
+    )
+    profile_actions = profiles.add_subparsers(dest="accion", required=True, metavar="accion")
+    profiles_validate = profile_actions.add_parser(
+        "validar",
+        help="valida el muestreador clínico sin el motor y guarda cuatro gráficas",
+        description="Sortea pacientes con el muestreador clínico, sin el motor, y los compara "
+        "con lo exacto de los perfiles: la mezcla de motivos por contexto, el triaje (niveles "
+        "asignados y matriz real × asignado), las pruebas y las duraciones. Imprime una tabla "
+        f"con una fila por comprobación y guarda {', '.join(PROFILE_PLOTS)}. Termina con "
+        f"código 1 si alguna comprobación falla. {FALSE_ALARM}",
+    )
+    profiles_validate.add_argument(
+        "--perfiles",
+        default=DEFAULT_PROFILES,
+        metavar="FICHERO",
+        help="perfiles clínicos en TOML (por defecto: %(default)s)",
+    )
+    profiles_validate.add_argument(
+        "--llegadas",
+        default=DEFAULT_CONFIG,
+        metavar="FICHERO",
+        help="perfil de llegadas en TOML, para la fecha de inicio y el peso de cada contexto "
+        "(por defecto: %(default)s)",
+    )
+    profiles_validate.add_argument(
+        "--pacientes",
+        type=int,
+        default=None,
+        metavar="N",
+        help="pacientes de cada muestra: N por contexto en la mezcla (24 × N en total) y N "
+        "en la muestra del año del triaje, las pruebas y las duraciones (por defecto, "
+        f"{DEFAULT_MIXING_PATIENTS} por contexto y un año del perfil de llegadas)",
+    )
+    _add_output_options(profiles_validate)
+    profiles_validate.set_defaults(
+        handler=_validate_profiles, subparser=profiles_validate, salida="resultados/perfiles"
+    )
 
     return parser
 

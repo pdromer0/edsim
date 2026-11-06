@@ -254,7 +254,7 @@ Tres reglas: orden fijo y número fijo de sorteos por flujo, salga lo que salga;
 | `test_ordered` | `pruebas` | Lista no vacía de tipos, en el orden de `TEST_TYPES` y sin repetir, como `["analitica", "ecg"]` |
 | `test_resulted` | `resultados` | Objeto con los mismos tipos que el `test_ordered` del episodio, cada uno `"normal"` o `"alterado"`, como `{"analitica": "alterado", "ecg": "normal"}` |
 
-En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con las claves en el orden de `TEST_TYPES`: el evento sigue inmutable, comparable con `==` y con pickle y deepcopy, y la ida y vuelta por JSONL da el mismo evento. Cada `test_resulted` se lee solo, sin buscar su pedido. Un log lleva una sola versión, la de su `EventLog(..., schema_version=...)`; `read_events` valida cada evento con el catálogo de su versión, y `_upgrade` (el `circuito` de los logs anteriores a la 4.1) solo actúa en la versión 1. Ningún catálogo lleva G, z, nivel real, calidad, salto, banda ni respuestas; un test lo comprueba.
+En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con las claves en el orden de `TEST_TYPES`: el evento sigue inmutable, comparable con `==` y con pickle y deepcopy, y la ida y vuelta por JSONL da el mismo evento. Cada `test_resulted` se lee solo, sin buscar su pedido. Un log lleva una sola versión, la de su `EventLog(..., schema_version=...)`; `read_events` valida cada evento con el catálogo de su versión, y `_upgrade` (el `circuito` de los logs anteriores a la 4.1) solo actúa en la versión 1. Ningún catálogo lleva G, z, nivel real, calidad, salto, banda ni respuestas; un test lo comprueba. Los valores aceptados (los 17 motivos, los medios, los sexos, los tipos de prueba y los resultados) están fijados en un test literal: cambiar cualquiera exige una versión 3 del catálogo.
 
 **Cambios en el motor**, pequeños y explícitos; la lógica de colas, recursos y turnos no cambia:
 
@@ -267,9 +267,9 @@ En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con
 
 - `door`, con los dos modelos: un triaje con `circuito: "puerta"` va con un `triage_completed` de nivel 1, y al revés; en la puerta, `triage_started` y `triage_completed` ocurren en el instante de la llegada. Lo contrario no se exige: un triaje de enfermería también puede empezar al llegar, si hay una enfermera libre.
 - `schema_version`: una sola versión en el log.
+- `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
 
 **Logs anteriores a la tarea 4.1.** `_upgrade` los lee con `circuito: "enfermeria"` en todos sus triajes, también en los de sus niveles 1, porque entonces el nivel 1 pasaba por la enfermera. Si se recalculan sus invariantes con las reglas de hoy, `door` marca cada uno de esos niveles 1. Es lo esperado: esas ejecuciones guardaron 0 violaciones en `run.json` con las reglas de su momento, y `runs/results.py` solo recalcula las invariantes de una ejecución que guardó alguna, así que en la app no cambian.
-- `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
 
 **Ground truth de episodios.** `EpisodeTruth` gana un campo `clinical` (`None` con el provisional, sin otros cambios) con la verdad clínica, `ClinicalTruth`, compuesta de los resultados congelados de los muestreadores de `profiles/`:
 
@@ -285,9 +285,34 @@ En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con
 
 **Modelo opcional durante el hito** (decisión candidata 44). `simulate_ed(..., profiles=...)` y, desde la tarea 4.5b, la CLI aceptan unos perfiles. Con ellos usan `child_streams(seed, 8)`, el `ClinicalSampler` y un log de la versión 2; sin ellos, `child_streams(seed, 5)` y el `ProvisionalSampler`, y la app y `runs/` siguen funcionando sin cambios. Dar `profiles` y `sampler` a la vez es un error de uso. El cambio de modelo por defecto y la separación de `centro.toml` (decisión candidata 36) se hacen en la tarea de cierre, cuando la app ya trabaje con perfiles. El `ProvisionalSampler` se queda para la validación del motor (M/G/1, escenario de tres boxes), que necesita un modelo sencillo con teoría conocida.
 
-**Huellas.** Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito, y no cambiaron en la 4.5a. El modelo clínico tiene sus propias huellas desde la tarea 4.5a, con el centro, las llegadas y los perfiles de ejemplo, semilla 2026 y 3 días: la del log y la del ground truth, una línea JSON por episodio (`json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":"))`, con el `EpisodeTruth` entero). Se regeneran solo con un cambio a propósito de los muestreadores o de `ClinicalTruth`, explicado en el commit; el formato estable del ground truth será el CSV de la tarea 4.5b.
+**Huellas.** Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito, y no cambiaron en la 4.5a. El modelo clínico tiene sus propias huellas desde la tarea 4.5a, con el centro, las llegadas y los perfiles de ejemplo, semilla 2026 y 3 días: la del log y la del ground truth, una línea JSON por episodio (`json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":"))`, con el `EpisodeTruth` entero). Se regeneran solo con un cambio a propósito de los muestreadores o de `ClinicalTruth`, explicado en el commit. El formato estable del ground truth es el CSV clínico de la tarea 4.5b (ver «Ejecuciones clínicas en disco»), con su propia caracterización.
 
-**Pendiente para la tarea 4.5b.** `simulate_run` debe pasar `profiles` a `check_invariants`: sin ellos, la comprobación de la respuesta de la ronda no se hace. La 4.5b añade un test que lo vigile. La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: la 4.8a tendrá que usar `to_json` o un payload plano. Si la 4.8a guarda una ejecución antigua como dato de prueba, debe ser posterior a la tarea 4.1 o tener en cuenta que `door` marca sus niveles 1 (ver «Logs anteriores a la tarea 4.1»).
+## Ejecuciones clínicas en disco
+
+Desde la tarea 4.5b, una ejecución del modelo clínico se guarda en `resultados/` con el contrato de la fase 1 de la app (decisión 32): se copia primero, se escribe en una carpeta oculta, `run.json` va el último y la carpeta se publica con un solo renombrado. El modelo provisional no cambia ni un byte, salvo `run.json`.
+
+**CSV del ground truth clínico** (`engine/report.py`). Lleva todo lo que tiene un `EpisodeTruth`, incluidos la z de la gravedad y los 12 sorteos de las pruebas, así que leerlo da el mismo `EpisodeTruth` con `==`, floats bit a bit (escritos con `repr`). Tiene 57 columnas: las 10 de datos del provisional (`respuesta_pruebas` vacía, que se lee como `None`), las 37 clínicas, los 8 parámetros de la ejecución y `perfiles` y `huella_perfiles`.
+
+| Grupo | Columnas |
+| --- | --- |
+| Contexto | `franja` (`manana`, `tarde`, `noche`), `tipo_dia` (`laborable`, `fin_de_semana`) y `estacion` (`invierno`, `primavera`, `verano`, `otono`), por nombre |
+| Persona | `banda` (índice 0 a 3: los límites son de los perfiles), `edad`, `sexo` y `medio`, con las palabras del log |
+| Motivo | `motivo` |
+| Triaje | `z_gravedad`, `gravedad`, `nivel_real`, `calidad_triaje` y `salto`; el nivel asignado es la columna `nivel`, sin duplicarla |
+| Pruebas | `pedida_<tipo>`, `alterada_<tipo>` y `respuesta_base_<tipo>` (factor 1), cuatro de cada, en el orden de `TEST_TYPES` |
+| Sorteos del flujo 3 | `sorteo_pedida_<tipo>`, `sorteo_alterada_<tipo>` y `sorteo_respuesta_<tipo>` de cada tipo, en el orden de `Workup.draws` |
+
+`write_episodes_csv(..., profiles=ProfilesParameters(...))` escribe el clínico. Son errores de uso, comprobados antes de crear el fichero: un episodio clínico sin perfiles, uno provisional con ellos, y un episodio clínico que no se puede leer de vuelta (con `test_turnaround`, o con el nivel o `needs_tests` en contradicción con su verdad). `episode_from_row` lee una fila de cualquiera de los dos modelos con tokens exactos y comprobaciones de coherencia (`calidad_triaje` y `salto` con los dos niveles, `pruebas` con las pedidas). `read_episodes_csv` lee el fichero entero y exige la cabecera exacta y los mismos parámetros en todas las filas. El CSV de días es el mismo con los dos modelos, porque las llegadas no dependen de los perfiles.
+
+**`run.json` versión 2** (`runs/store.py`). Es la versión 1 más `model` (`"provisional"` o `"clinico"`) y, solo con el clínico, `clinical_profiles_path` (la ruta original) y `clinical_profiles_fingerprint` (la huella de la copia). Los nombres no se confunden con `profile_path` y `profile_fingerprint`, que son del perfil de llegadas. En `RunInfo` los dos campos son opcionales: el modelo los explica y `__post_init__` exige que existan con el clínico y que sean `None` con el provisional. `read` exige las claves exactas de su versión, sin que los valores por defecto rellenen ninguna; la versión 1 (16 claves) se lee como provisional, y una versión desconocida es un error. `write` solo escribe la 2, sin claves nulas. `RunStore.archive` comprime 7 ficheros en una ejecución clínica, con `perfiles.toml`, y 6 en una provisional. `tests/data/run_v1.json` es un `run.json` real de la versión 1, escrito antes de la 4.5b.
+
+**`simulate_run(..., profiles=None)`**. Con perfiles, copia `perfiles.toml` a la carpeta, como `centro.toml` y `llegadas.toml`, carga desde la copia y calcula su huella sobre ella. Después simula con `simulate_ed(..., profiles=...)`, escribe el CSV clínico y pasa los perfiles a `check_invariants`, que comprueba la respuesta de cada ronda con la franja de su pedido. Volver a simular desde las copias de la carpeta da el mismo log, también con perfiles.
+
+**Emparejamiento mínimo** (`runs/compare.py`). `pairing_blockers` añade, detrás de los bloqueos de antes, `model` y `clinical_profiles_fingerprint`: dos ejecuciones de modelos distintos, o clínicas con perfiles de huella distinta, no son los mismos pacientes. El formato de `run.json` no bloquea: una versión 1 y una 2 provisionales se emparejan.
+
+**Pendiente para la tarea 4.8a.** `runs/truth.py` lee hoy solo el CSV provisional: para el clínico usará `episode_from_row`, con su comprobación contra `run.json`. Queda también el emparejamiento clínico con el ground truth (sorteos estándar por paciente). `read_run_results` recalcula las invariantes sin los perfiles cuando `run.json` guarda alguna violación, así que en una ejecución clínica con violaciones el recuento puede no coincidir. Si la 4.8a guarda una ejecución antigua como dato de prueba, debe ser posterior a la tarea 4.1 o tener en cuenta que `door` marca sus niveles 1 (ver «Logs anteriores a la tarea 4.1»).
+
+**Pendiente para la tarea 4.8b** (Codex, `app/src`). La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: tendrá que usar `to_json` o un payload plano. Comparar muestra los campos nuevos de `run.json` con su nombre en inglés, porque sus etiquetas viven en `comparison_frames.py`.
 
 ## Relojes y cumplimiento
 
@@ -433,8 +458,14 @@ edsim perfiles validar --perfiles config/perfiles.toml --pacientes 20000 --semil
 edsim calibracion evaluar --perfiles config/perfiles.toml --objetivos config/objetivos.toml --replicas 10 --semilla 2026 --salida resultados/calibracion
 ```
 
-- `motor simular` acepta `--perfiles`; sin él usa el modelo provisional, como hasta ahora. La ejecución se escribe con `simulate_run`, y `run.json` guarda la huella de los perfiles cuando los hay.
-- `perfiles validar` prueba el muestreador sin el motor: imprime una tabla con una fila por comprobación (mezcla de motivos por contexto, reparto asignado y real, infra y sobretriaje, pruebas por tramos de G, cuantiles de duraciones) y guarda sus gráficas.
+- `motor simular` acepta `--perfiles`, sin valor por defecto; sin él usa el modelo provisional, como hasta ahora (decisión 44). La ejecución se escribe con `simulate_run`, y `run.json` guarda el modelo y la huella de los perfiles cuando los hay. La cabecera dice el modelo («Modelo clínico · perfiles … (huella …)» o «Modelo provisional»). Si el fichero de perfiles no existe o no es válido, código 2 antes de imprimir nada o de crear ningún fichero.
+- `perfiles validar` prueba el muestreador sin el motor (tarea 4.5b): `--perfiles` y `--llegadas` (por defecto los de `config/`), `--pacientes`, `--semilla` y `--salida` (por defecto `resultados/perfiles`). `validate_profiles` ejecuta `check_mixing` con el hijo 0 de la semilla y sortea **una sola vez** la muestra del año, con el hijo 1, para el triaje, las pruebas y las duraciones. Cada fila es `==` a su `check_*` con esa semilla: con la misma semilla, las tres sortean los mismos pacientes.
+  - `--pacientes N` es N por contexto en la mezcla (24 × N) y N en la muestra del año. Sin la opción, 20 000 por contexto (la potencia de «Tests y validación») y un año del perfil de llegadas (109 542 con `config/`).
+  - Los mínimos se comprueban antes de sortear (código 2). La mezcla calcula lo esperado de cada motivo dentro de una banda con el recuento *observado* de la banda, que es aleatorio: en el mínimo exacto (13 993 por contexto con `config/`, por intoxicación en 80–99 años, tarde laborable de invierno) pararía el 49,9 % de las veces. `check_profiles_validation_counts` exige el N con el que la probabilidad de parar, acotada con la binomial de cada banda y la unión de bandas y contextos, es menor que 1e-6: 15 234 por contexto. El año exige 11 826 (el nivel real 1 con 50 pacientes esperados).
+  - La tabla tiene una fila por comprobación: pacientes, categorías, fallos, el p mínimo frente al α de cada categoría (Bonferroni), el error detectable de una categoría de referencia con una potencia del 80 % (un motivo del 5 %; el nivel 1 asignado; pedir analítica en el quintil central de G; la mediana de la valoración del nivel real 3) y el tiempo (la mezcla con su sorteo y las otras tres solo su evaluación; el sorteo del año va en una línea aparte).
+  - **Falsa alarma conjunta.** Cada comprobación usa α = 0,01 con Bonferroni dentro de ella. Con las cuatro, un muestreador correcto da código 1 hasta un 4 % de las veces (desigualdad de Boole); la tabla y la ayuda lo dicen.
+  - Cuatro gráficas (`profiles/report.py`), cada una con lo exacto y el IC al 95 % de lo observado (Wilson para las proporciones; estadísticos de orden para los cuantiles): `motivos.png` (los 17 motivos del año), `triaje.png` (P(asignado | real), un panel por nivel real), `pruebas_por_gravedad.png` (pedir cada tipo por quintil de G) y `duraciones_por_nivel.png` (mediana y p90 de la valoración y la reevaluación por nivel real). Se escriben siempre, también si algo falla.
+  - Tiempos con los valores por defecto y `config/` (tarea 4.5b): 29 s en total; la mezcla, 11,1 s con su sorteo; la muestra del año, 14,3 s; la evaluación del triaje, las pruebas y las duraciones, 0,0, 0,2 y 0,2 s. Sortear el año para cada comprobación por separado costaría unos 14 s más.
 - `calibracion evaluar` ejecuta las réplicas, compara cada objetivo con su horquilla e imprime una tabla con la media, su IC, la horquilla, el uso, el porcentaje de días fuera y el resultado. Guarda un CSV para el registro de calibración.
 - Códigos de salida como en los hitos 2 y 3: 0 si todo va bien, 1 si alguna comprobación falla (escribiendo igualmente los ficheros) y 2 para errores de uso, sin crear ficheros a medias.
 - Las opciones `--perfiles` y `--objetivos` usan por defecto los ficheros de `config/` en los subcomandos nuevos.
@@ -458,7 +489,8 @@ src/edsim/profiles/
   workup.py              pruebas por tipo, resultado y respuesta; WorkupModel exacto
   durations.py           lognormales por nivel real y motivo; DurationModel y carga del médico
   sampler.py             PersonReasonSampler, SeverityTriageSampler y WorkupDurationSampler
-  validation.py          comprobaciones estadísticas del muestreador
+  validation.py          comprobaciones estadísticas del muestreador y validate_profiles
+  report.py              tabla y gráficas de perfiles validar (tarea 4.5b)
 src/edsim/calibration/
   __init__.py
   targets.py             objetivos.toml: Target, load_targets
@@ -500,7 +532,8 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Motor | Asignación de flujos con sorteos a mano; consumo fijo con generadores instrumentados; el motor como tubería del `ClinicalSampler`; respuesta con la franja del pedido (75 / 82,5 / 67,5; 84 de noche; 260 a las 7:59; pedido a las 15:10 de una llegada a las 14:00); destino con el nivel asignado; payloads del catálogo 2 en un escenario a mano, sin campos ocultos; invariantes `door`, `schema_version` y `clinical`, y cero violaciones en 14 días; huellas del modelo provisional (sin cambios) y del clínico (log y ground truth) |
 | Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
 | Calibración (slow) | Objetivos cargados con su fuente; evaluación con réplicas; semillas de ajuste y de comprobación distintas |
-| CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso |
+| CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso. `motor simular --perfiles`: caracterización con los argumentos de la del provisional (log igual al de `simulate_ed` y CSV de días con la huella del provisional), la CLI y `simulate_run` dan el mismo log, y código 2 con perfiles que no existen o no son válidos. `perfiles validar`: tabla y gráficas con un contexto (rápido), código 1 con el sesgo del triaje desplazado en el muestreador (`sampled_profiles`), código 2 sin ficheros y los valores por defecto con `config/` (slow) |
+| Ejecuciones (tarea 4.5b) | Ida y vuelta del CSV clínico con `==` y tipos exactos; cabecera literal y fila a mano; `run.json` v1 de `tests/data` y v2 con los dos modelos; `simulate_run` pasa los perfiles a `check_invariants` (espía y comportamiento); `pairing_blockers` con los dos modelos |
 
 **Potencia.** El muestreador se prueba sin el motor, con 20 000 pacientes en décimas de segundo. Con el χ² por motivo, nivel 0,01 y Bonferroni entre 17, se detecta un 5 % que pasa a 6 % con una potencia del 99,7 %, pero un 5 % que pasa a 5,5 % solo con un 43 %. Cada prueba escribe qué tamaño de error ve. Los motivos raros (crítico, 0,5 %) necesitan comprobar que hay pacientes suficientes, para que el test no pase de forma vacía.
 
@@ -533,6 +566,14 @@ Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en l
 | Destino con el nivel real en lugar del asignado | Fallan la asignación de flujos a mano y las dos huellas clínicas; pasa el destino a mano, que es una función pura (tarea 4.5a, cumplida) |
 | Puerta decidida con el nivel real | Fallan los payloads a mano del infratriado y el sobretriado, la invariante `door` en 14 días y la huella del log; pasa la del ground truth (tarea 4.5a, cumplida) |
 | Factor del tipo de mayor base sobre la máxima de las bases, en lugar de la máxima de factor × base | Falla solo el caso a mano de las 22:00 (84) y pasa el de las 15:00 (82,5); fallan la respuesta con otra plantilla, la invariante `clinical` y la huella del log (tarea 4.5a, cumplida) |
+| `simulate_run` sin `profiles` en `check_invariants` | Fallan el espía y el test de comportamiento (con la ronda alargada 1 minuto, `run.json` guarda 0 violaciones); fallan también los dos espías que fijan los argumentos exactos (tarea 4.5b, cumplida) |
+| CSV clínico con la respuesta base multiplicada por el factor de la franja de la llegada | Fallan la ida y vuelta de 3 días, la fila a mano (de tarde), la huella del CSV clínico de la CLI y la lectura frente a `simulate_ed`; pasan la cabecera literal, los tipos exactos, el log y las huellas del provisional (tarea 4.5b, cumplida) |
+| `run.json` de una ejecución clínica con `format_version` 1 | `RunInfo` la rechaza: no se publica ninguna ejecución clínica y fallan todos los tests que crean una; pasan los provisionales y la lectura de la versión 1 (tarea 4.5b, cumplida) |
+| Perfiles cargados del original y no de la copia | Falla solo «el original modificado tras copiarlo no cambia el log» (tarea 4.5b, cumplida) |
+| CSV provisional con las columnas de los perfiles | Fallan la huella de la caracterización provisional, las cabeceras y todos los lectores de cabecera exacta (`runs/truth.py`, `read_episodes_csv` y la comparación de ejecuciones); pasa todo lo clínico (tarea 4.5b, cumplida) |
+| `pairing_blockers` sin mirar el modelo | Falla solo la tupla exacta del provisional frente al clínico: el bloqueo sigue por la huella de los perfiles (tarea 4.5b, cumplida) |
+| `validate_profiles` sortea el año en cada comprobación | Falla solo el espía del sorteo: con la misma semilla salen los mismos pacientes y la igualdad con los `check_*` no lo ve (tarea 4.5b, cumplida) |
+| Mínimo de la mezcla sin margen (lo esperado exacto) | Fallan las cifras de los mínimos y el código 2 entre los dos mínimos; contra la predicción, fallan también los tests rápidos, que toman N de `mixing_minimum`: en el mínimo exacto, la mezcla para por falta de pacientes (4,91 esperados < 5), que es lo que el margen evita (tarea 4.5b) |
 
 Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
 
@@ -1057,3 +1098,103 @@ Una predicción fallida (V4) destapó un error real del modelo exacto; las demá
 - **Para la 4.5:** unir los tres muestreadores en el `ClinicalSampler`. El motor aplica `turnaround_shift_factors` con la franja del momento del pedido y llama a `round_turnaround`; `None` equivale a `needs_tests=False`. La reevaluación solo se usa si hay ronda, y el triaje no se usa en el nivel 1. Payloads `pruebas` y `resultados`; ground truth con las pruebas pedidas, su resultado y su respuesta por tipo. `perfiles validar` incluye `check_workup` y `check_durations`.
 - **Para la 4.6:** la carga del médico es un 5 % mayor que en el modelo provisional (32,38 frente a 30,84 min por paciente); la plantilla lo absorberá.
 - **Mejora menor:** separar en dos el test de la regla de los k (la regla y el literal).
+
+### Tarea 4.5a: el ClinicalSampler en el motor
+
+**Qué se hizo**
+
+PR #44 (rama `feat/h4-muestreador`), fusionado con *squash and merge*: catorce commits, diez del plan y cuatro de la revisión, con revisión de Codex (tarea crítica). La 4.5 se partió en dos: esta lleva el muestreador al motor y la 4.5b, el guardado y la CLI. Por primera vez el motor simula pacientes con perfil, y el camino del modelo provisional no cambia ni un bit.
+
+- `engine/clinical_sampler.py`: `ClinicalSampler` (flujos 1 a 7 de `child_streams(seed, 8)`, repartidos en `[5, 6]`, `[7, 1]`, `[3, 2]` y el 4 para el destino), `ClinicalTruth`, `ClinicalDraws`, `TurnaroundShifts` y `admitted_from_draw` (destino con el nivel asignado). Vive en el motor porque necesita `PatientDraws` y el destino de `CenterConfig`.
+- `PatientDraws` gana `clinical` (`None` con el provisional) y `test_turnaround` pasa a `float | None`: con el clínico es `None`, sin valor inventado. Un `__post_init__` exige un modelo u otro y `needs_tests` = hay ronda.
+- `patient.py`: rama explícita. Sin `clinical`, el código del hito 3; con él, payloads clínicos y la respuesta de la ronda calculada al pedir, con la franja de ese instante.
+- `simulate_ed(..., profiles=None)`: con perfiles, ocho flujos, el `ClinicalSampler` y un log de la versión 2; con `profiles` y `sampler` a la vez, error de uso.
+- `events.py`: un catálogo por versión (`CATALOGS`, `SCHEMA_VERSIONS`); `SCHEMA_VERSION` desaparece. Versión 2: `medio`, `edad`, `sexo`, `motivo`, `pruebas` (tupla) y `resultados` (mapping de solo lectura); las comprobaciones devuelven el valor normalizado y `_plain` los convierte para JSON y pickle.
+- `invariants.py`: `door` (los dos modelos), `schema_version` y `clinical` (payloads frente a la verdad y respuesta de cada ronda frente a la franja del pedido, calculada aparte, a 1e-8 min).
+- `EpisodeTruth.clinical`; `write_episodes_csv` rechaza episodios clínicos hasta la 4.5b.
+- Refactor de rendimiento en `profiles/`: `arrival_context` con aritmética de Python (bit a bit igual que `context_indices`, con un test en los bordes) y pesos de banda precalculados.
+- Revisión: test literal de los valores del catálogo 2; nota sobre los logs anteriores a la 4.1; convención de idioma de los tests en `AGENTS.md`, `app/AGENTS.md` y una nota a la ADR 0015.
+
+**Conceptos**
+
+- **Inyección de dependencias.** El motor depende de un contrato, `sampler(arrival) → PatientDraws`, no de un modelo: cambiar el muestreador no toca colas, boxes ni turnos.
+- **Un valor que depende de la simulación.** La respuesta de la ronda no se conoce al llegar: se sortea la base (factor 1) y el motor la transforma en el instante del pedido. Los números aleatorios comunes se mantienen: con otra plantilla, el paciente k tiene los mismos sorteos, pero si su pedido cruza las 15:00 su ronda dura otra cosa, y eso es correcto.
+- **Lo que ve el hospital y lo que no.** El log lleva lo registrable (medio, edad, sexo, motivo, nivel asignado, pruebas y resultados); G, nivel real, calidad, z, banda y respuestas base van solo al ground truth. El catálogo cerrado y un test de claves prohibidas evitan la fuga de datos.
+- **Versionar el esquema.** Una versión por log; la 1 sigue intacta para el provisional. Cambiar los valores aceptados de la versión 2 exige una versión 3.
+- **El motor como tubería.** El test de cableado más fuerte no es estadístico: el ground truth de `simulate_ed` es idéntico al del `ClinicalSampler` aplicado a `iter_arrivals` con los mismos flujos.
+- **Referencias independientes.** El motor calcula la franja con la versión escalar y la invariante y los tests con `context_indices`: dos cálculos que se vigilan entre sí.
+
+**Decisiones**
+
+- Partir la 4.5 en 4.5a (motor) y 4.5b (guardado y CLI); `run.json` versión 2 se adelanta de la 4.8a a la 4.5b.
+- Catálogo versionado con `schema_version`: 1 para el provisional y 2 para el clínico, una versión por log.
+- `PatientDraws.clinical` opcional y `test_turnaround=None` con el clínico; la respuesta con la franja del pedido.
+- `ClinicalTruth` por composición de los dataclasses de `profiles/`. Guarda la z y los 12 sorteos de las pruebas; los 7 + 17 de persona y motivo y los 3 de duraciones se reconstruyen con la semilla.
+- Huella del ground truth clínico: una línea JSON por episodio (`asdict`, `separators=(",", ":")`) y un test de tipos exactos con `type(x)`, recursivo, porque `np.float64` es subclase de `float`.
+- `door` como invariante general: la equivalencia puerta ⇔ nivel 1 asignado, y la condición de tiempo en un solo sentido.
+- Idioma de los tests, cada zona con su práctica: `tests/` en español y `app/tests/` en inglés (nota a la ADR 0015).
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Tests | 2.235 en la suite completa (7 min 30 s) y 2.213 rápidos al abrir el PR (2.098 y 2.076 antes); 241 de la app, sin cambios; más el literal del catálogo 2 en la revisión |
+| Huellas del provisional | Sin cambios (log del motor y los tres ficheros de la caracterización) |
+| Huellas del clínico | Log `1ee7e1ba…` y ground truth `c4f2c069…` (ejemplo, semilla 2026, 3 días, 1.101 episodios) |
+| Coste por paciente (14 días, config/) | Provisional 252–264 µs y clínico 486–522 µs (1,93–1,98 veces; 2,46 antes de optimizar). El `ClinicalSampler` cuesta 136 µs; el motor con los sorteos hechos, 288 µs frente a 192 |
+| Recuentos de las guardas | V1: la franja de la llegada cambia la respuesta de 137 pacientes en 3 días y 346 en 14; V7: 4 y 38 |
+
+**Comprobaciones clínicas** (14 días, 2 de calentamiento, config/, semilla 2026; provisional → clínico)
+
+| Indicador | Provisional | Clínico |
+| --- | --- | --- |
+| Tiempo de box por paciente sin esperas | 73,4 min | 91,2 min (+24,2 %; el chat estimó +21 % con factor 1) |
+| Carga del médico por paciente | 30,71 min | 32,80 min (+6,8 %) |
+| Boxes ocupados: media y pico (de 30) | 16,58 y 30 | 21,00 y 30 |
+| Médicos ocupados: media y pico | 6,57 y 12 | 7,01 y 12 |
+| Censo: media y pico | 18,99 y 62 | 27,47 y 78 |
+| Espera de box, niveles 3 / 4 / 5 | 0,9 / 6,9 / 16,2 min | 2,9 / 36,0 / 87,5 min |
+| Espera de médico, niveles 4 / 5 | 3,9 / 15,1 min | 8,1 / 15,6 min |
+| Reloj C, nivel 4 (% dentro; días fuera de 12) | 99,5 %; 0 | 82,4 %; 5 |
+| Reloj C, nivel 5 | 97,6 %; 1 | 88,0 %; 3 |
+| Pretriaje ≤ 10 min (niveles 2 a 5) | 96,7 % | 96,6 % |
+
+Repartos: 2 de 21 motivos fuera del IC al 95 % frente a lo exacto de esos 14 días (lo esperado por azar es uno); bandas dentro; niveles y pruebas, 3 de 15 fuera frente al año, que no es la referencia de 14 días de enero. Reloj C por nivel real con el clínico: 75,0 / 94,8 / 95,6 / 83,7 / 86,4 %. Respuesta de la ronda por franja del pedido (media / mediana / p90): mañana 78,0 / 56,7 / 158,4; tarde 81,6 / 61,8 / 164,7; noche 80,8 / 55,4 / 174,1 min.
+
+Paradas en 60 días: 120 de 19.499 llegadas. 67 asignadas nivel 1 (puerta) y 53 nivel 2 (enfermería); 81 de nivel real 1 y 39 de nivel real 2. Las de la puerta esperan 0,6 min de media (p90 1,8); las de la enfermería, 10,5 min hasta el triaje (p90 19,4; máximo 32,2) y 3,2 min con el reloj C.
+
+**Comprobación de las versiones incorrectas** (temporales, con predicción firme)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Franja de la llegada en el pedido | Fallan la respuesta con otra plantilla, el pedido a las 15:10, `clinical` en 14 días (las dos configuraciones) y la huella del log | Exacta; la huella del ground truth pasa |
+| V2. Destino con el nivel real | Fallan la asignación de flujos y las dos huellas; pasa el destino a mano (función pura) | Exacta |
+| V3. Flujos 7 y 1 intercambiados | Fallan la asignación de flujos y las dos huellas; pasa la estadística | Exacta |
+| V4. Pruebas y duraciones solo si no es de puerta | Fallan la asignación de flujos, el consumo fijo y las dos huellas | Exacta |
+| V5. `child_streams(seed, 8)` también sin perfiles | No falla nada (los cinco primeros hijos son iguales) | Exacta; un primer intento mal aplicado se repitió |
+| V6. `gravedad` en el catálogo 2 | Fallan el literal del catálogo, los payloads a mano, las claves prohibidas y la huella; pasan las invariantes | Fallaron los previstos y además 2 de invariantes y eventos a mano: sin claves opcionales, la clave nueva pasa a ser obligatoria |
+| V7. Factor del tipo de mayor base sobre la máxima de las bases | Falla solo el caso de las 22:00 (84) y pasa el de las 15:00; fallan la respuesta con otra plantilla, `clinical` y la huella | Exacta |
+| V8. Puerta con el nivel real | Fallan los payloads a mano, `door` en 14 días (3 + 2 pacientes) y la huella (el 256) | Exacta |
+| V9. `resultados` también de las no pedidas | Fallan los payloads a mano, `clinical` y la huella; pasan las invariantes | Fallaron los previstos y además 11 de invariantes: sus datos de prueba los genera el motor, que ya escribe un log roto |
+| V10. Sin factor de franja | Fallan cuatro casos a mano (15:00, las dos de las 22:00 y 07:59), el pedido a las 15:10, la respuesta con otra plantilla, `clinical` y la huella | Exacta |
+
+Ninguna predicción falló por un hueco de cobertura: V6 y V9 fallaron en más tests de los previstos, no en menos.
+
+**Lecciones aprendidas**
+
+- Lo que depende del instante de la simulación no se sortea al llegar: se sortea lo estándar y se transforma cuando se conoce el instante.
+- Los sorteos comunes no implican resultados idénticos: la misma persona puede tener otra ronda si cambia la hora del pedido.
+- La igualdad bit a bit con el muestreador directo prueba el cableado mejor que cualquier χ².
+- Una referencia de test tiene que ser independiente del código; si comparte la función, comparte el error.
+- Una predicción puede fallar por «pasan»: un fixture generado por el motor arrastra el error a tests que no lo prueban, y un catálogo cerrado convierte cualquier clave nueva en obligatoria.
+- Cambiar el tipo de una constante con el mismo nombre rompe en silencio; un nombre nuevo hace que lo antiguo falle al importar.
+- Un revisor automático aplica las reglas al pie de la letra: hay que escribir la práctica real, y comprobar todas las zonas antes de escribirla (`app/tests/` estaba en inglés).
+- Pasar todos los tests no es ser clínicamente creíble: los boxes saturados y las paradas en la cola del triaje salieron de las comprobaciones clínicas.
+- Optimizar solo con una medida y un umbral fijados antes, y sin cambiar ningún valor.
+
+**Pendiente**
+
+- Tarea 4.5b: CSV del ground truth clínico, `simulate_run` con perfiles (y `profiles` a `check_invariants`, con un test), `run.json` versión 2, `motor simular --perfiles` y `perfiles validar`.
+- Decisión abierta para la 4.6: los boxes pasan a ser el cuello de botella (tiempo de box +24 %, nivel 4 con 5 días fuera de 12). La plantilla de médicos (decisión 41) puede no bastar: calibrar también los boxes, revisar los porcentajes orientativos de pruebas (72,8 % frente al 55,4 % del provisional) o adelantar una zona de espera de resultados.
+- Decisión abierta para la 4.6: el 44 % de las paradas recibe nivel 2 y espera en la cola del triaje (hasta 32 min), y un tercio tiene nivel real 2. Opciones: puerta por motivo, más gravedad y menos dispersión para la parada, o aceptarlo hasta el circuito de críticos de la v1.
+- Tarea 4.8a: la app serializa el payload con `json.dumps(dict(...))`, que no admite `resultados`; una ejecución antigua como dato de prueba debe ser posterior a la 4.1.

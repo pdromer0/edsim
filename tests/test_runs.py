@@ -10,6 +10,8 @@ from zipfile import ZipFile
 import numpy as np
 import pytest
 
+from edsim.arrivals.profile import load_profile
+from edsim.engine.center import load_center
 from edsim.engine.engine import default_run_id
 from edsim.runs import RunInfo, RunStore, validate_run_id
 
@@ -17,7 +19,7 @@ from edsim.runs import RunInfo, RunStore, validate_run_id
 @pytest.fixture
 def info():
     return RunInfo(
-        format_version=1,
+        format_version=2,
         run_id="r2026",
         created_at="2026-11-03T12:00:00+00:00",
         origin="cli",
@@ -77,7 +79,10 @@ def test_metadata_roundtrip(info, tmp_path):
     assert loaded == info
     loaded.write(second)
     assert first.read_bytes() == second.read_bytes()
-    assert json.loads(first.read_text()) == dataclasses.asdict(info)
+    # El provisional no escribe las claves nulas de los perfiles clínicos.
+    expected = dataclasses.asdict(info)
+    del expected["clinical_profiles_path"], expected["clinical_profiles_fingerprint"]
+    assert json.loads(first.read_text()) == expected
     assert "arrivals_per_day" not in json.loads(first.read_text())
 
 
@@ -93,8 +98,12 @@ def test_arrivals_per_day_uses_observation_window(info, days, warmup, arrivals, 
 @pytest.mark.parametrize(
     "change",
     [
-        {"format_version": 2},
+        {"format_version": 3},
         {"format_version": True},
+        {"format_version": 1},
+        {"model": "otro"},
+        {"model": "clinico"},
+        {"clinical_profiles_fingerprint": None},
         {"created_at": "2026-11-03T12:00:00"},
         {"origin": "other"},
         {"days": 0},
@@ -141,10 +150,10 @@ def test_catalog_valid_invalid_hidden_and_occupied(info, tmp_path):
     corrupt = store.root / "corrupt"
     corrupt.mkdir()
     (corrupt / "run.json").write_text("{broken")
-    wrong = dataclasses.replace(info, run_id="wrong", format_version=1)
+    wrong = dataclasses.replace(info, run_id="wrong")
     directory = save_info(store.root, wrong)
     (directory / "run.json").write_text(
-        json.dumps(dataclasses.asdict(wrong) | {"format_version": 2})
+        json.dumps(json.loads((directory / "run.json").read_text()) | {"format_version": 3})
     )
     mismatch = store.root / "mismatch"
     mismatch.mkdir()
@@ -446,6 +455,7 @@ def test_service_saves_violations_and_checks_ground_truth(simulate, tmp_path, mo
     assert calls[0][1] == {
         "ground_truth": engine_results[0].ground_truth,
         "inside": engine_results[0].inside,
+        "profiles": None,
     }
 
 
@@ -533,6 +543,9 @@ def test_cli_and_service_share_artifact_format(simulate, tmp_path, monkeypatch):
     cli_info = RunInfo.read(cli_output / "run.json")
     equal_fields = (
         "format_version",
+        "model",
+        "clinical_profiles_path",
+        "clinical_profiles_fingerprint",
         "run_id",
         "edsim_version",
         "seed",
@@ -578,7 +591,7 @@ def test_service_missing_input_cleans_temporary(simulate, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("argument", ["center", "profile"])
+@pytest.mark.parametrize("argument", ["center", "profile", "profiles"])
 @pytest.mark.parametrize("kind", ["missing", "directory", "unreadable", "toml", "validation"])
 def test_configuration_failures_keep_their_cause(simulate, tmp_path, monkeypatch, argument, kind):
     from edsim.runs import RunConfigurationError
@@ -691,3 +704,367 @@ def test_configuration_fingerprint_is_public(tmp_path):
     path.write_bytes(b"abc")
     assert "config_fingerprint" in runs.__all__
     assert runs.config_fingerprint(path) == "ba7816bf8f01"
+
+
+# --- run.json de la versión 1 ----------------------------------------------------------
+
+# Escrito con simulate_run en main, antes de la tarea 4.5b, y guardado tal cual: la
+# versión 1 solo se lee desde entonces.
+RUN_V1 = Path(__file__).parent / "data" / "run_v1.json"
+
+
+def test_run_json_de_la_version_1_de_referencia():
+    info = RunInfo.read(RUN_V1)
+
+    assert info.format_version == 1
+    assert (info.run_id, info.seed, info.days, info.warmup_days) == ("referencia-v1", 7, 2, 1)
+    assert (info.center_fingerprint, info.profile_fingerprint) == ("5b86440058ee", "63d0ae1fb4f0")
+    assert len(json.loads(RUN_V1.read_text())) == 16
+    # Una versión 1 es siempre del modelo provisional, sin perfiles clínicos.
+    assert info.model == "provisional"
+    assert not info.is_clinical
+    assert info.clinical_profiles_path is info.clinical_profiles_fingerprint is None
+
+
+def test_la_version_1_se_lee_pero_no_se_escribe(tmp_path):
+    info = RunInfo.read(RUN_V1)
+
+    with pytest.raises(ValueError, match="only format_version 2"):
+        info.write(tmp_path / "run.json")
+    assert not (tmp_path / "run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"model": "provisional"},
+        {"clinical_profiles_path": "p.toml", "clinical_profiles_fingerprint": "abc"},
+    ],
+)
+def test_la_version_1_no_admite_claves_de_la_2(extra, tmp_path):
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(json.loads(RUN_V1.read_text()) | extra))
+
+    with pytest.raises(ValueError, match="unexpected"):
+        RunInfo.read(path)
+
+
+V2_KEYS = [*json.loads(RUN_V1.read_text()), "model"]
+"""Las claves de la versión 2 del provisional: las 16 de la 1, en su orden, y el modelo."""
+
+
+@pytest.fixture
+def clinical_info(info):
+    return dataclasses.replace(
+        info,
+        model="clinico",
+        clinical_profiles_path="config/perfiles.toml",
+        clinical_profiles_fingerprint="fedcba987654",
+    )
+
+
+def test_ida_y_vuelta_de_la_version_2_provisional(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+
+    data = json.loads(path.read_text())
+    assert list(data) == V2_KEYS
+    assert (data["format_version"], data["model"]) == (2, "provisional")
+    assert RunInfo.read(path) == info
+
+
+def test_ida_y_vuelta_de_la_version_2_clinica(clinical_info, tmp_path):
+    path = tmp_path / "run.json"
+    clinical_info.write(path)
+
+    data = json.loads(path.read_text())
+    assert list(data) == [*V2_KEYS, "clinical_profiles_path", "clinical_profiles_fingerprint"]
+    assert data["model"] == "clinico"
+    assert data["clinical_profiles_path"] == "config/perfiles.toml"
+    assert data["clinical_profiles_fingerprint"] == "fedcba987654"
+    loaded = RunInfo.read(path)
+    assert loaded == clinical_info
+    assert loaded.is_clinical
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"format_version": 3}, "format_version"),
+        ({"format_version": "2"}, "format_version"),
+        ({"model": None}, "missing"),
+        ({"clinical_profiles_fingerprint": None}, "missing"),
+        ({"extra": 1}, "unexpected"),
+    ],
+)
+def test_version_2_clinica_rechaza_claves_o_valores_invalidos(
+    clinical_info, tmp_path, change, message
+):
+    # None en el cambio quiere decir «quitar la clave»: los valores por defecto del
+    # dataclass nunca rellenan una clave que falta.
+    path = tmp_path / "run.json"
+    clinical_info.write(path)
+    data = json.loads(path.read_text())
+    for key, value in change.items():
+        if value is None:
+            del data[key]
+        else:
+            data[key] = value
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match=message):
+        RunInfo.read(path)
+
+
+def test_version_2_provisional_sin_modelo_es_un_error(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+    data = json.loads(path.read_text())
+    del data["model"]
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="missing"):
+        RunInfo.read(path)
+
+
+def test_version_2_provisional_con_perfiles_es_un_error(info, tmp_path):
+    path = tmp_path / "run.json"
+    info.write(path)
+    data = json.loads(path.read_text()) | {
+        "clinical_profiles_path": "p.toml",
+        "clinical_profiles_fingerprint": "abc",
+    }
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="unexpected"):
+        RunInfo.read(path)
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"format_version": 1}, "format_version 1 has no clinical model"),
+        ({"clinical_profiles_path": None}, "clinical_profiles_path"),
+        ({"clinical_profiles_fingerprint": ""}, "clinical_profiles_fingerprint"),
+        ({"model": "otro"}, "model"),
+    ],
+)
+def test_el_modelo_explica_los_campos_opcionales(clinical_info, change, message):
+    with pytest.raises(ValueError, match=message):
+        dataclasses.replace(clinical_info, **change)
+
+
+def test_el_provisional_no_lleva_perfiles(info):
+    with pytest.raises(ValueError, match="None with model provisional"):
+        dataclasses.replace(info, clinical_profiles_fingerprint="abc")
+
+
+def test_archivo_de_una_ejecucion_clinica_con_siete_ficheros(clinical_info, tmp_path):
+    info = dataclasses.replace(clinical_info, run_id="clinica")
+    directory = save_info(tmp_path, info)
+    names = {
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    for name in names:
+        (directory / name).write_text(f"contenido de {name}\n")
+    store = RunStore(tmp_path)
+
+    assert set(store.run_files("clinica")) == names | {"run.json"}
+    with ZipFile(BytesIO(store.archive("clinica"))) as archive:
+        assert sorted(archive.namelist()) == sorted(names | {"run.json"})
+        for name in names | {"run.json"}:
+            assert archive.read(name) == (directory / name).read_bytes()
+    assert store.read_file("clinica", "perfiles.toml") == b"contenido de perfiles.toml\n"
+
+
+# --- simulate_run con perfiles clínicos (tarea 4.5b) ----------------------------------------
+
+PROFILES = "tests/data/perfiles_ejemplo.toml"
+
+
+def test_simulacion_clinica_metadatos_y_copias(simulate, tmp_path):
+    from edsim.arrivals.report import config_fingerprint
+    from edsim.engine.report import CLINICAL_EPISODE_COLUMNS
+
+    result = simulate(profiles=PROFILES)
+    output = tmp_path / "run"
+    info = RunInfo.read(output / "run.json")
+
+    assert info == result.info
+    assert (info.format_version, info.model) == (2, "clinico")
+    assert info.clinical_profiles_path == PROFILES
+    assert (output / "perfiles.toml").read_bytes() == Path(PROFILES).read_bytes()
+    assert info.clinical_profiles_fingerprint == config_fingerprint(output / "perfiles.toml")
+    # Las huellas del centro y de las llegadas no dependen del modelo.
+    assert info.profile_path == "tests/data/llegadas_ejemplo.toml"
+    assert info.invariant_violations == len(result.violations) == 0
+    assert {p.name for p in output.iterdir()} == {
+        "run.json",
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+    }
+    header = (output / "ground_truth_episodios.csv").read_text().splitlines()[0]
+    assert tuple(header.split(",")) == CLINICAL_EPISODE_COLUMNS
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())
+
+
+def test_simulacion_clinica_es_la_de_simulate_ed(simulate, tmp_path):
+    # El log y el ground truth guardados son los de simulate_ed con los mismos argumentos.
+    from edsim.engine.engine import simulate_ed
+    from edsim.engine.events import JsonlSink
+    from edsim.engine.report import read_episodes_csv
+    from edsim.profiles.config import load_profiles
+
+    simulate(profiles=PROFILES)
+    path = tmp_path / "eventos.jsonl"
+    with JsonlSink(path) as sink:
+        expected = simulate_ed(
+            load_center("tests/data/centro_ejemplo.toml"),
+            load_profile("tests/data/llegadas_ejemplo.toml"),
+            2,
+            7,
+            sink=sink,
+            warmup_days=1,
+            run_id="test-run",
+            profiles=load_profiles(PROFILES),
+        )
+
+    assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == path.read_bytes()
+    episodes = read_episodes_csv(tmp_path / "run" / "ground_truth_episodios.csv")
+    assert episodes == expected.ground_truth.episodes
+    assert all(e.clinical is not None for e in episodes)
+
+
+def test_reproducir_desde_la_copia_con_perfiles(simulate, tmp_path):
+    simulate(profiles=PROFILES)
+    saved = tmp_path / "run"
+    simulate(
+        center=saved / "centro.toml",
+        profile=saved / "llegadas.toml",
+        profiles=saved / "perfiles.toml",
+        output_dir=tmp_path / "reproduced",
+    )
+
+    from edsim.engine.report import read_episodes_csv
+
+    reproduced = tmp_path / "reproduced"
+    assert (saved / "eventos.jsonl").read_bytes() == (reproduced / "eventos.jsonl").read_bytes()
+    # Los CSV llevan las rutas de procedencia, que aquí cambian; los episodios, no.
+    assert read_episodes_csv(saved / "ground_truth_episodios.csv") == read_episodes_csv(
+        reproduced / "ground_truth_episodios.csv"
+    )
+
+
+def test_perfiles_desde_la_copia_aunque_cambie_el_original(simulate, tmp_path, monkeypatch):
+    from edsim.runs import service
+
+    original = tmp_path / "perfiles.toml"
+    original.write_bytes(Path(PROFILES).read_bytes())
+    baseline = tmp_path / "baseline"
+    simulate(profiles=original, output_dir=baseline)
+    copyfile = service._copy_configuration
+    copied = []
+
+    def copy_then_modify(source, destination):
+        result = copyfile(source, destination)
+        copied.append(Path(destination).name)
+        if Path(source) == original:
+            # Más ruido de triaje: otro reparto de niveles asignados, otro log.
+            original.write_text(original.read_text().replace("ruido = 0.333", "ruido = 0.9"))
+        return result
+
+    monkeypatch.setattr(service, "_copy_configuration", copy_then_modify)
+    simulate(profiles=original)
+
+    assert copied == ["centro.toml", "llegadas.toml", "perfiles.toml"]
+    assert "ruido = 0.9" in original.read_text()
+    assert "ruido = 0.333" in (tmp_path / "run" / "perfiles.toml").read_text()
+    assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == (
+        baseline / "eventos.jsonl"
+    ).read_bytes()
+
+
+def test_simulate_run_pasa_los_perfiles_a_las_invariantes(simulate, monkeypatch):
+    # Espía: check_invariants recibe el mismo objeto de perfiles que simulate_ed, el
+    # cargado de la copia, junto al ground truth.
+    from edsim.profiles.config import load_profiles
+    from edsim.runs import service
+
+    real_engine, real_check = service.simulate_ed, service.check_invariants
+    engine_profiles, check_kwargs = [], []
+
+    def engine(*args, **kwargs):
+        engine_profiles.append(kwargs["profiles"])
+        return real_engine(*args, **kwargs)
+
+    def check(events, center, **kwargs):
+        check_kwargs.append(kwargs)
+        return real_check(events, center, **kwargs)
+
+    monkeypatch.setattr(service, "simulate_ed", engine)
+    monkeypatch.setattr(service, "check_invariants", check)
+    simulate(profiles=PROFILES)
+
+    assert len(engine_profiles) == len(check_kwargs) == 1
+    assert check_kwargs[0]["profiles"] is engine_profiles[0]
+    assert engine_profiles[0] == load_profiles(PROFILES)
+    assert check_kwargs[0]["ground_truth"] is not None
+
+
+def test_simulate_run_guarda_las_violaciones_de_la_respuesta(simulate, tmp_path, monkeypatch):
+    # Comportamiento: si el motor alarga cada ronda un minuto, solo la comprobación de la
+    # respuesta con los perfiles lo ve (la base del ground truth no cambia).
+    from edsim.engine.clinical_sampler import ClinicalDraws
+
+    real = ClinicalDraws.round_turnaround
+    monkeypatch.setattr(ClinicalDraws, "round_turnaround", lambda self, t: real(self, t) + 1.0)
+    result = simulate(profiles=PROFILES)
+
+    turnaround = [
+        v for v in result.violations if v.check == "clinical" and "turnaround" in v.message
+    ]
+    assert turnaround
+    assert result.info.invariant_violations == len(result.violations) > 0
+    assert RunInfo.read(tmp_path / "run" / "run.json").invariant_violations > 0
+
+
+def test_la_cli_y_simulate_run_dan_el_mismo_log_con_perfiles(simulate, tmp_path, monkeypatch):
+    from edsim.cli import main
+
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    result = simulate(profiles=PROFILES)
+    cli_output = tmp_path / "cli"
+    arguments = ["--centro", "tests/data/centro_ejemplo.toml"]
+    arguments += ["--llegadas", "tests/data/llegadas_ejemplo.toml", "--perfiles", PROFILES]
+    arguments += ["--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+    arguments += ["--run-id", "test-run", "--salida", str(cli_output)]
+
+    assert main(["motor", "simular", *arguments]) == 0
+    for name in (
+        "eventos.jsonl",
+        "ground_truth_episodios.csv",
+        "ground_truth_dias.csv",
+        "centro.toml",
+        "llegadas.toml",
+        "perfiles.toml",
+    ):
+        assert (cli_output / name).read_bytes() == (tmp_path / "run" / name).read_bytes(), name
+    cli_info = RunInfo.read(cli_output / "run.json")
+    assert (
+        dataclasses.replace(
+            cli_info,
+            created_at=result.info.created_at,
+            origin="app",
+            simulation_seconds=result.info.simulation_seconds,
+        )
+        == result.info
+    )

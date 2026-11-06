@@ -18,9 +18,15 @@ from edsim.engine.center import load_center
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
-from edsim.engine.report import RunParameters, write_episodes_csv, write_ground_truth_days_csv
+from edsim.engine.report import (
+    ProfilesParameters,
+    RunParameters,
+    write_episodes_csv,
+    write_ground_truth_days_csv,
+)
+from edsim.profiles.config import load_profiles
 from edsim.runs.identifiers import validate_run_id
-from edsim.runs.store import RunInfo
+from edsim.runs.store import FORMAT_VERSION, RunInfo
 
 
 class RunConfigurationError(ValueError):
@@ -78,10 +84,20 @@ def simulate_run(
     run_id: str | None = None,
     origin: Literal["app", "cli"],
     variant: str | None = None,
+    profiles: str | Path | None = None,
     clock: Callable[[], datetime] = _utc_now,
     timer: Callable[[], float] = perf_counter,
 ) -> SimulationResult:
     """Simulate from exact configuration copies and atomically publish a run.
+
+    With ``profiles``, the path of a ``perfiles.toml``, the run uses the
+    clinical model: the file is copied to the run as ``perfiles.toml`` and
+    loaded from the copy, like the center and the arrival profile; the episodes
+    CSV is the clinical one, the invariants are checked with the profiles (the
+    turnaround of each round against the shift band of its order) and
+    ``run.json`` records the model, the original path and the fingerprint of
+    the copy. Without it, the provisional model, as before. ``profile`` is
+    always the arrival profile.
 
     Original path strings are retained as provenance in metadata and CSVs.
     The timer covers simulate_ed and its streaming log writes only. All
@@ -127,6 +143,14 @@ def simulate_run(
         arrival_profile = _load_configuration(load_profile, profile, profile_copy)
         center_fingerprint = config_fingerprint(center_copy)
         profile_fingerprint = config_fingerprint(profile_copy)
+        clinical_profiles, profiles_parameters = None, None
+        if profiles is not None:
+            profiles_copy = temporary / "perfiles.toml"
+            _copy_configuration(profiles, profiles_copy)
+            clinical_profiles = _load_configuration(load_profiles, profiles, profiles_copy)
+            profiles_parameters = ProfilesParameters(
+                profiles=str(profiles), profiles_fingerprint=config_fingerprint(profiles_copy)
+            )
         events_path = temporary / "eventos.jsonl"
         with JsonlSink(events_path) as sink:
             start = timer()
@@ -138,6 +162,7 @@ def simulate_run(
                 sink=sink,
                 warmup_days=warmup_days,
                 run_id=run_id,
+                profiles=clinical_profiles,
             )
             simulation_seconds = timer() - start
         parameters = RunParameters(
@@ -151,7 +176,10 @@ def simulate_run(
             run_id=run_id,
         )
         write_episodes_csv(
-            result.ground_truth.episodes, temporary / "ground_truth_episodios.csv", parameters
+            result.ground_truth.episodes,
+            temporary / "ground_truth_episodios.csv",
+            parameters,
+            profiles_parameters,
         )
         write_ground_truth_days_csv(
             result.ground_truth.days, temporary / "ground_truth_dias.csv", parameters
@@ -163,11 +191,19 @@ def simulate_run(
                 center_config,
                 ground_truth=result.ground_truth,
                 inside=result.inside,
+                profiles=clinical_profiles,
             )
         )
         analysis = analyze_run(events, center_config, days, warmup_days)
+        model = {}  # the provisional model is the default of RunInfo
+        if profiles_parameters is not None:
+            model = {
+                "model": "clinico",
+                "clinical_profiles_path": profiles_parameters.profiles,
+                "clinical_profiles_fingerprint": profiles_parameters.profiles_fingerprint,
+            }
         info = RunInfo(
-            format_version=1,
+            format_version=FORMAT_VERSION,
             run_id=run_id,
             created_at=created_at.isoformat(),
             origin=origin,
@@ -183,6 +219,7 @@ def simulate_run(
             invariant_violations=len(violations),
             window_arrivals=analysis.metrics.arrivals,
             simulation_seconds=simulation_seconds,
+            **model,
         )
         info.write(temporary / "run.json")
         _check_destination(destination)
