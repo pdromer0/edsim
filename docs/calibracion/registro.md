@@ -11,6 +11,14 @@ Rama `feat/h4-calibracion`. Modelo clínico con `config/llegadas.toml`,
 `config/perfiles.toml` y `config/objetivos.toml`; boxes (30), duraciones y
 `espera_resultados_fuera` (`[4, 5]`) fijos.
 
+> **Desde la tarea 4.6c**, la calibración usa la ventana anual y la plantilla de `config/`
+> es otra (ver «Tarea 4.6c» abajo). Las tablas de esta sección se reproducen con
+> `--ventana inicio` y el centro de entonces, fijado en `tests/data/centro_4_6b.toml`, por
+> ejemplo `uv run edsim calibracion evaluar --ventana inicio --centro
+> tests/data/centro_4_6b.toml`. El cumplidor de entonces ([15, 15, 6]) sale igual con la
+> regla de días enteros de la 4.6c (12 de 120 días fuera en los niveles 4 y 5, justo el
+> 10 %).
+
 ### Cambios
 
 | Parámetro | Antes | Después | KPI | Motivo |
@@ -284,10 +292,259 @@ días seguidos más pacientes de lo esperado (efecto diario de 1,03 a 1,18; 390,
 min de reloj A a los niveles 2 a 5 y 985 al nivel 5, el 47 % de los minutos de espera del
 nivel 5 en los 89 días (sin ella, 137 min).
 
-**Lo que queda por decidir.** La calibración no subestima el reloj A por el horizonte: con
-el mismo mes, el segundo bloque de enero da 4,7 min más que el primero (61,8 frente a 57,1),
-con un IC que los contiene a los dos. Pero la ventana de 14 días es la primera quincena de
-enero, el mes de más carga (factor 1,10), y con el factor neutro, que es la carga media del
-año, el mismo centro da unos 28 min, por debajo de la horquilla de 35–70. La plantilla no
-cambia en esta tarea; queda pendiente de decidir si se recalibra con más calentamiento o con
-una ventana más larga (y qué meses debe cubrir).
+**Resuelto en la tarea 4.6c.** La ventana de la calibración pasa a cubrir el año: una
+réplica por mes, desde el primer lunes de cada mes. Con ella, el centro de la 4.6b da 27,75
+min de reloj A (fuera de 35–70 por abajo) y la plantilla se recalibra: médicos [12, 11, 4]
+(ver «Tarea 4.6c»).
+
+## Tarea 4.6c: recalibración con la ventana anual (6 de noviembre de 2026)
+
+Rama `feat/h4-recalibracion-anual`. Mismo modelo clínico, mismos `config/llegadas.toml`,
+`config/perfiles.toml` y `config/objetivos.toml`, boxes, duraciones y
+`espera_resultados_fuera` que en la 4.6b. Solo cambian la ventana de la calibración, la
+regla del cumplidor (días enteros) y la de elección (veto de la semilla de comprobación).
+
+### Cambios
+
+| Parámetro | Antes (4.6b) | Después (4.6c) | KPI | Motivo |
+| --- | --- | --- | --- | --- |
+| Ventana de la calibración | 10 réplicas, todas desde el 5/1/2026 (primera quincena de enero) | 12 réplicas, la m desde el primer lunes del mes m+1 | Reloj A de los niveles 2 a 5 del centro de la 4.6b: 54,51 → 27,75 min | Los objetivos del SAS son medias anuales; enero es el mes de más carga (factor 1,10) |
+| `recursos.enfermeria_triaje` | [3, 2, 1] | [3, 2, 1] (u de 0,795 a 0,8325) | Pretriaje medio: 6,78 min [5,49; 8,06] (horquilla 6–15; SAS 12,4) | La regla elige [2, 2, 1] (13,21), pero la semilla 2027 la veta (15,16) y se toma la siguiente |
+| `recursos.medicos` | [12, 11, 5] | [12, 11, 4] (u de 0,85) | Reloj A, niveles 2 a 5: 27,75 → 42,10 min [28,02; 56,18] (horquilla 35–70) | La única plantilla de la regla que pasa con la ventana anual |
+| Centro cumplidor (`config/centro_cumplidor.toml`) | médicos [15, 15, 6] | médicos [14, 14, 6] (u de 0,67 a 0,6775) | Días fuera de Manchester con el reloj C, niveles 2 a 5: 1/144, 0/144, 2/144, 6/142 | El u más alto con como mucho un 10 % de días fuera, con los días sumados |
+| Regla del cumplidor | media de los % de días fuera por réplica ≤ 10 % | días fuera sumados ≤ 10 % de los días medidos sumados, con enteros | — | Exacta, sin decimales; ver «Método» |
+| Regla de elección (decisión 41) | la semilla 2027 solo comprueba | la semilla 2027 puede vetar, no elegir; después de un veto, la comprobación independiente es 2028 | — | Ver «El veto de la semilla 2027» |
+
+### Método
+
+- **Ventana anual.** 12 réplicas: la m (m = 0…11) empieza a las 00:00 del primer lunes
+  del mes m+1 del año de `fecha_inicio` (en 2026: 5/1, 2/2, 2/3, 6/4, 4/5, 1/6, 6/7, 3/8,
+  7/9, 5/10, 2/11 y 7/12) y usa el hijo m de `child_streams(semilla, 12)`. Cada réplica
+  tiene el factor mensual, los días de la semana y el contexto clínico (mes y estación)
+  de su mes. Igual que antes: 14 días con 2 de calentamiento, un día de vaciado, la
+  ventana [2, 14) y números aleatorios comunes entre candidatos. La réplica de enero es,
+  bit a bit, la réplica 0 de la 4.6b (test slow `test_la_replica_de_enero_reproduce_la_replica_0_de_la_ventana_de_la_4_6b`).
+  Las cargas de la regla son las del día medio y no dependen de la fecha: las plantillas
+  candidatas no cambian.
+- **Regla 4.** Igual, con t₁₁ = 2,201. El IC entre réplicas incluye la variación entre
+  meses, así que es conservador: la regla pide que la media del año caiga en la horquilla
+  y que los meses no se separen más que su anchura.
+- **Media por paciente del año.** `edsim calibracion evaluar` informa también de la media
+  de todos los pacientes de las 12 réplicas, que pondera cada mes por sus pacientes. No
+  decide: la regla 4 usa la media entre réplicas. La diferencia es pequeña (reloj A de los
+  niveles 2 a 5 del centro elegido: 42,10 entre réplicas y 42,99 por paciente).
+- **Cumplidor con días enteros.** Pasa si en cada nivel de 2 a 5 los días fuera de
+  Manchester con el reloj C, sumados en las réplicas, no superan el 10 % de los días con
+  pacientes de ese nivel, también sumados: fuera × 10 ≤ medidos, con enteros. Con 12
+  réplicas de 12 días medidos (144), pasan 14 días fuera y no 15. **Cambia la definición**
+  cuando las réplicas tienen distinto número de días con pacientes de un nivel (el nivel 5,
+  con 1,4 % de los pacientes, tiene días sin ninguno): antes, una réplica con 6 días
+  medidos pesaba lo mismo que una con 12; ahora pesa cada día. Con `--ventana inicio` y la
+  semilla 2026, la regla con enteros sigue eligiendo [15, 15, 6], como en la 4.6b: 12 de
+  120 días fuera en los niveles 4 y 5, justo el 10 %, pasa; [15, 14, 6] tiene 13 de 120 en
+  el nivel 4 y no pasa (`uv run edsim calibracion sensibilidad --mando medicos --ventana
+  inicio`, 11 min 36 s).
+- **Veto de la semilla de comprobación (decisión 41, revisada).** La semilla de
+  comprobación puede vetar, no elegir: si la plantilla elegida con 2026 falla un objetivo
+  de ajuste con 2027 (regla 4), se descarta y se toma la siguiente candidata de la regla
+  de elección (la siguiente más cercana a la referencia o al centro de la horquilla) que
+  pase los objetivos de ajuste con 2026 y con 2027. Si ninguna pasa con las dos, no se
+  elige. Como 2027 ha intervenido en la elección, la comprobación independiente pasa a la
+  semilla 2028. En el paquete, `choose_staffing(filas, mando, check=…)`.
+- **Orden.** Como en la 4.6b: la enfermería contra el pretriaje, con los médicos del
+  centro; con ella fija, los médicos contra el reloj A.
+
+### El centro de la 4.6b con la ventana anual
+
+`uv run edsim calibracion evaluar --centro tests/data/centro_4_6b.toml` (36 s). Con la
+carga del año, el reloj A de los niveles 2 a 5 queda por debajo de la horquilla.
+
+| Objetivo | Uso | Horquilla | Media [IC 95 %] | Por paciente |
+| --- | --- | --- | --- | --- |
+| pretriaje_medio | ajuste | 6–15 | 6,78 [5,49; 8,06] ✓ | 6,87 |
+| tiempo_medico_niveles_2_5 | ajuste | 35–70 | 27,75 [19,12; 36,38] ✗ | 28,31 |
+| tiempo_medico_nivel_3 | comprobacion | 45–75 | 15,65 [13,87; 17,44] ✗ | 15,80 |
+| porcentaje_sobre_manchester | comprobacion | 10–30 | 11,16 [8,05; 14,28] ✓ | 11,37 |
+| porcentaje_pretriaje_mas_5 | comprobacion | 30–60 | 31,39 [28,47; 34,30] ✓ | 31,58 |
+
+Por mes, el reloj A de los niveles 2 a 5 va de 65,39 en enero a 16,58 en agosto (ver
+«Enero con una plantilla anual»). Sin censurados.
+
+### Sensibilidad de la enfermería (médicos [12, 11, 5])
+
+`uv run edsim calibracion sensibilidad --mando enfermeria_triaje` (3 min 13 s) y lo mismo
+con `--semilla 2027` (2 min 14 s). La enfermería no cambia el reloj de los médicos de forma
+apreciable, ni los médicos el pretriaje: con los médicos de la 4.6b o con [12, 11, 4], el
+pretriaje es el mismo salvo por los pacientes censurados, que no se miden (13,21 y 13,20
+con [2, 2, 1]). La tabla de 2027 se ejecutó con el `config/` final (médicos [12, 11, 4]).
+
+| Plantilla | u | 2026: pretriaje medio [IC 95 %] | 2026: % pretriaje > 5 min | 2027: pretriaje medio [IC 95 %] | 2027: % pretriaje > 5 min |
+| --- | --- | --- | --- | --- | --- |
+| [4, 3, 2] | 0,5500–0,5550 | 0,60 [0,52; 0,67] ✗ | 3,72 | 0,60 [0,52; 0,68] ✗ | 3,62 |
+| [3, 3, 2] | 0,5575–0,6050 | 0,95 [0,82; 1,08] ✗ | 6,22 | 1,03 [0,85; 1,21] ✗ | 6,81 |
+| [3, 3, 1] | 0,6075–0,7925 | 3,54 [2,85; 4,23] ✗ | 16,23 | 3,92 [3,30; 4,54] ✗ | 16,57 |
+| [3, 2, 1] | 0,7950–0,8325 | 6,78 [5,49; 8,06] ✓ | 31,39 | 7,86 [6,31; 9,41] ✓ | 32,91 |
+| [2, 2, 1] | 0,8350–0,9900 | 13,21 [8,98; 17,44] ✓ | 51,44 | 15,16 [10,61; 19,71] ✗ | 53,02 |
+
+Sin censurados en ninguna. Con 2026 pasan [3, 2, 1] y [2, 2, 1], y la regla elige
+[2, 2, 1], la más cercana a la referencia (12,4). Con 2027 [2, 2, 1] no pasa: el veto la
+descarta y queda [3, 2, 1] (ver «El veto de la semilla 2027»). La salida de la CLI con
+`--semilla 2027` dice «Elección: [3, 2, 1]»: aplica la regla a la semilla que se le da; que
+2027 solo vete lo decide `choose_staffing` con `check`.
+
+### Sensibilidad de los médicos (enfermería [3, 2, 1])
+
+`uv run edsim calibracion sensibilidad --mando medicos` (15 min 37 s). Días fuera de
+Manchester con el reloj C / días medidos, sumados en las 12 réplicas.
+
+| Plantilla | u | Reloj A, niveles 2 a 5 [IC 95 %] | Nivel 3 | % sobre Manchester | Censurados (máx.) | Días fuera (C), niveles 2 / 3 / 4 / 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| [18, 17, 7] | 0,5500 | 13,65 [11,95; 15,36] ✗ | 12,90 | 5,79 | 0,00 % | 0/144 / 0/144 / 1/144 / 1/142 |
+| [17, 17, 7] | 0,5525–0,5550 | 13,67 [11,95; 15,38] ✗ | 12,91 | 5,79 | 0,00 % | 0/144 / 0/144 / 1/144 / 1/142 |
+| [17, 16, 7] | 0,5575–0,5650 | 13,68 [11,95; 15,40] ✗ | 12,91 | 5,80 | 0,00 % | 0/144 / 0/144 / 1/144 / 1/142 |
+| [17, 16, 6] | 0,5675–0,5850 | 15,21 [13,27; 17,14] ✗ | 13,38 | 6,48 | 0,00 % | 1/144 / 0/144 / 2/144 / 5/142 |
+| [16, 16, 6] | 0,5875–0,5925 | 15,24 [13,28; 17,20] ✗ | 13,40 | 6,49 | 0,00 % | 1/144 / 0/144 / 2/144 / 5/142 |
+| [16, 15, 6] | 0,5950–0,6225 | 15,27 [13,28; 17,25] ✗ | 13,41 | 6,50 | 0,00 % | 1/144 / 0/144 / 2/144 / 5/142 |
+| [15, 15, 6] | 0,6250–0,6350 | 15,35 [13,32; 17,37] ✗ | 13,44 | 6,53 | 0,00 % | 1/144 / 0/144 / 2/144 / 5/142 |
+| [15, 14, 6] | 0,6375–0,6675 | 15,43 [13,38; 17,48] ✗ | 13,47 | 6,53 | 0,00 % | 1/144 / 0/144 / 2/144 / 6/142 |
+| [14, 14, 6] | 0,6700–0,6775 | 15,65 [13,48; 17,81] ✗ | 13,53 | 6,59 | 0,00 % | 1/144 / 0/144 / 2/144 / 6/142 |
+| [14, 14, 5] | 0,6800–0,6825 | 20,41 [17,32; 23,49] ✗ | 14,70 | 9,07 | 0,00 % | 4/144 / 0/144 / 9/144 / 22/142 |
+| [14, 13, 5] | 0,6850–0,7200 | 20,66 [17,50; 23,82] ✗ | 14,78 | 9,18 | 0,00 % | 4/144 / 0/144 / 10/144 / 22/142 |
+| [13, 13, 5] | 0,7225–0,7400 | 21,16 [17,76; 24,55] ✗ | 14,92 | 9,27 | 0,00 % | 3/144 / 0/144 / 11/144 / 22/142 |
+| [13, 12, 5] | 0,7425–0,7800 | 22,09 [18,25; 25,92] ✗ | 15,07 | 9,60 | 0,00 % | 5/144 / 0/144 / 15/144 / 28/142 |
+| [12, 12, 5] | 0,7825–0,8075 | 23,89 [18,60; 29,19] ✗ | 15,31 | 10,16 | 0,00 % | 6/144 / 0/144 / 20/144 / 30/142 |
+| [12, 11, 5] | 0,8100–0,8475 | 27,75 [19,12; 36,38] ✗ | 15,65 | 11,16 | 0,00 % | 6/144 / 0/144 / 28/144 / 32/142 |
+| **[12, 11, 4]** | 0,8500 | 42,10 [28,02; 56,18] ✓ | 18,76 | 16,13 | 0,20 % | 28/144 / 7/144 / 88/144 / 54/142 |
+| [11, 11, 4] | 0,8525–0,8900 | 50,23 [27,79; 72,66] ✗ | 19,35 | 18,03 | 0,23 % | 37/144 / 6/144 / 89/144 / 55/142 |
+| [11, 10, 4] | 0,8925–0,9350 | 76,47 [24,53; 128,42] ✗ | 20,44 | 22,52 | 0,23 % | 55/144 / 11/144 / 95/144 / 67/142 |
+| [10, 10, 4] | 0,9375–0,9875 | 129,66 [7,41; 251,90] ✗ | 21,56 | 27,90 | 1,12 % | 53/144 / 11/144 / 101/144 / 81/137 |
+| [10, 9, 4] | 0,9900 | 240,52 [11,66; 469,37] ✗ | 23,31 | 34,49 | 7,31 % | 75/144 / 15/144 / 113/143 / 74/118 |
+
+Solo pasa [12, 11, 4], con un único punto de la rejilla de u (0,85). [11, 11, 4] tiene la
+media dentro (50,23), pero su IC (44,87 de ancho) es más ancho que la horquilla (35): los
+meses se separan demasiado. Con 2027, [12, 11, 4] pasa (43,29): no hay veto de médicos.
+Con la enfermería [2, 2, 1] (antes del veto) la sensibilidad de los médicos elegía también
+[12, 11, 4] (48,69) y el cumplidor [14, 14, 6] (16 min 17 s).
+
+### El veto de la semilla 2027
+
+`uv run edsim calibracion evaluar --semilla 2027` con cada enfermería (24 s cada una). Los
+dos objetivos de ajuste, con médicos [12, 11, 4]:
+
+| Enfermería | Semilla | Pretriaje medio [IC 95 %] (6–15) | Reloj A, niveles 2 a 5 [IC 95 %] (35–70) | Censurados |
+| --- | --- | --- | --- | --- |
+| [2, 2, 1] | 2026 | 13,20 [8,99; 17,41] ✓ | 48,69 [31,80; 65,58] ✓ | 3, en enero (0,08 %) |
+| [2, 2, 1] | 2027 | **15,16 [10,61; 19,71] ✗** | 50,07 [37,45; 62,69] ✓ | 0 |
+| [3, 2, 1] | 2026 | 6,78 [5,49; 8,06] ✓ | 42,10 [28,02; 56,18] ✓ | 8, en enero (0,20 %) |
+| [3, 2, 1] | 2027 | 7,86 [6,31; 9,41] ✓ | 43,29 [33,11; 53,47] ✓ | 0 |
+
+Con 2027 el pretriaje de [2, 2, 1] sale de la horquilla por la media (15,16 > 15) y por el
+IC (9,10 de ancho frente a 9). Con dos enfermeras de mañana el pretriaje depende de unos
+pocos días de muchas llegadas: con 2027, la quincena de noviembre da 32,58 min y la de
+enero 25,23. [3, 2, 1] queda cerca del borde inferior (6,78 y 7,86) y pasa con las dos.
+
+### Ajuste (2026), comprobación (2027) y confirmación (2028) del centro calibrado
+
+`uv run edsim calibracion evaluar`, con `--semilla 2027` y con `--semilla 2028` (24 s cada
+una).
+
+| Objetivo | Uso | Horquilla | ajuste-2026 | comprobacion-2027 | confirmacion-2028 |
+| --- | --- | --- | --- | --- | --- |
+| pretriaje_medio | ajuste | 6–15 | 6,78 [5,49; 8,06] ✓ | 7,86 [6,31; 9,41] ✓ | 7,76 [6,48; 9,03] ✓ |
+| tiempo_medico_niveles_2_5 | ajuste | 35–70 | 42,10 [28,02; 56,18] ✓ | 43,29 [33,11; 53,47] ✓ | 41,20 [33,57; 48,84] ✓ |
+| tiempo_medico_nivel_3 | comprobacion | 45–75 | 18,76 [16,60; 20,93] ✗ | 20,13 [17,36; 22,90] ✗ | 20,60 [17,86; 23,34] ✗ |
+| porcentaje_sobre_manchester | comprobacion | 10–30 | 16,13 [12,33; 19,93] ✓ | 16,79 [13,31; 20,27] ✓ | 16,64 [13,95; 19,32] ✓ |
+| porcentaje_pretriaje_mas_5 | comprobacion | 30–60 | 31,38 [28,47; 34,28] ✓ | 32,91 [29,31; 36,50] ✓ | 32,36 [29,54; 35,17] ✓ |
+| Censurados | | | 8, en enero (0,20 %) | 0 | 0 |
+
+Media por paciente del año del reloj A de los niveles 2 a 5: 42,99, 43,87 y 41,57. Con las
+tres semillas pasan los objetivos de ajuste y fallan solo el nivel 3, por la discrepancia
+de la 4.6b.
+
+| Nivel | % sobre Manchester: ajuste-2026, % del nivel / contribución | comprobacion-2027 |
+| --- | --- | --- |
+| 2 | 48,3 % / 5,86 puntos | 48,3 % / 5,92 puntos |
+| 3 | 6,4 % / 2,13 puntos | 7,1 % / 2,40 puntos |
+| 4 | 15,0 % / 7,89 puntos | 15,7 % / 8,22 puntos |
+| 5 | 17,7 % / 0,24 puntos | 18,3 % / 0,25 puntos |
+
+### Enero con una plantilla anual
+
+La plantilla es la misma todo el año, y la regla 4 con la ventana anual pide que la media
+del año caiga en la horquilla. Enero, el mes de más carga (factor mensual 1,10), queda cerca
+de la saturación. Reloj A de los niveles 2 a 5 por mes (la quincena desde el primer lunes;
+médicos [12, 11, 4] salvo la primera fila):
+
+| Centro | Semilla | ene | feb | mar | abr | may | jun | jul | ago | sep | oct | nov | dic |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4.6b: [3, 2, 1] + [12, 11, 5] | 2026 | 65,4 | 38,7 | 25,8 | 23,6 | 24,1 | 17,8 | 28,9 | 16,6 | 19,6 | 22,7 | 16,9 | 32,9 |
+| **[3, 2, 1] + [12, 11, 4]** | 2026 | 105,2 | 58,7 | 36,9 | 37,8 | 36,6 | 28,5 | 41,2 | 24,6 | 28,4 | 34,4 | 25,0 | 47,8 |
+| **[3, 2, 1] + [12, 11, 4]** | 2027 | 78,6 | 40,8 | 46,2 | 37,8 | 27,1 | 22,6 | 45,0 | 33,9 | 35,9 | 31,6 | 62,3 | 57,6 |
+| **[3, 2, 1] + [12, 11, 4]** | 2028 | 60,5 | 65,2 | 35,7 | 37,5 | 39,3 | 33,9 | 32,7 | 31,7 | 39,6 | 33,8 | 29,7 | 54,9 |
+| [2, 2, 1] + [12, 11, 4] | 2026 | 123,9 | 68,8 | 45,5 | 39,1 | 45,6 | 31,2 | 50,2 | 27,9 | 31,8 | 37,5 | 28,4 | 54,6 |
+| [2, 2, 1] + [12, 11, 4] | 2027 | 93,7 | 44,9 | 52,9 | 41,9 | 31,0 | 29,0 | 50,1 | 37,1 | 40,8 | 35,5 | 79,0 | 65,0 |
+
+Pretriaje medio por mes:
+
+| Centro | Semilla | ene | feb | mar | abr | may | jun | jul | ago | sep | oct | nov | dic |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **[3, 2, 1] + [12, 11, 4]** | 2026 | 10,3 | 10,2 | 8,1 | 5,9 | 7,2 | 5,5 | 7,1 | 4,4 | 4,7 | 5,4 | 4,9 | 7,6 |
+| **[3, 2, 1] + [12, 11, 4]** | 2027 | 10,0 | 9,7 | 9,5 | 8,2 | 5,0 | 4,5 | 8,2 | 6,1 | 5,2 | 5,9 | 11,6 | 10,5 |
+| [2, 2, 1] + [12, 11, 4] | 2026 | 30,0 | 19,9 | 15,0 | 7,6 | 15,6 | 8,8 | 13,2 | 7,7 | 7,9 | 9,6 | 8,3 | 14,7 |
+| [2, 2, 1] + [12, 11, 4] | 2027 | 25,2 | 13,5 | 15,0 | 13,1 | 9,2 | 8,5 | 12,7 | 9,9 | 14,9 | 9,5 | 32,6 | 17,8 |
+
+- **El salto de 5 a 4 médicos de noche.** La carga de médicos de la noche es de 3,399
+  (día medio). Con 5 médicos, u nominal 0,68; con 4, 0,85, y con el factor de enero
+  (1,10), 0,93. Con [12, 11, 5] el reloj A anual se queda en 27,75 (fuera por abajo); con
+  [12, 11, 4] sube a 42,10, y en enero a 105,2. Entre las dos no hay plantilla de la
+  regla: es el único paso que lleva el año dentro de la horquilla.
+- **Censurados de enero.** Con 2026, 8 pacientes de enero (0,20 % de 3924) siguen dentro
+  al final del día de vaciado; ninguno en otro mes ni con 2027 o 2028. El aviso de la CLI
+  salta por encima del 0,1 % en una réplica.
+- **El pretriaje de noche.** Mismo método que el 18,6 de la 4.6b (llegados de 22 a 8 h
+  de los niveles 2 a 5 en la ventana [2, 14) de cada réplica, con los médicos de la 4.6b,
+  que no mueven el pretriaje); el 18,6 (p90 58,9) se reproduce con una ejecución de la
+  semilla 2026 desde `fecha_inicio`. Con la ventana anual y semilla 2026, [3, 2, 1] da 15,6
+  min por paciente (p90 44,1; enero 23,8) y [2, 2, 1], 18,4 (p90 50,0; enero 38,7). Por
+  turno, mañana / tarde / noche: 1,1 / 8,1 / 15,6 con [3, 2, 1] y 10,9 / 13,5 / 18,4 con
+  [2, 2, 1]. La causa del empeoramiento con [2, 2, 1] es la cola de la mañana: con dos
+  enfermeras (u nominal 0,83 en el día medio) el pretriaje de los llegados sube de 1,7 min
+  a las 8 h a 16,7 a las 13 h (con [3, 2, 1], 0,3 y 1,3), y la cola pasa a la tarde y a
+  la noche.
+- **Refuerzo de invierno, para versiones posteriores.** Con una plantilla anual, enero
+  queda cerca de la saturación: reloj A de 105 min con 2026 y 8 censurados. Un refuerzo de
+  invierno (por ejemplo, el quinto médico de noche solo en los meses de más carga) es
+  para versiones posteriores: pide una plantilla por mes en el motor y en la regla, y
+  medir con la ventana anual que el año sigue dentro de la horquilla. Esta tarea mantiene
+  la misma plantilla todo el año.
+
+### Centro cumplidor
+
+`uv run edsim calibracion evaluar --centro config/centro_cumplidor.toml` (y con
+`--semilla 2027`). No es un centro calibrado: el reloj A de los niveles 2 a 5 queda por
+debajo de la horquilla, como se espera de un centro que cumple Manchester.
+
+| Objetivo | Uso | Horquilla | cumplidor-2026 | cumplidor-2027 |
+| --- | --- | --- | --- | --- |
+| pretriaje_medio | ajuste | 6–15 | 6,78 [5,49; 8,06] ✓ | 7,86 [6,31; 9,41] ✓ |
+| tiempo_medico_niveles_2_5 | ajuste | 35–70 | 15,65 [13,48; 17,81] ✗ | 17,46 [14,64; 20,29] ✗ |
+| tiempo_medico_nivel_3 | comprobacion | 45–75 | 13,53 [12,13; 14,93] ✗ | 14,54 [12,84; 16,24] ✗ |
+| porcentaje_sobre_manchester | comprobacion | 10–30 | 6,59 [5,42; 7,75] ✗ | 7,52 [6,09; 8,95] ✗ |
+| porcentaje_pretriaje_mas_5 | comprobacion | 30–60 | 31,39 [28,47; 34,30] ✓ | 32,91 [29,31; 36,50] ✓ |
+
+Sin censurados. Días fuera de Manchester con el reloj C, niveles 2 a 5, con 2026: 1/144,
+0/144, 2/144 y 6/142, todos por debajo del 10 % (14 de 144). La siguiente de la regla,
+[14, 14, 5], tiene 22/142 en el nivel 5 y no pasa. Porcentaje sobre Manchester por nivel
+con 2026: 41,8 / 2,2 / 1,4 / 1,5 % (el nivel 2 sigue por encima por el pretriaje y el
+triaje, como en la 4.6b).
+
+### Fila reproducible
+
+`uv run edsim calibracion evaluar --dias 5 --calentamiento 1` (12 réplicas de la ventana
+anual; 13 s; código 1, porque con 5 días el IC de los niveles 2 a 5 es más ancho que la
+horquilla). Medias: pretriaje 7,08; reloj A de los niveles 2 a 5, 58,58; nivel 3, 20,88;
+sobre Manchester, 18,12 %; pretriaje de más de 5 minutos, 31,57 %; 1 censurado, en
+septiembre. El test slow `test_reproduce_la_fila_corta_anual_del_registro` la comprueba;
+`test_reproduce_la_fila_del_registro_del_centro`, `test_la_semilla_2027_veta_2_2_1_y_queda_3_2_1`,
+`test_la_comprobacion_independiente_con_2028` y
+`test_el_cumplidor_y_su_siguiente_con_dias_enteros` recalculan las tablas de arriba.
