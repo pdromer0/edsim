@@ -68,12 +68,14 @@ def test_simulate_cli_characterization(tmp_path, monkeypatch):
 
 # Huellas SHA-256 de motor simular --perfiles con el centro, las llegadas y los perfiles
 # de ejemplo y los mismos argumentos que la caracterización del provisional, también el
-# run_id. Generadas en la tarea 4.5b; se regeneran solo con un cambio a propósito de los
-# muestreadores, del catálogo 2 o del CSV clínico, nunca para que un test pase.
+# run_id. Generadas en la tarea 4.5b (306392fe… y 3f59dd25…); se regeneran solo con un
+# cambio a propósito de los muestreadores, del catálogo o del CSV clínico, nunca para que
+# un test pase. Fase A de la 4.6a: los perfiles de ejemplo, con la parada al 0,3 % y la
+# cascada rederivada, cambian el log y el CSV de episodios (también su huella_perfiles).
 CLINICAL_CHARACTERIZATION = {
-    "eventos.jsonl": "306392fe5e0cf8b9e65a5a87858f374f0e370054ddee18ccaa72c20f7bc4afc8",
+    "eventos.jsonl": "f7cb322599ed23c29a5a9da89f33bdb088df2d1649d2e158fed2787871a700c9",
     "ground_truth_episodios.csv": (
-        "3f59dd25ee90e4214f6c8640fe50220d28490ed57b249de353cedcf76e1784c0"
+        "0d18f0a06be4a7bcc78fe141b042ed2564e7bfc8dc4a61959ebd81a5444b6e40"
     ),
     # El de los días es el del provisional: las llegadas no dependen de los perfiles.
     "ground_truth_dias.csv": "af940fff1593570fc8c127a21cbe3fcf72e3686d0a7771bcc33521cc545a21c8",

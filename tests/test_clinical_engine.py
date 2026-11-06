@@ -424,9 +424,12 @@ def test_invariantes_sin_violaciones_con_el_clinico(
 # JSON por episodio (abajo). Se regeneran solo a propósito, con un cambio de los
 # muestreadores o de ClinicalTruth explicado en el commit; nunca para que un test pase.
 # La representación del ground truth es la de este test: el formato estable será el CSV
-# clínico de la tarea 4.5b. Generadas en la tarea 4.5a.
-CLINICAL_LOG_FINGERPRINT = "1ee7e1ba39794236de15ae005f764a68ada92c40ec2f3dcea58c3520e8f03eb1"
-CLINICAL_TRUTH_FINGERPRINT = "c4f2c069cfabd4a4e4491c1b0db7abd986bec9558019f92579950fc3f61f3733"
+# clínico de la tarea 4.5b. Generadas en la tarea 4.5a (1ee7e1ba… y c4f2c069…) y
+# regeneradas en la fase A de la 4.6a: la parada al 0,3 % con gravedad 4,21 y 0,25 y la
+# cascada rederivada (pesos base, ruido y umbrales) cambian el motivo, el nivel y las
+# pruebas de algunos pacientes.
+CLINICAL_LOG_FINGERPRINT = "c1e44ab71806bb6783338e7c359d0bfc4d076cd690017eb273afd27fc403c10f"
+CLINICAL_TRUTH_FINGERPRINT = "106179101b404bbb2c19aaef41c2a2c08946b60a055e69e7eeadb5ffdcfcf6a2"
 
 
 def truth_lines(episodes) -> str:

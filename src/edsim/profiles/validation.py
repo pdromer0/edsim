@@ -144,8 +144,19 @@ MIN_GROUP_PATIENTS = 50
 
 With 50 patients, the p90 of a duration expects 5 patients above it, the
 ``MIN_EXPECTED`` of the chi-square. With fewer, a test can hardly fail and
-would pass without testing anything: the true levels 1 (0.42 %) and 5
-(0.65 %) need 12 000 patients.
+would pass without testing anything: since task 4.6a the cardiac arrest
+(0.30 % of the patients, in the medians by reason) needs 16 545 patients, and
+the true levels 1 (0.39 %) and 5 (0.65 %) about 12 900 and 7 700.
+"""
+
+DEFAULT_MIXING_PATIENTS = 25_000
+"""Patients per context of the mix by default.
+
+It must be at least ``mixing_minimum``: 21 379 with ``config/perfiles.toml``
+since task 4.6a, set by the cardiac arrest at 15-44 years on a winter weekday
+afternoon (20 491 expected, plus the margin of ``MAX_MIXING_ERROR``). 25 000
+is 16.9 % above it, with a chance of stopping for lack of patients below
+1e-100. It was 20 000 until task 4.6a, when the minimum was 15 234.
 """
 
 QUANTILES = (("mediana", 0.5), ("p90", 0.9))
@@ -218,7 +229,7 @@ def check_mixing(
     start_date: date,
     *,
     seed: int | np.random.SeedSequence,
-    patients: int = 20_000,
+    patients: int = DEFAULT_MIXING_PATIENTS,
     contexts: Sequence[ArrivalContext] | None = None,
     sampled_profiles: ClinicalProfiles | None = None,
 ) -> ValidationResult:
@@ -232,7 +243,7 @@ def check_mixing(
         profiles: The profiles that give the hypothesis.
         start_date: Date of minute 0 of the arrivals.
         seed: Master seed of the check.
-        patients: Patients per context.
+        patients: Patients per context; ``DEFAULT_MIXING_PATIENTS`` by default.
         contexts: Contexts to check; the 24 by default.
         sampled_profiles: Profiles the patients are drawn with; ``profiles``
             by default. Only for power tests.
@@ -784,9 +795,6 @@ def _durations_result(profiles: ClinicalProfiles, model, year: _Year) -> Validat
 
 
 # --- All the checks at once: edsim perfiles validar ------------------------------------------
-
-DEFAULT_MIXING_PATIENTS = 20_000
-"""Patients per context of the mix by default, the power of the specification."""
 
 MAX_MIXING_ERROR = 1e-6
 """Largest accepted chance that ``check_mixing`` stops for lack of patients after drawing.

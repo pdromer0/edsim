@@ -904,8 +904,9 @@ PROFILE_PLOTS = (
 )
 # Las comprobaciones rápidas usan un solo contexto en la mezcla (mañana laborable de
 # invierno) con validate_profiles sustituida en la CLI; --pacientes es el mínimo con
-# margen de los 24 contextos (15 234 con config/), que es el que exige la CLI y basta
-# también para ese contexto (15 081). Con menos, la CLI responde con el código 2.
+# margen de los 24 contextos (21 379 con config/ desde la tarea 4.6a), que es el que
+# exige la CLI y basta también para ese contexto (20 898). Con menos, la CLI responde
+# con el código 2.
 MORNING = (ArrivalContext(0, 0, 0),)
 
 
@@ -975,7 +976,7 @@ def test_perfiles_validar_devuelve_1_si_falla_y_guarda_las_graficas(one_context,
         (["--perfiles", "{bad}"], "--perfiles"),
         (["--llegadas", "no-existe.toml"], "--llegadas no-existe.toml"),
         (["--pacientes", "0"], "--pacientes"),
-        (["--pacientes", "15233"], "15233 < 15234"),
+        (["--pacientes", "21378"], "21378 < 21379"),
         (["--semilla", "-1"], "--semilla"),
     ],
 )
@@ -1020,8 +1021,9 @@ def test_perfiles_validar_con_los_valores_por_defecto(tmp_path, capsys, monkeypa
     out = capsys.readouterr().out
 
     assert code == 0, out
-    assert "20000 pacientes por contexto en la mezcla · 109542 en la muestra del año" in out
+    # 25 000 por contexto desde la tarea 4.6a (20 000 antes): 24 × 25 000 = 600 000.
+    assert "25000 pacientes por contexto en la mezcla · 109542 en la muestra del año" in out
     (mixing,) = [line for line in out.splitlines() if line.startswith("Mezcla de motivos")]
-    assert "480000" in mixing and "2136" in mixing
+    assert "600000" in mixing and "2136" in mixing
     for name in PROFILE_PLOTS:
         assert (tmp_path / name).is_file()

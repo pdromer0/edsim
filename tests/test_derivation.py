@@ -179,3 +179,42 @@ def test_sin_candidato_en_la_rejilla(real):
             max_steps=2,
             targets=CATALOG_03,
         )
+
+
+# --- Guarda del criterio de la parada (tarea 4.6a) ------------------------------------
+
+
+@FILES
+def test_guarda_de_la_parada_con_lo_escrito(profiles_path, arrivals_path):
+    """Con los valores escritos, ≥ 99 % de las paradas de un año son nivel real 1 y ≥ 97 %,
+    asignado 1 (a la puerta). La parada no depende de la edad, así que las dos cuotas son
+    una Φ cada una, calculadas aquí a mano:
+
+    - real: Φ((4,21 − 3,341) / 0,25) = Φ(3,476) = 0,99975;
+    - asignado: Φ((4,21 − 0,081 − 3,341) / √(0,25² + 0,334²)) = Φ(1,8887) = 0,97054.
+    """
+    profiles = load_profiles(profiles_path)
+    severity = profiles.reason("parada").severity
+    t = profiles.triage
+    assert (severity.mean, severity.sd, severity.age_shift) == (4.21, 0.25, (0.0,) * 4)
+    assert (t.noise, t.bias, t.thresholds[0]) == (0.334, -0.081, 3.341)
+
+    real_hand = stats.norm.cdf((4.21 - 3.341) / 0.25)
+    assigned_hand = stats.norm.cdf((4.21 - 0.081 - 3.341) / math.sqrt(0.25**2 + 0.334**2))
+    assert real_hand == pytest.approx(0.99975, abs=5e-6)
+    assert assigned_hand == pytest.approx(0.97054, abs=5e-6)
+
+    real_share, assigned = reason_level1_shares(profiles, load_profile(arrivals_path), "parada")
+    assert real_share == pytest.approx(real_hand, abs=1e-12)
+    assert assigned == pytest.approx(assigned_hand, abs=1e-12)
+    assert real_share >= 0.99 and assigned >= 0.97
+
+
+def test_la_media_escrita_es_la_del_criterio_con_el_catalogo(real):
+    """Con el catálogo de REASONS (la parada al 0,3 %), la función da la media escrita."""
+    profiles, arrivals = real
+    assert {key: share for key, _, share in REASONS}["parada"] == 0.3
+    mean = severity_mean_for(
+        profiles, arrivals, "parada", 0.25, real_min=0.99, assigned_min=0.97, start=4.0
+    )
+    assert mean == profiles.reason("parada").severity.mean == 4.21

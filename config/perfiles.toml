@@ -48,7 +48,10 @@ ambulancia = [6, 10, 21, 34]
 # Los valores de juicio clínico se escribieron en una escala libre y después se
 # desplazaron y escalaron igual en todos los motivos, x' = (x + 0,104) / 1,065
 # (por_edad y desviacion solo se dividen), para que la mezcla de un año del perfil
-# de llegadas tenga media 0 y desviación 1. Al redondear quedan 0,0014 y 1,0002.
+# de llegadas tenga media 0 y desviación 1. Al redondear quedaban 0,0014 y 1,0002;
+# con la parada de la tarea 4.6a (0,3 % del catálogo, media 4,21 y desviación
+# 0,25) quedan -0,0026 y 0,9990, dentro de 0 ± 0,01 y 1 ± 0,01, así que la
+# transformación no se rehízo.
 # Un desplazamiento y una escala comunes no cambian ningún nivel: los umbrales se
 # mueven con ellos.
 #
@@ -65,12 +68,12 @@ ambulancia = [6, 10, 21, 34]
 # duracion es el factor k sobre la mediana de la valoración y la reevaluación
 # de su nivel real (orientativo). Los k se eligen para que la carga de
 # valoración de un año con los k quede a 1 ± 0,05 de la carga sin ellos
-# (lo comprueba un test): 1,0052, con una media simple de k por paciente de 0,9905
+# (lo comprueba un test): 1,0053, con una media simple de k por paciente de 0,9904
 #   edsim.profiles.durations.physician_load(perfiles, llegadas).
 
 [motivos.traumatismo]
 nombre = "Traumatismo / musculoesquelético"
-peso_base = 19.670                  # derivado
+peso_base = 19.723                  # derivado
 edad = [1.3, 1.0, 0.7, 0.8]         # orientativo: deporte, trabajo y tráfico en jóvenes; caídas con fractura en ≥80
 franja = [1.0, 1.1, 0.8]            # orientativo: accidentes ligados a la actividad diurna
 dia = [1.0, 1.2]                    # orientativo: deporte y ocio de fin de semana
@@ -81,14 +84,14 @@ duracion = 0.85                     # orientativo: Rx en casi todos; exploració
 
 [motivos.dolor_abdominal]
 nombre = "Dolor abdominal"
-peso_base = 10.673                  # derivado; sin factores: todas las edades, sin patrón claro
+peso_base = 10.698                  # derivado; sin factores: todas las edades, sin patrón claro
 gravedad = { media = 0.29, por_edad = [-0.19, 0.0, 0.19, 0.47], desviacion = 0.75 }   # orientativo, media: gastroenteritis y cólicos frente a abdomen agudo; isquemia y perforación atenuadas en mayores
 pruebas = { analitica = 67, radiografia = 14, ecg = 7, imagen = 25 }   # orientativo, elegido por su marginal: 75,0 / 19,5 / 14,9 / 35,1 % en un año
 duracion = 1.1                      # orientativo: analítica y eco/TC; exploración y reevaluación del abdomen
 
 [motivos.fiebre]
 nombre = "Fiebre / infección"
-peso_base = 8.340                   # derivado
+peso_base = 8.359                   # derivado
 estacion = [1.4, 1.0, 0.7, 1.0]     # orientativo: gripe y VRS en invierno
 gravedad = { media = -0.18, por_edad = [-0.19, 0.0, 0.28, 0.47], desviacion = 0.75 }   # orientativo, baja-media: viriasis en jóvenes; neumonía y sepsis en mayores
 pruebas = { analitica = 72, radiografia = 46, ecg = 6, imagen = 4 }   # orientativo, elegido por su marginal: 69,8 / 49,6 / 10,2 / 5,4 % en un año
@@ -96,25 +99,25 @@ duracion = 1.0                      # orientativo: analítica y Rx de tórax; cu
 
 [motivos.disnea]
 nombre = "Disnea / respiratorio"
-peso_base = 7.388                   # derivado
+peso_base = 7.397                   # derivado
 edad = [0.4, 0.8, 1.8, 2.4]         # orientativo: EPOC e insuficiencia cardiaca en mayores
 franja = [1.0, 1.0, 1.2]            # orientativo: disnea paroxística nocturna de la insuficiencia cardiaca
 estacion = [1.5, 1.0, 0.7, 1.0]     # orientativo: infecciones respiratorias de invierno
 gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.38], desviacion = 0.85 }   # orientativo, media-alta: asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores
-pruebas = { analitica = 59, radiografia = 73, ecg = 32, imagen = 2 }   # orientativo, elegido por su marginal: 84,8 / 85,0 / 65,0 / 7,3 % en un año
+pruebas = { analitica = 59, radiografia = 73, ecg = 32, imagen = 2 }   # orientativo, elegido por su marginal: 84,8 / 85,0 / 65,1 / 7,3 % en un año
 duracion = 1.1                      # orientativo: gasometría con la analítica y Rx de tórax; angioTC raro
 
 [motivos.malestar]
 nombre = "Malestar general / debilidad"
-peso_base = 5.611                   # derivado
+peso_base = 5.618                   # derivado
 edad = [0.5, 0.9, 1.8, 2.5]         # orientativo: fragilidad y pluripatología
 gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.28], desviacion = 0.75 }   # orientativo, media: inespecífico; en frágiles esconde sepsis o descompensación
-pruebas = { analitica = 68, radiografia = 24, ecg = 38, imagen = 4 }   # orientativo, elegido por su marginal: 79,9 / 35,4 / 59,9 / 8,4 % en un año
+pruebas = { analitica = 68, radiografia = 24, ecg = 38, imagen = 4 }   # orientativo, elegido por su marginal: 79,9 / 35,4 / 60,0 / 8,4 % en un año
 duracion = 1.2                      # orientativo: analítica y ECG; inespecífico en frágiles, valoración lenta
 
 [motivos.dolor_toracico]
 nombre = "Dolor torácico"
-peso_base = 5.327                   # derivado
+peso_base = 5.337                   # derivado
 edad = [0.6, 1.3, 1.4, 1.2]         # orientativo: cardiopatía isquémica de 45 a 79; en ≥80 se presenta atípica
 estacion = [1.1, 1.0, 0.9, 1.0]     # orientativo: más síndromes coronarios en invierno
 gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media-alta: mecánico o ansiedad en jóvenes; síndrome coronario desde los 45
@@ -123,15 +126,15 @@ duracion = 1.0                      # orientativo: ECG casi universal, troponina
 
 [motivos.neurologico]
 nombre = "Neurológico"
-peso_base = 4.975                   # derivado
+peso_base = 4.983                   # derivado
 edad = [0.7, 1.0, 1.5, 1.7]         # orientativo: el ictus aumenta con la edad
 gravedad = { media = 0.38, por_edad = [-0.28, 0.0, 0.28, 0.38], desviacion = 1.13 }   # orientativo, variable: cefalea y vértigo frente a ictus, que crece con la edad
-pruebas = { analitica = 40, radiografia = 4, ecg = 13, imagen = 40 }   # orientativo, elegido por su marginal: 59,7 / 7,3 / 30,5 / 54,6 % en un año
+pruebas = { analitica = 40, radiografia = 4, ecg = 13, imagen = 40 }   # orientativo, elegido por su marginal: 59,7 / 7,3 / 30,6 / 54,7 % en un año
 duracion = 1.15                     # orientativo: TC craneal; exploración neurológica completa
 
 [motivos.sincope]
 nombre = "Síncope / mareo"
-peso_base = 3.787                   # derivado
+peso_base = 3.793                   # derivado
 edad = [0.7, 0.8, 1.5, 2.0]         # orientativo: ortostatismo, fármacos y arritmias en mayores
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: calor, deshidratación e hipotensión en verano
 gravedad = { media = 0.29, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media: vasovagal en jóvenes; arritmia o hemorragia en mayores
@@ -140,7 +143,7 @@ duracion = 1.1                      # orientativo: ECG casi universal y analíti
 
 [motivos.urologico]
 nombre = "Urológico / renal"
-peso_base = 3.919                   # derivado
+peso_base = 3.928                   # derivado
 edad = [1.0, 1.1, 1.0, 1.1]         # orientativo: cólico renal en la edad media; retención de orina, sondas e ITU complicada en ≥80
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: cólico renal por deshidratación con el calor
 gravedad = { media = -0.18, por_edad = [0.0, 0.0, 0.09, 0.19], desviacion = 0.66 }   # orientativo, baja-media: infección de orina y cólico; retención y urosepsis en mayores
@@ -149,7 +152,7 @@ duracion = 0.9                      # orientativo: orina con la analítica y eco
 
 [motivos.cutaneo]
 nombre = "Cutáneo / alergia"
-peso_base = 4.136                   # derivado
+peso_base = 4.146                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable, no se acude de madrugada
 dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [0.9, 1.2, 1.2, 0.9]     # orientativo: alergias estacionales, picaduras y quemaduras solares
@@ -159,7 +162,7 @@ duracion = 0.8                      # orientativo: «pocas» pruebas; consulta b
 
 [motivos.orl]
 nombre = "ORL / oftalmológico"
-peso_base = 4.247                   # derivado
+peso_base = 4.257                   # derivado
 franja = [1.0, 1.0, 0.7]            # orientativo: consulta demorable
 dia = [1.0, 1.2]                    # orientativo: consulta demorable con el centro de salud cerrado
 estacion = [1.2, 1.0, 0.9, 1.0]     # orientativo: otitis y faringitis de invierno
@@ -169,14 +172,14 @@ duracion = 0.8                      # orientativo: «pocas» pruebas; consulta b
 
 [motivos.digestivo]
 nombre = "Digestivo"
-peso_base = 4.269                   # derivado; sin factores: variable, sin patrón claro
+peso_base = 4.279                   # derivado; sin factores: variable, sin patrón claro
 gravedad = { media = -0.09, por_edad = [-0.19, 0.0, 0.19, 0.38], desviacion = 1.03 }   # orientativo, variable: gastroenteritis frente a hemorragia digestiva
 pruebas = { analitica = 72, radiografia = 12, ecg = 9, imagen = 11 }   # orientativo, elegido por su marginal: 69,6 / 15,2 / 15,6 / 15,2 % en un año
 duracion = 1.0                      # orientativo: analítica
 
 [motivos.psiquiatrico]
 nombre = "Psiquiátrico"
-peso_base = 3.040                   # derivado
+peso_base = 3.049                   # derivado
 edad = [1.4, 1.0, 0.5, 0.4]         # orientativo: crisis de ansiedad y debuts en jóvenes
 franja = [1.0, 1.0, 1.3]            # orientativo: crisis y agitación nocturnas
 gravedad = { media = 0.19, desviacion = 0.75 }   # orientativo, media: ansiedad frente a agitación o ideación suicida; sin patrón por edad
@@ -185,7 +188,7 @@ duracion = 1.3                      # orientativo: «pocas» pruebas: tóxicos y
 
 [motivos.palpitaciones]
 nombre = "Palpitaciones / arritmia"
-peso_base = 2.060                   # derivado
+peso_base = 2.064                   # derivado
 edad = [0.7, 1.1, 1.5, 1.3]         # orientativo: fibrilación auricular con la edad
 gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.19], desviacion = 0.66 }   # orientativo, media: taquicardias benignas en jóvenes; fibrilación auricular rápida en mayores
 pruebas = { analitica = 58, radiografia = 18, ecg = 97, imagen = 2 }   # orientativo, elegido por su marginal: 70,1 / 25,3 / 98,0 / 3,7 % en un año
@@ -193,25 +196,35 @@ duracion = 0.9                      # orientativo: ECG casi universal y analíti
 
 [motivos.intoxicacion]
 nombre = "Intoxicación"
-peso_base = 1.342                   # derivado
+peso_base = 1.346                   # derivado
 edad = [2.0, 0.8, 0.3, 0.2]         # orientativo: alcohol y drogas en jóvenes
 franja = [1.0, 1.0, 1.8]            # orientativo: ocio nocturno
 dia = [1.0, 1.7]                    # orientativo: fin de semana; noche × fin de semana = 3,06 (el «×3» de la especificación)
 gravedad = { media = 0.10, desviacion = 1.13 }   # orientativo, variable: embriaguez leve frente a sobredosis o coma
-pruebas = { analitica = 78, radiografia = 7, ecg = 46, imagen = 6 }   # orientativo, elegido por su marginal: 74,7 / 8,3 / 49,7 / 8,4 % en un año
+pruebas = { analitica = 78, radiografia = 7, ecg = 46, imagen = 6 }   # orientativo, elegido por su marginal: 74,7 / 8,3 / 49,8 / 8,4 % en un año
 duracion = 1.1                      # orientativo: analítica con tóxicos y ECG por el QT; vigilancia
 
+# Parada / crítico: 0,3 % del catálogo («< 1 %»; 0,5 hasta la tarea 4.6a). Su
+# gravedad es orientativa, elegida por criterio: desviación de 0,25 (poco
+# dispersa: el compromiso vital no depende de la edad) y la menor media de una
+# rejilla de 0,01 con la que, tras rederivar pesos, ruido, sesgo y umbrales, al
+# menos el 99 % de las paradas de un año es nivel real 1 y al menos el 97 %
+# recibe nivel 1 asignado y va a la puerta (99,97 % y 97,05 %; con 4,20, el
+# 96,91 %). Manda el asignado: el ruido del triaje dispersa más que la parada.
+#   edsim.profiles.derivation.severity_mean_for(perfiles, llegadas, "parada", 0.25,
+#       real_min=0.99, assigned_min=0.97, start=4.0)
+#   con llegadas = load_profile("config/llegadas.toml"); la cascada, derive_written_values.
 [motivos.parada]
 nombre = "Parada / crítico"
-peso_base = 0.539                   # derivado
+peso_base = 0.324                   # derivado
 edad = [0.2, 0.8, 1.8, 2.5]         # orientativo: muerte súbita y parada en mayores
-gravedad = { media = 3.38, desviacion = 0.38 }   # orientativo, muy alta: compromiso vital a cualquier edad (3,5 y 0,4 antes de la transformación común)
-pruebas = { analitica = 36, radiografia = 61, ecg = 83, imagen = 4 }   # orientativo, elegido por su marginal: 98,0 / 90,1 / 99,0 / 40,4 % en un año
+gravedad = { media = 4.21, desviacion = 0.25 }   # orientativo, elegido por criterio (ver arriba): muy alta y poco dispersa, a cualquier edad (4,38 y 0,27 antes de la transformación común)
+pruebas = { analitica = 36, radiografia = 61, ecg = 83, imagen = 4 }   # orientativo, elegido por su marginal: 99,3 / 92,8 / 99,4 / 54,2 % en un año
 duracion = 1.0                      # orientativo: «todas»; la base del nivel 1 ya es larga
 
 [motivos.otros]
 nombre = "Otros"
-peso_base = 10.673                  # derivado; sin factores: cajón de sastre
+peso_base = 10.698                  # derivado; sin factores: cajón de sastre
 gravedad = { media = -0.56, desviacion = 0.75 }   # orientativo, baja: cajón de sastre, en su mayoría banal
 pruebas = { analitica = 22, radiografia = 10, ecg = 7, imagen = 4 }   # orientativo, elegido por su marginal: 19,7 / 10,4 / 8,5 / 3,9 % en un año
 duracion = 0.9                      # orientativo: «pocas» pruebas
@@ -230,7 +243,7 @@ sobretriaje = 6.3
 #   triage_error_for(load_profiles("config/perfiles.toml"), load_profile("config/llegadas.toml"))
 # (edsim.profiles.severity). Con G normal estándar, la especificación daba 0,32 y
 # -0,08; la mezcla de motivos y edades no es normal y pide algo más de ruido.
-ruido = 0.333                       # calibrado
+ruido = 0.334                       # calibrado
 sesgo = -0.081                      # calibrado
 # Umbrales c1 > c2 > c3 > c4 sobre G + ε (derivado): dan reparto_objetivo como
 # reparto asignado de un año con el ruido y el sesgo escritos, redondeados a 3
@@ -238,7 +251,7 @@ sesgo = -0.081                      # calibrado
 # escenario con más gravedad (gripe, accidente múltiple) debe dar más niveles
 # urgentes, y no volver al reparto objetivo. Si cambia la gravedad, un factor o
 # el ruido, hay que volver a calcularlos (lo comprueba un test).
-umbrales = [3.260, 1.140, -0.044, -2.163]   # derivado
+umbrales = [3.341, 1.130, -0.047, -2.164]   # derivado
 # Duración del triaje de enfermería, [mediana, p90] en minutos (orientativo):
 # una sola lognormal para los niveles 2 a 5, sin factor por motivo. Se sortea
 # para todos; el nivel 1 se clasifica en la puerta y no la usa.

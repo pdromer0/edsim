@@ -82,8 +82,9 @@ def test_medias_por_nivel_a_mano(example):
 
 
 def test_medias_con_el_reparto_real(example, model):
-    # Con el reparto real exacto (0,42 / 12,46 / 35,81 / 50,65 / 0,65 %) y k = 1:
-    # 24,07 de valoración y 10,60 de reevaluación.
+    # Con el reparto real exacto (0,39 / 12,52 / 35,82 / 50,62 / 0,65 % desde la tarea
+    # 4.6a; 0,42 / 12,46 / 35,81 / 50,65 / 0,65 antes) y k = 1: 24,07 de valoración y
+    # 10,60 de reevaluación.
     shares = real_shares(model.workup.mixture, example.triage.thresholds)
     d = example.durations
 
@@ -94,7 +95,7 @@ def test_medias_con_el_reparto_real(example, model):
         10.60, abs=5e-3
     )
     plain = duration_model(without_k(example), load_profile(ARRIVALS))
-    assert plain.mean(ASSESSMENT) == pytest.approx(24.069, abs=5e-4)
+    assert plain.mean(ASSESSMENT) == pytest.approx(24.070, abs=5e-4)
     assert plain.mean(REASSESSMENT) == pytest.approx(10.596, abs=5e-4)
 
 
@@ -247,22 +248,25 @@ def test_carga_del_medico_del_ejemplo(model):
     assert load.assessment == pytest.approx(24.20, abs=5e-3)
     assert load.reassessment == pytest.approx(10.60, abs=5e-3)
     assert load.reassessment_with_tests == pytest.approx(8.18, abs=5e-3)
-    assert load.load == pytest.approx(32.38, abs=5e-3)
-    assert load.k_ratio == pytest.approx(1.0052, abs=5e-5)
-    assert load.mean_k == pytest.approx(0.9905, abs=5e-5)
+    assert load.load == pytest.approx(32.37, abs=5e-3)  # 32,38 hasta la tarea 4.6a
+    assert load.k_ratio == pytest.approx(1.0053, abs=5e-5)  # 1,0052
+    assert load.mean_k == pytest.approx(0.9904, abs=5e-5)  # 0,9905
 
 
 def test_medias_por_nivel_con_los_k_del_ejemplo(model):
+    # Recalculadas en la tarea 4.6a; antes, 50,24 / 40,44 / 27,95 / 17,48 / 12,17 y
+    # 17,85 / 15,32 / 11,98 / 8,45 / 6,54.
     assert model.mean_by_level(ASSESSMENT) == pytest.approx(
-        [50.24, 40.44, 27.95, 17.48, 12.17], abs=5e-3
+        [50.06, 40.48, 27.94, 17.48, 12.17], abs=5e-3
     )
     assert model.mean_by_level(REASSESSMENT) == pytest.approx(
-        [17.85, 15.32, 11.98, 8.45, 6.54], abs=5e-3
+        [17.79, 15.33, 11.97, 8.45, 6.54], abs=5e-3
     )
 
 
 def test_cuantiles_por_nivel_del_ejemplo(model):
-    expected = [(41.07, 92.66), (32.41, 76.03), (22.60, 52.13), (13.92, 33.03), (9.36, 23.67)]
+    # Recalculados en la tarea 4.6a; antes, (41,07; 92,66), (32,41; 76,03), (22,60; 52,13).
+    expected = [(40.93, 92.31), (32.45, 76.11), (22.59, 52.12), (13.92, 33.03), (9.36, 23.67)]
     got = [
         (model.quantile(ASSESSMENT, 0.5, level=n), model.quantile(ASSESSMENT, 0.9, level=n))
         for n in range(1, 6)
