@@ -25,6 +25,22 @@ START = date(2026, 1, 5)  # fecha_inicio de llegadas_ejemplo.toml
 BASES = (75.0, 70.0, 12.0, 200.0)  # respuesta base de analítica, radiografía, ECG e imagen
 
 
+PLAIN = (float, int, bool, str, type(None))
+"""Los tipos exactos de las hojas de una verdad clínica: ningún escalar de NumPy."""
+
+
+def leaves(value, path=()):
+    """Todas las hojas de un asdict, con su camino, recorriendo dicts y tuplas."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from leaves(item, (*path, key))
+    elif isinstance(value, tuple | list):
+        for i, item in enumerate(value):
+            yield from leaves(item, (*path, i))
+    else:
+        yield path, value
+
+
 def example_profiles() -> ClinicalProfiles:
     return load_profiles(DATA / "perfiles_ejemplo.toml")
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from clinical_factory import PLAIN, leaves
 
 from edsim.arrivals.profile import load_profile
 from edsim.arrivals.thinning import ArrivalRecord, iter_arrivals
@@ -389,20 +390,6 @@ def test_inmutable(profiles, center, arrival_profile, arrivals):
 
 
 # --- Tipos exactos de la verdad ---------------------------------------------------
-
-PLAIN = (float, int, bool, str, type(None))
-
-
-def leaves(value, path=()):
-    """Todas las hojas de un asdict, con su camino, recorriendo dicts y tuplas."""
-    if isinstance(value, dict):
-        for key, item in value.items():
-            yield from leaves(item, (*path, key))
-    elif isinstance(value, tuple | list):
-        for i, item in enumerate(value):
-            yield from leaves(item, (*path, i))
-    else:
-        yield path, value
 
 
 def test_la_verdad_solo_tiene_tipos_de_python(profiles, center, arrival_profile, arrivals):
