@@ -8,13 +8,16 @@ inicio = [8, 15, 22]
 
 [recursos]
 # Plantilla por turno: mañana, tarde, noche. La enfermería de triaje es la del centro
-# base (calibrada en la tarea 4.6b). Los médicos salen de la misma regla, ⌈carga del
-# turno / u⌉, con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene, de
-# media entre réplicas, como mucho un 10 % de días fuera del cumplimiento Manchester
-# con el reloj C: u de 0,625 a 0,635 (en el centro base, 0,81 a 0,8475).
+# base (calibrada en la tarea 4.6c). Los médicos salen de la misma regla, ⌈carga del
+# turno / u⌉, con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene como
+# mucho un 10 % de días fuera del cumplimiento Manchester con el reloj C, con los días
+# fuera y los días medidos sumados en las 12 réplicas de la ventana anual (con 144 días,
+# 14 fuera pasan): u de 0,67 a 0,6775 (en el centro base, 0,85). Días fuera / medidos de
+# los niveles 2 a 5: 1/144, 0/144, 2/144 y 6/142; la siguiente, [14, 14, 5], tiene
+# 22/142 en el nivel 5 y no pasa.
 #   uv run edsim calibracion sensibilidad --mando medicos
 enfermeria_triaje = [3, 2, 1]
-medicos = [15, 15, 6]
+medicos = [14, 14, 6]
 # Capacidad física, igual en todos los turnos
 boxes = 30
 # Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
