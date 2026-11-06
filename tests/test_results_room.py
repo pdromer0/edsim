@@ -7,6 +7,7 @@ de este fichero salen de esos instantes, no de las funciones que se prueban.
 """
 
 import dataclasses
+import itertools
 from datetime import date
 from pathlib import Path
 
@@ -399,3 +400,23 @@ def test_catorce_dias_con_la_sala():
         r.box_wait == pytest.approx(by_hand.get(r.episode_id, 0.0), abs=1e-9) for r in departed
     )
     assert sum(r.results_box_wait > 0 for r in departed) > 100
+
+
+def test_nunca_dos_pacientes_en_el_mismo_box_en_tres_dias(profiles):
+    # Con la sala, en 3 días: los tramos con box de Episodios nunca se solapan en un box.
+    from edsim.runs.episodes import episode_segments
+
+    events, _ = simulate(load_center(DATA / "centro_sala_ejemplo.toml"), profiles)
+    assert released(events)
+    by_episode = {}
+    for e in events:
+        if e.episode_id is not None:
+            by_episode.setdefault(e.episode_id, []).append(e)
+    spans = {}
+    for own in by_episode.values():
+        for s in episode_segments(own, 3 * 1440.0).segments:
+            if s.box is not None:
+                spans.setdefault(s.box, []).append((s.start, s.end))
+    for box, intervals in spans.items():
+        intervals.sort()
+        assert all(a[1] <= b[0] for a, b in itertools.pairwise(intervals)), box
