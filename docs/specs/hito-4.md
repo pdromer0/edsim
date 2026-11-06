@@ -353,6 +353,10 @@ El reparto de triaje se cumple por construcción, porque los umbrales salen de �
 
 **Parámetros indirectos: un solo mando, la plantilla de médicos por turno.** Menos médicos y valoraciones más largas alargan igual el tiempo hasta el médico, y en el hito 4 no hay ningún objetivo que los distinga (la estancia, que sí depende de las duraciones, se calibra en el hito 5). Calibrar los dos sería un problema no identificable. Las duraciones quedan fijas por criterio clínico y se ajusta solo la plantilla, que es una «plantilla equivalente» del modelo, no una recomendación de dotación.
 
+**Boxes fijos y espera de resultados fuera del box** (decisión candidata 45, tarea 4.6a). Con el modelo clínico, el 64 % del tiempo de box (91,2 minutos por paciente en 14 días) era esperar resultados, y los 30 boxes llegaban al pico mientras los médicos estaban a unos 7 de 12 de media: la plantilla no habría podido mover las esperas de los niveles 4 y 5. Desde la 4.6a, los pacientes de los niveles asignados de `espera_resultados_fuera` (en `centro.toml`, `[4, 5]` en el centro base) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y, con los resultados, vuelven a pedir box con su misma clave de prioridad, como un paciente desalojado, para la reevaluación. Los boxes quedan fijos (30) y no se calibran: con objetivos de tiempo hasta el médico, plantilla y boxes no serían identificables. Antes de ajustar se mide la sensibilidad de los dos mandos (regla 5). El modelo provisional no cambia (sus huellas y la validación del motor siguen iguales).
+
+**Paradas** (decisión candidata 46, tarea 4.6a). La parada / crítico pesaba un 0,54 % con una gravedad media de 3,38 y desviación 0,38, justo por encima del umbral del nivel 1 (3,26): solo el 62 % eran nivel real 1, y el 44 % recibía nivel 2 y esperaba el triaje hasta 32 minutos. Con el nivel 1 asignado del 0,4 % no había sitio para todas. Desde la 4.6a, la parada pesa un 0,3 % en el catálogo (sigue siendo «< 1 %») y su gravedad es alta y poco dispersa, de modo que casi todas son nivel 1 real y asignado, a la puerta. Se rederivan con sus funciones y se escriben los pesos base, el ruido y el sesgo, los umbrales y las marginales de pruebas.
+
 **Objetivos indirectos** (horquillas orientativas; se fijan en `config/objetivos.toml` en la tarea 4.6). El CMBD del SAS es de 2013 e incluye niños, así que da el orden de magnitud y las horquillas son anchas.
 
 | Objetivo | Reloj | Referencia observada | Horquilla | Uso |
@@ -599,7 +603,7 @@ Contenido
 
 ## Decisiones del hito
 
-Once decisiones candidatas, acordadas en la sesión conceptual del 5 de noviembre de 2026. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0044 y las añade al registro del diseño. La decisión APP-0003, que solo afecta a la app, está en «App web — incrementos».
+Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptual del 5 de noviembre de 2026, y la 45 y la 46, en la del 6 de noviembre, tras las comprobaciones clínicas de la tarea 4.5a. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0046 y las añade al registro del diseño. La decisión APP-0003, que solo afecta a la app, está en «App web — incrementos».
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -610,10 +614,12 @@ Once decisiones candidatas, acordadas en la sesión conceptual del 5 de noviembr
 | 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo; umbrales derivados una vez para el reparto asignado y escritos en el TOML, sin recalcularse al cargar; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje; un escenario con más gravedad da más niveles urgentes |
 | 39 | El nivel 1 asignado se clasifica en la puerta (triaje de duración 0, `circuito: "puerta"`, sin enfermera) y va directo al box; sin desalojo de médicos | El crítico no hace cola de triaje sin cambiar el orden de los eventos; el desalojo de médicos ahorraría un minuto a un paciente al día con una regla clínica sin datos (v1) |
 | 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
-| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; la plantilla de médicos es el único mando indirecto | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia |
+| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; la plantilla de médicos es el único mando indirecto, y los boxes quedan fijos (30), con la sensibilidad de los dos mandos medida antes de ajustar | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia, y plantilla y boxes tampoco con objetivos de tiempo hasta el médico |
 | 42 | Pruebas de cuatro tipos en una ronda, con un solo `test_ordered` (lista de pruebas) y un solo `test_resulted` (resultados) | Mismo comportamiento del paciente sin cambiar el contrato del log; un evento por tipo queda para versiones posteriores |
 | 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,6 % de los pacientes y no el 17,3 % |
 | 44 | Modelo clínico opcional durante el hito (`profiles=None` usa el provisional) y por defecto en el cierre, cuando la app ya lo soporta; el `ProvisionalSampler` se queda para la validación del motor | `main` estable y `tests-app` obligatorio en todo el hito; la app no se rompe a mitad de camino |
+| 45 | Con el modelo clínico, los pacientes de los niveles asignados de `espera_resultados_fuera` (`centro.toml`, `[4, 5]`) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y vuelven a pedir box con su misma clave de prioridad para la reevaluación; un evento nuevo en el catálogo versión 3. El provisional no cambia | El 64 % del tiempo de box era espera de resultados y saturaba los 30 boxes; en las urgencias reales los leves esperan fuera; la plantilla de médicos no puede calibrar una cola de boxes |
+| 46 | La parada / crítico pasa al 0,3 % del catálogo con una gravedad alta y poco dispersa, para que casi todas sean nivel 1 real y asignado; pesos base, ruido y sesgo, umbrales y marginales de pruebas se rederivan y se escriben | Con el 0,54 % y la gravedad en el umbral, el 44 % de las paradas recibía nivel 2 y esperaba en la cola del triaje: el nivel 1 asignado del 0,4 % no dejaba sitio para todas |
 
 Al cerrar el hito se actualizan también la pestaña de diseño (catálogo de eventos con los payloads nuevos, objetivos de calibración, hoja de ruta con lo aplazado) y la ADR 0031 con una nota de actualización: los incrementos de la app se documentan en su propia pestaña, no en la del hito.
 
@@ -629,11 +635,12 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | 4.4 | Pruebas por tipo con resultado y respuesta (42); duraciones por nivel real y motivo | Claude Code | `feat/h4-pruebas` | Logísticas y lognormales validadas |
 | 4.5a | `ClinicalSampler` en el motor como opción (44): `PatientDraws` ampliado, `simulate_ed` con perfiles, catálogo versión 2 y payloads, ground truth clínico en memoria, invariantes y huellas | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
 | 4.5b | CSV del ground truth clínico, `simulate_run` con perfiles, `run.json` versión 2 con la huella de los perfiles (adelantado de la 4.8a), `motor simular --perfiles` y `perfiles validar` | Claude Code | `feat/h4-cli-perfiles` | Ejecuciones clínicas en `resultados/` y validación del muestreador desde la CLI |
-| 4.6 | `objetivos.toml`, `calibracion evaluar` y primera calibración de la plantilla (41); `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
+| 4.6a | Paradas al 0,3 % con gravedad alta (46) y rederivación; espera de resultados fuera del box en los niveles 4 y 5 con el catálogo versión 3 (45). `@codex review` | Claude Code | `feat/h4-paradas-sala` | Paradas a la puerta, boxes sin la ronda de los niveles 4 y 5 y el provisional bit a bit igual |
+| 4.6b | `objetivos.toml`, sensibilidad de los mandos, `calibracion evaluar` y `calibracion sensibilidad`, primera calibración de la plantilla (41) y registro; `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
 | 4.7 | Notebook `04_perfiles_clinicos.ipynb` | Claude Code | `feat/h4-notebook` | Notebook ejecutable de principio a fin en el CI |
 | 4.8a | Núcleo de la app con perfiles (`runs/`); `run.json` versión 2 se adelanta a la 4.5b | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
 | 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
-| 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0044; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
+| 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0046; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
 
 Preparación en la tarea 4.1: exportar esta pestaña a `docs/specs/hito-4.md`, apuntar el hito en curso al hito 4 en `CLAUDE.md` y `AGENTS.md`, añadir el prefijo `refactor` a la lista de commits y quitar el permiso de ejecución a los `.md` de `docs/` (`git update-index --chmod=-x`).
 
@@ -653,7 +660,7 @@ En cada tarea, como en el hito 3:
 4. Pedro revisa el PR completo con este chat, espera el CI en verde y fusiona con *squash and merge*. `gh pr merge` sigue denegado para los dos agentes.
 5. Sincronización: `git switch main && git pull && git branch -D <rama>`.
 
-Solo una rama abierta a la vez. La revisión automática con `@codex review` se pide solo en las tareas críticas: en este hito, la 4.5a (el muestreador en el motor) y la 4.9 (el cambio de modelo por defecto).
+Solo una rama abierta a la vez. La revisión automática con `@codex review` se pide solo en las tareas críticas: en este hito, la 4.5a (el muestreador en el motor), la 4.6a (paradas y espera de resultados fuera del box, en el motor) y la 4.9 (el cambio de modelo por defecto).
 
 ## Criterios de aceptación
 
@@ -1198,3 +1205,85 @@ Ninguna predicción falló por un hueco de cobertura: V6 y V9 fallaron en más t
 - Decisión abierta para la 4.6: los boxes pasan a ser el cuello de botella (tiempo de box +24 %, nivel 4 con 5 días fuera de 12). La plantilla de médicos (decisión 41) puede no bastar: calibrar también los boxes, revisar los porcentajes orientativos de pruebas (72,8 % frente al 55,4 % del provisional) o adelantar una zona de espera de resultados.
 - Decisión abierta para la 4.6: el 44 % de las paradas recibe nivel 2 y espera en la cola del triaje (hasta 32 min), y un tercio tiene nivel real 2. Opciones: puerta por motivo, más gravedad y menos dispersión para la parada, o aceptarlo hasta el circuito de críticos de la v1.
 - Tarea 4.8a: la app serializa el payload con `json.dumps(dict(...))`, que no admite `resultados`; una ejecución antigua como dato de prueba debe ser posterior a la 4.1.
+
+### Tarea 4.5b: ejecuciones clínicas, motor simular --perfiles y perfiles validar
+
+**Qué se hizo**
+
+PR #45 (rama `feat/h4-cli-perfiles`), fusionado con *squash and merge*: trece commits, sin revisión de Codex y sin cambios pedidos en la revisión. Una ejecución clínica ya se guarda en `resultados/` con todo lo que la generó, se lanza desde la CLI y el muestreador se valida con un comando.
+
+- `engine/report.py`: CSV del ground truth clínico (57 columnas, con la z y los 12 sorteos), `ProfilesParameters`, y un lector (`episode_from_row`, `read_episodes_csv`) con tokens exactos y comprobaciones de coherencia. El CSV provisional, byte a byte igual.
+- `runs/store.py`: `run.json` versión 2 con `model`, `clinical_profiles_path` y `clinical_profiles_fingerprint`; claves exactas por versión al leer; solo se escribe la 2; `archive` con 7 ficheros en las clínicas. `tests/data/run_v1.json`, escrito con `main` antes de tocar nada.
+- `runs/service.py`: `simulate_run(..., profiles=None)` copia `perfiles.toml`, carga desde la copia y pasa los perfiles a `simulate_ed` y a `check_invariants` (el pendiente de la 4.5a).
+- `runs/compare.py`: `pairing_blockers` añade el modelo y la huella de los perfiles.
+- `cli.py`: `motor simular --perfiles` y `perfiles validar`. `profiles/validation.py`: evaluación separada del sorteo (refactor sin tocar tests), `validate_profiles` con un solo sorteo del año, `mixing_minimum` con margen, datos de las gráficas con IC. `profiles/report.py`: tabla y cuatro gráficas.
+
+**Conceptos**
+
+- **Una ejecución reproducible** guarda todo lo que la generó: copia y huella de los tres ficheros de configuración, y se carga siempre desde la copia.
+- **Versionar un formato en disco.** Se escribe la versión nueva y se leen las dos; lo antiguo se lee con el significado que tenía (versión 1 = provisional). Los valores por defecto nunca rellenan claves que faltan.
+- **Un formato estable va y vuelve.** Leer el CSV da el mismo `EpisodeTruth`, floats bit a bit. Eso convierte el CSV en el formato de intercambio y en la referencia de la 4.8a.
+- **Misma semilla no es mismos pacientes** si cambia el modelo: el emparejamiento lo bloquea.
+- **Un mínimo con recuentos aleatorios necesita margen.** La mezcla calcula lo esperado de un motivo dentro de una banda con el recuento observado de la banda: en el mínimo exacto, la comprobación se queda sin pacientes la mitad de las veces. El margen se elige con la binomial de cada banda y la unión de bandas y contextos.
+- **Falsa alarma de una batería de pruebas.** Cuatro comprobaciones al 1 % dan hasta un 4 % de falsas alarmas conjuntas (desigualdad de Boole); se escribe, sin cambiar α, para que cada fila siga siendo su `check_*`.
+- **Sortear una vez.** Triaje, pruebas y duraciones usan los mismos pacientes con la misma semilla: un solo sorteo del año ahorra unos 14 s y da exactamente los mismos resultados.
+
+**Decisiones**
+
+- `run.json` v2 para todas las ejecuciones nuevas; v1 solo lectura, como provisional. Nombres `clinical_profiles_*` para no confundirlos con el perfil de llegadas; campos opcionales explicados por `model` y comprobados en `__post_init__`.
+- CSV clínico con todo `EpisodeTruth`; `banda` como índice (los límites son de los perfiles); el nivel asignado solo en `nivel`. El CSV de días, igual con los dos modelos.
+- `--pacientes N`: N por contexto en la mezcla y N en el año; mínimos con margen (probabilidad de parar menor que 1e-6): 15 234 por contexto en la mezcla y 11 826 en el año.
+- Semillas de `perfiles validar`: `child_streams(seed, 2)`, hijo 0 para la mezcla y 1 para el año.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Tests | 2.344 en la suite completa (7 min 32 s) y 2.321 rápidos (3 min 51 s); 241 de la app sin cambios en `app/` |
+| Huellas del provisional | Sin cambios: log `220eb8c6…`, episodios `55a623b9…`, días `af940fff…` |
+| Huellas nuevas del clínico (`motor simular --perfiles`, ejemplo, 2 días, semilla 7) | Log `306392fe…` (igual que `simulate_ed`), episodios `3f59dd25…`, días `af940fff…` (la misma que el provisional) |
+| `motor simular` 14 días, config/, semilla 2026 | 0 violaciones (incluida la respuesta de cada ronda); 5,3 s frente a 3,8 s del provisional; log de 22,1 MB frente a 20,7 MB; CSV de episodios de 3,1 MB frente a 1,0 MB |
+| `perfiles validar` por defecto | Código 0; 29 s en total (mezcla 11–12 s, sorteo del año 14–18 s, evaluaciones 0,0 / 0,2 / 0,2 s); 209 MiB de memoria |
+
+| Comprobación | Pacientes | Categorías | p mínimo | α por categoría | Error detectable (80 %) |
+| --- | --- | --- | --- | --- | --- |
+| Mezcla de motivos | 480 000 | 2.136 | 1,65e-5 | 4,68e-6 | Un motivo del 5,0 % que pasa a 5,8 % |
+| Triaje | 109 542 | 30 | 0,00705 | 3,33e-4 | Nivel 1 asignado: 0,40 % → 0,49 % |
+| Pruebas | 109 542 | 134 | 0,0042 | 7,46e-5 | Analítica en el quintil 3 de G: 45,0 % → 46,6 % |
+| Duraciones | 109 542 | 64 | 0,000356 | 1,56e-4 | Mediana de valoración del real 3: 50,0 % → 51,2 % |
+
+El chat recalculó el mínimo de la mezcla con la rama: 15 234 da una probabilidad de parar de 9,9e-7 y 15 233, de 1,01e-6. También los errores detectables de la mezcla y del triaje. La app lista las tres ejecuciones (v1, provisional v2 y clínica) y abre Resultados y Replay de la clínica; Episodios y Comparar no la abren hasta la 4.8a.
+
+**Comprobación de las versiones incorrectas**
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. `simulate_run` sin perfiles en `check_invariants` | Fallan el espía y el de comportamiento | Cumplida, más dos espías que fijan los argumentos exactos |
+| V2. Respuesta base con el factor de la franja de la llegada en el CSV | Fallan la ida y vuelta, la fila a mano de tarde y la huella del CSV clínico | Cumplida, más la lectura frente a `simulate_ed` |
+| V3. `run.json` clínico con la versión 1 | `RunInfo` la rechaza y fallan todos los tests que crean una clínica | Exacta |
+| V4. Perfiles del original y no de la copia | Falla solo «el original modificado no cambia el log» | Exacta |
+| V5. `perfiles validar` devuelve 0 aunque falle | Falla solo el del código 1 | Exacta |
+| V6. CSV provisional con las columnas de perfiles | Fallan huellas, cabeceras y lectores de cabecera exacta | Cumplida, más la ida y vuelta con `read_episodes_csv` |
+| V7. Emparejamiento sin el modelo | Falla solo la tupla exacta; el bloqueo sigue por la huella | Exacta |
+| V8. La CLI no valida `--perfiles` antes de simular | Fallan los de código 2 | Cumplida, más el de la cabecera |
+| V9. Sortear el año en cada comprobación | Falla solo el espía del sorteo | Exacta |
+| V10. `archive` sin `perfiles.toml` | Falla solo el de los 7 ficheros | Exacta |
+| V11. `read` rellena claves que faltan en la v2 | Fallan 4 tests | Fallaron 10: más tests dependen de las claves exactas |
+| V12. `respuesta_pruebas` vacía leída como 0,0 | Fallan la ida y vuelta y la fila a mano | Cumplida, más la lectura frente a `simulate_ed` |
+| V13. Mínimo de la mezcla sin margen | Fallan las cifras y el código 2; pasan los rápidos | No cumplida: los rápidos toman su N de `mixing_minimum` y, en el mínimo exacto, la mezcla se queda sin pacientes (4,91 esperados < 5). El literal 15 234 vigila la función |
+
+**Lecciones aprendidas**
+
+- Un mínimo calculado con valores esperados no basta si la comprobación usa recuentos observados: hace falta un margen con su probabilidad calculada.
+- Un test que calcula su tamaño con la función que se prueba hereda sus errores; un literal la vigila.
+- Las predicciones de «pasa» fallan más que las de «falla»: muchos tests dependen indirectamente de lo que se rompe (V11, V13).
+- Si dos comprobaciones sortean lo mismo con la misma semilla, se sortea una vez y un espía lo vigila, porque la igualdad de resultados no lo ve.
+- Una batería de pruebas tiene una tasa de falsa alarma conjunta que hay que escribir.
+- Leer el código resuelve dudas que la descripción de un PR deja abiertas (si los perfiles llegaban a `check_invariants`).
+
+**Pendiente**
+
+- Tarea 4.6: las dos decisiones abiertas de la 4.5a (boxes como cuello de botella y paradas en la cola del triaje), antes de calibrar.
+- Tarea 4.8a: `runs/truth.py` con `episode_from_row`, emparejamiento clínico, `read_run_results` que recalcula invariantes sin perfiles.
+- Tarea 4.8b: payload de `resultados` en la app y etiquetas de los campos nuevos en Comparar.
+- Menor: el aviso «tarda unos 30 segundos» de `perfiles validar` se imprime también con `--pacientes`.
