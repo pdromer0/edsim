@@ -373,7 +373,6 @@ def check_triage(
         else check_count("patients", patients, 1)
     )
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_TRIAGE_CATEGORIES
     start_date = arrival_profile.start_date
 
     context_seed, patient_seed = child_streams(seed, 2)
@@ -395,11 +394,22 @@ def check_triage(
     for c in drawn:
         x = triage(people(arrivals[c]))
         observed[x.true_level - 1, x.level - 1] += 1
+    return _triage_result(profiles, arrival_profile, observed)
 
+
+def exact_triage_matrix(profiles: ClinicalProfiles, arrival_profile: ArrivalProfile) -> np.ndarray:
+    """Exact shares of true (rows) against assigned (columns) level over a year, (5, 5)."""
     t = profiles.triage
-    exact = triage_matrix(
-        severity_mixture(profiles, arrival_profile), t.thresholds, t.noise, t.bias
-    )
+    return triage_matrix(severity_mixture(profiles, arrival_profile), t.thresholds, t.noise, t.bias)
+
+
+def _triage_result(
+    profiles: ClinicalProfiles, arrival_profile: ArrivalProfile, observed: np.ndarray
+) -> ValidationResult:
+    """The 30 categories of ``check_triage`` from the counts of true × assigned level."""
+    patients = int(observed.sum())
+    alpha = ALPHA / N_TRIAGE_CATEGORIES
+    exact = exact_triage_matrix(profiles, arrival_profile)
     assigned, expected_assigned = observed.sum(axis=0), exact.sum(axis=0)
     tests = [
         _category(
@@ -455,6 +465,7 @@ class _Year:
     """The patients drawn for the checks of tests and durations, as arrays."""
 
     severity: np.ndarray
+    level: np.ndarray  # assigned
     true_level: np.ndarray
     under: np.ndarray
     reason: np.ndarray
@@ -504,6 +515,7 @@ def _draw_year(
                 st.severity,
                 st.true_level,
                 st.quality == UNDER,
+                st.level,
                 REASON_KEYS.index(pr.reason),
                 *w.ordered,
                 *w.abnormal,
@@ -518,16 +530,17 @@ def _draw_year(
     k = N_TESTS
     return _Year(
         severity=a[:, 0],
+        level=a[:, 3].astype(int),
         true_level=a[:, 1].astype(int),
         under=a[:, 2].astype(bool),
-        reason=a[:, 3].astype(int),
-        ordered=a[:, 4 : 4 + k].astype(bool),
-        abnormal=a[:, 4 + k : 4 + 2 * k].astype(bool),
-        turnaround=a[:, 4 + 2 * k : 4 + 3 * k],
-        round_turnaround=a[:, 4 + 3 * k],
-        triage=a[:, 5 + 3 * k],
-        assessment=a[:, 6 + 3 * k],
-        reassessment=a[:, 7 + 3 * k],
+        reason=a[:, 4].astype(int),
+        ordered=a[:, 5 : 5 + k].astype(bool),
+        abnormal=a[:, 5 + k : 5 + 2 * k].astype(bool),
+        turnaround=a[:, 5 + 2 * k : 5 + 3 * k],
+        round_turnaround=a[:, 5 + 3 * k],
+        triage=a[:, 6 + 3 * k],
+        assessment=a[:, 7 + 3 * k],
+        reassessment=a[:, 8 + 3 * k],
     )
 
 
@@ -584,20 +597,33 @@ def check_workup(
     """
     patients = _patients(profiles, arrival_profile, patients)
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_WORKUP_CATEGORIES
-
     model = workup_model(profiles, arrival_profile)
+    _check_groups(_workup_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+    return _workup_result(model, year)
+
+
+def _workup_groups(model) -> dict[str, float]:
+    """Exact share of each group a category of ``check_workup`` is conditioned on."""
     levels = real_shares_of(model)
     reasons = model.mixture.weights.sum(axis=1)
     groups = {f"real_{n + 1}": float(levels[n]) for n in range(N_LEVELS)}
     groups |= {key: float(reasons[i]) for i, key in enumerate(REASON_KEYS)}
     groups |= {"infratriaje": model.undertriage_share(), "ronda": model.round_share()}
-    _check_groups(groups, patients)
+    return groups
 
-    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+
+def severity_fifth(model, severity: np.ndarray) -> np.ndarray:
+    """Fifth of G of each patient, 1 the least severe, with the exact edges of ``model``."""
     edges = model.severity_edges(N_SEVERITY_GROUPS)  # decreasing
     # Fifth 1 is the least severe: count the edges at or above each G.
-    fifth = N_SEVERITY_GROUPS - np.searchsorted(-edges[1:-1], -year.severity, side="right")
+    return N_SEVERITY_GROUPS - np.searchsorted(-edges[1:-1], -severity, side="right")
+
+
+def _workup_result(model, year: _Year) -> ValidationResult:
+    """The 134 categories of ``check_workup`` from drawn patients."""
+    alpha = ALPHA / N_WORKUP_CATEGORIES
+    fifth = severity_fifth(model, year.severity)
     order_g = model.order_by_severity(N_SEVERITY_GROUPS)[::-1]
     abnormal_g = model.abnormal_by_severity(N_SEVERITY_GROUPS)[::-1]
 
@@ -696,16 +722,25 @@ def check_durations(
     """
     patients = _patients(profiles, arrival_profile, patients)
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    alpha = ALPHA / N_DURATION_CATEGORIES
-
     model = duration_model(profiles, arrival_profile)
+    _check_groups(_duration_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+    return _durations_result(profiles, model, year)
+
+
+def _duration_groups(model) -> dict[str, float]:
+    """Exact share of each group a category of ``check_durations`` is conditioned on."""
     levels = model.reason_level.sum(axis=0)
     reasons = model.reason_level.sum(axis=1)
     groups = {f"real_{n + 1}": float(levels[n]) for n in range(N_LEVELS)}
     groups |= {key: float(reasons[i]) for i, key in enumerate(REASON_KEYS)}
-    _check_groups(groups, patients)
+    return groups
 
-    year = _draw_year(sampled_profiles, arrival_profile, seed, patients)
+
+def _durations_result(profiles: ClinicalProfiles, model, year: _Year) -> ValidationResult:
+    """The 64 categories of ``check_durations`` from drawn patients."""
+    patients = year.severity.size
+    alpha = ALPHA / N_DURATION_CATEGORIES
     tests = []
     for (name, q), x in zip(QUANTILES, profiles.triage.duration, strict=True):
         tests.append(_proportion(f"triaje/{name}", (year.triage <= x).sum(), patients, q, alpha))
