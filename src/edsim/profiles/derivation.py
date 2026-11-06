@@ -24,7 +24,7 @@ least another share is assigned level 1 (task 4.6a, the cardiac arrests).
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
@@ -92,6 +92,31 @@ def with_derived(profiles: ClinicalProfiles, derived: DerivedValues) -> Clinical
             thresholds=derived.thresholds,
         ),
     )
+
+
+def with_target_mix(
+    profiles: ClinicalProfiles, arrival_profile: ArrivalProfile, target_pct: Sequence[float]
+) -> ClinicalProfiles:
+    """A variant of the profiles with another target assigned mix and its thresholds.
+
+    ``reparto_objetivo`` becomes ``target_pct`` and the thresholds are derived
+    again for it with ``thresholds_for``, in memory and without rounding, so
+    the exact assigned mix of a year is the new target. The noise and the bias
+    stay as they are: they were calibrated for the base mix, so the under- and
+    overtriage of the variant change. Nothing is written: the file of the
+    profiles does not change.
+
+    Args:
+        profiles: The base profiles.
+        arrival_profile: The arrival profile, for the mixture of a year.
+        target_pct: Percentage of each assigned level, 1 to 5, adding up to 100.
+
+    Raises:
+        ValueError: If ``target_pct`` is not a valid ``reparto_objetivo``.
+    """
+    variant = replace(profiles, triage=replace(profiles.triage, target_pct=tuple(target_pct)))
+    thresholds = thresholds_for(variant, arrival_profile)
+    return replace(variant, triage=replace(variant.triage, thresholds=thresholds))
 
 
 def derive_written_values(

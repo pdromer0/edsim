@@ -7,6 +7,8 @@
   each target with its band, the days out of it, the sensitivity of a knob
   and the choice of a staffing;
 - ``report``: the tables and CSV files of ``edsim calibracion``.
+- ``sas``: other figures of the SAS (the triage mix and the time to the doctor
+  by level), with the conversion of the counts to adults.
 
 See docs/specs/hito-4.md, "Calibración".
 """
