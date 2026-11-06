@@ -1,6 +1,6 @@
 """Sensibilidad de los mandos y elección de la plantilla (tarea 4.6b)."""
 
-import math
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 
@@ -9,6 +9,10 @@ import pytest
 from edsim.arrivals.profile import load_profile
 from edsim.calibration import evaluate
 from edsim.calibration.evaluate import (
+    CHECK_SEED,
+    COMPLIANCE_SHARE_OUT,
+    CONFIRMATION_SEED,
+    FIT_SEED,
     KNOB_TARGETS,
     ReplicaValues,
     SensitivityRow,
@@ -17,9 +21,11 @@ from edsim.calibration.evaluate import (
     check_knob_targets,
     choose_staffing,
     compliant_staffing,
+    complies,
     evaluate_staffings,
     sensitivity,
 )
+from edsim.calibration.report import format_check
 from edsim.calibration.staffing import DOCTORS, NURSES, RuleStaffing, nurse_loads, rule_staffings
 from edsim.calibration.targets import CHECK, FIT, Target, load_targets
 from edsim.engine.center import load_center
@@ -56,10 +62,20 @@ def result(t: Target, mean: float, passed: bool = True) -> TargetResult:
     return TargetResult(t, (mean,) * 10, summary, (0.0,) * 10, passed, True)
 
 
-def row(staff, u, results, compliance=(math.nan,) * 5) -> SensitivityRow:
-    """Una fila a mano, con dos réplicas que dan el cumplimiento indicado."""
-    reps = tuple(ReplicaValues(MappingProxyType({}), 100, 0, compliance) for _ in range(2))
+def row(staff, u, results, *replicas) -> SensitivityRow:
+    """Una fila a mano; cada réplica, (días fuera, días medidos) por nivel 1 a 5. Sin
+    réplicas, dos sin días fuera y con 12 días medidos en cada nivel."""
+    replicas = replicas or (((0,) * 5, (12,) * 5),) * 2
+    reps = tuple(ReplicaValues(MappingProxyType({}), 100, 0, out, days) for out, days in replicas)
     return SensitivityRow(RuleStaffing(staff, u, u), None, tuple(results), reps)
+
+
+def level4(out_by_replica, days_by_replica):
+    """Réplicas con días fuera solo en el nivel 4; los niveles 2, 3 y 5, 12 días sin fallos."""
+    return tuple(
+        ((0, 0, 0, out, 0), (12, 12, 12, days, 12))
+        for out, days in zip(out_by_replica, days_by_replica, strict=True)
+    )
 
 
 # --- Elección -----------------------------------------------------------------------------
@@ -106,17 +122,162 @@ def test_empate_la_de_menos_personal():
     assert choose_staffing(rows, NURSES).staffing.staff == (3, 3, 1)
 
 
-def test_el_cumplidor_es_el_de_u_mas_alto_con_todos_los_niveles_al_10_por_ciento():
-    # Nivel 1 sin porcentaje (no cuenta); la de u 0,95 tiene el nivel 2 al 30 %.
-    nan = math.nan
+# --- Veto de la semilla de comprobación (decisión 41, revisada en la tarea 4.6c) ------------
+
+
+def nurse_rows():
+    """La sensibilidad de la enfermería con la semilla de ajuste, como en la 4.6c: [3, 3, 1]
+    no pasa, y entre las que pasan [2, 2, 1] (a 0,8 de 12,4) gana a [3, 2, 1] (a 5,6)."""
+    return [
+        row((3, 3, 1), 0.65, [result(PRETRIAGE, 3.5, passed=False)]),
+        row((3, 2, 1), 0.80, [result(PRETRIAGE, 6.8)]),
+        row((2, 2, 1), 0.85, [result(PRETRIAGE, 13.2)]),
+    ]
+
+
+def checker(by_staff, calls):
+    """La comprobación a mano: la misma plantilla con otra semilla, sacada de ``by_staff``;
+    apunta en ``calls`` cada plantilla por la que se pregunta."""
+
+    def check(r: SensitivityRow) -> SensitivityRow:
+        calls.append(r.staffing.staff)
+        return by_staff[r.staffing.staff]
+
+    return check
+
+
+def test_la_comprobacion_veta_y_se_elige_la_siguiente():
+    # Con la semilla de comprobación, [2, 2, 1] no pasa (15,2) y [3, 2, 1] sí (7,9): se
+    # descarta [2, 2, 1] y se toma la siguiente de la regla. [3, 3, 1] pasaría la
+    # comprobación, pero no pasa el ajuste: la comprobación veta, no elige.
+    rows = nurse_rows()
+    assert choose_staffing(rows, NURSES).staffing.staff == (2, 2, 1)  # sin veto
+    checked = {
+        (3, 3, 1): row((3, 3, 1), 0.65, [result(PRETRIAGE, 12.4)]),
+        (3, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)]),
+        (2, 2, 1): row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)]),
+    }
+    calls = []
+    chosen = choose_staffing(rows, NURSES, check=checker(checked, calls))
+    assert chosen is rows[1]
+    assert calls == [(2, 2, 1), (3, 2, 1)]
+
+
+def test_sin_veto_la_comprobacion_no_cambia_la_eleccion():
+    rows = nurse_rows()
+    checked = {staff: row(staff, 0.8, [result(PRETRIAGE, 9.0)]) for staff in [(2, 2, 1)]}
+    calls = []
+    assert choose_staffing(rows, NURSES, check=checker(checked, calls)) is rows[2]
+    assert calls == [(2, 2, 1)]  # la comprobación se pide solo hasta que una pasa
+
+
+def test_si_ninguna_pasa_con_las_dos_semillas_no_se_elige():
+    rows = nurse_rows()
+    checked = {
+        (3, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 5.1, passed=False)]),
+        (2, 2, 1): row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)]),
+    }
+    calls = []
+    assert choose_staffing(rows, NURSES, check=checker(checked, calls)) is None
+    assert calls == [(2, 2, 1), (3, 2, 1)]
+
+
+def test_el_veto_de_los_medicos_mira_sus_objetivos_de_ajuste():
+    # La de 54,5 gana con el ajuste; con la comprobación su reloj A no pasa y se toma la de
+    # 43,8. El nivel 3 de la comprobación no pasa en ninguna y no veta: no es de ajuste.
     rows = [
-        row((14, 13, 5), 0.70, [], (1.0, 0.0, 0.0, 0.0, 0.0)),
-        row((12, 12, 5), 0.80, [], (1.0, 0.10, 0.0, 0.05, 0.0)),
-        row((11, 10, 4), 0.90, [], (1.0, 0.12, 0.0, 0.0, 0.0)),
-        row((10, 10, 4), 0.95, [], (1.0, 0.30, nan, 0.0, 0.0)),
+        row((12, 12, 5), 0.80, [result(CLOCK_A, 43.8), result(LEVEL_3, 22.0)]),
+        row((12, 11, 5), 0.85, [result(CLOCK_A, 54.5), result(LEVEL_3, 22.9)]),
+    ]
+    checked = {
+        (12, 12, 5): row((12, 12, 5), 0.80, [result(CLOCK_A, 45.0), result(LEVEL_3, 23.0, False)]),
+        (12, 11, 5): row((12, 11, 5), 0.85, [result(CLOCK_A, 71.0, False), result(LEVEL_3, 24.0)]),
+    }
+    chosen = choose_staffing(rows, DOCTORS, check=checker(checked, []))
+    assert chosen.staffing.staff == (12, 12, 5)
+
+
+def test_la_comprobacion_impresa_dice_vetada_y_elegida():
+    vetoed = row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)])
+    chosen = row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)])
+    text = format_check(NURSES, 2027, [vetoed, chosen]).splitlines()
+    assert text[0].startswith("Comprobación con la semilla 2027")
+    assert text[1].startswith("  [2, 2, 1]")
+    assert text[1].endswith("pretriaje_medio 15.20 [14.50, 15.90] FALLA → vetada")
+    assert text[2].endswith("pretriaje_medio 7.90 [7.20, 8.60] pasa → elegida")
+    assert "no hay nada que comprobar" in format_check(NURSES, 2027, [])
+
+
+def test_tres_semillas_distintas():
+    # La de ajuste elige, la de comprobación puede vetar y, después de un veto, la de
+    # confirmación es la comprobación independiente.
+    assert (FIT_SEED, CHECK_SEED, CONFIRMATION_SEED) == (2026, 2027, 2028)
+
+
+def test_la_comprobacion_tiene_que_ser_de_la_misma_plantilla():
+    rows = nurse_rows()
+    wrong = {(2, 2, 1): row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)])}
+    with pytest.raises(ValueError, match="the check of \\(2, 2, 1\\) is of \\(3, 2, 1\\)"):
+        choose_staffing(rows, NURSES, check=checker(wrong, []))
+
+
+def test_el_cumplidor_es_el_de_u_mas_alto_con_todos_los_niveles_al_10_por_ciento():
+    # Dos réplicas de 10 días medidos (20 en total). El nivel 1 no cuenta. La de u 0,80
+    # tiene el nivel 2 con 2 de 20 (justo el 10 %) y el 4 con 1 de 20; la de 0,90, el
+    # nivel 2 con 3 de 20; la de 0,95, sin pacientes de nivel 3 (0 días medidos).
+    def rep(out, days=(10,) * 5):
+        return out, days
+
+    rows = [
+        row((14, 13, 5), 0.70, [], rep((10, 0, 0, 0, 0)), rep((10, 0, 0, 0, 0))),
+        row((12, 12, 5), 0.80, [], rep((10, 1, 0, 1, 0)), rep((10, 1, 0, 0, 0))),
+        row((11, 10, 4), 0.90, [], rep((10, 2, 0, 0, 0)), rep((10, 1, 0, 0, 0))),
+        row(
+            (10, 10, 4),
+            0.95,
+            [],
+            rep((10, 0, 0, 0, 0), (10, 10, 0, 10, 10)),
+            rep((10,) + (0,) * 4, (10, 10, 0, 10, 10)),
+        ),
     ]
     assert compliant_staffing(rows).staffing.staff == (12, 12, 5)
     assert compliant_staffing(rows[2:]) is None
+    assert rows[1].compliance_days[1] == (2, 20) and rows[1].compliance_days[3] == (1, 20)
+
+
+def test_el_cumplidor_en_el_borde_con_dias_enteros():
+    # 10 réplicas × 12 días = 120 días medidos en el nivel 4: con 12 fuera (justo el
+    # 10 %) pasa; con 13, no.
+    days = [12] * 10
+    border = row((12, 12, 5), 0.80, [], *level4([2, 2, 1, 1, 1, 1, 1, 1, 1, 1], days))
+    over = row((12, 12, 5), 0.80, [], *level4([2, 2, 2, 1, 1, 1, 1, 1, 1, 1], days))
+    assert border.compliance_days[3] == (12, 120) and over.compliance_days[3] == (13, 120)
+    assert compliant_staffing([border]) is border
+    assert compliant_staffing([over]) is None
+    assert complies(border.compliance_days) and not complies(over.compliance_days)
+
+
+def test_el_cumplidor_suma_los_dias_y_no_promedia_las_proporciones():
+    # 12 réplicas con 120 días medidos en el nivel 4: ocho de 12 días y cuatro de 6 (días
+    # sin pacientes de nivel 4), y los 12 días fuera en las de 6. Sumados, 12 de 120: justo
+    # el 10 %, pasa. La media de las proporciones por réplica sería 4 · 0,5 / 12 = 0,167.
+    out = [0] * 8 + [3] * 4
+    days = [12] * 8 + [6] * 4
+    r = row((12, 12, 5), 0.80, [], *level4(out, days))
+    assert r.compliance_days[3] == (12, 120)
+    assert r.compliance_out[3] > COMPLIANCE_SHARE_OUT  # el caso ocurre: la media pasa de 0,10
+    assert r.compliance_out[3] == pytest.approx(1 / 6)
+    assert compliant_staffing([r]) is r
+
+
+def test_el_cumplidor_exige_dias_medidos_en_cada_nivel():
+    r = row((12, 12, 5), 0.80, [], *level4([0, 0], [0, 0]))
+    assert r.compliance_days[3] == (0, 0)
+    assert compliant_staffing([r]) is None
+
+
+def test_el_limite_del_cumplidor_es_una_fraccion_exacta():
+    assert COMPLIANCE_SHARE_OUT == Fraction(1, 10)
 
 
 def test_objetivos_de_cada_mando():

@@ -1,23 +1,31 @@
 # Centro base para el motor. Ver docs/specs/hito-3.md y docs/specs/hito-4.md («Calibración»).
-# La plantilla (enfermería de triaje y médicos) está calibrada en la tarea 4.6b; el resto
-# de valores siguen siendo los provisionales del hito 3.
+# La plantilla (enfermería de triaje y médicos) está calibrada en la tarea 4.6c con la
+# ventana anual; el resto de valores siguen siendo los provisionales del hito 3.
 
 [turnos]
 # Hora de inicio de los turnos de mañana, tarde y noche
 inicio = [8, 15, 22]
 
 [recursos]
-# Plantilla por turno: mañana, tarde, noche. Calibrada en la tarea 4.6b con la regla de
-# la plantilla equivalente, ⌈carga del turno / u⌉, un u por mando (registro en
-# docs/calibracion/registro.md; antes, [3, 3, 2] y [12, 12, 7]):
-# - enfermería de triaje, contra el pretriaje medio (6-15 min): u de 0,795 a 0,8325;
-#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje
+# Plantilla por turno: mañana, tarde, noche. Calibrada en la tarea 4.6c con la regla de
+# la plantilla equivalente, ⌈carga del turno / u⌉, un u por mando, y la ventana anual:
+# 12 réplicas de 14 días, la m desde el primer lunes del mes m+1, semilla 2026 (registro
+# en docs/calibracion/registro.md; antes, [3, 2, 1] y [12, 11, 5] en la tarea 4.6b, con
+# la quincena de enero, y [3, 3, 2] y [12, 12, 7] en el hito 3):
+# - enfermería de triaje, contra el pretriaje medio (6-15 min): la regla eligió
+#   [2, 2, 1] (13,21 min, la más cercana a 12,4), pero la semilla 2027 la vetó (15,16:
+#   fuera de la horquilla) y se tomó la siguiente, [3, 2, 1] (6,78 con 2026 y 7,86 con
+#   2027): u de 0,795 a 0,8325 (decisión 41, revisada en la tarea 4.6c);
+#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje --comprobacion 2027
 # - médicos, con esa enfermería, contra el reloj A de los niveles 2 a 5 (35-70 min):
-#   u de 0,81 a 0,8475;
-#   uv run edsim calibracion sensibilidad --mando medicos
-# Comprobación con otra semilla: uv run edsim calibracion evaluar --semilla 2027
+#   [12, 11, 4], la única que pasa (42,10 min), con u de 0,85; con 2027, 43,29, pasa;
+#   uv run edsim calibracion sensibilidad --mando medicos --comprobacion 2027
+# Comprobación independiente, después del veto de 2027 (pretriaje 7,76 y reloj A 41,20):
+#   uv run edsim calibracion evaluar --semilla 2028
+# Es una plantilla para todo el año: enero queda cerca de la saturación (reloj A de
+# 105 min con 2026) y el refuerzo de invierno queda para versiones posteriores.
 enfermeria_triaje = [3, 2, 1]
-medicos = [12, 11, 5]
+medicos = [12, 11, 4]
 # Capacidad física, igual en todos los turnos
 boxes = 30
 # Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan

@@ -5,8 +5,10 @@ Simulating and evaluating are separate (docs/specs/hito-4.md, "Calibración"):
 - **Simulate.** ``simulate_replicas`` runs R replications with common random
   numbers: child ``i`` of the seed (``child_streams``) is replication ``i`` for
   every candidate, so two staffings see the same patients and their difference
-  is not noise. Each replication is reduced to a ``ReplicaValues`` at once and
-  its events are dropped.
+  is not noise. Each replication may start on its own date (the annual window
+  of ``calibration.window``: one per month); the same date for every candidate.
+  Each replication is reduced to a ``ReplicaValues`` at once and its events are
+  dropped.
 - **Evaluate.** ``replica_values`` (one replication) and ``summarize_targets``
   (all of them) are pure functions of the episodes.
 
@@ -20,12 +22,29 @@ of the horizon are counted as censored, per replication.
 
 **Rule 4 of the calibration.** A target passes if the mean between
 replications falls inside its band and the width of its 95 % confidence
-interval (Student's t) is not larger than the width of the band.
+interval (Student's t) is not larger than the width of the band. With the
+annual window the spread between replications includes the variation between
+months, so the interval is conservative. ``pooled_value``, the mean per patient
+of all the replications (the yearly mean, which weighs each month by its
+arrivals), is reported but never chooses.
 
 **Days out.** Each replication gives the value of the target on each day of
 the window (with the patients who arrived that day); a day is out if that
 value is outside the band. The share of days out is the mean between
 replications of each replication's share.
+
+**The check seed may veto, never choose** (decision 41, revised in task 4.6c).
+``choose_staffing`` takes the staffings that pass the fit targets with the fit
+seed in the order of the choice; with ``check`` it skips each one whose fit
+targets fail with the check seed, and chooses the first that passes with both.
+Once the check seed has vetoed, the independent check of the staffing chosen is
+``CONFIRMATION_SEED``.
+
+**The compliant center** is decided with whole days (task 4.6c): the days out
+of Manchester with clock C summed over the replications against the days with
+patients summed over them, ``out ≤ share · days`` with an exact fraction. It is
+not the mean of each replication's share when the replications have different
+days with patients of a level, and it does not depend on rounding.
 """
 
 from __future__ import annotations
@@ -34,6 +53,8 @@ import dataclasses
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
+from fractions import Fraction
 from types import MappingProxyType
 
 import numpy as np
@@ -52,6 +73,7 @@ from edsim.calibration.staffing import (
     rule_staffings,
 )
 from edsim.calibration.targets import FIT, Target
+from edsim.calibration.window import with_start_date
 from edsim.checks import check_count
 from edsim.engine.analysis import EpisodeRecord, completed_in_window, episode_table
 from edsim.engine.center import N_LEVELS, CenterConfig
@@ -69,7 +91,12 @@ FIT_SEED = 2026
 """Seed of the fit (rule 3: different seeds to fit and to check)."""
 
 CHECK_SEED = 2027
-"""Seed of the check of the fitted staffing; never used to choose it."""
+"""Seed of the check of the fitted staffing: it may veto the choice, never make it
+(decision 41, revised in task 4.6c; ``choose_staffing`` with ``check``)."""
+
+CONFIRMATION_SEED = 2028
+"""Seed of the independent check once the check seed has taken part in the choice
+(task 4.6c: it vetoed the nurses chosen with the fit seed)."""
 
 CONFIDENCE = 0.95
 """Confidence of the interval of rule 4."""
@@ -77,8 +104,10 @@ CONFIDENCE = 0.95
 CENSORED_WARNING = 0.001
 """Share of censored patients of a replication above which the CLI warns."""
 
-COMPLIANCE_SHARE_OUT = 0.10
-"""Largest mean share of days out of Manchester (clock C) of the compliant center."""
+COMPLIANCE_SHARE_OUT = Fraction(1, 10)
+"""Largest share of days out of Manchester (clock C) of the compliant center: the
+days out summed over the replications over the days with patients summed over
+them, compared exactly."""
 
 COMPLIANCE_LEVELS = (2, 3, 4, 5)
 """Levels whose compliance the compliant center needs; level 1 has no share."""
@@ -115,20 +144,30 @@ class ReplicaValues:
         targets: The values of each target, by its name.
         arrivals: Episodes that arrived in the window.
         censored: Of them, those without a departure at the end of the horizon.
-        compliance_out: Share of the days of the window out of the Manchester
-            compliance with clock C, per level 1 to 5; ``nan`` for a level
-            without patients.
+        compliance_days_out: Days of the window out of the Manchester
+            compliance with clock C, per level 1 to 5.
+        compliance_days: Days of the window with patients of each level 1 to 5.
     """
 
     targets: Mapping[str, TargetValues]
     arrivals: int
     censored: int
-    compliance_out: tuple[float, ...]
+    compliance_days_out: tuple[int, ...]
+    compliance_days: tuple[int, ...]
 
     @property
     def censored_share(self) -> float:
         """Censored over the arrivals of the window; 0 without arrivals."""
         return self.censored / self.arrivals if self.arrivals else 0.0
+
+    @property
+    def compliance_out(self) -> tuple[float, ...]:
+        """Share of the days with patients out of Manchester (clock C), per level 1
+        to 5; ``nan`` for a level without patients."""
+        return tuple(
+            out / days if days else math.nan
+            for out, days in zip(self.compliance_days_out, self.compliance_days, strict=True)
+        )
 
 
 def _statistic(target: Target, episodes: Sequence[EpisodeRecord]) -> float:
@@ -205,7 +244,8 @@ def replica_values(
         ),
         arrivals=len(arrived),
         censored=sum(e.departure is None for e in arrived),
-        compliance_out=tuple(float(x) for x in compliance.share_out),
+        compliance_days_out=tuple(int(x) for x in compliance.out.sum(axis=0)),
+        compliance_days=tuple(int(x) for x in compliance.days_with_patients),
     )
 
 
@@ -293,6 +333,28 @@ def summarize_targets(
     return tuple(out)
 
 
+def pooled_value(replicas: Sequence[ReplicaValues], target: Target) -> float:
+    """The statistic of ``target`` over the patients of all the replications: a pure function.
+
+    The weight of each replication is the number of patients its value is
+    computed on: those of the window that departed, of the levels of the target
+    (``n_by_level``). A mean is Σ value · (n / N); a percentage counts the
+    patients above the threshold of all of them, 100 · (Σ over / N), as each
+    replication does. With one replication it is its value, bit for bit. With
+    the annual window it is the mean of the year, which weighs each month by
+    its patients, while rule 4 uses the mean of the replications. ``nan``
+    without patients.
+    """
+    values = [r.targets[target.name] for r in replicas]
+    counts = [sum(v.n_by_level) for v in values]
+    total = sum(counts)
+    if not total:
+        return math.nan
+    if target.is_percentage:
+        return 100 * (sum(sum(v.over_by_level) for v in values) / total)
+    return sum(v.value * (n / total) for v, n in zip(values, counts, strict=True) if n)
+
+
 def evaluate_targets(
     tables: Sequence[Sequence[EpisodeRecord]],
     targets: Sequence[Target],
@@ -355,6 +417,18 @@ def mean_compliance_out(replicas: Sequence[ReplicaValues]) -> tuple[float, ...]:
     return tuple(float(np.mean([r.compliance_out[k] for r in replicas])) for k in range(N_LEVELS))
 
 
+def compliance_days(replicas: Sequence[ReplicaValues]) -> tuple[tuple[int, int], ...]:
+    """Days out of Manchester (clock C) and days with patients, each summed over the
+    replications, per level 1 to 5."""
+    return tuple(
+        (
+            sum(r.compliance_days_out[k] for r in replicas),
+            sum(r.compliance_days[k] for r in replicas),
+        )
+        for k in range(N_LEVELS)
+    )
+
+
 # --- Simulating -----------------------------------------------------------------------------
 
 Run = Callable[[int], Sequence[Event]]
@@ -410,6 +484,7 @@ def simulate_replicas(
     days: int,
     warmup_days: int,
     seed: int | np.random.SeedSequence,
+    start_dates: Sequence[date] | None = None,
 ) -> tuple[ReplicaValues, ...]:
     """Simulate ``replicas`` replications and reduce each one at once.
 
@@ -417,14 +492,32 @@ def simulate_replicas(
     patients for every center, the common random numbers that make the
     comparison of two staffings paired.
 
+    Args:
+        start_dates: The date on which each replication starts, such as the
+            annual window (``calibration.window``): replication ``i`` uses
+            ``arrival_profile`` with ``start_date = start_dates[i]`` and its
+            factors bit for bit (``with_start_date``), and so the
+            monthly factor, the weekdays and the clinical context of that date.
+            ``None`` starts all of them on the profile's ``start_date``.
+
     Raises:
-        ValueError: If ``replicas`` is below 2 or the days are not valid.
+        ValueError: If ``replicas`` is below 2, the days are not valid or there
+            is not one start date per replication.
     """
     replicas = check_count("replicas", replicas, 2)
     days, warmup_days = check_horizon(days, warmup_days)
+    if start_dates is None:
+        profiles_by_replica = [arrival_profile] * replicas
+    else:
+        start_dates = tuple(start_dates)
+        if len(start_dates) != replicas:
+            raise ValueError(
+                f"need one start date per replica: {replicas} replicas and {len(start_dates)} dates"
+            )
+        profiles_by_replica = [with_start_date(arrival_profile, d) for d in start_dates]
     out = []
-    for child in child_streams(seed, replicas):
-        run = clinical_run(center, arrival_profile, profiles, child, warmup_days)
+    for child, profile in zip(child_streams(seed, replicas), profiles_by_replica, strict=True):
+        run = clinical_run(center, profile, profiles, child, warmup_days)
         out.append(
             replica_values(replica_table(run, days, warmup_days), targets, warmup_days, days)
         )
@@ -500,7 +593,13 @@ class SensitivityRow:
 
     @property
     def compliance_out(self) -> tuple[float, ...]:
+        """Mean between replications of the share of days out of Manchester (C), by level."""
         return mean_compliance_out(self.replicas)
+
+    @property
+    def compliance_days(self) -> tuple[tuple[int, int], ...]:
+        """Days out of Manchester (C) and days with patients, summed, by level."""
+        return compliance_days(self.replicas)
 
     @property
     def max_censored_share(self) -> float:
@@ -519,12 +618,14 @@ def evaluate_staffings(
     days: int,
     warmup_days: int,
     seed: int | np.random.SeedSequence,
+    start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
     """Evaluate the given staffings of ``knob``, in their order, the other knob fixed.
 
-    Each one is simulated with the same replications (the same seed), so the
-    rows differ only in the staff. ``sensitivity`` gives it every staffing of
+    Each one is simulated with the same replications (the same seed and the
+    same ``start_dates``, as in ``simulate_replicas``), so the rows differ only
+    in the staff. ``sensitivity`` gives it every staffing of
     the rule; a subset, such as the staffings around the chosen one, costs
     less.
 
@@ -550,6 +651,7 @@ def evaluate_staffings(
             days=days,
             warmup_days=warmup_days,
             seed=seed,
+            start_dates=start_dates,
         )
         row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
         rows.append(row)
@@ -572,14 +674,16 @@ def sensitivity(
     u_min: float = U_MIN,
     u_max: float = U_MAX,
     step: float = U_STEP,
+    start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
     """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
 
     The staffings come from ``rule_staffings`` with the loads of the knob and
     the shifts of ``center``, and ``evaluate_staffings`` simulates each one
-    with the same replications (the same seed), so the rows differ only in
-    the staff.
+    with the same replications (the same seed and ``start_dates``), so the
+    rows differ only in the staff. The loads are those of the mean day of the
+    profile, which do not depend on its ``start_date``.
 
     Args:
         on_row: Called with each row as soon as it is evaluated, such as a
@@ -597,43 +701,100 @@ def sensitivity(
         days=days,
         warmup_days=warmup_days,
         seed=seed,
+        start_dates=start_dates,
         on_row=on_row,
     )
 
 
-def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow | None:
-    """Among the rows that pass every fit target of ``knob``, the one whose mean
-    of the choosing target is closest to its aim (``Target.aim``: the reference,
-    or the centre of the band without one); on a tie, the smaller staff. ``None``
-    if none passes: the choice is never forced.
+def passes_fit(row: SensitivityRow, knob: str) -> bool:
+    """Whether ``row`` passes every fit target of ``knob`` (rule 4)."""
+    if knob not in KNOBS:
+        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    names, _ = KNOB_TARGETS[knob]
+    return all(row.result(name).passed for name in names)
+
+
+def choice_order(rows: Sequence[SensitivityRow], knob: str) -> tuple[SensitivityRow, ...]:
+    """The rows that pass every fit target of ``knob``, in the order of the choice:
+    the mean of the choosing target closest to its aim (``Target.aim``: the
+    reference, or the centre of the band without one) first; on a tie, the smaller
+    staff first.
     """
     if knob not in KNOBS:
         raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    names, chooser = KNOB_TARGETS[knob]
-    passing = [row for row in rows if all(row.result(name).passed for name in names)]
-    if not passing:
-        return None
+    _, chooser = KNOB_TARGETS[knob]
 
     def distance(row: SensitivityRow) -> tuple[float, int]:
         r = row.result(chooser)
         return abs(r.mean - r.target.aim), sum(row.staffing.staff)
 
-    return min(passing, key=distance)
+    return tuple(sorted((row for row in rows if passes_fit(row, knob)), key=distance))
+
+
+def choose_staffing(
+    rows: Sequence[SensitivityRow],
+    knob: str,
+    *,
+    check: Callable[[SensitivityRow], SensitivityRow] | None = None,
+) -> SensitivityRow | None:
+    """Among the rows that pass every fit target of ``knob``, the one whose mean
+    of the choosing target is closest to its aim (``choice_order``). ``None`` if
+    none passes: the choice is never forced.
+
+    With ``check``, the check seed may veto (decision 41, revised in task 4.6c):
+    the candidates are taken in the order of the choice, and the first whose
+    check also passes every fit target is chosen. The check never chooses: a row
+    that fails with the fit seed is not a candidate, whatever its check.
+
+    Args:
+        rows: The staffings evaluated with the fit seed.
+        check: The same staffing as the given row evaluated with the check seed,
+            such as ``evaluate_staffings`` with ``CHECK_SEED``. It is called only
+            until a candidate passes, in the order of the choice.
+
+    Raises:
+        ValueError: If ``knob`` is unknown, or ``check`` returns another staff.
+    """
+    for row in choice_order(rows, knob):
+        if check is None:
+            return row
+        checked = check(row)
+        if checked.staffing.staff != row.staffing.staff:
+            raise ValueError(f"the check of {row.staffing.staff} is of {checked.staffing.staff}")
+        if passes_fit(checked, knob):
+            return row
+    return None
+
+
+def complies(
+    days: Sequence[tuple[int, int]],
+    levels: Sequence[int] = COMPLIANCE_LEVELS,
+    max_share_out: Fraction = COMPLIANCE_SHARE_OUT,
+) -> bool:
+    """Whether each level has days with patients and at most ``max_share_out`` of
+    them out: ``out ≤ max_share_out · days``, with whole days and an exact fraction.
+
+    Args:
+        days: Days out and days with patients of each level 1 to 5, such as
+            ``compliance_days`` of some replications.
+    """
+    share = Fraction(max_share_out)
+    return all(
+        days[level - 1][1] > 0 and days[level - 1][0] <= share * days[level - 1][1]
+        for level in levels
+    )
 
 
 def compliant_staffing(
     rows: Sequence[SensitivityRow],
     *,
     levels: Sequence[int] = COMPLIANCE_LEVELS,
-    max_share_out: float = COMPLIANCE_SHARE_OUT,
+    max_share_out: Fraction = COMPLIANCE_SHARE_OUT,
 ) -> SensitivityRow | None:
-    """The row of highest u (the smallest staff) whose levels all have, on mean
-    between replications, at most ``max_share_out`` of days out of Manchester
-    with clock C. ``None`` if none.
+    """The row of highest u (the smallest staff) whose levels all have at most
+    ``max_share_out`` of days out of Manchester with clock C: the days out summed
+    over the replications against the days with patients summed over them
+    (``complies``). ``None`` if none.
     """
-    passing = [
-        row
-        for row in rows
-        if all(row.compliance_out[level - 1] <= max_share_out for level in levels)
-    ]
+    passing = [row for row in rows if complies(row.compliance_days, levels, max_share_out)]
     return max(passing, key=lambda row: row.staffing.u_high, default=None)

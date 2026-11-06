@@ -6,7 +6,9 @@
 - ``evaluate``: replications with common random numbers, the comparison of
   each target with its band, the days out of it, the sensitivity of a knob
   and the choice of a staffing;
-- ``report``: the tables and CSV files of ``edsim calibracion``.
+- ``window``: the window of the calibration, one replication per month (task
+  4.6c) or all from ``fecha_inicio`` (task 4.6b);
+- ``report``: the tables and CSV files of ``edsim calibracion``;
 - ``sas``: other figures of the SAS (the triage mix and the time to the doctor
   by level), with the conversion of the counts to adults.
 

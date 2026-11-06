@@ -1,11 +1,19 @@
 """CLI de la calibración: calibracion evaluar y calibracion sensibilidad (tarea 4.6b)."""
 
 import csv
+import dataclasses
 from pathlib import Path
 
 import pytest
 
+from edsim.arrivals.profile import load_profile
+from edsim.calibration import evaluate
+from edsim.calibration.evaluate import pooled_value, simulate_replicas, summarize_targets
+from edsim.calibration.targets import load_targets
+from edsim.calibration.window import first_mondays
 from edsim.cli import main
+from edsim.engine.center import load_center
+from edsim.profiles.config import load_profiles
 
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "tests" / "data"
@@ -17,7 +25,11 @@ EXAMPLE = [
     "--perfiles",
     str(DATA / "perfiles_ejemplo.toml"),
 ]
-SHORT = ["--replicas", "2", "--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+# La ventana de la 4.6b con 2 réplicas; la anual siempre tiene 12.
+SHORT = ["--ventana", "inicio", "--replicas", "2", "--dias", "2", "--calentamiento", "1"]
+SHORT += ["--semilla", "7"]
+ANNUAL_SHORT = ["--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+MONDAYS_2026 = [d.isoformat() for d in first_mondays(2026)]
 
 
 def targets_file(path: Path, *, pretriage_band="[0, 100]", check_band="[0, 100]") -> Path:
@@ -80,7 +92,10 @@ def test_evaluar_codigo_0_tabla_y_ficheros(tmp_path, capsys):
 
     # La comprobación falla, pero solo se informa: el código sigue siendo 0.
     assert code == 0
-    assert "2 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · semilla 7" in out
+    assert (
+        "2 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · ventana inicio (todas"
+        " desde 2026-01-05) · semilla 7" in out
+    )
     assert "Resultado: todos los objetivos de ajuste pasan" in out
     assert (
         "Comprobación (se informa, no cambia el resultado): fallan porcentaje_sobre_manchester"
@@ -135,7 +150,10 @@ def test_evaluar_codigo_1_si_falla_un_objetivo_de_ajuste(tmp_path, capsys):
         (["--objetivos", "{bad}"], "objetivos.x.uso"),
         (["--perfiles", "no-existe.toml"], "--perfiles no-existe.toml"),
         (["--centro", "no-existe.toml"], "--centro no-existe.toml"),
-        (["--replicas", "1"], "replicas must be an integer >= 2"),
+        (["--ventana", "inicio", "--replicas", "1"], "replicas must be an integer >= 2"),
+        (["--replicas", "10"], "la ventana anual tiene 12 réplicas, una por mes"),
+        (["--ventana", "anual", "--replicas", "2"], "la ventana anual tiene 12 réplicas"),
+        (["--ventana", "mensual"], "invalid choice: 'mensual'"),
         (["--dias", "2", "--calentamiento", "2"], "warmup_days"),
     ],
 )
@@ -191,6 +209,10 @@ def test_salida_que_es_un_fichero(command, tmp_path, capsys, monkeypatch):
             ["--mando", "medicos", "--objetivos", "{incomplete}"],
             "objetivos.tiempo_medico_niveles_2_5",
         ),
+        (
+            ["--mando", "medicos", "--comprobacion", "2026"],
+            "la semilla de comprobación (2026) tiene que ser distinta de la de ajuste (2026)",
+        ),
     ],
 )
 def test_sensibilidad_errores_de_uso(extra, message, tmp_path, capsys, monkeypatch):
@@ -224,6 +246,10 @@ def test_sensibilidad_de_la_enfermeria_elige_y_escribe_el_csv(tmp_path, capsys):
     assert code == 0
     assert "Sensibilidad del mando enfermeria_triaje con u de 0.6 a 0.9" in out
     assert "Elección (entre las que pasan pretriaje_medio" in out
+    assert (
+        "con la semilla de ajuste; la de comprobación puede vetarla (--comprobacion, decisión 41)"
+        in out
+    )
     assert "Cumplidor" not in out
     rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
     staffings = {(r["manana"], r["tarde"], r["noche"]) for r in rows}
@@ -254,3 +280,257 @@ def test_sensibilidad_codigo_1_si_ninguna_pasa(tmp_path, capsys):
     assert "Elección: ninguna plantilla de la regla pasa" in out
     assert "Cumplidor" in out
     assert (out_dir / "sensibilidad_medicos.csv").is_file()
+
+
+# --- La ventana (tarea 4.6c) -----------------------------------------------------------------
+
+
+def example_inputs(targets_path):
+    return (
+        load_center(DATA / "centro_sala_ejemplo.toml"),
+        load_profile(DATA / "llegadas_ejemplo.toml"),
+        load_profiles(DATA / "perfiles_ejemplo.toml"),
+        load_targets(targets_path),
+    )
+
+
+class Simulated(Exception):
+    """Para la CLI en cuanto pide simular, con los argumentos que le pasa."""
+
+
+@pytest.mark.parametrize(
+    ("extra", "replicas", "dates"),
+    [
+        ([], 12, tuple(first_mondays(2026))),
+        (["--replicas", "12"], 12, tuple(first_mondays(2026))),
+        (["--ventana", "anual", "--replicas", "12"], 12, tuple(first_mondays(2026))),
+        (["--ventana", "inicio"], 10, None),
+        (["--ventana", "inicio", "--replicas", "4"], 4, None),
+    ],
+)
+@pytest.mark.parametrize("command", [["evaluar"], ["sensibilidad", "--mando", "medicos"]])
+def test_replicas_y_fechas_de_cada_ventana(command, extra, replicas, dates, tmp_path, monkeypatch):
+    def stop(*args, **kwargs):
+        raise Simulated(kwargs["replicas"], kwargs["start_dates"])
+
+    monkeypatch.chdir(REPO)
+    monkeypatch.setattr("edsim.cli.simulate_replicas", stop)
+    monkeypatch.setattr("edsim.cli.sensitivity", stop)
+    with pytest.raises(Simulated) as info:
+        main(["calibracion", *command, *extra, "--salida", str(tmp_path / "salida")])
+    assert info.value.args == (replicas, dates)
+
+
+def test_evaluar_con_la_ventana_anual_una_replica_por_mes(tmp_path, capsys):
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "evaluar", *EXAMPLE, "--objetivos", str(targets), *ANNUAL_SHORT]
+        + ["--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (
+        "12 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · ventana anual (una"
+        " réplica por mes, desde el primer lunes de cada mes de 2026) · semilla 7" in out
+    )
+    assert "Por réplica (ventana anual: una por mes" in out
+    assert all(f"{m} {d}" in out for m, d in (("ene", 5), ("jul", 6), ("dic", 7)))
+    assert "Media por paciente de todas las réplicas" in out
+
+    rows = read_rows(out_dir / "evaluacion_replicas.csv")
+    assert len(rows) == 12 * 4
+    assert [r["fecha_inicio"] for r in rows[::4]] == MONDAYS_2026
+    assert len({r["fecha_inicio"] for r in rows}) == 12
+    assert [r["replica"] for r in rows[::4]] == [str(i) for i in range(12)]
+    assert {r["ventana"] for r in rows} == {"anual"} and {r["replicas"] for r in rows} == {"12"}
+
+    # La media por paciente del CSV es pooled_value de las mismas réplicas.
+    inputs = example_inputs(targets)
+    reduced = simulate_replicas(
+        *inputs, replicas=12, days=2, warmup_days=1, seed=7, start_dates=first_mondays(2026)
+    )
+    evaluation = read_rows(out_dir / "evaluacion.csv")
+    assert [float(r["media_por_paciente"]) for r in evaluation] == [
+        pooled_value(reduced, t) for t in inputs[3]
+    ]
+    assert {r["ventana"] for r in evaluation} == {"anual"}
+
+
+def test_evaluar_con_la_ventana_de_inicio_reproduce_la_4_6b(tmp_path, capsys):
+    # Todas desde fecha_inicio y con los mismos valores que simulate_replicas sin fechas
+    # (las 10 réplicas por defecto, en test_replicas_y_fechas_de_cada_ventana).
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "evaluar", *EXAMPLE, "--objetivos", str(targets), "--ventana", "inicio"]
+        + ["--replicas", "3", *ANNUAL_SHORT, "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "3 réplicas de 2 días" in out and "ventana inicio (todas desde 2026-01-05)" in out
+    rows = read_rows(out_dir / "evaluacion_replicas.csv")
+    assert len(rows) == 3 * 4
+    assert {r["fecha_inicio"] for r in rows} == {"2026-01-05"}
+    assert {r["ventana"] for r in rows} == {"inicio"}
+
+    inputs = example_inputs(targets)
+    results = summarize_targets(
+        simulate_replicas(*inputs, replicas=3, days=2, warmup_days=1, seed=7), inputs[3]
+    )
+    evaluation = read_rows(out_dir / "evaluacion.csv")
+    assert [float(r["media"]) for r in evaluation] == [r.mean for r in results]
+
+
+def test_sensibilidad_de_los_medicos_con_la_ventana_anual(tmp_path, capsys):
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "medicos", *EXAMPLE]
+        + ["--objetivos", str(targets), *ANNUAL_SHORT, "--u-min", "0.95", "--u-max", "0.95"]
+        + ["--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "12 réplicas de 2 días" in out and "ventana anual" in out
+    assert "días fuera de Manchester (C) / días medidos, sumados" in out
+    rows = read_rows(out_dir / "sensibilidad_medicos.csv")
+    assert {r["ventana"] for r in rows} == {"anual"} and {r["replicas"] for r in rows} == {"12"}
+    # Un día medido por réplica: 12 días medidos por nivel, sumados en las 12 réplicas.
+    assert {r[f"dias_medidos_c_nivel_{k}"] for r in rows for k in (2, 3, 4)} == {"12"}
+    assert all(0 <= int(r["dias_fuera_c_nivel_4"]) <= 12 for r in rows)
+
+
+# --- El veto de la semilla de comprobación (revisión del PR #50) -----------------------------
+
+NURSE_SHORT = ["--mando", "enfermeria_triaje", "--u-min", "0.6", "--u-max", "0.9"]
+
+
+def check_spy(monkeypatch, verdicts):
+    """Espía de la comprobación: evaluate_staffings real con lo que pide la CLI, y cada
+    candidata pasa o falla según ``verdicts`` en el orden en que se piden (las que faltan,
+    fallan). Devuelve la lista de llamadas: (semilla, plantillas, réplicas, días, fechas)."""
+    calls = []
+
+    def spy(center, profile, profiles, targets, knob, staffings, **kwargs):
+        calls.append(
+            (
+                kwargs["seed"],
+                [s.staff for s in staffings],
+                kwargs["replicas"],
+                kwargs["days"],
+                kwargs["start_dates"],
+            )
+        )
+        rows = evaluate.evaluate_staffings(
+            center, profile, profiles, targets, knob, staffings, **kwargs
+        )
+        passed = verdicts[len(calls) - 1] if len(calls) <= len(verdicts) else False
+        return tuple(
+            dataclasses.replace(
+                row,
+                results=tuple(
+                    dataclasses.replace(r, within=passed, narrow=passed) for r in row.results
+                ),
+            )
+            for row in rows
+        )
+
+    monkeypatch.setattr("edsim.cli.evaluate_staffings", spy)
+    return calls
+
+
+def chosen_in_csv(out_dir):
+    rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
+    return {(r["manana"], r["tarde"], r["noche"]) for r in rows if r["elegida"] == "True"}
+
+
+def test_la_comprobacion_veta_una_candidata_y_elige_la_siguiente(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [False, True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    # Dos llamadas, una plantilla en cada una, con la semilla de comprobación y el resto
+    # de opciones de la de ajuste.
+    assert [(c[0], len(c[1]), c[2], c[3], c[4]) for c in calls] == [(8, 1, 2, 2, None)] * 2
+    vetoed, chosen = calls[0][1][0], calls[1][1][0]
+    assert vetoed != chosen
+    assert "Comprobación con la semilla 8" in out
+    assert f"{list(vetoed)}".replace(" ", "") in out.replace(" ", "")
+    assert "vetada" in out and "elegida" in out
+    assert "Elección (entre las que pasan pretriaje_medio con las semillas 7 y 8" in out
+    assert f"): {list(chosen)} con u" in out
+    assert chosen_in_csv(out_dir) == {tuple(str(x) for x in chosen)}
+
+
+def test_la_comprobacion_se_pide_solo_hasta_la_primera_que_pasa(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert len(calls) == 1
+    assert "vetada" not in out
+    assert chosen_in_csv(out_dir) == {tuple(str(x) for x in calls[0][1][0])}
+
+
+def test_si_ninguna_pasa_con_las_dos_semillas_codigo_1(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+    rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
+    passing = {
+        (r["manana"], r["tarde"], r["noche"])
+        for r in rows
+        if r["objetivo"] == "pretriaje_medio" and r["resultado"] == "pasa"
+    }
+
+    assert code == 1
+    assert len(passing) >= 2  # el caso ocurre: hay más de una candidata que vetar
+    # Se piden todas las que pasan con la de ajuste, y solo esas.
+    assert {tuple(str(x) for x in c[1][0]) for c in calls} == passing
+    assert len(calls) == len(passing)
+    assert "ninguna plantilla de la regla pasa pretriaje_medio con las semillas 7 y 8" in out
+    assert chosen_in_csv(out_dir) == set()
+
+
+def test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "enfermeria_triaje", *EXAMPLE]
+        + ["--objetivos", str(targets), *ANNUAL_SHORT, "--u-min", "0.85", "--u-max", "0.9"]
+        + ["--comprobacion", "8", "--salida", str(tmp_path / "salida")]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    ((seed, _, replicas, days, dates),) = calls
+    assert (seed, replicas, days) == (8, 12, 2)
+    assert [d.isoformat() for d in dates] == MONDAYS_2026

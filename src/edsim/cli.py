@@ -35,15 +35,18 @@ from edsim.arrivals.report import (
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
 from edsim.calibration.evaluate import (
+    DRAIN_DAYS,
     FIT_SEED,
     check_knob_targets,
     choose_staffing,
     compliant_staffing,
+    evaluate_staffings,
     sensitivity,
     simulate_replicas,
     summarize_targets,
 )
 from edsim.calibration.report import (
+    format_check,
     format_choice,
     format_evaluation,
     format_sensitivity_row,
@@ -55,6 +58,15 @@ from edsim.calibration.report import (
 )
 from edsim.calibration.staffing import DOCTORS, KNOBS, U_MAX, U_MIN, U_STEP, u_grid
 from edsim.calibration.targets import FIT, load_targets
+from edsim.calibration.window import (
+    ANNUAL,
+    ANNUAL_REPLICAS,
+    START_REPLICAS,
+    WINDOWS,
+    replica_start_dates,
+    window_replicas,
+    window_start_dates,
+)
 from edsim.checks import check_count
 from edsim.engine.center import load_center
 from edsim.engine.engine import check_horizon, default_run_id
@@ -429,16 +441,28 @@ def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser
 
 
 def _load_calibration(args: argparse.Namespace, parser: argparse.ArgumentParser):
-    """Load the four files and check the counts, or stop with code 2 before simulating."""
+    """Load the four files and check the window and the counts, or stop with code 2
+    before simulating. Sets ``args.replicas`` (the window's default without
+    ``--replicas``) and ``args.fechas``, the start date of each replication."""
     center, args.huella_centro = _load_file(args.centro, "--centro", load_center, parser)
     profile, args.huella_llegadas = _load_file(args.llegadas, "--llegadas", load_profile, parser)
     profiles, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
     targets, args.huella_objetivos = _load_file(args.objetivos, "--objetivos", load_targets, parser)
     try:
+        args.replicas = window_replicas(args.ventana, args.replicas)
+    except ValueError as error:
+        parser.error(
+            f"la ventana anual tiene {ANNUAL_REPLICAS} réplicas, una por mes: quita --replicas"
+            f" o usa --ventana inicio ({error})"
+        )
+    try:
         check_count("replicas", args.replicas, 2)
         check_horizon(args.dias, args.calentamiento)
     except ValueError as error:
         parser.error(str(error))
+    args.fechas = window_start_dates(args.ventana, profile)
+    args.fechas_replicas = replica_start_dates(args.ventana, profile, args.replicas)
+    args.inicio = profile.start_date
     return center, profile, profiles, targets
 
 
@@ -452,11 +476,21 @@ def _calibration_parameters(args: argparse.Namespace) -> dict:
         "huella_perfiles": args.huella_perfiles,
         "objetivos": args.objetivos,
         "huella_objetivos": args.huella_objetivos,
+        "ventana": args.ventana,
         "replicas": args.replicas,
         "dias": args.dias,
         "calentamiento": args.calentamiento,
         "semilla": args.semilla,
     }
+
+
+def _window_text(args: argparse.Namespace) -> str:
+    if args.ventana == ANNUAL:
+        return (
+            f"ventana anual (una réplica por mes, desde el primer lunes de cada mes de"
+            f" {args.inicio.year})"
+        )
+    return f"ventana inicio (todas desde {args.inicio.isoformat()})"
 
 
 def _calibration_header(args: argparse.Namespace) -> str:
@@ -465,7 +499,7 @@ def _calibration_header(args: argparse.Namespace) -> str:
         f"Perfiles {args.perfiles} (huella {args.huella_perfiles})"
         f" · objetivos {args.objetivos} (huella {args.huella_objetivos})\n"
         f"{args.replicas} réplicas de {args.dias} días ({args.calentamiento} de calentamiento"
-        f" y 1 de vaciado) · semilla {args.semilla}"
+        f" y {DRAIN_DAYS} de vaciado) · {_window_text(args)} · semilla {args.semilla}"
     )
 
 
@@ -482,15 +516,16 @@ def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentPar
         days=args.dias,
         warmup_days=args.calentamiento,
         seed=args.semilla,
+        start_dates=args.fechas,
     )
     results = summarize_targets(replicas, targets)
-    print(format_evaluation(results, replicas))
+    print(format_evaluation(results, replicas, args.fechas_replicas, annual=args.ventana == ANNUAL))
 
     # The files are written even if a target fails: they help to find out why.
     out_dir.mkdir(parents=True, exist_ok=True)
     parameters = _calibration_parameters(args)
-    write_evaluation_csv(results, out_dir / EVALUATION_CSV, parameters)
-    write_replicas_csv(results, replicas, out_dir / REPLICAS_CSV, parameters)
+    write_evaluation_csv(results, replicas, out_dir / EVALUATION_CSV, parameters)
+    write_replicas_csv(results, replicas, args.fechas_replicas, out_dir / REPLICAS_CSV, parameters)
     write_levels_csv(results, replicas, out_dir / LEVELS_CSV, parameters)
     print()
     for name in (EVALUATION_CSV, REPLICAS_CSV, LEVELS_CSV):
@@ -506,10 +541,20 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         u_grid(args.u_min, args.u_max, args.paso)
     except ValueError as error:
         parser.error(str(error))
+    if args.comprobacion == args.semilla:
+        parser.error(
+            f"la semilla de comprobación ({args.comprobacion}) tiene que ser distinta de la de"
+            f" ajuste ({args.semilla}) (regla 3)"
+        )
+    check_text = (
+        ""
+        if args.comprobacion is None
+        else f"; comprobación con la semilla {args.comprobacion}, que puede vetar la elección"
+    )
     print(
         f"{_calibration_header(args)}\nSensibilidad del mando {args.mando} con u de"
         f" {args.u_min:g} a {args.u_max:g} en pasos de {args.paso:g}; el otro mando, como en"
-        f" el centro\n\n{sensitivity_header(targets, args.mando)}",
+        f" el centro{check_text}\n\n{sensitivity_header(targets, args.mando)}",
         flush=True,
     )
     rows = sensitivity(
@@ -525,11 +570,39 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         u_min=args.u_min,
         u_max=args.u_max,
         step=args.paso,
+        start_dates=args.fechas,
         on_row=lambda row: print(format_sensitivity_row(row, args.mando), flush=True),
     )
-    chosen = choose_staffing(rows, args.mando)
+    if args.comprobacion is None:
+        chosen = choose_staffing(rows, args.mando)
+        seeds = None
+    else:
+        checked = []
+
+        def check(row):
+            # The same staffing with the check seed, the same window and the rest of the
+            # options; asked only for the candidates the choice needs, in its order.
+            (row_checked,) = evaluate_staffings(
+                center,
+                profile,
+                profiles,
+                targets,
+                args.mando,
+                [row.staffing],
+                replicas=args.replicas,
+                days=args.dias,
+                warmup_days=args.calentamiento,
+                seed=args.comprobacion,
+                start_dates=args.fechas,
+            )
+            checked.append(row_checked)
+            return row_checked
+
+        chosen = choose_staffing(rows, args.mando, check=check)
+        seeds = (args.semilla, args.comprobacion)
+        print(f"\n{format_check(args.mando, args.comprobacion, checked)}")
     compliant = compliant_staffing(rows) if args.mando == DOCTORS else None
-    print(f"\n{format_choice(args.mando, chosen, compliant)}")
+    print(f"\n{format_choice(args.mando, chosen, compliant, seeds=seeds)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / SENSITIVITY_CSV.format(knob=args.mando)
@@ -568,11 +641,20 @@ def _add_calibration_options(parser: argparse.ArgumentParser) -> None:
         help="objetivos de calibración en TOML (por defecto: %(default)s)",
     )
     parser.add_argument(
+        "--ventana",
+        choices=WINDOWS,
+        default=ANNUAL,
+        help="anual: una réplica por mes, la m desde el primer lunes del mes m+1 del año de "
+        "fecha_inicio, de modo que la media es la del año (tarea 4.6c); inicio: todas desde "
+        "fecha_inicio, como en la tarea 4.6b (por defecto: %(default)s)",
+    )
+    parser.add_argument(
         "--replicas",
         type=int,
-        default=10,
+        default=None,
         metavar="R",
-        help="réplicas, cada una con un hijo de la semilla (por defecto: %(default)s)",
+        help=f"réplicas, cada una con un hijo de la semilla: {ANNUAL_REPLICAS} con la ventana "
+        f"anual, la única que admite; {START_REPLICAS} por defecto con la ventana inicio",
     )
     parser.add_argument(
         "--dias",
@@ -594,8 +676,9 @@ def _add_calibration_options(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=FIT_SEED,
         metavar="N",
-        help="semilla maestra: la de ajuste es 2026 y la de comprobación, 2027 (por defecto: "
-        "%(default)s)",
+        help="semilla maestra: la de ajuste es 2026; la de comprobación, 2027, que puede vetar "
+        "la plantilla elegida y no elegirla; y 2028, la comprobación independiente después de "
+        "un veto (por defecto: %(default)s)",
     )
     parser.add_argument(
         "--salida",
@@ -880,9 +963,12 @@ def build_parser() -> argparse.ArgumentParser:
         "evaluar",
         help="compara el centro con los objetivos en varias réplicas",
         description="Simula R réplicas del modelo clínico con números aleatorios comunes (un "
-        "día de vaciado después de la ventana) y compara cada objetivo con su horquilla: "
+        "día de vaciado después de la ventana; con la ventana anual, una réplica por mes) y "
+        "compara cada objetivo con su horquilla: "
         "media entre réplicas, IC al 95 % con la t de Student, porcentaje de días fuera y "
         "resultado (pasa si la media cae dentro y el IC no es más ancho que la horquilla). "
+        "Informa también el valor de cada réplica y la media por paciente de todas, que no "
+        "decide. "
         f"Guarda {EVALUATION_CSV}, {REPLICAS_CSV} y {LEVELS_CSV}. Termina con código 1 si "
         "falla algún objetivo de ajuste; los de comprobación se informan.",
     )
@@ -895,7 +981,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Evalúa todos los objetivos con cada plantilla distinta que da la regla de "
         "la plantilla equivalente (⌈carga del turno / u⌉) para un mando, con el otro mando "
         "como en el centro, e indica la elección (la más cercana a la referencia entre las "
-        "que pasan) y, para los médicos, el centro cumplidor. Guarda "
+        "que pasan; con --comprobacion, la primera que pasa también con esa semilla) y, para "
+        "los médicos, el centro cumplidor. Guarda "
         f"{SENSITIVITY_CSV.format(knob='<mando>')}. Termina con código 1 si ninguna plantilla "
         "pasa los objetivos del mando.",
     )
@@ -904,6 +991,16 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=KNOBS,
         help="mando que se mueve: enfermeria_triaje o medicos",
+    )
+    sensitivity_parser.add_argument(
+        "--comprobacion",
+        type=int,
+        default=None,
+        metavar="SEMILLA",
+        help="semilla de comprobación, que puede vetar la elección y no elegir (decisión 41): "
+        "las candidatas que pasan con la semilla de ajuste se evalúan con esta, con la misma "
+        "ventana y el resto de opciones, en el orden de la elección y solo hasta la primera "
+        "que pasa; la elegida es esa (sin la opción, la elección es la de la semilla de ajuste)",
     )
     sensitivity_parser.add_argument(
         "--u-min",
