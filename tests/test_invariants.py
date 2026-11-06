@@ -1188,7 +1188,7 @@ def replaced(events, event_type, episode="EP-000000", **changes):
 
 def test_log_clinico_valido(clinical_run):
     events, ground_truth, profiles = clinical_run
-    assert {e.schema_version for e in events} == {2}
+    assert {e.schema_version for e in events} == {3}
     assert [e.event_type for e in events].count("test_resulted") == 1
     assert (
         check_invariants(events, load_center(EXAMPLE), ground_truth=ground_truth, profiles=profiles)
@@ -1272,7 +1272,7 @@ def test_log_clinico_con_verdad_provisional(clinical_run):
     )
 
     (v,) = clinical_violations(events, provisional)
-    assert v.message == "a log of version 2 with a provisional ground truth"
+    assert v.message == "a clinical log with a provisional ground truth"
 
 
 def test_log_provisional_con_verdad_clinica(clinical_run):

@@ -22,7 +22,7 @@ stop them.
 
 Everything random was drawn on arrival (``PatientDraws``): the process only
 waits and emits. With the clinical model (``draws.clinical``), the events
-carry the clinical payloads of version 2 of the catalog, and the turnaround of
+carry the clinical payloads of version 3 of the catalog, and the turnaround of
 the tests is computed when they are ordered, with the shift band of that
 instant; without it, the process is exactly the one of the provisional model.
 """

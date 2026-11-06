@@ -12,7 +12,7 @@ from pathlib import Path
 
 from edsim.engine.clinical import PatientDraws
 from edsim.engine.clinical_sampler import ClinicalDraws, ClinicalTruth, TurnaroundShifts
-from edsim.engine.events import CLINICAL_SCHEMA_VERSION, EventLog, MemorySink
+from edsim.engine.events import CURRENT_CLINICAL_SCHEMA_VERSION, EventLog, MemorySink
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles, load_profiles
 from edsim.profiles.context import ArrivalContext, context_indices
 from edsim.profiles.population import Person
@@ -112,7 +112,7 @@ def hand_patient(
 
 def clinical_log(run_id: str = "clinico", start: date = START) -> tuple[EventLog, MemorySink]:
     sink = MemorySink()
-    return EventLog(run_id, start, sink, schema_version=CLINICAL_SCHEMA_VERSION), sink
+    return EventLog(run_id, start, sink, schema_version=CURRENT_CLINICAL_SCHEMA_VERSION), sink
 
 
 def expected_turnaround(

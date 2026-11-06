@@ -14,9 +14,9 @@ would be true by construction.
 
 Task 4.5a adds three checks: ``door`` (a triage at the door is a level 1
 classified on arrival), ``schema_version`` (one version per log) and
-``clinical`` (the clinical payloads of a log of version 2 against the clinical
-ground truth, and the turnaround of each round against the shift band of its
-order). Task 4.1 adds the triage queue to "nobody jumps the queue" and leaves the
+``clinical`` (the clinical payloads of a clinical log, version 2 or 3, against
+the clinical ground truth, and the turnaround of each round against the shift
+band of its order). Task 4.1 adds the triage queue to "nobody jumps the queue" and leaves the
 triages at the door (a level 1, without a nurse) out of the capacity of the
 nurses. Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
 are edges of ``TRANSITIONS``, ``patient_displaced`` frees the box in the
@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.engine.center import CenterConfig
-from edsim.engine.events import CLINICAL_SCHEMA_VERSION, DOOR, Event
+from edsim.engine.events import CLINICAL_SCHEMA_VERSIONS, DOOR, Event
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
 from edsim.profiles.context import context_indices
@@ -792,13 +792,14 @@ def _expected_turnaround(
 
 
 def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
-    """The clinical payloads of a log of version 2 are the ones of its patients.
+    """The clinical payloads of a clinical log are the ones of its patients.
 
-    Only for a log with events of version 2 (``CLINICAL_SCHEMA_VERSION``):
+    Only for a log with events of a clinical version, 2 or 3
+    (``CLINICAL_SCHEMA_VERSIONS``):
 
     - From the log alone: the types of ``resultados`` of each
       ``test_resulted`` are the ``pruebas`` of the episode's ``test_ordered``.
-    - With a ground truth: a log of version 2 needs the clinical ground truth,
+    - With a ground truth: a clinical log needs the clinical ground truth,
       and a log of version 1 the provisional one (one violation if not). The
       ``medio``, ``edad``, ``sexo``, ``nivel`` (the assigned level),
       ``motivo``, ``pruebas`` and ``resultados`` of each episode are the ones
@@ -810,13 +811,13 @@ def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[V
     """
     name = "clinical"
     out: list[Violation] = []
-    clinical_log = any(e.schema_version == CLINICAL_SCHEMA_VERSION for e in events)
+    clinical_log = any(e.schema_version in CLINICAL_SCHEMA_VERSIONS for e in events)
     ground_truth = context.ground_truth
     truth: dict[str, EpisodeTruth] = {}
     if ground_truth is not None:
         kinds = {e.clinical is not None for e in ground_truth.episodes}
         if clinical_log and False in kinds:
-            out.append(Violation(name, "a log of version 2 with a provisional ground truth"))
+            out.append(Violation(name, "a clinical log with a provisional ground truth"))
             return out
         if not clinical_log and True in kinds:
             out.append(Violation(name, "a log of version 1 with a clinical ground truth"))
@@ -831,7 +832,7 @@ def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[V
 
     ordered: dict[str, Event] = {}
     for e in events:
-        if e.schema_version != CLINICAL_SCHEMA_VERSION:
+        if e.schema_version not in CLINICAL_SCHEMA_VERSIONS:
             continue  # reported by schema_version
         episode = e.episode_id
         mine = truth.get(episode)

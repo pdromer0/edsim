@@ -72,8 +72,10 @@ def test_simulate_cli_characterization(tmp_path, monkeypatch):
 # cambio a propósito de los muestreadores, del catálogo o del CSV clínico, nunca para que
 # un test pase. Fase A de la 4.6a: los perfiles de ejemplo, con la parada al 0,3 % y la
 # cascada rederivada, cambian el log y el CSV de episodios (también su huella_perfiles).
+# Fase B: solo el log (f7cb3225… → 2a8df1e8…), por el schema_version 3; el centro de
+# ejemplo no tiene sala y los CSV no cambian.
 CLINICAL_CHARACTERIZATION = {
-    "eventos.jsonl": "f7cb322599ed23c29a5a9da89f33bdb088df2d1649d2e158fed2787871a700c9",
+    "eventos.jsonl": "2a8df1e89bf8b2ec240c9a167d721fc82343dc7b09161bd2a5c365e6a39ff7d4",
     "ground_truth_episodios.csv": (
         "0d18f0a06be4a7bcc78fe141b042ed2564e7bfc8dc4a61959ebd81a5444b6e40"
     ),
@@ -132,7 +134,7 @@ def test_simulate_cli_characterization_clinico(tmp_path, monkeypatch):
             profiles=load_profiles("tests/data/perfiles_ejemplo.toml"),
         )
     assert (output / "eventos.jsonl").read_bytes() == path.read_bytes()
-    # Guarda: es un log clínico de la versión 2, no el del provisional.
+    # Guarda: es un log clínico (versión 3 desde la tarea 4.6a), no el del provisional.
     events = list(read_events(output / "eventos.jsonl"))
-    assert {e.schema_version for e in events} == {2}
+    assert {e.schema_version for e in events} == {3}
     assert all("medio" in e.payload for e in events if e.event_type == "patient_arrived")

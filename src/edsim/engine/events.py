@@ -32,7 +32,12 @@ version, in ``CATALOGS``:
 - version 1 is the catalog of milestone 3 with the ``circuito`` of task 4.1,
   without clinical payloads; the provisional model writes it;
 - version 2 is version 1 plus the payloads of the clinical model: ``medio``,
-  ``edad``, ``sexo``, ``motivo``, ``pruebas`` and ``resultados``.
+  ``edad``, ``sexo``, ``motivo``, ``pruebas`` and ``resultados``;
+- version 3 is version 2 plus ``box_released`` (task 4.6a): a patient of a
+  level of ``espera_resultados_fuera`` leaves its box when the tests are
+  ordered and waits for the results outside, still inside the department.
+  The clinical model writes it, whatever that list holds: one version per
+  model, not per configuration.
 
 A log has one version, the one of its ``EventLog``; the invariant
 ``schema_version`` checks it. Nothing hidden from the hospital (the latent
@@ -56,8 +61,15 @@ from edsim.profiles.config import REASON_KEYS, TEST_TYPES
 PROVISIONAL_SCHEMA_VERSION = 1
 """Version of the logs of the provisional model: the catalog without clinical payloads."""
 
-CLINICAL_SCHEMA_VERSION = 2
-"""Version of the logs of the clinical model: version 1 plus the clinical payloads."""
+CURRENT_CLINICAL_SCHEMA_VERSION = 3
+"""Version the clinical model writes since task 4.6a: version 2 plus ``box_released``.
+
+It replaces ``CLINICAL_SCHEMA_VERSION`` (2), which is gone so that an old use
+fails on import instead of missing the logs of version 3.
+"""
+
+CLINICAL_SCHEMA_VERSIONS: frozenset[int] = frozenset({2, 3})
+"""Versions with the clinical payloads: 2 (tasks 4.5a and 4.5b) and 3."""
 
 TIMEZONE = timezone(timedelta(hours=1))
 """Fixed offset of ``event_time``: +01:00 all year (ADR candidate 20)."""
@@ -162,6 +174,10 @@ SEXES = ("mujer", "hombre")
 TEST_RESULTS = ("normal", "alterado")
 """Values of ``resultados`` in ``test_resulted``, version 2."""
 
+RESULTS_WAIT = "resultados"
+"""``espera`` of ``box_released``, version 3: the patient leaves the box to wait
+for the results of its tests outside it (ADR candidate 45)."""
+
 _TIPO = _choice("inicial", "reevaluacion")
 _BOX = _int_range(1)
 _DESTINO = _choice("alta", "ingreso")
@@ -254,13 +270,31 @@ CATALOG_V2: Mapping[str, EventSpec] = MappingProxyType(
 )
 """Version 2: version 1 plus the payloads of the clinical model (task 4.5a)."""
 
+CATALOG_V3: Mapping[str, EventSpec] = MappingProxyType(
+    {
+        **CATALOG_V2,
+        "box_released": _spec("his", box=_BOX, espera=_choice(RESULTS_WAIT)),
+    }
+)
+"""Version 3: version 2 plus ``box_released`` (task 4.6a).
+
+``box`` is the box the patient leaves and ``espera`` why: to wait for its
+results, still inside (it has no ``patient_departed``). It comes right after
+the ``test_ordered`` of the patient, in the same instant; with the results the
+patient asks for a box again with its original priority (``box_assigned``).
+"""
+
 CATALOGS: Mapping[int, Mapping[str, EventSpec]] = MappingProxyType(
-    {PROVISIONAL_SCHEMA_VERSION: CATALOG_V1, CLINICAL_SCHEMA_VERSION: CATALOG_V2}
+    {
+        PROVISIONAL_SCHEMA_VERSION: CATALOG_V1,
+        2: CATALOG_V2,
+        CURRENT_CLINICAL_SCHEMA_VERSION: CATALOG_V3,
+    }
 )
 """The catalog of each schema version."""
 
 SCHEMA_VERSIONS: frozenset[int] = frozenset(CATALOGS)
-"""The schema versions a log can have: 1 and 2."""
+"""The schema versions a log can have: 1, 2 and 3."""
 
 CATALOG = CATALOG_V1
 """The catalog of version 1, as before task 4.5a."""
@@ -569,7 +603,8 @@ class EventLog:
         sink: ``MemorySink``, ``JsonlSink`` or anything with ``write(event)``.
         schema_version: Version of the log, one of ``SCHEMA_VERSIONS``:
             ``PROVISIONAL_SCHEMA_VERSION`` (1) by default, or
-            ``CLINICAL_SCHEMA_VERSION`` (2) for the clinical model.
+            ``CURRENT_CLINICAL_SCHEMA_VERSION`` (3) for the clinical model;
+            2 is the clinical version of tasks 4.5a and 4.5b.
 
     Raises:
         ValueError: If ``run_id`` is not a non-empty string, ``start_date``
@@ -708,8 +743,8 @@ def _upgrade(data: dict) -> dict:
     Their ``triage_started`` has no ``circuito``: every triage went through a
     nurse then, so the value is ``NURSE``. Only reading tolerates it;
     ``EventLog.emit`` and ``Event`` still require the key. The version stays
-    1 (docs/specs/hito-4.md, task 4.1). A log of version 2 was always written
-    with ``circuito``, so it is never upgraded.
+    1 (docs/specs/hito-4.md, task 4.1). A log of version 2 or 3 was always
+    written with ``circuito``, so it is never upgraded.
     """
     payload = data["payload"]
     if (
