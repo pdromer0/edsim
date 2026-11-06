@@ -2,15 +2,16 @@
 
 The CSV files are tidy (one row per target, per replication and target, per
 level or per staffing and target) and every row carries the parameters of
-the run: the four files with their fingerprints, the replications, the days,
-the warm-up and the seed, so that a row of the calibration log can be traced
-back to the command that produced it.
+the run: the four files with their fingerprints, the window, the
+replications, the days, the warm-up and the seed, so that a row of the
+calibration log can be traced back to the command that produced it.
 """
 
 from __future__ import annotations
 
 import csv
 from collections.abc import Mapping, Sequence
+from datetime import date
 from pathlib import Path
 
 from edsim.calibration.evaluate import (
@@ -24,6 +25,7 @@ from edsim.calibration.evaluate import (
     SensitivityRow,
     TargetResult,
     level_breakdown,
+    pooled_value,
 )
 from edsim.calibration.staffing import DOCTORS
 from edsim.calibration.targets import FIT, Target
@@ -37,6 +39,7 @@ PARAMETER_COLUMNS = (
     "huella_perfiles",
     "objetivos",
     "huella_objetivos",
+    "ventana",
     "replicas",
     "dias",
     "calentamiento",
@@ -62,11 +65,13 @@ EVALUATION_COLUMNS = (
     "media_dentro",
     "ic_estrecho",
     "resultado",
+    "media_por_paciente",
     *PARAMETER_COLUMNS,
 )
 
 REPLICA_COLUMNS = (
     "replica",
+    "fecha_inicio",
     "llegados_ventana",
     "censurados",
     "objetivo",
@@ -152,9 +157,76 @@ def _breakdown_lines(target: Target, shares: Sequence[LevelShare]) -> list[str]:
     return lines
 
 
-def format_evaluation(results: Sequence[TargetResult], replicas: Sequence[ReplicaValues]) -> str:
+_MONTHS = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+_CELL = 9
+
+
+def _replica_lines(
+    results: Sequence[TargetResult],
+    replicas: Sequence[ReplicaValues],
+    start_dates: Sequence[date],
+    annual: bool,
+) -> list[str]:
+    """The value of each target in each replication, one column per replication."""
+    labels = [
+        f"{_MONTHS[d.month - 1]} {d.day}" if annual else f"r{i} {d.day}/{d.month}"
+        for i, d in enumerate(start_dates)
+    ]
+    title = (
+        "Por réplica (ventana anual: una por mes, desde el primer lunes; el valor de cada"
+        " objetivo en los pacientes de la réplica)"
+        if annual
+        else "Por réplica (el valor de cada objetivo en los pacientes de la réplica)"
+    )
+    lines = [title, f"{'':<{_NAME_WIDTH}}" + "".join(f"{x:>{_CELL}}" for x in labels)]
+    lines.append(
+        f"{'llegados':<{_NAME_WIDTH}}" + "".join(f"{r.arrivals:>{_CELL}}" for r in replicas)
+    )
+    lines.append(
+        f"{'censurados':<{_NAME_WIDTH}}" + "".join(f"{r.censored:>{_CELL}}" for r in replicas)
+    )
+    for r in results:
+        lines.append(
+            f"{r.target.name:<{_NAME_WIDTH}}" + "".join(f"{v:>{_CELL}.2f}" for v in r.values)
+        )
+    return lines
+
+
+def _pooled_lines(
+    results: Sequence[TargetResult], replicas: Sequence[ReplicaValues], annual: bool
+) -> list[str]:
+    what = (
+        "con la ventana anual, la del año: pondera cada mes por sus pacientes"
+        if annual
+        else "pondera cada réplica por sus pacientes"
+    )
+    lines = [
+        f"Media por paciente de todas las réplicas ({what}; se informa y no decide, la regla 4"
+        " usa la media entre réplicas)",
+        f"{'objetivo':<{_NAME_WIDTH}}{'entre réplicas':>16}{'por paciente':>14}",
+    ]
+    for r in results:
+        pooled = pooled_value(replicas, r.target)
+        lines.append(f"{r.target.name:<{_NAME_WIDTH}}{r.mean:>16.2f}{pooled:>14.2f}")
+    return lines
+
+
+def format_evaluation(
+    results: Sequence[TargetResult],
+    replicas: Sequence[ReplicaValues],
+    start_dates: Sequence[date],
+    *,
+    annual: bool = False,
+) -> str:
     """The table of ``calibracion evaluar``: one row per target, then the censored
-    patients, the breakdown by level of each percentage and the outcome."""
+    patients, the value of each replication (with the annual window, the profile
+    by month), the mean per patient, the breakdown by level of each percentage
+    and the outcome.
+
+    Args:
+        start_dates: The date on which each replication starts.
+        annual: Whether the replications are those of the annual window.
+    """
     lines = [
         f"{'objetivo':<{_NAME_WIDTH}}{'uso':<14}{'media':>8}  {'IC al 95 %':<20}"
         f"{'horquilla':<12}{'días fuera':>11}  resultado"
@@ -168,6 +240,8 @@ def format_evaluation(results: Sequence[TargetResult], replicas: Sequence[Replic
             f"{100 * r.share_days_out:>9.1f} %  {_outcome(r.passed)}"
         )
     lines += ["", *_censored_lines(replicas)]
+    lines += ["", *_replica_lines(results, replicas, start_dates, annual)]
+    lines += ["", *_pooled_lines(results, replicas, annual)]
     for r in results:
         if r.target.is_percentage:
             lines += ["", *_breakdown_lines(r.target, level_breakdown(replicas, r.target))]
@@ -187,9 +261,13 @@ def format_evaluation(results: Sequence[TargetResult], replicas: Sequence[Replic
 
 
 def write_evaluation_csv(
-    results: Sequence[TargetResult], path: Path, parameters: Mapping[str, object]
+    results: Sequence[TargetResult],
+    replicas: Sequence[ReplicaValues],
+    path: Path,
+    parameters: Mapping[str, object],
 ) -> None:
-    """One row per target: the band, the mean, its interval, the days out and the outcome."""
+    """One row per target: the band, the mean, its interval, the days out, the
+    outcome and the mean per patient of all the replications (``pooled_value``)."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(EVALUATION_COLUMNS)
@@ -214,6 +292,7 @@ def write_evaluation_csv(
                     r.within,
                     r.narrow,
                     "pasa" if r.passed else "falla",
+                    repr(pooled_value(replicas, t)),
                     *_params(parameters),
                 ]
             )
@@ -222,10 +301,12 @@ def write_evaluation_csv(
 def write_replicas_csv(
     results: Sequence[TargetResult],
     replicas: Sequence[ReplicaValues],
+    start_dates: Sequence[date],
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per replication and target: its value, its days out and its censored."""
+    """One row per replication and target: its start date, its value, its days out
+    and its censored."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(REPLICA_COLUMNS)
@@ -234,6 +315,7 @@ def write_replicas_csv(
                 writer.writerow(
                     [
                         i,
+                        start_dates[i].isoformat(),
                         rep.arrivals,
                         rep.censored,
                         r.target.name,

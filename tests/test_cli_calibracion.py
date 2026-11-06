@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from edsim.arrivals.profile import load_profile
+from edsim.calibration.evaluate import pooled_value, simulate_replicas, summarize_targets
+from edsim.calibration.targets import load_targets
+from edsim.calibration.window import first_mondays
 from edsim.cli import main
+from edsim.engine.center import load_center
+from edsim.profiles.config import load_profiles
 
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "tests" / "data"
@@ -17,7 +23,11 @@ EXAMPLE = [
     "--perfiles",
     str(DATA / "perfiles_ejemplo.toml"),
 ]
-SHORT = ["--replicas", "2", "--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+# La ventana de la 4.6b con 2 réplicas; la anual siempre tiene 12.
+SHORT = ["--ventana", "inicio", "--replicas", "2", "--dias", "2", "--calentamiento", "1"]
+SHORT += ["--semilla", "7"]
+ANNUAL_SHORT = ["--dias", "2", "--calentamiento", "1", "--semilla", "7"]
+MONDAYS_2026 = [d.isoformat() for d in first_mondays(2026)]
 
 
 def targets_file(path: Path, *, pretriage_band="[0, 100]", check_band="[0, 100]") -> Path:
@@ -80,7 +90,10 @@ def test_evaluar_codigo_0_tabla_y_ficheros(tmp_path, capsys):
 
     # La comprobación falla, pero solo se informa: el código sigue siendo 0.
     assert code == 0
-    assert "2 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · semilla 7" in out
+    assert (
+        "2 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · ventana inicio (todas"
+        " desde 2026-01-05) · semilla 7" in out
+    )
     assert "Resultado: todos los objetivos de ajuste pasan" in out
     assert (
         "Comprobación (se informa, no cambia el resultado): fallan porcentaje_sobre_manchester"
@@ -135,7 +148,10 @@ def test_evaluar_codigo_1_si_falla_un_objetivo_de_ajuste(tmp_path, capsys):
         (["--objetivos", "{bad}"], "objetivos.x.uso"),
         (["--perfiles", "no-existe.toml"], "--perfiles no-existe.toml"),
         (["--centro", "no-existe.toml"], "--centro no-existe.toml"),
-        (["--replicas", "1"], "replicas must be an integer >= 2"),
+        (["--ventana", "inicio", "--replicas", "1"], "replicas must be an integer >= 2"),
+        (["--replicas", "10"], "la ventana anual tiene 12 réplicas, una por mes"),
+        (["--ventana", "anual", "--replicas", "2"], "la ventana anual tiene 12 réplicas"),
+        (["--ventana", "mensual"], "invalid choice: 'mensual'"),
         (["--dias", "2", "--calentamiento", "2"], "warmup_days"),
     ],
 )
@@ -254,3 +270,128 @@ def test_sensibilidad_codigo_1_si_ninguna_pasa(tmp_path, capsys):
     assert "Elección: ninguna plantilla de la regla pasa" in out
     assert "Cumplidor" in out
     assert (out_dir / "sensibilidad_medicos.csv").is_file()
+
+
+# --- La ventana (tarea 4.6c) -----------------------------------------------------------------
+
+
+def example_inputs(targets_path):
+    return (
+        load_center(DATA / "centro_sala_ejemplo.toml"),
+        load_profile(DATA / "llegadas_ejemplo.toml"),
+        load_profiles(DATA / "perfiles_ejemplo.toml"),
+        load_targets(targets_path),
+    )
+
+
+class Simulated(Exception):
+    """Para la CLI en cuanto pide simular, con los argumentos que le pasa."""
+
+
+@pytest.mark.parametrize(
+    ("extra", "replicas", "dates"),
+    [
+        ([], 12, tuple(first_mondays(2026))),
+        (["--replicas", "12"], 12, tuple(first_mondays(2026))),
+        (["--ventana", "anual", "--replicas", "12"], 12, tuple(first_mondays(2026))),
+        (["--ventana", "inicio"], 10, None),
+        (["--ventana", "inicio", "--replicas", "4"], 4, None),
+    ],
+)
+@pytest.mark.parametrize("command", [["evaluar"], ["sensibilidad", "--mando", "medicos"]])
+def test_replicas_y_fechas_de_cada_ventana(command, extra, replicas, dates, tmp_path, monkeypatch):
+    def stop(*args, **kwargs):
+        raise Simulated(kwargs["replicas"], kwargs["start_dates"])
+
+    monkeypatch.chdir(REPO)
+    monkeypatch.setattr("edsim.cli.simulate_replicas", stop)
+    monkeypatch.setattr("edsim.cli.sensitivity", stop)
+    with pytest.raises(Simulated) as info:
+        main(["calibracion", *command, *extra, "--salida", str(tmp_path / "salida")])
+    assert info.value.args == (replicas, dates)
+
+
+def test_evaluar_con_la_ventana_anual_una_replica_por_mes(tmp_path, capsys):
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "evaluar", *EXAMPLE, "--objetivos", str(targets), *ANNUAL_SHORT]
+        + ["--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (
+        "12 réplicas de 2 días (1 de calentamiento y 1 de vaciado) · ventana anual (una"
+        " réplica por mes, desde el primer lunes de cada mes de 2026) · semilla 7" in out
+    )
+    assert "Por réplica (ventana anual: una por mes" in out
+    assert all(f"{m} {d}" in out for m, d in (("ene", 5), ("jul", 6), ("dic", 7)))
+    assert "Media por paciente de todas las réplicas" in out
+
+    rows = read_rows(out_dir / "evaluacion_replicas.csv")
+    assert len(rows) == 12 * 4
+    assert [r["fecha_inicio"] for r in rows[::4]] == MONDAYS_2026
+    assert len({r["fecha_inicio"] for r in rows}) == 12
+    assert [r["replica"] for r in rows[::4]] == [str(i) for i in range(12)]
+    assert {r["ventana"] for r in rows} == {"anual"} and {r["replicas"] for r in rows} == {"12"}
+
+    # La media por paciente del CSV es pooled_value de las mismas réplicas.
+    inputs = example_inputs(targets)
+    reduced = simulate_replicas(
+        *inputs, replicas=12, days=2, warmup_days=1, seed=7, start_dates=first_mondays(2026)
+    )
+    evaluation = read_rows(out_dir / "evaluacion.csv")
+    assert [float(r["media_por_paciente"]) for r in evaluation] == [
+        pooled_value(reduced, t) for t in inputs[3]
+    ]
+    assert {r["ventana"] for r in evaluation} == {"anual"}
+
+
+def test_evaluar_con_la_ventana_de_inicio_reproduce_la_4_6b(tmp_path, capsys):
+    # Todas desde fecha_inicio y con los mismos valores que simulate_replicas sin fechas
+    # (las 10 réplicas por defecto, en test_replicas_y_fechas_de_cada_ventana).
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "evaluar", *EXAMPLE, "--objetivos", str(targets), "--ventana", "inicio"]
+        + ["--replicas", "3", *ANNUAL_SHORT, "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "3 réplicas de 2 días" in out and "ventana inicio (todas desde 2026-01-05)" in out
+    rows = read_rows(out_dir / "evaluacion_replicas.csv")
+    assert len(rows) == 3 * 4
+    assert {r["fecha_inicio"] for r in rows} == {"2026-01-05"}
+    assert {r["ventana"] for r in rows} == {"inicio"}
+
+    inputs = example_inputs(targets)
+    results = summarize_targets(
+        simulate_replicas(*inputs, replicas=3, days=2, warmup_days=1, seed=7), inputs[3]
+    )
+    evaluation = read_rows(out_dir / "evaluacion.csv")
+    assert [float(r["media"]) for r in evaluation] == [r.mean for r in results]
+
+
+def test_sensibilidad_de_los_medicos_con_la_ventana_anual(tmp_path, capsys):
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "medicos", *EXAMPLE]
+        + ["--objetivos", str(targets), *ANNUAL_SHORT, "--u-min", "0.95", "--u-max", "0.95"]
+        + ["--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "12 réplicas de 2 días" in out and "ventana anual" in out
+    assert "días fuera de Manchester (C) / días medidos, sumados" in out
+    rows = read_rows(out_dir / "sensibilidad_medicos.csv")
+    assert {r["ventana"] for r in rows} == {"anual"} and {r["replicas"] for r in rows} == {"12"}
+    # Un día medido por réplica: 12 días medidos por nivel, sumados en las 12 réplicas.
+    assert {r[f"dias_medidos_c_nivel_{k}"] for r in rows for k in (2, 3, 4)} == {"12"}
+    assert all(0 <= int(r["dias_fuera_c_nivel_4"]) <= 12 for r in rows)

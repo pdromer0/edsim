@@ -88,8 +88,8 @@ def window_replicas(window: str, replicas: int | None) -> int:
     if _check_window(window) == ANNUAL:
         if replicas is not None and replicas != ANNUAL_REPLICAS:
             raise ValueError(
-                f"la ventana anual tiene {ANNUAL_REPLICAS} réplicas, una por mes: no admite"
-                f" --replicas {replicas} (usa --ventana inicio para elegir las réplicas)"
+                f"the annual window has {ANNUAL_REPLICAS} replicas, one per month: got"
+                f" {replicas} (the start window takes any number)"
             )
         return ANNUAL_REPLICAS
     return START_REPLICAS if replicas is None else replicas
@@ -105,3 +105,18 @@ def window_start_dates(window: str, arrival_profile: ArrivalProfile) -> tuple[da
     if _check_window(window) == ANNUAL:
         return first_mondays(arrival_profile.start_date.year)
     return None
+
+
+def replica_start_dates(
+    window: str, arrival_profile: ArrivalProfile, replicas: int
+) -> tuple[date, ...]:
+    """The date on which each of the ``replicas`` replications of ``window`` starts,
+    for the reports: the start window repeats the profile's ``start_date``.
+
+    Raises:
+        ValueError: If the window is unknown or the annual window does not have 12
+            replications.
+    """
+    replicas = window_replicas(window, replicas)
+    dates = window_start_dates(window, arrival_profile)
+    return dates if dates is not None else (arrival_profile.start_date,) * replicas

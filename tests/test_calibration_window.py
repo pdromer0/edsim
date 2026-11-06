@@ -28,6 +28,7 @@ from edsim.calibration.window import (
     START_REPLICAS,
     WINDOWS,
     first_mondays,
+    replica_start_dates,
     window_replicas,
     window_start_dates,
     with_start_date,
@@ -108,7 +109,7 @@ def test_ventanas_y_replicas():
 
 @pytest.mark.parametrize("replicas", [10, 2, 13])
 def test_la_ventana_anual_no_admite_otro_numero_de_replicas(replicas):
-    with pytest.raises(ValueError, match="la ventana anual tiene 12 réplicas, una por mes"):
+    with pytest.raises(ValueError, match="the annual window has 12 replicas, one per month: got"):
         window_replicas(ANNUAL, replicas)
 
 
@@ -125,6 +126,14 @@ def test_fechas_de_cada_ventana():
     assert window_start_dates(START, profile) is None
     later = dataclasses.replace(profile, start_date=date(2027, 3, 10))
     assert window_start_dates(ANNUAL, later) == first_mondays(2027)
+
+
+def test_fecha_de_cada_replica_para_los_informes():
+    profile = load_profile(DATA / "llegadas_ejemplo.toml")
+    assert replica_start_dates(ANNUAL, profile, 12) == MONDAYS_2026
+    assert replica_start_dates(START, profile, 3) == (date(2026, 1, 5),) * 3
+    with pytest.raises(ValueError, match="the annual window has 12 replicas"):
+        replica_start_dates(ANNUAL, profile, 10)
 
 
 # --- simulate_replicas con fechas ---------------------------------------------------------
