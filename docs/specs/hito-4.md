@@ -416,7 +416,7 @@ Fuera de la calibración del hito 4, a propósito (decisión candidata 34): el p
 
 Con \[3, 2, 1\] solo esa plantilla de enfermería pasa el pretriaje (con \[3, 3, 1\], 5,0 min; con \[2, 2, 1\], 26,8). Con esa enfermería, pasan el reloj A de los niveles 2 a 5 las plantillas de médicos de `[13, 13, 5]` a `[12, 11, 5]` (35,0 a 54,5 min); con un médico menos de noche, 88 min. Las comprobaciones con 2027: porcentaje sobre Manchester con el reloj A, 20,0 % (horquilla 10–30; el nivel 2 queda por encima en el 57 % de sus pacientes y aporta 7,5 puntos); pretriaje de más de 5 minutos, 39,4 % (30–60); el nivel 3, 24,2 min, fuera, por la discrepancia. Sin censurados en ninguna réplica. El centro cumplidor (`config/centro_cumplidor.toml`) tiene los médicos `[15, 15, 6]` (u de 0,625 a 0,635): días fuera de Manchester con el reloj C de 0,8 / 0 / 10,0 / 10,0 % en los niveles 2 a 5, y reloj A de los niveles 2 a 5 de 23,5 min, por debajo de la horquilla, como se espera de un centro que cumple. Con la plantilla calibrada, el pretriaje de noche es de 18,6 min de media (p90 58,9): la regla reparte con la carga media del turno, y a las 22 h la carga de enfermería es de 1,21 para una enfermera (ver el registro).
 
-**El reloj A según el horizonte** (tarea 4.7, revisión del PR #49; tablas en el registro). El reloj A de los niveles 2 a 5 no crece por el arranque vacío: con el factor mensual neutro, los bloques de 14 días de 5 semillas × 56 días dan de 26,8 a 33,9 min y el primero (28,3) no queda por debajo, así que 2 días de calentamiento bastan. Lo mueven el mes (enero, con el factor 1,10, da 57–62 min; febrero, 34–43) y la acumulación en días malos: en la semilla 2026, cuatro días seguidos con más llegadas (19 a 22 de enero) dejan la cola de box de un día para otro y llevan el reloj A de esa semana a 132 min. La calibración mide la primera quincena de enero, y con la carga media del año el centro da unos 28 min, por debajo de la horquilla: pendiente de decidir si se recalibra con más calentamiento o con una ventana más larga.
+**El reloj A según el horizonte** (tarea 4.7, revisión del PR #49; tablas en el registro). El reloj A de los niveles 2 a 5 no crece por el arranque vacío: con el factor mensual neutro, los bloques de 14 días de 5 semillas × 56 días dan de 26,8 a 33,9 min y el primero (28,3) no queda por debajo, así que 2 días de calentamiento bastan. Lo mueven el mes (enero, con el factor 1,10, da 57–62 min; febrero, 34–43) y la acumulación en días malos: en la semilla 2026, cuatro días seguidos con más llegadas (19 a 22 de enero) dejan la cola de box de un día para otro y llevan el reloj A de esa semana a 132 min. La calibración mide la primera quincena de enero, el mes de más carga, y con la carga media del año el centro da unos 28 min, por debajo de la horquilla, mientras que los objetivos del SAS son medias anuales: pendiente de recalibrar con una ventana que represente el año (tarea 4.6c; el calentamiento no es el problema).
 
 ## Ficheros de configuración
 
@@ -755,6 +755,7 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | 4.6a | Paradas al 0,3 % con gravedad alta (46) y rederivación; espera de resultados fuera del box en los niveles 4 y 5 con el catálogo versión 3 (45). `@codex review` | Claude Code | `feat/h4-paradas-sala` | Paradas a la puerta, boxes sin la ronda de los niveles 4 y 5 y el provisional bit a bit igual |
 | 4.6b | `objetivos.toml`, sensibilidad de los mandos, `calibracion evaluar` y `calibracion sensibilidad`, primera calibración de la enfermería de triaje y de los médicos (41) y registro; `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
 | 4.7 | Notebook `04_perfiles_clinicos.ipynb` | Claude Code | `feat/h4-notebook` | Notebook ejecutable de principio a fin en el CI |
+| 4.6c | Recalibración con la ventana anual: una réplica por mes, de modo que la media sea la del año, como los objetivos del SAS (41); el cumplidor decidido con enteros; registro, especificación y cifras del notebook 04 con la plantilla nueva. Va después de la 4.7, que destapó que la ventana de la 4.6b era la primera quincena de enero | Claude Code | `feat/h4-recalibracion-anual` | Objetivos de ajuste dentro de horquilla con la media del año y el registro con las dos calibraciones |
 | 4.8a | Núcleo de la app con perfiles (`runs/`); `run.json` versión 2 se adelanta a la 4.5b | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
 | 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
 | 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0046; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
@@ -1561,3 +1562,68 @@ Se fusionó sin cambios. Quedó un detalle sin arreglar: `compliant_staffing` co
 - Circuitos separados para los niveles 4 y 5 (consultas o vía rápida): es lo que permitiría calibrar el nivel 3, y reduciría las esperas de los niveles 4 y 5 (p90 de 181 y 376 min). Por decidir.
 - Tarea 4.7: el notebook 04 con el centro calibrado, el cumplidor y la sensibilidad.
 - Tarea 4.9: el centro de ejemplo de los tests provisionales se retira cuando `centro.toml` pierda sus secciones provisionales.
+
+### Tarea 4.7: notebook 04 de perfiles clínicos
+
+**Qué se hizo**
+
+PR #49 (rama `feat/h4-notebook`), fusionado con *squash and merge*: ocho commits y dos de la revisión. El motor y la calibración no cambian: `config/` sigue igual byte a byte.
+
+- `engine/targets.py`: cumplimiento por nivel real con el ground truth (`true_level_compliance`, `true_levels`, `true_level_waits`) y `classified_late`, sin tocar `manchester_compliance`.
+- `profiles/coupling.py`: Gumbel-max frente a la CDF inversa ante un cambio de pesos, con la fórmula exacta y simulado con números comunes.
+- `profiles/derivation.py`: `with_target_mix`, una variante en memoria con otro reparto objetivo; `calibration/sas.py`: el reparto del SAS en adultos y el TPAM por nivel.
+- Auxiliares: `SeverityMixture.pdf`, `lognormal_pdf` y `evaluate_staffings` (la sensibilidad evalúa una lista dada de plantillas).
+- `notebooks/04_perfiles_clinicos.ipynb`, con el centro calibrado y el cumplidor, y la especificación y el registro al día.
+- En la revisión: el apartado «El reloj A según el horizonte» del registro y las cifras del notebook (73,5 y 229) corregidas con lo medido.
+
+**Conceptos**
+
+- **El coste del infratriaje se mide en tiempo.** El mismo paciente cumple o no según el máximo de qué nivel se le aplique: por nivel asignado mide al hospital, por nivel real mide al paciente. Solo el ground truth lo sabe.
+- **Acoplamiento mínimo.** Con dos repartos, la menor proporción de pacientes que tiene que cambiar de motivo es la distancia de variación total. Gumbel-max la alcanza siempre que solo crece un peso; la CDF inversa depende del orden de las categorías.
+- **Clasificado tarde.** Si al terminar el triaje ya pasó el máximo del nivel, ningún médico puede hacerlo cumplir con el reloj A: el incumplimiento es del triaje, no de la consulta.
+- **Una variante es otro perfil.** Cambiar el reparto objetivo rederiva los umbrales en memoria; los escritos no se recalculan al cargar (decisión 38).
+- **Sesgo de inicialización frente a carga del mes.** Para saber si el arranque vacío baja las esperas se compara por bloques con la carga fija (factor mensual neutro): si el primer bloque no queda por debajo, el calentamiento basta.
+
+**Decisiones**
+
+- El cumplimiento por nivel real es una función aparte que exige el ground truth, para que no se pueda calcular desde el log.
+- Las cifras de la gripe son las exactas de `reason_shock_changes` con los pesos de `config/`; las de la sesión conceptual eran de los pesos de entonces.
+- El SAS en adultos se obtiene quitando los menores nivel a nivel, no restando puntos al reparto con niños.
+- El notebook 03 sigue con la plantilla del hito 3; el 04 usa la calibrada.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Gripe (disnea ×1,5), un año | Gumbel-max 3,37 % (el mínimo); CDF inversa 15,55 %; simulado 3,41 y 15,52 % |
+| Nivel 2 con el reloj C, 89 días | 94,6 % por nivel asignado y 93,3 % por nivel real; 14 y 21 días fuera |
+| Días fuera, niveles 3 y 5 | Nivel 3, de 2 a 15; nivel 5, de 40 a 24 (muchos niveles 5 reales están asignados como 4) |
+| Niveles 2 clasificados tarde | 45,5 %: con el reloj A el nivel 2 queda fuera los 89 días |
+| Niveles 1 reales, ejecución principal | 141: 126 a la puerta y 15 asignados como 2 (10,6 %) |
+| SAS en adultos | 1,15 / 7,32 / 34,44 / 38,86 / 18,22 % (2.574.941 adultos) |
+| Variante con el SAS en adultos | Infratriaje 14,4 % y sobretriaje 8,0 %; reloj A de los niveles 2 a 5, de 73,5 a 47,3 min con los mismos pacientes |
+| Calibración en el notebook (5 réplicas) | Elige \[3, 2, 1\] y \[12, 11, 5\], como el registro con 10 |
+| Notebook 04 | Modo normal 3 min 52 s a 4 min 4 s, 621 a 638 MB; rápido 26 a 28 s; los cuatro notebooks en rápido, 53 s a 1 min 2 s |
+| Tests | 2.613 (2.589 rápidos); 241 de la app |
+
+**Comprobación de las versiones incorrectas**
+
+Ocho, aplicadas y deshechas. Tres exactas (clasificados tarde con `>=`, la densidad sin pesos tras separar sus tests y la variante con los umbrales de antes en la segunda pasada). Cinco cumplidas con fallos de más, todos explicados: el episodio que falta en el ground truth lo detecta solo la búsqueda del nivel real; con sorteos independientes cambian pacientes aunque los pesos no cambien; y los tests que toman su objetivo del SAS o usan la fórmula con un cambio de pesos fallan con ellas. La tabla completa está en «Tests y validación».
+
+**Revisión**
+
+La sección 12 dio un reloj A de 73,5 min en 28 días y la ejecución de 91 días, 229 en el nivel 5, muy por encima de los 54,5 de la calibración. El agente lo midió sin tocar la calibración (registro, «El reloj A según el horizonte»): no es sesgo de inicialización, sino el mes y una semana mala. Con el factor mensual neutro, los bloques de 14 días dan de 26,8 a 33,9 min, y el primero no queda por debajo. Enero (factor 1,10) da 57–62 min y febrero, 34–43; en la semilla 2026, cuatro días seguidos con más llegadas (19 a 22 de enero) llevan la semana a 131,8 min y al nivel 5 a 985, el 47 % de sus minutos de espera en los 89 días. La consecuencia: la calibración mide la primera quincena de enero, y con la carga media del año el centro calibrado da unos 28 min, por debajo de la horquilla de 35–70, mientras los objetivos del SAS son medias anuales.
+
+**Lecciones aprendidas**
+
+- Una cifra que crece con el horizonte se descompone antes de corregirla: por bloques, con la carga fija y por semana de calendario.
+- La ventana de la calibración tiene que representar lo que mide el objetivo: una media anual no se ajusta con la primera quincena de enero.
+- Un solo test que comprueba dos cosas puede esconder una versión incorrecta: «integra 1» no ve una mezcla sin pesos.
+- Emparejar por posición funciona mientras las tablas vienen en el mismo orden; se empareja por id.
+- Las cifras de una sesión conceptual se rehacen con la configuración vigente antes de escribirlas en la especificación.
+
+**Pendiente**
+
+- Tarea 4.6c: recalibrar con una réplica por mes, de modo que la media sea la del año, y rehacer con la plantilla nueva las cifras del notebook 04, el registro y la especificación.
+- Menor: el cumplidor decidido con enteros (`compliant_staffing`).
+- Tarea 4.8a, después de la 4.6c.
