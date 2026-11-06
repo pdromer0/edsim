@@ -138,11 +138,16 @@ def run_engine(
     start_shifts(env, log, pools, center, days)
     episodes: list[EpisodeTruth] = []
     processes: list[simpy.Process] = []
+    # Only the clinical patients use it (leaves_for_results): the provisional
+    # model ignores espera_resultados_fuera.
+    wait_outside = frozenset(center.results_wait_outside)
 
     def on_arrival(arrival: ArrivalRecord) -> None:
         draws = sampler(arrival)
         episodes.append(EpisodeTruth.from_draws(arrival, draws))
-        processes.append(env.process(patient(env, log, pools, arrival.arrival_id, draws)))
+        processes.append(
+            env.process(patient(env, log, pools, arrival.arrival_id, draws, wait_outside))
+        )
 
     env.process(arrival_source(env, arrivals, on_arrival))
     env.run(until=days * MINUTES_PER_DAY)

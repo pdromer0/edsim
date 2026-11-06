@@ -174,3 +174,228 @@ def test_nunca_dos_pacientes_en_el_mismo_box(room):
         ("waiting_box", 42.0, 70.0, None),
         ("reassessment", 70.0, 80.0, 1),
     ]
+
+
+# --- El motor -------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def profiles():
+    from clinical_factory import example_profiles
+
+    return example_profiles()
+
+
+@pytest.fixture(scope="module")
+def room_center():
+    return dataclasses.replace(load_center(DATA / "centro_sala_ejemplo.toml"), boxes=1)
+
+
+def run_hand(center, patients, days=1):
+    """El motor con pacientes a mano, uno por instante de llegada, y su log de la versión 3."""
+    from clinical_factory import clinical_log
+
+    from edsim.arrivals.thinning import ArrivalRecord
+    from edsim.engine.engine import run_engine
+
+    log, sink = clinical_log()
+    arrivals = [ArrivalRecord(k, t) for k, t in enumerate(patients)]
+    draws = dict(enumerate(patients.values()))
+    run_engine(center, arrivals, lambda a: draws[a.arrival_id], log, days)
+    return sink.events
+
+
+def test_el_motor_escribe_el_escenario_a_mano(room, room_center, profiles):
+    # El log del motor es, evento a evento, el escrito a mano (hasta la salida de C).
+    from clinical_factory import room_patients
+
+    from edsim.engine.invariants import check_invariants
+
+    events = run_hand(room_center, room_patients(profiles))
+
+    assert events[: len(room)] == room
+    assert all(e.event_type == "staffing_changed" for e in events[len(room) :])
+    assert check_invariants(events, room_center) == []
+
+
+def released(events):
+    return [e.episode_id for e in events if e.event_type == "box_released"]
+
+
+@pytest.mark.parametrize(
+    ("level", "true_level", "tests", "leaves"),
+    [
+        (3, 3, True, False),  # nivel 3 con pruebas: se queda en el box
+        (4, 3, True, True),  # infratriado: decide el asignado (4), sale
+        (3, 4, True, False),  # sobretriado: decide el asignado (3), se queda
+        (4, 4, False, False),  # nivel 4 sin pruebas: no hay ronda, se queda hasta salir
+        (5, 5, True, True),
+    ],
+)
+def test_quien_deja_el_box_lo_decide_el_nivel_asignado(
+    room_center, profiles, level, true_level, tests, leaves
+):
+    from clinical_factory import hand_patient, ordered_of
+
+    patient = hand_patient(
+        profiles,
+        level=level,
+        true_level=true_level,
+        ordered=ordered_of("ecg") if tests else (False,) * 4,
+    )
+    events = run_hand(room_center, {5.0: patient})
+    own = [e.event_type for e in events if e.episode_id == "EP-000000"]
+
+    assert released(events) == (["EP-000000"] if leaves else [])
+    assert own.count("box_assigned") == (2 if leaves else 1)
+    assert own[-1] == "patient_departed"
+
+
+def test_el_provisional_ignora_la_sala(room_center):
+    # Un nivel 4 con pruebas del modelo provisional, con [4, 5]: no deja el box, y el log
+    # es el mismo que sin sala.
+    from edsim.arrivals.thinning import ArrivalRecord
+    from edsim.engine.engine import run_engine
+    from edsim.engine.events import EventLog
+    from edsim.engine.scenarios import hand_draws
+
+    def run(center):
+        sink = MemorySink()
+        log = EventLog("p", date(2026, 1, 5), sink)
+        draws = hand_draws(4, 5.0, 20.0, needs_tests=True)
+        run_engine(center, [ArrivalRecord(0, 5.0)], lambda a: draws, log, 1)
+        return sink.events
+
+    with_room = run(room_center)
+    assert released(with_room) == []
+    assert with_room == run(dataclasses.replace(room_center, results_wait_outside=()))
+    assert [e.event_type for e in with_room].count("box_assigned") == 1
+
+
+def test_huella_del_provisional_con_la_sala(tmp_path):
+    # La huella del log provisional de test_engine.py, también con espera_resultados_fuera:
+    # el provisional no cambia ni un bit.
+    import hashlib
+
+    from test_engine import FINGERPRINT, SEED
+
+    from edsim.engine.events import JsonlSink
+
+    center = load_center(DATA / "centro_sala_ejemplo.toml")
+    assert center.results_wait_outside == (4, 5)
+    sink_path = tmp_path / "eventos.jsonl"
+    with JsonlSink(sink_path) as sink:
+        simulate_ed(center, load_profile(DATA / "llegadas_ejemplo.toml"), 3, SEED, sink=sink)
+    assert hashlib.sha256(sink_path.read_bytes()).hexdigest() == FINGERPRINT
+
+
+def simulate(center, profiles, days=3, seed=2026):
+    sink = MemorySink()
+    result = simulate_ed(
+        center,
+        load_profile(DATA / "llegadas_ejemplo.toml"),
+        days,
+        seed,
+        sink=sink,
+        profiles=profiles,
+    )
+    return sink.events, result
+
+
+def test_numeros_comunes_con_y_sin_sala_y_con_otra_plantilla(profiles):
+    # Ningún sorteo del paciente cambia: el ground truth es el mismo con la sala, sin ella
+    # y con otra plantilla; el log sí cambia (el flujo).
+    sala = load_center(DATA / "centro_sala_ejemplo.toml")
+    events, base = simulate(sala, profiles)
+    others = [
+        dataclasses.replace(sala, results_wait_outside=()),
+        dataclasses.replace(sala, doctors=(8, 8, 5), boxes=25),
+    ]
+    assert released(events)
+    for other in others:
+        other_events, result = simulate(other, profiles)
+        assert result.ground_truth == base.ground_truth
+        assert other_events != events
+
+
+def test_una_copia_sin_la_clave_da_el_log_de_antes(tmp_path, profiles):
+    # Reproducibilidad: el centro de la sala sin la línea de la clave (como la copia de una
+    # ejecución anterior a la 4.6a) da el log de centro_ejemplo.toml, sin box_released.
+    text = (DATA / "centro_sala_ejemplo.toml").read_text(encoding="utf-8")
+    copy = tmp_path / "centro.toml"
+    copy.write_text(text.replace("espera_resultados_fuera = [4, 5]\n", ""), encoding="utf-8")
+    events, _ = simulate(load_center(copy), profiles)
+
+    assert load_center(copy).results_wait_outside == ()
+    assert events == simulate(load_center(DATA / "centro_ejemplo.toml"), profiles)[0]
+    assert released(events) == []
+
+
+def box_waits_by_hand(events, horizon):
+    """La espera de box de cada episodio, recortada en el horizonte, por otro camino.
+
+    Espera box desde triage_completed, desde patient_displaced y, si dejó el box por la
+    sala, desde su test_resulted; hasta el box_assigned siguiente o el horizonte.
+    """
+    since, room, total = {}, set(), {}
+    for e in events:
+        ep, kind = e.episode_id, e.event_type
+        if kind in ("triage_completed", "patient_displaced") or (
+            kind == "test_resulted" and ep in room
+        ):
+            since[ep] = e.sim_time
+            room.discard(ep)
+        elif kind == "box_released":
+            room.add(ep)
+        elif kind == "box_assigned" and ep in since:
+            total[ep] = total.get(ep, 0.0) + e.sim_time - since.pop(ep)
+    for ep, start in since.items():
+        total[ep] = total.get(ep, 0.0) + horizon - start
+    return total
+
+
+def test_catorce_dias_con_la_sala():
+    # config/ (espera_resultados_fuera = [4, 5]), 14 días con 2 de calentamiento: cero
+    # violaciones, utilización exacta y la cola de box contada por dos caminos.
+    from edsim.engine.analysis import analyze_run
+    from edsim.engine.invariants import check_invariants
+    from edsim.profiles.config import load_profiles
+
+    config = Path(__file__).resolve().parents[1] / "config"
+    center, profiles = load_center(config / "centro.toml"), load_profiles(config / "perfiles.toml")
+    sink = MemorySink()
+    result = simulate_ed(
+        center,
+        load_profile(config / "llegadas.toml"),
+        14,
+        2026,
+        sink=sink,
+        warmup_days=2,
+        profiles=profiles,
+    )
+    events, horizon = sink.events, 14 * 1440.0
+    assert center.results_wait_outside == (4, 5)
+    assert len(released(events)) > 1000
+    assert (
+        check_invariants(
+            events,
+            center,
+            ground_truth=result.ground_truth,
+            inside=result.inside,
+            profiles=profiles,
+        )
+        == []
+    )
+
+    run = analyze_run(events, center, 14, 2)
+    for identity in run.utilization:
+        assert identity.relative_error < 1e-9, identity.pool
+    by_hand = box_waits_by_hand(events, horizon)
+    assert run.curves.area("waiting_box", 0, horizon) == pytest.approx(
+        sum(by_hand.values()), rel=1e-12
+    )
+    departed = [r for r in run.table if r.departure is not None]
+    assert all(
+        r.box_wait == pytest.approx(by_hand.get(r.episode_id, 0.0), abs=1e-9) for r in departed
+    )
+    assert sum(r.results_box_wait > 0 for r in departed) > 100

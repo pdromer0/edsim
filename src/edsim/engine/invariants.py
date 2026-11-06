@@ -12,6 +12,12 @@ still alive in SimPy). Comparing with them is what makes conservation a real
 check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
+Task 4.6a adds the results room (ADR candidate 45): ``box_released`` is an
+edge of ``TRANSITIONS`` from the wait for the tests to a room where the
+patient holds no box; it frees the box in the capacity and displacement
+checks; the box wait after the room counts in "nobody jumps the queue", with
+the same key; and ``results_wait`` checks, in logs of version 3, that exactly
+the levels of ``espera_resultados_fuera`` leave the box when they order tests.
 Task 4.5a adds three checks: ``door`` (a triage at the door is a level 1
 classified on arrival), ``schema_version`` (one version per log) and
 ``clinical`` (the clinical payloads of a clinical log, version 2 or 3, against
@@ -32,7 +38,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.engine.center import CenterConfig
-from edsim.engine.events import CLINICAL_SCHEMA_VERSIONS, DOOR, Event
+from edsim.engine.events import (
+    CLINICAL_SCHEMA_VERSIONS,
+    CURRENT_CLINICAL_SCHEMA_VERSION,
+    DOOR,
+    Event,
+)
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
 from edsim.profiles.context import context_indices
@@ -229,7 +240,13 @@ TRANSITIONS: Mapping[str, Mapping[Symbol, str]] = MappingProxyType(
         "awaiting_tests": {
             "test_resulted": "tests_resulted",
             "patient_displaced": "waiting_box_tests",
+            # Results room (task 4.6a): the patient leaves the box right after
+            # test_ordered and holds no box until the results are in.
+            "box_released": "results_room",
         },
+        # In the room, waiting for the results without a box: it cannot be
+        # displaced, and it asks for a box again only with the results.
+        "results_room": {"test_resulted": "waiting_box_reassessment"},
         # The tests keep running while the patient waits for a box.
         "waiting_box_tests": {
             "test_resulted": "waiting_box_reassessment",
@@ -261,6 +278,11 @@ tests (``awaiting_tests``). After it, the patient waits for a box in a
 ``waiting_box_*`` state that remembers the stage, and the next
 ``box_assigned`` takes it back to that stage, so an interrupted assessment
 starts again with the same type.
+
+With the results room (task 4.6a), ``box_released`` takes a patient that has
+just ordered its tests to ``results_room``; only ``test_resulted`` leaves it,
+to ``waiting_box_reassessment``, so the patient is back in a box only after
+its results, and the reassessment is always in a box.
 
 There is no final state: a run cut by the horizon leaves episodes anywhere,
 and a prefix of a valid path is valid.
@@ -332,8 +354,9 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
 
     - Boxes: every ``box_assigned`` gives a number in 1..``boxes`` that is
       free, to an episode without a box; the box is freed by the episode's
-      ``patient_departed`` or ``patient_displaced``, whose ``box`` must be
-      the episode's. Assessments happen in the episode's box.
+      ``patient_departed``, ``patient_displaced`` or ``box_released``, whose
+      ``box`` must be the episode's. Assessments happen in the episode's box.
+      A patient in the results room holds no box.
     - Doctors (``assessment_started`` to ``assessment_ended``) and triage
       nurses (``triage_started`` to ``triage_completed``), with the staff in
       force given by the last ``staffing_changed`` of the pool:
@@ -440,15 +463,15 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                     out.append(_at(name, e, f"{episode} already in box {box_of[episode]}"))
                 occupant[box] = episode
                 box_of[episode] = box
-            case "patient_displaced":
+            case "patient_displaced" | "box_released":
+                what = "displaced from" if e.event_type == "patient_displaced" else "released"
                 box = box_of.pop(episode, None)
                 if box != e.payload["box"]:
                     out.append(
                         _at(
                             name,
                             e,
-                            f"displaced from box {e.payload['box']}, but the patient "
-                            f"is in box {box}",
+                            f"{what} box {e.payload['box']}, but the patient is in box {box}",
                         )
                     )
                 if box is not None and occupant.get(box) == episode:
@@ -488,8 +511,9 @@ def check_nobody_jumps_the_queue(
     (``assessment_started``), no other episode waiting for that resource
     since an earlier instant has a lower key. Who waits, from the log:
 
-    - for a box: from ``triage_completed`` or ``patient_displaced`` to
-      ``box_assigned``;
+    - for a box: from ``triage_completed``, ``patient_displaced`` or, after
+      the results room, ``test_resulted`` to ``box_assigned``, always with
+      the key of the arrival;
     - for a doctor: holding a box with an assessment to do, from
       ``box_assigned`` or ``test_resulted`` to ``assessment_started`` or
       ``patient_displaced``.
@@ -504,6 +528,7 @@ def check_nobody_jumps_the_queue(
     waiting: dict[str, dict[str, float]] = {"box": {}, "doctor": {}}  # episode → since
     waiting_triage: dict[str, float] = {}  # episode → arrival
     has_box: set[str] = set()
+    in_room: set[str] = set()  # waiting for the results outside the box
     to_assess: set[str] = set()  # an assessment is next in the box
 
     def check(e: Event, resource: str) -> None:
@@ -564,10 +589,16 @@ def check_nobody_jumps_the_queue(
                 to_assess.add(episode)
                 if episode in has_box:
                     waiting["doctor"][episode] = e.sim_time
+                elif episode in in_room:
+                    in_room.discard(episode)
+                    waiting["box"][episode] = e.sim_time
             case "patient_displaced":
                 has_box.discard(episode)
                 waiting["doctor"].pop(episode, None)
                 waiting["box"][episode] = e.sim_time
+            case "box_released":
+                has_box.discard(episode)
+                in_room.add(episode)
             case "patient_departed":
                 has_box.discard(episode)
     return out
@@ -668,7 +699,7 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
                 if held is not None and occupant.get(held) == episode:
                     del occupant[held]
                 owed[by] = (e.payload["box"], e.sim_time)
-            case "patient_departed":
+            case "patient_departed" | "box_released":
                 held = box_of.pop(episode, None)
                 if held is not None and occupant.get(held) == episode:
                     del occupant[held]
@@ -892,6 +923,79 @@ def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[V
     return out
 
 
+def check_results_wait(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """Exactly the levels of ``espera_resultados_fuera`` leave the box for the results.
+
+    Only for the events of a log of version 3 (``CURRENT_CLINICAL_SCHEMA_VERSION``),
+    with the levels of the center of the context and the *assigned* level of
+    each episode (its ``triage_completed``):
+
+    - the ``test_ordered`` of an episode of one of those levels is followed,
+      as the next event of the episode and in the same instant, by its
+      ``box_released``;
+    - a ``box_released`` comes only right after the ``test_ordered`` of an
+      episode of one of those levels.
+
+    The order of ``box_released`` (after ``test_ordered``, from a box, back in
+    a box only with the results) is checked by ``transitions`` and
+    ``capacity``.
+    """
+    name = "results_wait"
+    levels = set(context.center.results_wait_outside)
+    out: list[Violation] = []
+    level: dict[str, int] = {}
+    ordered: dict[str, Event] = {}  # test_ordered waiting for its box_released
+
+    for e in events:
+        episode = e.episode_id
+        if e.schema_version != CURRENT_CLINICAL_SCHEMA_VERSION or episode is None:
+            continue
+        order = ordered.pop(episode, None)
+        if e.event_type == "box_released":
+            if order is None:
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"box_released of a level {level.get(episode)} patient not right "
+                        f"after its test_ordered (espera_resultados_fuera {sorted(levels)})",
+                    )
+                )
+            elif e.sim_time != order.sim_time:
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"box_released at {e.sim_time!r}, not in the instant of its "
+                        f"test_ordered {order.sim_time!r}",
+                    )
+                )
+            continue
+        if order is not None:
+            out.append(
+                _at(
+                    name,
+                    order,
+                    f"a level {level[episode]} patient ordered tests and did not leave its box "
+                    f"(espera_resultados_fuera {sorted(levels)})",
+                )
+            )
+        if e.event_type == "triage_completed":
+            level[episode] = e.payload["nivel"]
+        elif e.event_type == "test_ordered" and level.get(episode) in levels:
+            ordered[episode] = e
+    for order in ordered.values():
+        out.append(
+            _at(
+                name,
+                order,
+                f"a level {level[order.episode_id]} patient ordered tests and "
+                f"did not leave its box (espera_resultados_fuera {sorted(levels)})",
+            )
+        )
+    return out
+
+
 CHECKS: Mapping[str, Check] = MappingProxyType(
     {
         "conservation": check_conservation,
@@ -903,6 +1007,7 @@ CHECKS: Mapping[str, Check] = MappingProxyType(
         "door": check_door,
         "schema_version": check_schema_version,
         "clinical": check_clinical,
+        "results_wait": check_results_wait,
     }
 )
 """The invariants, by name, in the order ``check_invariants`` runs them."""

@@ -12,6 +12,15 @@ without a nurse and in the instant it arrives (docs/specs/hito-4.md). While
 the tests are pending, the patient keeps the box and frees the doctor; that is
 why the box is usually the bottleneck.
 
+**Results room** (ADR candidate 45, task 4.6a). With the clinical model, a
+patient whose *assigned* level is in ``espera_resultados_fuera`` leaves its
+box when it orders the tests: right after ``test_ordered``, in the same
+instant, it emits ``box_released`` and gives the box back, as a departure
+does. It waits for the results in a room without a capacity limit, holding no
+resource, so nobody can displace it. With the results it asks for a box again
+with its same key, as a displaced patient does, and there it is reassessed,
+decided and departs. The provisional model never leaves the box.
+
 Boxes and doctors go by ``priority_key`` = (level, arrival). A level 1 can
 displace a patient of a higher level from its box: the displaced patient gets
 ``simpy.Interrupt`` at the ``yield`` where it is, emits ``patient_displaced``,
@@ -36,7 +45,7 @@ import simpy
 from simpy.resources.resource import Preempted
 
 from edsim.engine.clinical import PatientDraws, classified_at_the_door
-from edsim.engine.events import DOOR, NURSE, EventLog, episode_id
+from edsim.engine.events import DOOR, NURSE, RESULTS_WAIT, EventLog, episode_id
 from edsim.engine.resources import (
     TRIAGE_PRIORITY,
     Holder,
@@ -81,8 +90,26 @@ class _Stay:
     results: simpy.Event | None = None
 
 
+RESULTS_ROOM = object()
+"""What ``_in_box`` returns when the patient leaves its box for the results room."""
+
+
+def leaves_for_results(draws: PatientDraws, wait_outside: frozenset[int]) -> bool:
+    """Whether the patient waits for its results outside the box.
+
+    Only with the clinical model, and by the assigned level (``draws.level``,
+    what the hospital knows), as the priority and the door.
+    """
+    return draws.clinical is not None and draws.level in wait_outside
+
+
 def patient(
-    env: simpy.Environment, log: EventLog, pools: Pools, arrival_id: int, draws: PatientDraws
+    env: simpy.Environment,
+    log: EventLog,
+    pools: Pools,
+    arrival_id: int,
+    draws: PatientDraws,
+    wait_outside: frozenset[int] = frozenset(),
 ) -> Generator[simpy.Event]:
     """SimPy process of one episode, from the arrival to the departure.
 
@@ -110,6 +137,9 @@ def patient(
         pools: Nurses, doctors and boxes of the run.
         arrival_id: Arrival of the patient; gives the episode identifier.
         draws: What the patient drew on arrival.
+        wait_outside: Assigned levels that wait for the results outside the
+            box (``CenterConfig.results_wait_outside``); only the clinical
+            model uses it.
     """
     me = env.active_process
     pools.arrival_of[me] = arrival_id
@@ -148,6 +178,7 @@ def patient(
 
     holder = Holder(me, arrival_id, draws.level)
     stay = _Stay(Stage.INITIAL, draws.assessment_time)
+    leaves = leaves_for_results(draws, wait_outside)
     while stay.stage is not Stage.DONE:
         preempt = should_displace(pools.boxes, draws.level)
         with pools.boxes.request(priority=key, preempt=preempt) as box_request:
@@ -161,8 +192,14 @@ def patient(
             box = pools.box_numbers.take(holder)
             emit("box_assigned", env.now, box=box)
 
-            cause = yield from _in_box(env, pools, emit, draws, stay, key, box)
-            if cause is None:
+            cause = yield from _in_box(env, pools, emit, draws, stay, key, box, leaves)
+            if cause is RESULTS_ROOM:
+                # Right after test_ordered, in the same instant. Emitted before
+                # giving the box back, as a departure: whoever gets it next
+                # resumes later in this instant, and its box_assigned comes after.
+                emit("box_released", env.now, box=box, espera=RESULTS_WAIT)
+                pools.box_numbers.give(box)
+            elif cause is None:
                 destino = "ingreso" if draws.admitted else "alta"
                 emit("disposition_decided", env.now, destino=destino)
                 emit("patient_departed", env.now, destino=destino)
@@ -176,6 +213,10 @@ def patient(
                 pools.box_numbers.hand_over(box, to=cause.by)
         # Leaving the with releases the box; after a displacement SimPy already
         # removed this request from the users, and the release does nothing.
+        if cause is RESULTS_ROOM and not stay.results.triggered:
+            # In the room: no resource held, so nobody can displace the patient.
+            # With the results it asks for a box again with the same key.
+            yield stay.results
 
 
 def _in_box(
@@ -186,13 +227,15 @@ def _in_box(
     stay: _Stay,
     key: tuple[int, float],
     box: int,
-) -> Generator[simpy.Event, object, Preempted | None]:
+    leaves: bool = False,
+) -> Generator[simpy.Event, object, object]:
     """Go through the stages left in the box.
 
-    Returns ``None`` when they are all done, or the ``Preempted`` cause if the
-    patient is displaced. Waiting for the results, a displacement needs
-    nothing else: the lab keeps running. Waiting for a doctor or in an
-    assessment, ``_assessment`` handles it.
+    Returns ``None`` when they are all done, the ``Preempted`` cause if the
+    patient is displaced, or ``RESULTS_ROOM`` right after ordering the tests if
+    ``leaves`` (the patient waits for the results outside). Waiting for the
+    results, a displacement needs nothing else: the lab keeps running. Waiting
+    for a doctor or in an assessment, ``_assessment`` handles it.
     """
     while stay.stage is not Stage.DONE:
         if stay.stage is Stage.TESTS:
@@ -222,6 +265,8 @@ def _in_box(
             stay.results = env.event()
             env.process(_lab(env, emit, turnaround, stay.results, **_extra(draws, "test_resulted")))
             stay.stage = Stage.TESTS
+            if leaves:
+                return RESULTS_ROOM
         else:
             stay.stage = Stage.DONE
     return None
