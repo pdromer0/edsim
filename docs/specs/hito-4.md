@@ -36,7 +36,7 @@ Los conceptos se explicaron en la conversación de arranque del hito (3 y 5 de n
 | Cadena generativa | Cada atributo se sortea condicionado a los anteriores: contexto, edad, motivo, gravedad, nivel, pruebas, duraciones |
 | Categórica log-lineal | Peso base × factores de contexto, renormalizado; en logaritmos los factores se suman. Un factor multiplica, no suma puntos |
 | Peso base frente a reparto global | El reparto que sale es la media de los contextos ponderada por las llegadas; los pesos base se derivan para dar el reparto del catálogo |
-| Gumbel-max | Un sorteo por categoría y gana el mayor log w + g. Misma distribución, y al cambiar un peso solo cambian los pacientes que entran o salen de esa categoría (3,6 % frente a 17,3 % con la CDF inversa en el ejemplo de la gripe) |
+| Gumbel-max | Un sorteo por categoría y gana el mayor log w + g. Misma distribución, y al cambiar un peso solo cambian los pacientes que entran o salen de esa categoría (3,37 %, el mínimo posible, frente al 15,55 % con la CDF inversa en el ejemplo de la gripe; tarea 4.7) |
 | Gravedad latente | G continua, oculta, en desviaciones de la población de referencia; depende del motivo y de la edad |
 | Triaje ordinal | Nivel asignado = umbrales(G + ε); nivel real = umbrales(G). Los umbrales se derivan una vez para dar el reparto asignado objetivo y se escriben en el TOML |
 | Infra y sobretriaje | Asignado menos o más urgente que el real. Con G normal estándar, ruido 0,32 y sesgo −0,08 salen un 10,2 % y un 6,2 %; el 31 % de los niveles 1 reales se asigna como 2 |
@@ -89,7 +89,7 @@ Los 17 motivos del catálogo del diseño existen desde el principio, cada uno co
 
 **Ejemplo a mano** (valores orientativos de la sesión). Disnea con peso base 8, factor 2,4 en mayores y 1,5 en invierno: 8 × 2,4 × 1,5 = 28,8. Con todos los motivos, la suma es 126,54, y la disnea queda en 22,8 % de los mayores un martes de invierno (126,74 y 22,7 % con la parada al 0,5 % del catálogo, antes de la tarea 4.6a).
 
-**Sorteo con Gumbel-max** (flujo 6, 17 sorteos fijos por paciente). Cada motivo recibe un g\_m de una Gumbel estándar y gana el mayor `log w_m + g_m`. La distribución es exactamente la categórica y no hace falta renormalizar. Al cambiar el peso de un motivo, solo cambian los pacientes que entran o salen de él: con la disnea ×1,5 cambia el 3,6 % de los pacientes (el mínimo posible es 3,5 %), frente al 17,3 % con la CDF inversa (decisión candidata 43).
+**Sorteo con Gumbel-max** (flujo 6, 17 sorteos fijos por paciente). Cada motivo recibe un g\_m de una Gumbel estándar y gana el mayor `log w_m + g_m`. La distribución es exactamente la categórica y no hace falta renormalizar. Al cambiar el peso de un motivo, solo cambian los pacientes que entran o salen de él: con la disnea ×1,5 cambia el 3,37 % de los pacientes de un año, exactamente el mínimo posible (la distancia de variación total en cada banda y contexto), frente al 15,55 % con la CDF inversa en el orden de `REASON_KEYS` (decisión candidata 43). Cuando solo crece un peso, Gumbel-max alcanza siempre el mínimo: solo cambian los que pasan a ese motivo. Las cifras son exactas y salen de `reason_shock_changes` (`profiles/coupling.py`, tarea 4.7); las de la sesión conceptual (3,6 %, un mínimo de 3,5 % y 17,3 %) eran de los pesos de entonces.
 
 **Pesos base derivados.** La columna «peso aprox.» del catálogo es un reparto global, no un peso de referencia: el reparto que sale es la media de los contextos ponderada por las llegadas. `base_weights_for(...)` calcula los pesos base para que el reparto global de un año del perfil de llegadas (contextos ponderados por las llegadas esperadas y por la mezcla de bandas de cada contexto) coincida con el catálogo. Se ejecuta una vez y su resultado se escribe en el TOML con un comentario. Un test comprueba que el reparto global sale dentro de ±0,5 puntos. El peso base es el punto fijo y los factores mandan: así un shock «disnea ×1,5» no se renormaliza de vuelta.
 
@@ -343,6 +343,17 @@ Entre la llegada y el primer médico hay tres tramos (pretriaje, triaje y espera
 - **Nivel 1 solo con su tiempo** (mediana y p90), sin porcentaje: su máximo es 0 y el porcentaje sería siempre 0 %.
 - **Cumplimiento por nivel real**, solo con ground truth: la misma regla con el nivel real. La diferencia con el KPI es el coste del infratriaje medido en tiempo. Nunca entra en el log ni en los KPIs observables.
 
+**API del cumplimiento por nivel real** (tarea 4.7, `engine/targets.py`). Una función aparte que recibe el ground truth, para que no se pueda calcular desde el log:
+
+- `true_level_compliance(tabla, ground_truth, primer_día, día_final, *, measure, max_wait, target)` devuelve un `Compliance`, como `manchester_compliance`, con el nivel real para agrupar a cada paciente y para elegir su máximo: un nivel 2 real asignado como 3 que ve al médico en 30 minutos cumple con su nivel asignado (60) y no con el real (10).
+- `true_levels(ground_truth)` da el nivel real de cada `episode_id` y es un error con un episodio sin verdad clínica (el modelo provisional); también lo es un episodio de la tabla que falta en el ground truth.
+- `true_level_waits(tabla, ground_truth, medida, primer_día, día_final)` da una medida con los dos niveles de cada episodio, emparejados por `episode_id`.
+- `manchester_compliance` no cambia ni de firma ni de cuerpo. El auxiliar compartido gana un argumento opcional con el nivel de cada episodio que, sin él, hace lo de siempre. `runs/` y la calibración no usan las funciones nuevas.
+
+En el notebook 04 (89 días, centro calibrado, reloj C), el nivel 2 cumple en el 94,6 % de sus pacientes por nivel asignado y en el 93,3 % por nivel real, con 14 y 21 días fuera; el nivel 3 pasa de 2 días fuera a 15; el nivel 5, de 40 a 24, porque muchos niveles 5 reales están asignados como 4.
+
+**Clasificados tarde** (tarea 4.7). `classified_late(tabla, primer_día, día_final)` da la proporción de cada nivel que ya pasa estrictamente de su máximo, contado desde la llegada, al clasificarse: ningún médico puede hacerlos cumplir con el reloj A. En el notebook 04 es el 45,5 % de los niveles 2: por eso el nivel 2 queda fuera de Manchester con el reloj A los 89 días, y con el C, 14.
+
 Las normas (máximos de Manchester, pretriaje en 10 minutos, límites del PAUE) se informan siempre, pero no son objetivos de calibración.
 
 ## Calibración
@@ -530,12 +541,14 @@ src/edsim/profiles/
   sampler.py             PersonReasonSampler, SeverityTriageSampler y WorkupDurationSampler
   validation.py          comprobaciones estadísticas del muestreador y validate_profiles
   report.py              tabla y gráficas de perfiles validar (tarea 4.5b)
+  coupling.py            Gumbel-max frente a la CDF inversa: cambios exactos y simulados con números comunes (tarea 4.7)
 src/edsim/calibration/
   __init__.py
   targets.py             objetivos.toml: Target, load_targets
   staffing.py            regla de la plantilla equivalente: cargas por turno, ⌈carga / u⌉, plantillas de la regla (tarea 4.6b)
   evaluate.py            réplicas con día de vaciado, comparación con horquillas, días fuera, sensibilidad y elección
   report.py              tablas y CSV de calibracion evaluar y sensibilidad (tarea 4.6b)
+  sas.py                 cifras del SAS que no son objetivos: reparto por nivel en adultos y TPAM por nivel (tarea 4.7)
 src/edsim/engine/        cambios acotados
   clinical_sampler.py    ClinicalSampler, ClinicalDraws, ClinicalTruth y TurnaroundShifts (tarea 4.5a)
   clinical.py            PatientDraws con clinical y test_turnaround opcional; ProvisionalSampler
@@ -544,7 +557,7 @@ src/edsim/engine/        cambios acotados
   engine.py              simulate_ed(..., profiles=None)
   analysis.py            triage_start_to_doctor y classified_to_doctor; initial_box_wait y results_box_wait (tarea 4.6a)
   center.py              espera_resultados_fuera, opcional (tarea 4.6a)
-  targets.py             cumplimiento con medida, pretriaje, nivel 1 sin porcentaje
+  targets.py             cumplimiento con medida, pretriaje, nivel 1 sin porcentaje; cumplimiento por nivel real y clasificados tarde (tarea 4.7)
   invariants.py          capacidad sin triajes de puerta, nadie se cuela en el triaje; door, schema_version y clinical; la sala y results_wait (tarea 4.6a)
   ground_truth.py        EpisodeTruth.clinical (ClinicalTruth)
   validation.py          M/G/1 con λ·(1 − p₁)
@@ -556,7 +569,9 @@ tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.
       test_profiles_validation.py, test_calibration.py, test_calibration_targets.py,
       test_calibration_sensitivity.py, test_staffing.py, test_calibrated_center.py,
       test_cli_calibracion.py, test_door_triage.py,
-      test_clinical_sampler.py, test_clinical_engine.py, clinical_factory.py
+      test_clinical_sampler.py, test_clinical_engine.py, clinical_factory.py,
+      test_true_level_compliance.py, test_coupling.py, test_sas.py,
+      test_target_mix_variant.py (tarea 4.7)
 ```
 
 `ProvisionalSampler` sigue en `engine/clinical.py` para la validación del motor. Sin dependencias nuevas: `tomllib`, NumPy y SciPy cubren la Gumbel, la logística y la búsqueda de umbrales. Los nombres de módulos los confirma el plan de cada tarea.
@@ -569,15 +584,16 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | --- | --- |
 | Perfiles | Carga del TOML de ejemplo y del real; factores opcionales neutros; errores con claves desconocidas, longitudes, porcentajes y medianas inválidos |
 | Contexto | Franja en los bordes (7:59 y 8:00), tipo de día en el paso de domingo a lunes, estación por mes |
-| Mezcla | Valor a mano (22,8 % de disnea en mayores en invierno; 22,7 % hasta la tarea 4.6a); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea» |
+| Mezcla | Valor a mano (22,8 % de disnea en mayores en invierno; 22,7 % hasta la tarea 4.6a); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea». Tarea 4.7: [2, 1, 1] → [3, 1, 1] a mano (mínimo 0,10, Gumbel-max 0,10 y CDF inversa 0,15 en el orden [A, B, C]); Gumbel = mínimo con un solo peso que crece y ≥ mínimo con cualquier cambio (pesos aleatorios); la simulación con números comunes dentro de su binomial; la gripe con `config/` (3,37 % y 15,55 %, a 1e-6) y simulada en el año; otra población es un error |
 | Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje; matriz real × asignado casilla a casilla; umbrales escritos = derivados y el shock con los escritos; la cascada entera (pesos, ruido y sesgo, umbrales) igual a lo escrito; la guarda de la parada (≥ 99 % de nivel real 1 y ≥ 97 % de asignado 1, con Φ a mano) y la media del criterio (4,21; con 4,20 no cumple); orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
 | Pruebas y duraciones | logit(0,40) = −0,4055 y 40,00 / 59,74 / 68,88 / 83,13 %; bordes u = P; máxima de las pedidas (75; 82,5 de tarde; `None` sin pruebas); media lognormal 24,43 → 29,32 con el factor 1,2; lo exacto contra `quad`; marginales por motivo y regla de los k sobre `config/perfiles.toml`; `check_workup` y `check_durations` |
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
 | Motor | Asignación de flujos con sorteos a mano; consumo fijo con generadores instrumentados; el motor como tubería del `ClinicalSampler`; respuesta con la franja del pedido (75 / 82,5 / 67,5; 84 de noche; 260 a las 7:59; pedido a las 15:10 de una llegada a las 14:00); destino con el nivel asignado; payloads del catálogo 2 en un escenario a mano, sin campos ocultos; invariantes `door`, `schema_version` y `clinical`, y cero violaciones en 14 días; huellas del modelo provisional (sin cambios) y del clínico (log y ground truth) |
-| Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
+| Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real (tarea 4.7): un infratriado que cumple con su nivel asignado y no con el real y un sobretriado al revés, a mano; bien clasificados = `manchester_compliance` campo a campo; errores sin verdad clínica o con un episodio que falta; esperas emparejadas por id con la tabla desordenada; en 3 días, el `n` por nivel es el de los niveles reales. Clasificados tarde en el borde (10 min no, 10,5 sí; el nivel 1 en la puerta, 0) |
 | Calibración (tarea 4.6b) | `objetivos.toml` real y sus errores con la clave completa; cargas con `config/` (a 1e-3), regla a mano (`u` = 0,60 → `[3, 3, 2]`; 0,80 → `[12, 12, 5]` en médicos…) y las listas de plantillas distintas; IC a mano (10, 12, 14: media dentro de \[6, 15\] e IC de 9,94, no pasa; t₉ = 2,262); días fuera (5, 8, 16, 10 → 50 %); media diaria por paciente; ventana sin calentamiento; umbral de Manchester en el borde; desglose por nivel; pureza de la evaluación; vaciado a mano (una llegada en el minuto 1430 que sale después de la ventana) y su espía; el pretriaje igual con otros médicos (igualdad exacta) y distinto con otra enfermería; semillas de ajuste y de comprobación distintas; sensibilidad corta con un espía de la plantilla de cada candidato; elección y cumplidor a mano (el centro de la horquilla sin referencia); CLI con códigos 0, 1 y 2 sin ficheros; centros calibrado y cumplidor desde la regla con sus u. Slow: la fila corta del registro |
 | CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso. `motor simular --perfiles`: caracterización con los argumentos de la del provisional (log igual al de `simulate_ed` y CSV de días con la huella del provisional), la CLI y `simulate_run` dan el mismo log, y código 2 con perfiles que no existen o no son válidos. `perfiles validar`: tabla y gráficas con un contexto (rápido), código 1 con el sesgo del triaje desplazado en el muestreador (`sampled_profiles`), código 2 sin ficheros y los valores por defecto con `config/` (slow) |
 | Sala de resultados (tarea 4.6a) | Escenario a mano (un box, tres niveles 4): el motor lo escribe evento a evento, A ocupa el box 20 + 10 minutos, vuelve por delante de C con su clave, y esperas, curvas, Little y utilización exactas; quién deja el box (nivel 3, infratriado, sobretriado, nivel 4 sin pruebas); el provisional con `[4, 5]`, igual y con su huella; números comunes con y sin sala y con otra plantilla; una copia de `centro.toml` sin la clave da el log de antes; la clave y sus errores; catálogo 3 literal y lectura de las versiones 1, 2 y 3; violaciones a mano de las invariantes nuevas; Replay y Episodios sin dos pacientes en un box; 14 días con `config/`: cero violaciones, utilización exacta y la cola de box contada por dos caminos |
+| Variante y SAS (tarea 4.7) | El SAS en adultos a mano (1,15 / 7,32 / 34,44 / 38,86 / 18,22 % y 2.574.941 adultos) y con niños; la variante con umbrales = `thresholds_for`, reparto asignado exacto = objetivo (a 1e-10), ruido y sesgo sin cambios, los ficheros de `config/` iguales byte a byte y en su hora; la densidad de G a mano, su integral y su media; `lognormal_pdf` frente a SciPy; `evaluate_staffings` con un espía de la plantilla de cada candidato |
 | Ejecuciones (tarea 4.5b) | Ida y vuelta del CSV clínico con `==` y tipos exactos; cabecera literal y fila a mano; `run.json` v1 de `tests/data` y v2 con los dos modelos; `simulate_run` pasa los perfiles a `check_invariants` (espía y comportamiento); `pairing_blockers` con los dos modelos |
 
 **Potencia.** El muestreador se prueba sin el motor, con 25 000 pacientes por contexto en la mezcla (20 000 hasta la tarea 4.6a) en décimas de segundo. Con el χ² por motivo, nivel 0,01 y Bonferroni entre 17, se detecta un 5 % que pasa a 6 % con una potencia del 99,98 % (99,7 % con 20 000), pero un 5 % que pasa a 5,5 % solo con un 57 % (43 %). En la tabla de `perfiles validar`, con Bonferroni entre las 2.136 categorías de los 24 contextos, un motivo del 5 % se ve si pasa a 5,76 % (5,85 % con 20 000). Cada prueba escribe qué tamaño de error ve. Los motivos raros (crítico, 0,3 % desde la tarea 4.6a) necesitan comprobar que hay pacientes suficientes, para que el test no pase de forma vacía.
@@ -643,6 +659,14 @@ Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en l
 | El cumplidor con el reloj A | Falla el cumplimiento a mano con A ≠ C. Exacta (tarea 4.6b) |
 | La CLI crea `--salida` antes de validar | Fallan los tests de código 2 sin ficheros (15). Exacta (tarea 4.6b) |
 | Sin día de vaciado | Fallan el vaciado a mano, el espía del horizonte y la fila corta del registro (slow). Exacta (tarea 4.6b) |
+| El cumplimiento por nivel real con el nivel asignado | Fallan los casos a mano del infratriado y del sobretriado y la ejecución de 3 días; pasan «bien clasificados = asignado» y los tests de `manchester_compliance`. Cumplida, con un fallo de más: sin buscar el nivel real, nadie detecta el episodio que falta en el ground truth (tarea 4.7) |
+| Gumbel-max con sorteos distintos antes y después del cambio de pesos | Fallan las simulaciones del contexto (cambia el 60 % frente al 10 %) y del año; pasan las fórmulas exactas y la CDF inversa simulada. Cumplida, más los dos «sin cambio de pesos nadie cambia» simulados: con sorteos independientes cambian pacientes aunque los pesos no cambien (tarea 4.7) |
+| La variante con los umbrales de antes | Fallan «umbrales = `thresholds_for`» y «reparto asignado exacto = objetivo»; pasan «no toca los ficheros» y «ruido y sesgo sin cambios». En la primera pasada falló también este último, que comprobaba además que los umbrales cambian; esa aserción pasó a su test y la segunda pasada fue exacta (tarea 4.7) |
+| La fórmula de Gumbel-max con `min` en lugar de `max` | Fallan el 0,10 a mano, «Gumbel = mínimo con un peso que crece», el literal de la gripe y la simulación del año; pasan la CDF inversa y la simulación del contexto, que se compara con los valores a mano. Cumplida, más los cuatro tests que usan la fórmula con un cambio de pesos (escala, peso cero, «ningún método por debajo del mínimo» y por ejes) (tarea 4.7) |
+| Clasificados tarde con `>=` | Fallan el borde de 10 minutos y el nivel 1 en la puerta (todos «tarde»); pasa el de 10,5. Exacta (tarea 4.7) |
+| El SAS en adultos restando los puntos de los menores al reparto con niños | Fallan los cinco porcentajes y el total de adultos; pasa el reparto con niños. Cumplida, más los cinco tests de la variante, que toman su objetivo del SAS: restado y recortado a 0 no es un reparto válido (tarea 4.7) |
+| La densidad de la mezcla de G sin los pesos | Fallan la mezcla a mano y la media; pasa «integra 1», que por sí solo no la ve (una media simple de densidades también integra 1). Exacta tras separar «integra 1» y «da la media», que estaban en un solo test (tarea 4.7) |
+| Las esperas con los dos niveles emparejadas por posición | Falla la tabla desordenada; pasa la ejecución de 3 días, porque la tabla y el ground truth van en el mismo orden. Cumplida, más el episodio que falta, por la misma causa que la primera de esta tarea (tarea 4.7) |
 
 Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
 
@@ -666,6 +690,32 @@ Contenido
 12. Para experimentar: un perfil con muchos niveles 5 (el reparto del SAS), otro ruido de triaje, otra plantilla.
 13. Resumen: las lecciones del hito en pocas frases.
 
+**Lo que quedó** (tarea 4.7). El notebook usa `config/centro.toml` (calibrado) y `config/centro_cumplidor.toml`; el notebook 03 sigue con la plantilla del hito 3. Las cifras que cita el texto son las de la ejecución normal y lo dice, como el 03.
+
+| # | Qué hace | Del paquete |
+| --- | --- | --- |
+| 2 | Un paciente infratriado de 3 días: su verdad clínica y lo que el log dice de él; el nivel asignado por banda de edad | `simulate_ed(..., profiles=)`, `ClinicalTruth` |
+| 3 | Los 17 motivos en cuatro situaciones (edad, franja, día y estación) y el peso base frente al reparto del año y el catálogo | `reason_probabilities`, `global_reason_shares`, `catalog_shares` |
+| 4 | La gripe (disnea ×1,5) exacta y simulada con números aleatorios comunes, en un año y en un contexto | `reason_shock_changes`, `simulate_reason_shock`, `simulate_changes` (`profiles/coupling.py`) |
+| 5 | La densidad de G y de G + ε con los umbrales, la matriz P(asignado \| real), y el infra y sobretriaje al mover el ruido o el sesgo con los umbrales escritos | `SeverityMixture.pdf`, `triage_matrix`, `triage_error_rates`, `assigned_shares` |
+| 6 | Los niveles 1 reales de la ejecución principal, a la puerta o asignados como 2, con su pretriaje y su reloj A | `true_level_waits` |
+| 7 | Las logísticas de las cuatro pruebas de un motivo (adulto y mayor) y la valoración por nivel real y por k | `order_probability`, `workup_model`, `duration_params`, `lognormal_pdf` |
+| 8 | El mismo día con A, B y C, los días fuera de cada reloj y los niveles 2 ya fuera al clasificarse | `manchester_compliance`, `classified_late`, `clock_quantiles` |
+| 9 | La enfermería entera (5 plantillas) y las 5 plantillas de médicos alrededor de la elegida, con 5 réplicas de 14 días; el TPAM del SAS por nivel frente al reloj A del modelo | `rule_staffings`, `evaluate_staffings`, `choose_staffing`, `calibration/sas.py` |
+| 10 | El cumplimiento por nivel asignado frente al real, y los niveles 2 reales según su nivel asignado | `true_level_compliance`, `true_level_waits` |
+| 11 | El calibrado frente al cumplidor con los mismos pacientes | `paired_waits`, `manchester_compliance` |
+| 12 | Tres variantes: el reparto del SAS en adultos (umbrales rederivados en memoria; el ruido y el sesgo no cambian), el ruido ×1,5 con los umbrales escritos y los médicos [13, 12, 5] | `with_target_mix`, `replica_values`, `true_level_compliance` |
+
+- **Parámetros.** La ejecución principal dura 91 días (enero a abril), con 2 de calentamiento y el día de vaciado de la calibración, y se reduce a su tabla y su ground truth nada más simularla; la usan las secciones 6, 8, 9, 10 y 11, y el cumplidor tiene la suya, con la misma semilla. Calibración con 5 réplicas de 14 días; la gripe, con los pacientes de un año; los experimentos, 28 días. En modo rápido: 5 días, 2 réplicas de 3 días, 5.000 pacientes y 5 días.
+- **Tiempos y memoria** (medidos en la tarea 4.7): modo normal, 3 min 52 s y 621 MB de pico del kernel; modo rápido, 26 s.
+- **La calibración del notebook no sustituye al registro**: con 5 réplicas elige la misma enfermería ([3, 2, 1], pretriaje 11,5 min) y los mismos médicos ([12, 11, 5], reloj A de 57,1 min) que el registro con 10.
+- **El TPAM del SAS frente al modelo** se compara por la forma, no por la cifra: el del SAS incluye menores y va por nivel asignado. En el SAS los niveles 3 a 5 esperan parecido (59,0 / 59,8 / 68,5 min); en el modelo, el 3 casi no espera (23,7) y el 5 mucho más (229 en el trimestre de invierno de la ejecución principal).
+- **Hallazgo de la sección 12.** Con el reparto del SAS en adultos, el reloj A de los niveles 2 a 5 baja de 73,5 a 47,3 minutos con los mismos pacientes: hay menos niveles 2 asignados, que retienen el box mientras esperan sus pruebas, y más 4 y 5, que lo dejan (decisión 45). El nivel asignado decide quién libera el box.
+
+**Variante de perfiles con otro reparto objetivo** (tarea 4.7). `with_target_mix(perfiles, llegadas, reparto)` (`profiles/derivation.py`) cambia `reparto_objetivo` y rederiva los umbrales en memoria con `thresholds_for`, sin redondear, de modo que el reparto asignado exacto del año es el nuevo objetivo. El ruido y el sesgo se quedan como están, así que el infratriaje y el sobretriaje cambian (con el SAS en adultos, 14,4 % y 8,0 %). Nunca escribe en `config/`. No contradice la decisión 38: los umbrales escritos no se recalculan al cargar; una variante con otro reparto es otro perfil.
+
+**El reparto del SAS en adultos** (`calibration/sas.py`). Del CMBD 2013 (página 30): los recuentos por nivel (30.457 / 208.635 / 989.622 / 1.312.906 / 731.808) y los menores de cada nivel (2,65 / 9,60 / 10,38 / 23,78 / 35,90 %). Quitando los menores nivel a nivel quedan 2.574.941 adultos y el reparto 1,15 / 7,32 / 34,44 / 38,86 / 18,22 %; con niños, 0,93 / 6,37 / 30,23 / 40,11 / 22,36 %. El módulo guarda también el TPAM por nivel (31,7 / 35,6 / 59,0 / 59,8 / 68,5 min; 59,7 en total).
+
 ## Decisiones del hito
 
 Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptual del 5 de noviembre de 2026, y la 45 y la 46, en la del 6 de noviembre, tras las comprobaciones clínicas de la tarea 4.5a. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0046 y las añade al registro del diseño. La decisión APP-0003, que solo afecta a la app, está en «App web — incrementos».
@@ -681,7 +731,7 @@ Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptua
 | 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
 | 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; dos mandos indirectos con objetivos separados, la enfermería de triaje (pretriaje) y los médicos (tiempo hasta el médico), ajustados en ese orden; los boxes quedan fijos (30), y la sensibilidad de los mandos se mide antes de ajustar | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia, y plantilla y boxes tampoco con objetivos de tiempo hasta el médico; los médicos no mueven el pretriaje (1,4 minutos con la enfermería de antes) |
 | 42 | Pruebas de cuatro tipos en una ronda, con un solo `test_ordered` (lista de pruebas) y un solo `test_resulted` (resultados) | Mismo comportamiento del paciente sin cambiar el contrato del log; un evento por tipo queda para versiones posteriores |
-| 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,6 % de los pacientes y no el 17,3 % |
+| 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,37 % de los pacientes, el mínimo posible, y no el 15,55 % |
 | 44 | Modelo clínico opcional durante el hito (`profiles=None` usa el provisional) y por defecto en el cierre, cuando la app ya lo soporta; el `ProvisionalSampler` se queda para la validación del motor | `main` estable y `tests-app` obligatorio en todo el hito; la app no se rompe a mitad de camino |
 | 45 | Con el modelo clínico, los pacientes de los niveles asignados de `espera_resultados_fuera` (`centro.toml`, `[4, 5]`) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y vuelven a pedir box con su misma clave de prioridad para la reevaluación; un evento nuevo en el catálogo versión 3. El provisional no cambia | El 64 % del tiempo de box era espera de resultados y saturaba los 30 boxes; en las urgencias reales los leves esperan fuera; la plantilla de médicos no puede calibrar una cola de boxes |
 | 46 | La parada / crítico pasa al 0,3 % del catálogo con una gravedad alta y poco dispersa, para que casi todas sean nivel 1 real y asignado; pesos base, ruido y sesgo, umbrales y marginales de pruebas se rederivan y se escriben | Con el 0,54 % y la gravedad en el umbral, el 44 % de las paradas recibía nivel 2 y esperaba en la cola del triaje: el nivel 1 asignado del 0,4 % no dejaba sitio para todas |
