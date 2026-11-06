@@ -13,6 +13,7 @@ from edsim.engine.center import load_center
 from edsim.profiles.config import load_profiles
 
 CONFIG = Path(__file__).resolve().parents[1] / "config"
+DATA = Path(__file__).resolve().parent / "data"
 
 # Los intervalos de u del comentario de config/centro.toml y config/centro_cumplidor.toml.
 NURSES_U = (0.795, 0.8325)
@@ -70,12 +71,14 @@ def test_las_plantillas_salen_de_la_regla_con_los_u_del_comentario(centers, load
 
 @pytest.mark.slow
 def test_reproduce_la_fila_corta_del_registro():
-    # docs/calibracion/registro.md, «Fila reproducible»: config/ calibrado, 3 réplicas de
-    # 5 días con 1 de calentamiento (y el de vaciado), semilla 2026. Con tan pocas
+    # docs/calibracion/registro.md, «Fila reproducible» de la tarea 4.6b: el centro
+    # calibrado entonces (fijado en tests/data/centro_4_6b.toml), 3 réplicas de 5 días con
+    # 1 de calentamiento (y el de vaciado), semilla 2026, todas desde fecha_inicio (sin
+    # fechas, simulate_replicas da lo mismo que antes de la ventana anual). Con tan pocas
     # réplicas el IC de los niveles 2 a 5 es más ancho que la horquilla: código 1.
     targets = load_targets(CONFIG / "objetivos.toml")
     replicas = simulate_replicas(
-        load_center(CONFIG / "centro.toml"),
+        load_center(DATA / "centro_4_6b.toml"),
         load_profile(CONFIG / "llegadas.toml"),
         load_profiles(CONFIG / "perfiles.toml"),
         targets,

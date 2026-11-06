@@ -5,8 +5,10 @@ Simulating and evaluating are separate (docs/specs/hito-4.md, "Calibración"):
 - **Simulate.** ``simulate_replicas`` runs R replications with common random
   numbers: child ``i`` of the seed (``child_streams``) is replication ``i`` for
   every candidate, so two staffings see the same patients and their difference
-  is not noise. Each replication is reduced to a ``ReplicaValues`` at once and
-  its events are dropped.
+  is not noise. Each replication may start on its own date (the annual window
+  of ``calibration.window``: one per month); the same date for every candidate.
+  Each replication is reduced to a ``ReplicaValues`` at once and its events are
+  dropped.
 - **Evaluate.** ``replica_values`` (one replication) and ``summarize_targets``
   (all of them) are pure functions of the episodes.
 
@@ -20,7 +22,11 @@ of the horizon are counted as censored, per replication.
 
 **Rule 4 of the calibration.** A target passes if the mean between
 replications falls inside its band and the width of its 95 % confidence
-interval (Student's t) is not larger than the width of the band.
+interval (Student's t) is not larger than the width of the band. With the
+annual window the spread between replications includes the variation between
+months, so the interval is conservative. ``pooled_value``, the mean per patient
+of all the replications (the yearly mean, which weighs each month by its
+arrivals), is reported but never chooses.
 
 **Days out.** Each replication gives the value of the target on each day of
 the window (with the patients who arrived that day); a day is out if that
@@ -34,6 +40,7 @@ import dataclasses
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 
 import numpy as np
@@ -52,6 +59,7 @@ from edsim.calibration.staffing import (
     rule_staffings,
 )
 from edsim.calibration.targets import FIT, Target
+from edsim.calibration.window import with_start_date
 from edsim.checks import check_count
 from edsim.engine.analysis import EpisodeRecord, completed_in_window, episode_table
 from edsim.engine.center import N_LEVELS, CenterConfig
@@ -293,6 +301,28 @@ def summarize_targets(
     return tuple(out)
 
 
+def pooled_value(replicas: Sequence[ReplicaValues], target: Target) -> float:
+    """The statistic of ``target`` over the patients of all the replications: a pure function.
+
+    The weight of each replication is the number of patients its value is
+    computed on: those of the window that departed, of the levels of the target
+    (``n_by_level``). A mean is Σ value · (n / N); a percentage counts the
+    patients above the threshold of all of them, 100 · (Σ over / N), as each
+    replication does. With one replication it is its value, bit for bit. With
+    the annual window it is the mean of the year, which weighs each month by
+    its patients, while rule 4 uses the mean of the replications. ``nan``
+    without patients.
+    """
+    values = [r.targets[target.name] for r in replicas]
+    counts = [sum(v.n_by_level) for v in values]
+    total = sum(counts)
+    if not total:
+        return math.nan
+    if target.is_percentage:
+        return 100 * (sum(sum(v.over_by_level) for v in values) / total)
+    return sum(v.value * (n / total) for v, n in zip(values, counts, strict=True) if n)
+
+
 def evaluate_targets(
     tables: Sequence[Sequence[EpisodeRecord]],
     targets: Sequence[Target],
@@ -410,6 +440,7 @@ def simulate_replicas(
     days: int,
     warmup_days: int,
     seed: int | np.random.SeedSequence,
+    start_dates: Sequence[date] | None = None,
 ) -> tuple[ReplicaValues, ...]:
     """Simulate ``replicas`` replications and reduce each one at once.
 
@@ -417,14 +448,32 @@ def simulate_replicas(
     patients for every center, the common random numbers that make the
     comparison of two staffings paired.
 
+    Args:
+        start_dates: The date on which each replication starts, such as the
+            annual window (``calibration.window``): replication ``i`` uses
+            ``arrival_profile`` with ``start_date = start_dates[i]`` and its
+            factors bit for bit (``with_start_date``), and so the
+            monthly factor, the weekdays and the clinical context of that date.
+            ``None`` starts all of them on the profile's ``start_date``.
+
     Raises:
-        ValueError: If ``replicas`` is below 2 or the days are not valid.
+        ValueError: If ``replicas`` is below 2, the days are not valid or there
+            is not one start date per replication.
     """
     replicas = check_count("replicas", replicas, 2)
     days, warmup_days = check_horizon(days, warmup_days)
+    if start_dates is None:
+        profiles_by_replica = [arrival_profile] * replicas
+    else:
+        start_dates = tuple(start_dates)
+        if len(start_dates) != replicas:
+            raise ValueError(
+                f"need one start date per replica: {replicas} replicas and {len(start_dates)} dates"
+            )
+        profiles_by_replica = [with_start_date(arrival_profile, d) for d in start_dates]
     out = []
-    for child in child_streams(seed, replicas):
-        run = clinical_run(center, arrival_profile, profiles, child, warmup_days)
+    for child, profile in zip(child_streams(seed, replicas), profiles_by_replica, strict=True):
+        run = clinical_run(center, profile, profiles, child, warmup_days)
         out.append(
             replica_values(replica_table(run, days, warmup_days), targets, warmup_days, days)
         )
@@ -519,12 +568,14 @@ def evaluate_staffings(
     days: int,
     warmup_days: int,
     seed: int | np.random.SeedSequence,
+    start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
     """Evaluate the given staffings of ``knob``, in their order, the other knob fixed.
 
-    Each one is simulated with the same replications (the same seed), so the
-    rows differ only in the staff. ``sensitivity`` gives it every staffing of
+    Each one is simulated with the same replications (the same seed and the
+    same ``start_dates``, as in ``simulate_replicas``), so the rows differ only
+    in the staff. ``sensitivity`` gives it every staffing of
     the rule; a subset, such as the staffings around the chosen one, costs
     less.
 
@@ -550,6 +601,7 @@ def evaluate_staffings(
             days=days,
             warmup_days=warmup_days,
             seed=seed,
+            start_dates=start_dates,
         )
         row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
         rows.append(row)
@@ -572,14 +624,16 @@ def sensitivity(
     u_min: float = U_MIN,
     u_max: float = U_MAX,
     step: float = U_STEP,
+    start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
     """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
 
     The staffings come from ``rule_staffings`` with the loads of the knob and
     the shifts of ``center``, and ``evaluate_staffings`` simulates each one
-    with the same replications (the same seed), so the rows differ only in
-    the staff.
+    with the same replications (the same seed and ``start_dates``), so the
+    rows differ only in the staff. The loads are those of the mean day of the
+    profile, which do not depend on its ``start_date``.
 
     Args:
         on_row: Called with each row as soon as it is evaluated, such as a
@@ -597,6 +651,7 @@ def sensitivity(
         days=days,
         warmup_days=warmup_days,
         seed=seed,
+        start_dates=start_dates,
         on_row=on_row,
     )
 
