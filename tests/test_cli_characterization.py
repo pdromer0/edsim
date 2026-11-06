@@ -68,12 +68,16 @@ def test_simulate_cli_characterization(tmp_path, monkeypatch):
 
 # Huellas SHA-256 de motor simular --perfiles con el centro, las llegadas y los perfiles
 # de ejemplo y los mismos argumentos que la caracterización del provisional, también el
-# run_id. Generadas en la tarea 4.5b; se regeneran solo con un cambio a propósito de los
-# muestreadores, del catálogo 2 o del CSV clínico, nunca para que un test pase.
+# run_id. Generadas en la tarea 4.5b (306392fe… y 3f59dd25…); se regeneran solo con un
+# cambio a propósito de los muestreadores, del catálogo o del CSV clínico, nunca para que
+# un test pase. Fase A de la 4.6a: los perfiles de ejemplo, con la parada al 0,3 % y la
+# cascada rederivada, cambian el log y el CSV de episodios (también su huella_perfiles).
+# Fase B: solo el log (f7cb3225… → 2a8df1e8…), por el schema_version 3; el centro de
+# ejemplo no tiene sala y los CSV no cambian.
 CLINICAL_CHARACTERIZATION = {
-    "eventos.jsonl": "306392fe5e0cf8b9e65a5a87858f374f0e370054ddee18ccaa72c20f7bc4afc8",
+    "eventos.jsonl": "2a8df1e89bf8b2ec240c9a167d721fc82343dc7b09161bd2a5c365e6a39ff7d4",
     "ground_truth_episodios.csv": (
-        "3f59dd25ee90e4214f6c8640fe50220d28490ed57b249de353cedcf76e1784c0"
+        "0d18f0a06be4a7bcc78fe141b042ed2564e7bfc8dc4a61959ebd81a5444b6e40"
     ),
     # El de los días es el del provisional: las llegadas no dependen de los perfiles.
     "ground_truth_dias.csv": "af940fff1593570fc8c127a21cbe3fcf72e3686d0a7771bcc33521cc545a21c8",
@@ -130,7 +134,71 @@ def test_simulate_cli_characterization_clinico(tmp_path, monkeypatch):
             profiles=load_profiles("tests/data/perfiles_ejemplo.toml"),
         )
     assert (output / "eventos.jsonl").read_bytes() == path.read_bytes()
-    # Guarda: es un log clínico de la versión 2, no el del provisional.
+    # Guarda: es un log clínico (versión 3 desde la tarea 4.6a), no el del provisional.
     events = list(read_events(output / "eventos.jsonl"))
-    assert {e.schema_version for e in events} == {2}
+    assert {e.schema_version for e in events} == {3}
     assert all("medio" in e.payload for e in events if e.event_type == "patient_arrived")
+
+
+# --- Con la sala de resultados (tarea 4.6a) ------------------------------------------
+
+# motor simular --perfiles con tests/data/centro_sala_ejemplo.toml (el centro de ejemplo más
+# espera_resultados_fuera = [4, 5]) y los mismos argumentos. Los CSV llevan otra huella del
+# centro, pero sus datos son los de la caracterización sin sala: la sala solo cambia el flujo.
+ROOM_CHARACTERIZATION = {
+    "eventos.jsonl": "d033762dc0f684cd4c1a2131977bc9d24c54d5bfb4fc5c8f09343ba9c8a6e585",
+    "ground_truth_episodios.csv": (
+        "0b367ec0d854a38d7a14daef267ef6206604628a24fd797298402a1c29b9a8af"
+    ),
+    "ground_truth_dias.csv": "ab36965715cafbe27cf94f120bba1f3e08aee44df7d07f73c64d0428a4f6a19f",
+}
+
+
+def _simulate_clinical(output: Path, center: str) -> None:
+    arguments = [
+        "motor",
+        "simular",
+        "--centro",
+        center,
+        "--llegadas",
+        "tests/data/llegadas_ejemplo.toml",
+        "--perfiles",
+        "tests/data/perfiles_ejemplo.toml",
+        "--dias",
+        "2",
+        "--calentamiento",
+        "1",
+        "--semilla",
+        "7",
+        "--run-id",
+        "caracterizacion-a2a",
+        "--salida",
+        str(output),
+    ]
+    assert main(arguments) == 0
+
+
+def _rows_without_center(path: Path) -> list[dict[str, str]]:
+    import csv
+
+    with path.open(encoding="utf-8", newline="") as f:
+        return [
+            {k: v for k, v in row.items() if k not in ("centro", "huella_centro")}
+            for row in csv.DictReader(f)
+        ]
+
+
+def test_simulate_cli_characterization_clinico_con_sala(tmp_path, monkeypatch):
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    room, plain = tmp_path / "sala", tmp_path / "sin_sala"
+    _simulate_clinical(room, "tests/data/centro_sala_ejemplo.toml")
+    _simulate_clinical(plain, "tests/data/centro_ejemplo.toml")
+
+    for name, digest in ROOM_CHARACTERIZATION.items():
+        assert hashlib.sha256((room / name).read_bytes()).hexdigest() == digest, name
+    events = list(read_events(room / "eventos.jsonl"))
+    assert {e.schema_version for e in events} == {3}
+    assert sum(e.event_type == "box_released" for e in events) == 223
+    # Los mismos pacientes y sorteos: solo cambian el nombre y la huella del centro.
+    for name in ("ground_truth_episodios.csv", "ground_truth_dias.csv"):
+        assert _rows_without_center(room / name) == _rows_without_center(plain / name)

@@ -62,7 +62,7 @@ CLINICAL_EVENTS = (
     "test_ordered",
     "test_resulted",
 )
-"""Event types with a clinical payload in version 2 of the catalog."""
+"""Event types with a clinical payload in versions 2 and 3 of the catalog."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +177,7 @@ class ClinicalDraws:
         return turnaround
 
     def payload(self, event_type: str) -> dict[str, object]:
-        """The clinical keys of the payload of ``event_type`` in version 2.
+        """The clinical keys of the payload of ``event_type`` in versions 2 and 3.
 
         ``triage_completed`` gets only ``motivo``: its ``nivel`` is the
         engine's, the assigned level.

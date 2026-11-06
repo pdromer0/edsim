@@ -34,7 +34,7 @@ def runs(tmp_path_factory):
     night = root / "noche.toml"
     write_variant(CENTER, values, night)
     other_profiles = root / "perfiles_otros.toml"
-    other_profiles.write_text(PROFILES.read_text().replace("ruido = 0.333", "ruido = 0.4"))
+    other_profiles.write_text(PROFILES.read_text().replace("ruido = 0.334", "ruido = 0.4"))
     for run_id, center, profiles in (
         ("provisional", CENTER, None),
         ("clinica", CENTER, PROFILES),

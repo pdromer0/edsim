@@ -292,7 +292,8 @@ def test_quintiles_de_igual_masa(model):
     _, mass, _ = model.nodes(edges)
 
     assert mass.sum(axis=(0, 2)) == pytest.approx([0.2] * 5, abs=1e-12)
-    assert edges[1:-1] == pytest.approx([0.8128, 0.1796, -0.3202, -0.8435], abs=5e-5)
+    # Recalculados en la tarea 4.6a; antes, 0,8128 / 0,1796 / -0,3202 / -0,8435.
+    assert edges[1:-1] == pytest.approx([0.8068, 0.1766, -0.3219, -0.8445], abs=5e-5)
 
 
 def test_mas_gravedad_mas_pruebas(model):
@@ -334,19 +335,30 @@ def test_ronda_cdf_extremos(model):
 
 
 def test_valores_exactos_del_ejemplo(model):
-    assert 100 * model.order_shares() == pytest.approx([48.08, 37.32, 28.09, 13.14], abs=5e-3)
-    assert 100 * model.any_test_share() == pytest.approx(72.79, abs=5e-3)
+    # Recalculados en la tarea 4.6a (la parada al 0,3 % con más gravedad y la cascada
+    # rederivada); los de antes, en el comentario de cada línea.
+    assert 100 * model.order_shares() == pytest.approx(
+        [47.99, 37.23, 27.96, 13.13],
+        abs=5e-3,  # 48,08 / 37,32 / 28,09 / 13,14
+    )
+    assert 100 * model.any_test_share() == pytest.approx(72.75, abs=5e-3)  # 72,79
     assert 100 * model.any_test_by_true_level() == pytest.approx(
-        [100.0, 98.2, 86.7, 57.1, 26.9], abs=0.05
+        [100.0, 98.1, 86.7, 57.0, 26.9],
+        abs=0.05,  # 100 / 98,2 / 86,7 / 57,1 / 26,9
     )
     assert 100 * model.order_given_undertriage() == pytest.approx(
-        [59.81, 39.29, 35.09, 15.86], abs=5e-3
+        [59.49, 38.88, 34.56, 15.65],
+        abs=5e-3,  # 59,81 / 39,29 / 35,09 / 15,86
     )
-    assert 100 * model.abnormal_among_ordered() == pytest.approx([42.5, 30.1, 30.9, 45.0], abs=0.05)
-    assert 100 * model.any_abnormal_given_round() == pytest.approx(46.8, abs=0.05)
+    assert 100 * model.abnormal_among_ordered() == pytest.approx(
+        [42.4, 30.0, 30.7, 44.9],
+        abs=0.05,  # 42,5 / 30,1 / 30,9 / 45,0
+    )
+    assert 100 * model.any_abnormal_given_round() == pytest.approx(46.6, abs=0.05)  # 46,8
 
 
 def test_ronda_exacta_del_ejemplo(model):
-    assert model.round_quantile(0.5) == pytest.approx(57.67, abs=5e-3)
-    assert model.round_quantile(0.9) == pytest.approx(161.78, abs=5e-3)
-    assert model.round_mean() == pytest.approx(78.20, abs=5e-3)
+    # Recalculados en la tarea 4.6a; antes, 57,67 / 161,78 / 78,20.
+    assert model.round_quantile(0.5) == pytest.approx(57.63, abs=5e-3)
+    assert model.round_quantile(0.9) == pytest.approx(161.73, abs=5e-3)
+    assert model.round_mean() == pytest.approx(78.16, abs=5e-3)

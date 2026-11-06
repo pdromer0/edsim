@@ -26,12 +26,13 @@ ARRIVALS = Path(__file__).parent / "data" / "llegadas_ejemplo.toml"
 DISNEA = REASON_KEYS.index("disnea")
 OLDEST = 3  # banda 80-99
 
-# Perfil del ejemplo a mano: pesos del catálogo (suma 99,5) y solo estos factores
+# Perfil del ejemplo a mano: pesos del catálogo (suma 99,3) y solo estos factores
 # en la banda de 80-99 años:
 #   disnea:   8 × 2,4 (edad) × 1,5 (invierno) = 28,8   (+20,8)
 #   malestar: 6 × 1,74                        = 10,44  (+4,44)
 #   síncope:  4 × 1,5                         = 6      (+2)
-# Suma: 99,5 + 20,8 + 4,44 + 2 = 126,74; disnea = 28,8 / 126,74 = 22,72 %.
+# Suma: 99,3 + 20,8 + 4,44 + 2 = 126,54; disnea = 28,8 / 126,54 = 22,76 %. Hasta la
+# tarea 4.6a la parada pesaba 0,5 en el catálogo: 126,74 y 22,72 %.
 HAND = {
     "disnea": {"age_factors": (1, 1, 1, 2.4), "season_factors": (1.5, 1, 1, 1)},
     "malestar": {"age_factors": (1, 1, 1, 1.74)},
@@ -72,8 +73,8 @@ def test_disnea_en_mayores_un_martes_de_invierno(tuesday_winter_morning):
     p = reason_probabilities(profiles, tuesday_winter_morning, OLDEST)
 
     assert w[DISNEA] == pytest.approx(28.8, rel=1e-12)
-    assert w.sum() == pytest.approx(126.74, rel=1e-12)
-    assert p[DISNEA] == pytest.approx(0.22724, abs=5e-6)
+    assert w.sum() == pytest.approx(126.54, rel=1e-12)
+    assert p[DISNEA] == pytest.approx(0.22760, abs=5e-6)
 
 
 def test_los_factores_se_multiplican():
@@ -109,7 +110,7 @@ def test_factores_neutros_dan_el_catalogo():
 
     for ctx in all_contexts():
         p = reason_probabilities(profiles, ctx, 2)
-        np.testing.assert_allclose(p, [w / 99.5 for _, _, w in REASONS], rtol=1e-12)
+        np.testing.assert_allclose(p, [w / 99.3 for _, _, w in REASONS], rtol=1e-12)
 
 
 def test_probabilidades_suman_uno():
@@ -202,7 +203,7 @@ def test_catalogo_normalizado():
     shares = catalog_shares()
 
     assert shares.sum() == pytest.approx(1, rel=1e-15)
-    assert shares[REASON_KEYS.index("parada")] == pytest.approx(0.5 / 99.5, rel=1e-15)
+    assert shares[REASON_KEYS.index("parada")] == pytest.approx(0.3 / 99.3, rel=1e-15)
 
 
 def test_sin_factores_los_pesos_base_son_el_catalogo(arrivals):
@@ -211,7 +212,7 @@ def test_sin_factores_los_pesos_base_son_el_catalogo(arrivals):
     assert tuple(weights) == REASON_KEYS
     assert sum(weights.values()) == pytest.approx(100, rel=1e-12)
     for key, _, catalog in REASONS:
-        assert weights[key] == pytest.approx(100 * catalog / 99.5, rel=1e-10)
+        assert weights[key] == pytest.approx(100 * catalog / 99.3, rel=1e-10)
 
 
 def test_sin_derivar_el_reparto_global_se_aleja(arrivals):

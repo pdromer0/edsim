@@ -375,9 +375,12 @@ def metrics_of(events, center, start, end, horizon):
 
 
 def test_medidas_por_episodio():
+    # initial_box_wait y results_box_wait, desde la tarea 4.6a (la sala de resultados).
     assert MEASURES == (
         "triage_wait",
         "box_wait",
+        "initial_box_wait",
+        "results_box_wait",
         "doctor_wait",
         "initial_doctor_wait",
         "door_to_doctor",

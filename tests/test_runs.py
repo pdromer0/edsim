@@ -979,7 +979,7 @@ def test_perfiles_desde_la_copia_aunque_cambie_el_original(simulate, tmp_path, m
         copied.append(Path(destination).name)
         if Path(source) == original:
             # Más ruido de triaje: otro reparto de niveles asignados, otro log.
-            original.write_text(original.read_text().replace("ruido = 0.333", "ruido = 0.9"))
+            original.write_text(original.read_text().replace("ruido = 0.334", "ruido = 0.9"))
         return result
 
     monkeypatch.setattr(service, "_copy_configuration", copy_then_modify)
@@ -987,7 +987,7 @@ def test_perfiles_desde_la_copia_aunque_cambie_el_original(simulate, tmp_path, m
 
     assert copied == ["centro.toml", "llegadas.toml", "perfiles.toml"]
     assert "ruido = 0.9" in original.read_text()
-    assert "ruido = 0.333" in (tmp_path / "run" / "perfiles.toml").read_text()
+    assert "ruido = 0.334" in (tmp_path / "run" / "perfiles.toml").read_text()
     assert (tmp_path / "run" / "eventos.jsonl").read_bytes() == (
         baseline / "eventos.jsonl"
     ).read_bytes()

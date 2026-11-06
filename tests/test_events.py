@@ -15,9 +15,12 @@ from edsim.engine.events import (
     CATALOG,
     CATALOG_V1,
     CATALOG_V2,
+    CATALOG_V3,
     CATALOGS,
-    CLINICAL_SCHEMA_VERSION,
+    CLINICAL_SCHEMA_VERSIONS,
+    CURRENT_CLINICAL_SCHEMA_VERSION,
     PROVISIONAL_SCHEMA_VERSION,
+    RESULTS_WAIT,
     SCHEMA_VERSIONS,
     SEXES,
     TEST_RESULTS,
@@ -182,7 +185,7 @@ def test_sobre_completo():
     assert e.event_id == "r2026-000000000"
     assert e.event_type == "triage_completed"
     assert e.schema_version == PROVISIONAL_SCHEMA_VERSION == 1
-    assert SCHEMA_VERSIONS == {1, 2}
+    assert SCHEMA_VERSIONS == {1, 2, 3}
     assert e.run_id == RUN
     assert (e.episode_id, e.patient_id) == ("EP-000137", "PT-000137")
     assert e.source_system == "triaje"
@@ -395,7 +398,7 @@ def test_construccion_directa_tambien_valida():
     with pytest.raises(ValueError, match="patient_id"):
         dataclasses.replace(e, patient_id="PT-000002")
     with pytest.raises(ValueError, match="schema_version"):
-        dataclasses.replace(e, schema_version=3)
+        dataclasses.replace(e, schema_version=4)  # 3 existe desde la tarea 4.6a
     with pytest.raises(ValueError, match="schema_version"):
         dataclasses.replace(e, schema_version=True)
     # Con la versión 2, el mismo payload se valida con su catálogo: le falta el motivo.
@@ -577,9 +580,10 @@ SAMPLES_V2 = {
 }
 
 
-def clinical_log(sink=None) -> tuple[EventLog, MemorySink]:
+def clinical_log(sink=None, version: int = 2) -> tuple[EventLog, MemorySink]:
+    """Un log clínico; de la versión 2 por defecto, la del catálogo que prueban estos tests."""
     sink = MemorySink() if sink is None else sink
-    return EventLog(RUN, START, sink, schema_version=CLINICAL_SCHEMA_VERSION), sink
+    return EventLog(RUN, START, sink, schema_version=version), sink
 
 
 def emit_all_v2(log: EventLog) -> None:
@@ -597,12 +601,21 @@ def test_schema_version_ya_no_existe():
         from edsim.engine.events import SCHEMA_VERSION  # noqa: F401
 
 
+def test_clinical_schema_version_ya_no_existe():
+    # Tarea 4.6a: la constante de la versión clínica deja de existir con la versión 3, para
+    # que un uso antiguo (comparar con 2) falle al importar en vez de perder los logs nuevos.
+    with pytest.raises(ImportError):
+        from edsim.engine.events import CLINICAL_SCHEMA_VERSION  # noqa: F401
+
+
 def test_catalogos_por_version():
-    assert dict(CATALOGS) == {1: CATALOG_V1, 2: CATALOG_V2}
+    assert dict(CATALOGS) == {1: CATALOG_V1, 2: CATALOG_V2, 3: CATALOG_V3}
     assert CATALOG is CATALOG_V1
-    assert SCHEMA_VERSIONS == frozenset({PROVISIONAL_SCHEMA_VERSION, CLINICAL_SCHEMA_VERSION})
+    assert (PROVISIONAL_SCHEMA_VERSION, CURRENT_CLINICAL_SCHEMA_VERSION) == (1, 3)
+    assert CLINICAL_SCHEMA_VERSIONS == frozenset({2, 3})
+    assert SCHEMA_VERSIONS == frozenset({PROVISIONAL_SCHEMA_VERSION, *CLINICAL_SCHEMA_VERSIONS})
     with pytest.raises(TypeError):
-        CATALOGS[3] = CATALOG_V2
+        CATALOGS[4] = CATALOG_V3
 
 
 def test_catalogo_2_literal():
@@ -745,7 +758,7 @@ def test_eventlog_con_version():
     assert EventLog(RUN, START, MemorySink()).schema_version == 1
 
 
-@pytest.mark.parametrize("version", [0, 3, True, 2.0, "2", None])
+@pytest.mark.parametrize("version", [0, 4, True, 2.0, "2", None])
 def test_eventlog_con_version_invalida(version):
     with pytest.raises(ValueError, match="schema_version"):
         EventLog(RUN, START, MemorySink(), schema_version=version)
@@ -874,8 +887,89 @@ def test_upgrade_solo_en_la_version_1(tmp_path):
 
 
 def test_lectura_con_version_desconocida(tmp_path):
-    path = write_with(tmp_path, lambda d: d.update(schema_version=3))
+    path = write_with(tmp_path, lambda d: d.update(schema_version=4))  # 3 existe desde la 4.6a
     events = read_events(path)
     next(events)
     with pytest.raises(ValueError, match=r"eventos\.jsonl:2: .*schema_version"):
         next(events)
+
+
+# --- Catálogo versión 3: box_released (tarea 4.6a) ------------------------------------
+
+
+def test_catalogo_3_literal():
+    # La versión 3 es la 2 más box_released, al final: los tipos de la 2 son los mismos
+    # objetos, en el mismo orden.
+    assert list(CATALOG_V3) == [*CATALOG_V2, "box_released"]
+    for name, spec in CATALOG_V2.items():
+        assert CATALOG_V3[name] is spec
+    spec = CATALOG_V3["box_released"]
+    assert (spec.source_system, spec.patient, list(spec.payload)) == (
+        "his",
+        True,
+        ["box", "espera"],
+    )
+
+
+# Los valores que acepta el catálogo 3: los de la 2 y el motivo de dejar el box. Como en la
+# versión 2, cambiar cualquiera exige otra versión del catálogo.
+CATALOG_V3_VALUES = {**CATALOG_V2_VALUES, ("box_released", "espera"): ("resultados",)}
+
+
+def test_valores_del_catalogo_3_literales():
+    assert RESULTS_WAIT == CATALOG_V3_VALUES["box_released", "espera"][0]
+    assert set(CATALOG_V3_VALUES) - set(CATALOG_V2_VALUES) == {("box_released", "espera")}
+
+
+def _accepted_v3(event_type, payload):
+    kwargs = {"arrival_id": 0} if CATALOG_V3[event_type].patient else {}
+    try:
+        clinical_log(version=3)[0].emit(event_type, 1.0, **kwargs, **payload)
+    except ValueError:
+        return False
+    return True
+
+
+def test_box_released_acepta_exactamente_sus_valores():
+    assert _accepted_v3("box_released", {"box": 7, "espera": "resultados"})
+    for espera in ("Resultados", "pruebas", "resultado", "", None):
+        assert not _accepted_v3("box_released", {"box": 7, "espera": espera}), espera
+    for box in (0, -1, 7.0, True, "7"):
+        assert not _accepted_v3("box_released", {"box": box, "espera": "resultados"}), box
+    assert not _accepted_v3("box_released", {"box": 7})
+    assert not _accepted_v3("box_released", {"box": 7, "espera": "resultados", "sala": 1})
+    # El resto de la versión 3 acepta lo mismo que la 2.
+    for event_type, payload in SAMPLES_V2.items():
+        assert _accepted_v3(event_type, payload), event_type
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_box_released_no_existe_en_las_versiones_1_y_2(version):
+    log = EventLog(RUN, START, MemorySink(), schema_version=version)
+    with pytest.raises(ValueError, match="box_released"):
+        log.emit("box_released", 1.0, arrival_id=0, box=7, espera="resultados")
+
+
+def test_ida_y_vuelta_v3(tmp_path):
+    log, sink = clinical_log(version=3)
+    emit_all_v2(log)
+    log.emit("box_released", 5000.0, arrival_id=137, box=7, espera="resultados")
+    path = tmp_path / "eventos.jsonl"
+    path.write_text("".join(to_json(e) + "\n" for e in sink.events), encoding="utf-8")
+
+    read = list(read_events(path))
+
+    assert read == sink.events
+    assert {e.schema_version for e in read} == {3}
+    assert read[-1].payload == {"box": 7, "espera": "resultados"}
+
+
+def test_se_leen_logs_de_las_versiones_1_2_y_3(tmp_path):
+    lines = []
+    for version, payload in ((1, {}), (2, {"medio": "ambulancia"}), (3, {"medio": "ambulancia"})):
+        log = EventLog(RUN, START, MemorySink(), schema_version=version)
+        lines.append(to_json(log.emit("patient_arrived", 1.0, arrival_id=version, **payload)))
+    path = tmp_path / "eventos.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    assert [e.schema_version for e in read_events(path)] == [1, 2, 3]

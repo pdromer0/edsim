@@ -141,6 +141,7 @@ def test_comprobaciones_registradas():
         "door",
         "schema_version",
         "clinical",
+        "results_wait",
     ]
 
 
@@ -1188,7 +1189,7 @@ def replaced(events, event_type, episode="EP-000000", **changes):
 
 def test_log_clinico_valido(clinical_run):
     events, ground_truth, profiles = clinical_run
-    assert {e.schema_version for e in events} == {2}
+    assert {e.schema_version for e in events} == {3}
     assert [e.event_type for e in events].count("test_resulted") == 1
     assert (
         check_invariants(events, load_center(EXAMPLE), ground_truth=ground_truth, profiles=profiles)
@@ -1272,7 +1273,7 @@ def test_log_clinico_con_verdad_provisional(clinical_run):
     )
 
     (v,) = clinical_violations(events, provisional)
-    assert v.message == "a log of version 2 with a provisional ground truth"
+    assert v.message == "a clinical log with a provisional ground truth"
 
 
 def test_log_provisional_con_verdad_clinica(clinical_run):
@@ -1285,3 +1286,169 @@ def test_log_provisional_con_verdad_clinica(clinical_run):
 
 def test_un_log_provisional_no_tiene_comprobacion_clinica(center):
     assert clinical_violations(two_patients(), truth((0, 0.0), (1, 30.0))) == []
+
+
+# --- Sala de resultados (tarea 4.6a) --------------------------------------------------
+#
+# El escenario a mano de clinical_factory: A (nivel 4) deja el box 1 en 30 al pedir un
+# ECG, B lo recibe en 30, los resultados de A llegan en 42 y A vuelve al box en 70 por
+# delante de C, que espera desde 25 pero llegó después.
+
+SALA = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
+
+
+@pytest.fixture(scope="module")
+def room_center():
+    return dataclasses.replace(load_center(SALA), boxes=1)
+
+
+@pytest.fixture(scope="module")
+def room():
+    from clinical_factory import room_log
+
+    return room_log()
+
+
+def all_violations(events, center):
+    return [(v.check, v.message) for v in check_invariants(events, center)]
+
+
+def moved(events, i, j):
+    """El log con el evento i llevado a la posición j (sin cambiar su sim_time)."""
+    events = list(events)
+    events.insert(j, events.pop(i))
+    return events
+
+
+def index_of(events, event_type, episode="EP-000000", nth=0):
+    return [
+        k for k, e in enumerate(events) if e.event_type == event_type and e.episode_id == episode
+    ][nth]
+
+
+def test_el_escenario_de_la_sala_es_valido(room, room_center):
+    assert all_violations(room, room_center) == []
+
+
+def test_la_transicion_de_la_sala():
+    assert TRANSITIONS["awaiting_tests"]["box_released"] == "results_room"
+    assert TRANSITIONS["results_room"] == {"test_resulted": "waiting_box_reassessment"}
+
+
+def test_soltar_el_box_antes_del_pedido(room, room_center):
+    # box_released antes de test_ordered: no es una transición válida desde «assessed».
+    i = index_of(room, "box_released")
+    bad = moved(room, i, i - 1)
+    found = violations(bad, room_center, "transitions")
+    assert [v.message for v in found] == ["'box_released' is not valid in state 'assessed'"]
+
+
+def test_volver_al_box_antes_de_los_resultados(room, room_center):
+    # El test_resulted de A, después de su vuelta al box: la vuelta llega en la sala.
+    i = index_of(room, "test_resulted")
+    bad = moved(room, i, index_of(room, "box_assigned", nth=1))
+    bad = [
+        dataclasses.replace(e, sim_time=70.0) if k == index_of(bad, "test_resulted") else e
+        for k, e in enumerate(bad)
+    ]
+    found = violations(bad, room_center, "transitions")
+    assert [v.message for v in found] == ["'box_assigned' is not valid in state 'results_room'"]
+
+
+def test_reevaluacion_sin_box(room, room_center):
+    # Sin el box_assigned de la vuelta, A se reevalúa sin box.
+    i = index_of(room, "box_assigned", nth=1)
+    bad = room[:i] + room[i + 1 :]
+    assert [v.message for v in violations(bad, room_center, "transitions")] == [
+        "('assessment_started', 'reevaluacion') is not valid in state 'waiting_box_reassessment'"
+    ]
+    assert [v.message for v in violations(bad, room_center, "capacity")] == [
+        "assessment in box 1, but the patient is in box None"
+    ]
+
+
+def test_box_released_con_otro_box(room, room_center):
+    # A dice dejar el box 2, pero tenía el 1: se señala, y el 1 queda libre igualmente
+    # (como en un desalojo), así que B lo recibe sin otra violación.
+    bad = [
+        dataclasses.replace(e, payload={**e.payload, "box": 2})
+        if e.event_type == "box_released"
+        else e
+        for e in room
+    ]
+    assert [v.message for v in violations(bad, room_center, "capacity")] == [
+        "released box 2, but the patient is in box 1"
+    ]
+
+
+def test_un_box_ocupado_dos_veces_si_la_sala_no_lo_libera(room, room_center):
+    # Sin el box_released de A, A sigue en el box 1 cuando B lo recibe en 30, y sigue en él
+    # cuando vuelve en 70 (B ya ha salido y el box está libre, pero A no lo dejó).
+    i = index_of(room, "box_released")
+    bad = room[:i] + room[i + 1 :]
+    assert [v.message for v in violations(bad, room_center, "capacity")] == [
+        "box 1 already taken by EP-000000",
+        "EP-000000 already in box 1",
+    ]
+
+
+def test_un_nivel_3_no_deja_el_box(room, room_center):
+    i = index_of(room, "triage_completed")
+    bad = [
+        dataclasses.replace(e, payload={**e.payload, "nivel": 3}) if k == i else e
+        for k, e in enumerate(room)
+    ]
+    assert [v.message for v in violations(bad, room_center, "results_wait")] == [
+        "box_released of a level 3 patient not right after its test_ordered "
+        "(espera_resultados_fuera [4, 5])"
+    ]
+
+
+def test_un_nivel_4_con_pruebas_deja_el_box(room_center):
+    # El motor sin sala (centro de ejemplo): el nivel 4 con pruebas se queda en el box. Con
+    # el centro de la sala, eso es una violación.
+    from clinical_factory import clinical_log, example_profiles, hand_patient, ordered_of
+
+    from edsim.engine.engine import run_engine
+
+    patient = hand_patient(example_profiles(), level=4, ordered=ordered_of("ecg"))
+    log, sink = clinical_log()
+    run_engine(load_center(EXAMPLE), [ArrivalRecord(0, 5.0)], lambda a: patient, log, 1)
+
+    assert check_invariants(sink.events, load_center(EXAMPLE)) == []
+    assert [v.message for v in violations(sink.events, room_center, "results_wait")] == [
+        "a level 4 patient ordered tests and did not leave its box (espera_resultados_fuera [4, 5])"
+    ]
+
+
+def test_box_released_en_otro_instante(room, room_center):
+    i = index_of(room, "box_released")
+    bad = [dataclasses.replace(e, sim_time=30.5) if k == i else e for k, e in enumerate(room)]
+    assert [v.message for v in violations(bad, room_center, "results_wait")] == [
+        "box_released at 30.5, not in the instant of its test_ordered 30.0"
+    ]
+
+
+def test_la_vuelta_con_su_clave_de_llegada(room_center):
+    # Si C recibe el box en 70 (como con una clave nueva para A, la hora de vuelta), C se
+    # cuela: A espera desde 42 con la clave (4, 5) y C tiene (4, 20).
+    from clinical_factory import room_log
+
+    bad = room_log(c_first=True)
+    assert [v.message for v in violations(bad, room_center, "nobody_jumps_the_queue")] == [
+        "EP-000002 (4, 20.0) got a box while EP-000000 (4, 5.0) waited for one since 42.0"
+    ]
+    assert [c for c, _ in all_violations(bad, room_center)] == ["nobody_jumps_the_queue"]
+
+
+def test_solo_en_logs_de_la_version_3(room_center):
+    # results_wait no mira los logs de las versiones 1 y 2, donde no hay sala: el mismo
+    # nivel 4 con pruebas que no deja el box, en un log de la versión 2, no se señala.
+    from clinical_factory import example_profiles, hand_patient, ordered_of
+
+    from edsim.engine.engine import run_engine
+
+    patient = hand_patient(example_profiles(), level=4, ordered=ordered_of("ecg"))
+    log = EventLog("v2", date(2026, 1, 5), MemorySink(), schema_version=2)
+    run_engine(load_center(EXAMPLE), [ArrivalRecord(0, 5.0)], lambda a: patient, log, 1)
+    assert violations(log.sink.events, room_center, "results_wait") == []

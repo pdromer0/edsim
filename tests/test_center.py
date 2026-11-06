@@ -360,3 +360,72 @@ def test_probabilidades_limite_validas(tmp_path, key):
     field = "test_probability" if key.startswith("pruebas") else "admission_probability"
 
     assert getattr(c, field) == (1.0, 1.0, 0.5, 0.0, 0.0)
+
+
+# --- Espera de resultados fuera del box (tarea 4.6a) ----------------------------------
+
+SALA = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
+WAIT = "recursos.espera_resultados_fuera"
+
+
+def test_sin_la_clave_nadie_espera_fuera(center):
+    # Opcional: el centro de ejemplo no la lleva y vale (), lo que significaba un
+    # centro.toml anterior a la 4.6a (por ejemplo, la copia de una ejecución guardada).
+    assert center.results_wait_outside == ()
+
+
+def test_el_centro_base_y_el_de_la_sala_llevan_4_y_5():
+    assert load_center(CONFIG).results_wait_outside == (4, 5)
+    assert load_center(SALA).results_wait_outside == (4, 5)
+
+
+def test_los_dos_ejemplos_solo_difieren_en_la_clave(center):
+    # centro_sala_ejemplo.toml es centro_ejemplo.toml más la clave: se comparan los
+    # valores leídos, no los bytes (los comentarios de cabecera son distintos).
+    from edsim.engine.center import read_center_values
+
+    sala = read_center_values(SALA)
+    assert sala.pop(WAIT) == [4, 5]
+    assert sala == read_center_values(EXAMPLE)
+    assert dataclasses.replace(load_center(SALA), results_wait_outside=()) == center
+
+
+def test_una_copia_sin_la_clave_es_el_centro_de_antes(tmp_path, center):
+    # Reproducibilidad: la copia de centro.toml de una ejecución anterior a la 4.6a no
+    # tiene la clave; sin ella, el centro es el de siempre y nadie espera fuera.
+    assert load(tmp_path, {}) == center
+    assert load(tmp_path, {WAIT: []}) == center
+
+
+@pytest.mark.parametrize("levels", [[4, 5], [2, 3, 4, 5], [5], []])
+def test_niveles_validos(tmp_path, levels):
+    assert load(tmp_path, {WAIT: levels}).results_wait_outside == tuple(levels)
+
+
+@pytest.mark.parametrize(
+    ("levels", "message"),
+    [
+        ([1, 4], r"recursos\.espera_resultados_fuera\[0\] cannot be 1: level 1 is classified"),
+        ([4, 6], r"recursos\.espera_resultados_fuera\[1\] must be a level from 2 to 5, got 6"),
+        ([0], r"recursos\.espera_resultados_fuera\[0\] must be a level from 2 to 5, got 0"),
+        ([4, 4], r"recursos\.espera_resultados_fuera must be increasing, without repeats"),
+        ([5, 4], r"recursos\.espera_resultados_fuera must be increasing, without repeats"),
+        ([4.0], r"recursos\.espera_resultados_fuera\[0\] must be an integer, got 4\.0"),
+        ([True], r"recursos\.espera_resultados_fuera\[0\] must be an integer, got True"),
+        (4, r"recursos\.espera_resultados_fuera must be a list of levels from 2 to 5, got 4"),
+    ],
+)
+def test_niveles_invalidos(tmp_path, levels, message):
+    with pytest.raises(ValueError, match=message):
+        load(tmp_path, {WAIT: levels})
+
+
+def test_sigue_sin_admitir_claves_desconocidas(tmp_path):
+    with pytest.raises(ValueError, match=r"unknown keys: recursos\.espera_resultados"):
+        load(tmp_path, {"recursos.espera_resultados": [4, 5]})
+
+
+def test_construccion_directa_valida_la_clave(center):
+    with pytest.raises(ValueError, match=r"espera_resultados_fuera\[0\] cannot be 1"):
+        dataclasses.replace(center, results_wait_outside=(1,))
+    assert dataclasses.replace(center, results_wait_outside=[4, 5]).results_wait_outside == (4, 5)

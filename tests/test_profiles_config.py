@@ -196,8 +196,10 @@ def test_los_17_motivos_del_catalogo():
     assert len(REASONS) == 17
     assert REASON_KEYS[0] == "traumatismo"
     assert REASON_KEYS[-1] == "otros"
-    # El catálogo del diseño: crítico < 1 % (0,5) y otros ~10 %; suma 99,5.
-    assert sum(w for _, _, w in REASONS) == pytest.approx(99.5)
+    # El catálogo del diseño: crítico < 1 % (0,3 desde la tarea 4.6a; 0,5 antes) y otros
+    # ~10 %; suma 99,3.
+    assert sum(w for _, _, w in REASONS) == pytest.approx(99.3)
+    assert dict((k, w) for k, _, w in REASONS)["parada"] == 0.3
     assert all(k.isascii() and k == k.lower() and " " not in k for k in REASON_KEYS)
 
 

@@ -24,7 +24,7 @@ from edsim.arrivals.thinning import ArrivalRecord, iter_arrivals
 from edsim.engine.center import load_center
 from edsim.engine.clinical_sampler import ClinicalSampler
 from edsim.engine.engine import N_CLINICAL_STREAMS, run_engine, simulate_ed
-from edsim.engine.events import CATALOG_V2, JsonlSink, MemorySink
+from edsim.engine.events import CATALOG_V3, JsonlSink, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import check_invariants
 from edsim.profiles.config import load_profiles
@@ -115,9 +115,11 @@ def test_misma_semilla_mismo_log_y_misma_verdad(center, arrival_profile, profile
     assert again.ground_truth == result.ground_truth
 
 
-def test_el_log_es_de_la_version_2(clinical):
+def test_el_log_es_de_la_version_3(clinical):
+    # Versión 3 desde la tarea 4.6a, también con este centro sin sala: una versión por
+    # modelo, no por configuración.
     events, _ = clinical
-    assert {e.schema_version for e in events} == {2}
+    assert {e.schema_version for e in events} == {3}
 
 
 def test_profiles_y_sampler_a_la_vez(center, arrival_profile, profiles):
@@ -353,10 +355,10 @@ def test_la_puerta_es_del_nivel_asignado(payload_scenario):
 
 def test_ningun_payload_lleva_un_valor_oculto(clinical):
     # Lo oculto (G, z, respuestas) son floats: el log clínico no lleva ninguno, y solo
-    # usa claves del catálogo 2.
+    # usa claves del catálogo 3.
     events, _ = clinical
     for e in events:
-        assert set(e.payload) == set(CATALOG_V2[e.event_type].payload)
+        assert set(e.payload) == set(CATALOG_V3[e.event_type].payload)
         for value in e.payload.values():
             assert type(value) is not float, (e.event_type, value)
 
@@ -424,9 +426,15 @@ def test_invariantes_sin_violaciones_con_el_clinico(
 # JSON por episodio (abajo). Se regeneran solo a propósito, con un cambio de los
 # muestreadores o de ClinicalTruth explicado en el commit; nunca para que un test pase.
 # La representación del ground truth es la de este test: el formato estable será el CSV
-# clínico de la tarea 4.5b. Generadas en la tarea 4.5a.
-CLINICAL_LOG_FINGERPRINT = "1ee7e1ba39794236de15ae005f764a68ada92c40ec2f3dcea58c3520e8f03eb1"
-CLINICAL_TRUTH_FINGERPRINT = "c4f2c069cfabd4a4e4491c1b0db7abd986bec9558019f92579950fc3f61f3733"
+# clínico de la tarea 4.5b. Generadas en la tarea 4.5a (1ee7e1ba… y c4f2c069…) y
+# regeneradas en la fase A de la 4.6a: la parada al 0,3 % con gravedad 4,21 y 0,25 y la
+# cascada rederivada (pesos base, ruido y umbrales) cambian el motivo, el nivel y las
+# pruebas de algunos pacientes. En la fase B de la 4.6a solo cambia el log, por el
+# schema_version 3: este centro no tiene sala, así que los eventos son los mismos (lo
+# comprueba test_la_version_3_sin_sala_son_los_eventos_de_la_2) y el ground truth, igual.
+CLINICAL_LOG_FINGERPRINT = "0a593f3f08fe72629ddae521eafe83eafe4e3bd1d48cfef28dc1add501fcaf10"
+CLINICAL_LOG_FINGERPRINT_V2 = "c1e44ab71806bb6783338e7c359d0bfc4d076cd690017eb273afd27fc403c10f"
+CLINICAL_TRUTH_FINGERPRINT = "106179101b404bbb2c19aaef41c2a2c08946b60a055e69e7eeadb5ffdcfcf6a2"
 
 
 def truth_lines(episodes) -> str:
@@ -443,6 +451,21 @@ def test_huella_del_log_clinico(center, arrival_profile, profiles, tmp_path):
         simulate_ed(center, arrival_profile, DAYS, SEED, sink=sink, profiles=profiles)
 
     assert hashlib.sha256(path.read_bytes()).hexdigest() == CLINICAL_LOG_FINGERPRINT
+
+
+def test_la_version_3_sin_sala_son_los_eventos_de_la_2(center, arrival_profile, profiles, tmp_path):
+    # Sin espera_resultados_fuera, la versión 3 no cambia ningún evento: el log, con el
+    # número de versión de la 2, es byte a byte el de la fase A de la tarea 4.6a.
+    assert center.results_wait_outside == ()
+    path = tmp_path / "eventos.jsonl"
+    with JsonlSink(path) as sink:
+        simulate_ed(center, arrival_profile, DAYS, SEED, sink=sink, profiles=profiles)
+    text = path.read_bytes()
+    lines = text.count(b"\n")
+
+    assert text.count(b'"schema_version": 3,') == lines
+    as_v2 = text.replace(b'"schema_version": 3,', b'"schema_version": 2,')
+    assert hashlib.sha256(as_v2).hexdigest() == CLINICAL_LOG_FINGERPRINT_V2
 
 
 def test_huella_del_ground_truth_clinico(clinical):

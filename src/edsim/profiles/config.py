@@ -64,14 +64,16 @@ REASONS: tuple[tuple[str, str, float], ...] = (
     ("psiquiatrico", "Psiquiátrico", 3.0),
     ("palpitaciones", "Palpitaciones / arritmia", 2.0),
     ("intoxicacion", "Intoxicación", 2.0),
-    ("parada", "Parada / crítico", 0.5),
+    ("parada", "Parada / crítico", 0.3),
     ("otros", "Otros", 10.0),
 )
 """The catalog of docs/diseno.md: key, name and approximate share, in percent.
 
 The share is the target of the global mix, not a base weight: «< 1 %» is
-written as 0.5 and «~10 %» as 10, so the shares add up to 99.5 and are
-normalized when used as targets.
+written as 0.3 and «~10 %» as 10, so the shares add up to 99.3 and are
+normalized when used as targets. The cardiac arrest was 0.5 until task 4.6a:
+with 0.3 and a high, narrow severity almost all of them fit in the 0.4 % of
+assigned level 1 (ADR candidate 46).
 """
 
 REASON_KEYS: tuple[str, ...] = tuple(key for key, _, _ in REASONS)

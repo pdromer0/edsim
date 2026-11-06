@@ -65,13 +65,18 @@ def test_carga(path):
 def test_valores_del_ejemplo(example):
     assert example.population.band_shares == (38.0, 22.0, 22.0, 18.0)
     assert example.population.ambulance_pct == (6.0, 10.0, 21.0, 34.0)
-    assert example.reason("disnea").base_weight == 7.388
+    assert example.reason("disnea").base_weight == 7.397
     assert example.reason("disnea").age_factors == (0.4, 0.8, 1.8, 2.4)
     assert example.reason("disnea").severity.mean == 0.94
     assert example.reason("parada").severity.age_shift == (0.0,) * 4
     # Derivados y calibrados escritos: cargar no los recalcula.
-    assert example.triage.thresholds == (3.260, 1.140, -0.044, -2.163)
-    assert (example.triage.noise, example.triage.bias) == (0.333, -0.081)
+    assert example.triage.thresholds == (3.341, 1.130, -0.047, -2.164)
+    assert (example.triage.noise, example.triage.bias) == (0.334, -0.081)
+    assert example.reason("parada").base_weight == 0.324
+    assert (example.reason("parada").severity.mean, example.reason("parada").severity.sd) == (
+        4.21,
+        0.25,
+    )
     # Motivos sin factores: todos valen 1.
     for key in ("dolor_abdominal", "digestivo", "otros"):
         r = example.reason(key)
@@ -231,14 +236,14 @@ def test_los_variables_tienen_mas_desviacion(path):
 
 def test_shock_con_los_umbrales_escritos(tmp_path):
     # Protege la decisión de escribir los umbrales: un escenario con la disnea
-    # ×1,5 (peso base 7,388 → 11,082) se carga con los umbrales del perfil base,
-    # y la proporción asignada de nivel 2 sube del 12,09 % al 13,10 %. Si los
-    # umbrales se recalcularan al cargar, volvería al 12,09 % y el shock
-    # desaparecería.
+    # ×1,5 (peso base 7,397 → 11,0955) se carga con los umbrales del perfil base,
+    # y la proporción asignada de nivel 2 sube del 12,10 % al 13,13 %. Si los
+    # umbrales se recalcularan al cargar, volvería al 12,10 % y el shock
+    # desaparecería. (Hasta la tarea 4.6a: 7,388, del 12,09 % al 13,10 %.)
     text = EXAMPLE.read_text(encoding="utf-8")
-    assert text.count("peso_base = 7.388") == 1
+    assert text.count("peso_base = 7.397") == 1
     shocked = tmp_path / "perfiles_gripe.toml"
-    shocked.write_text(text.replace("peso_base = 7.388", "peso_base = 11.082"), encoding="utf-8")
+    shocked.write_text(text.replace("peso_base = 7.397", "peso_base = 11.0955"), encoding="utf-8")
     profiles = load_profiles(shocked)
     t = profiles.triage
     arrivals = load_profile(ARRIVALS[EXAMPLE])
@@ -246,9 +251,10 @@ def test_shock_con_los_umbrales_escritos(tmp_path):
     base = assigned_shares(mixture_of(EXAMPLE), t.thresholds, t.noise, t.bias)
     shock = assigned_shares(severity_mixture(profiles, arrivals), t.thresholds, t.noise, t.bias)
 
-    assert 100 * base[1] == pytest.approx(12.0852, abs=1e-4)
-    assert 100 * shock[1] == pytest.approx(13.0953, abs=1e-4)
-    assert 100 * shock[0] == pytest.approx(0.4074, abs=1e-4)  # también más niveles 1
+    assert 100 * base[1] == pytest.approx(12.0960, abs=1e-4)
+    assert 100 * shock[1] == pytest.approx(13.1310, abs=1e-4)
+    assert 100 * base[0] == pytest.approx(0.3998, abs=1e-4)
+    assert 100 * shock[0] == pytest.approx(0.4010, abs=1e-4)  # también más niveles 1
 
 
 # --- Pruebas: la tabla por motivo (ajuste 1 de la aprobación de la tarea 4.4) ----
@@ -260,26 +266,28 @@ def test_shock_con_los_umbrales_escritos(tmp_path):
 # ratios, la gravedad, la mezcla o el perfil de llegadas, esta tabla y los
 # comentarios del TOML se actualizan juntos.
 MARGINALS = {
-    "traumatismo": (8.12, 69.71, 4.60, 6.42),
-    "dolor_abdominal": (74.96, 19.52, 14.87, 35.05),
-    "fiebre": (69.81, 49.61, 10.17, 5.40),
-    "disnea": (84.83, 84.95, 65.04, 7.29),
-    "malestar": (79.92, 35.37, 59.93, 8.41),
-    "dolor_toracico": (84.86, 69.94, 98.18, 5.89),
-    "neurologico": (59.66, 7.34, 30.54, 54.64),
-    "sincope": (64.89, 14.47, 94.91, 14.94),
-    "urologico": (59.99, 20.01, 5.01, 35.46),
-    "cutaneo": (9.89, 2.90, 3.20, 1.64),
-    "orl": (5.15, 3.72, 2.02, 3.08),
-    "digestivo": (69.63, 15.21, 15.59, 15.18),
-    "psiquiatrico": (19.75, 2.53, 12.19, 2.89),
-    "palpitaciones": (70.05, 25.32, 98.00, 3.70),
-    "intoxicacion": (74.66, 8.28, 49.74, 8.44),
-    "parada": (97.97, 90.13, 98.97, 40.38),
-    "otros": (19.66, 10.40, 8.54, 3.91),
+    "traumatismo": (8.12, 69.72, 4.60, 6.43),
+    "dolor_abdominal": (74.97, 19.53, 14.88, 35.07),
+    "fiebre": (69.83, 49.62, 10.18, 5.41),
+    "disnea": (84.84, 84.96, 65.06, 7.30),
+    "malestar": (79.93, 35.38, 59.95, 8.42),
+    "dolor_toracico": (84.87, 69.95, 98.19, 5.90),
+    "neurologico": (59.68, 7.34, 30.56, 54.66),
+    "sincope": (64.91, 14.47, 94.92, 14.94),
+    "urologico": (60.00, 20.01, 5.02, 35.47),
+    "cutaneo": (9.90, 2.90, 3.21, 1.64),
+    "orl": (5.16, 3.72, 2.02, 3.09),
+    "digestivo": (69.65, 15.22, 15.60, 15.19),
+    "psiquiatrico": (19.76, 2.53, 12.20, 2.89),
+    "palpitaciones": (70.07, 25.33, 98.01, 3.70),
+    "intoxicacion": (74.66, 8.28, 49.75, 8.44),
+    "parada": (99.28, 92.76, 99.43, 54.22),  # (97,97 / 90,13 / 98,97 / 40,38) hasta la 4.6a
+    "otros": (19.66, 10.41, 8.54, 3.91),
 }
-GLOBAL_TESTS = (48.08, 37.32, 28.09, 13.14)  # % de los pacientes del año, por tipo
-ANY_TEST = 72.79  # % con alguna prueba (frente al 55,41 % del modelo provisional)
+# Recalculadas en la tarea 4.6a (la parada al 0,3 % con más gravedad y la cascada
+# rederivada); antes, 48,08 / 37,32 / 28,09 / 13,14 y 72,79.
+GLOBAL_TESTS = (47.99, 37.23, 27.96, 13.13)  # % de los pacientes del año, por tipo
+ANY_TEST = 72.75  # % con alguna prueba (frente al 55,41 % del modelo provisional)
 
 
 @pytest.fixture(scope="module")
@@ -335,5 +343,5 @@ def test_razon_de_los_k_escrita_en_el_comentario(path):
     # un cambio de los k puede mover el literal y seguir cumpliendo la regla.
     load = physician_load(load_profiles(path), load_profile(ARRIVALS[path]))
 
-    assert load.k_ratio == pytest.approx(1.0052, abs=5e-5)
-    assert load.mean_k == pytest.approx(0.9905, abs=5e-5)
+    assert load.k_ratio == pytest.approx(1.0053, abs=5e-5)  # 1,0052 hasta la tarea 4.6a
+    assert load.mean_k == pytest.approx(0.9904, abs=5e-5)  # 0,9905 hasta la tarea 4.6a

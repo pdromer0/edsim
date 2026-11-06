@@ -79,19 +79,52 @@ def _variant_bytes(base: Path, values: Mapping[str, object]) -> bytes:
     document = tomlkit.parse(text)
     changed = False
     for key in _KEYS:
+        if (key in values) != (key in original):
+            # Only an optional key can be missing; a variant edits values, it
+            # never adds or removes a key of its base.
+            raise ValueError(f"{key} must be in both the base and the values, or in neither")
+        if key not in values:
+            continue
         value = values[key]
         if original[key] != value:
             section, name = key.split(".")
-            if isinstance(value, list | tuple):
-                # Fixed-length arrays: editing elements retains their comments,
-                # spacing and the spelling of every unchanged numeric element.
+            if isinstance(value, list | tuple) and len(value) == len(original[key]):
+                # Same length: editing elements retains their comments, spacing
+                # and the spelling of every unchanged numeric element.
                 for index, item in enumerate(value):
                     if original[key][index] != item:
                         document[section][name][index] = item
+            elif isinstance(value, list | tuple):
+                # Another length (espera_resultados_fuera): the whole array.
+                document[section][name] = list(value)
             else:
                 document[section][name] = value
             changed = True
-    return tomlkit.dumps(document).encode("utf-8") if changed else source
+    content = tomlkit.dumps(document).encode("utf-8") if changed else source
+    _check_written(content, values)
+    return content
+
+
+def _plain(value: object) -> object:
+    return list(value) if isinstance(value, list | tuple) else value
+
+
+def _check_written(content: bytes, values: Mapping[str, object]) -> None:
+    """Read the bytes back: every key must have the value asked for.
+
+    A safety net, so that no failure of the writing is silent again (before,
+    a list of another length was edited element by element: [] kept the base
+    and [5] wrote [5, 5]).
+    """
+    written = _flatten_center_data(tomllib.loads(content.decode("utf-8")))
+    for key in _KEYS:
+        if (key in written) != (key in values) or (
+            key in values and _plain(written[key]) != _plain(values[key])
+        ):
+            raise ValueError(
+                f"the variant would write {key} = {written.get(key)!r}, "
+                f"not the value asked for, {values.get(key)!r}"
+            )
 
 
 def _publish_variant(temporary: Path, path: Path, overwrite: bool) -> None:

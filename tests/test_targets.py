@@ -58,6 +58,8 @@ def record(
         door_to_doctor=door,
         triage_start_to_doctor=door - pretriage,
         classified_to_doctor=door - pretriage - triage,
+        initial_box_wait=box,
+        results_box_wait=0.0 if departed else None,
     )
 
 

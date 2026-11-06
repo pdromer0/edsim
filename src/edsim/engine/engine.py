@@ -18,7 +18,7 @@ durations, tests and destination).
 With clinical profiles (task 4.5a), ``simulate_ed`` derives eight streams with
 ``child_streams(seed, 8)``: the first five are the same five children, because
 each child depends only on its index, so the arrivals do not change; streams 1
-to 7 go to the ``ClinicalSampler``, and the log is of version 2 of the catalog.
+to 7 go to the ``ClinicalSampler``, and the log is of version 3 of the catalog.
 """
 
 from collections.abc import Callable, Iterable
@@ -33,7 +33,7 @@ from edsim.arrivals.thinning import ArrivalRecord, DayRecord, arrival_source, it
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler
 from edsim.engine.clinical_sampler import ClinicalSampler
-from edsim.engine.events import CLINICAL_SCHEMA_VERSION, EventLog, EventSink
+from edsim.engine.events import CURRENT_CLINICAL_SCHEMA_VERSION, EventLog, EventSink
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.patient import patient
 from edsim.engine.resources import make_pools
@@ -138,11 +138,16 @@ def run_engine(
     start_shifts(env, log, pools, center, days)
     episodes: list[EpisodeTruth] = []
     processes: list[simpy.Process] = []
+    # Only the clinical patients use it (leaves_for_results): the provisional
+    # model ignores espera_resultados_fuera.
+    wait_outside = frozenset(center.results_wait_outside)
 
     def on_arrival(arrival: ArrivalRecord) -> None:
         draws = sampler(arrival)
         episodes.append(EpisodeTruth.from_draws(arrival, draws))
-        processes.append(env.process(patient(env, log, pools, arrival.arrival_id, draws)))
+        processes.append(
+            env.process(patient(env, log, pools, arrival.arrival_id, draws, wait_outside))
+        )
 
     env.process(arrival_source(env, arrivals, on_arrival))
     env.run(until=days * MINUTES_PER_DAY)
@@ -219,7 +224,7 @@ def simulate_ed(
             1 to 4 if ``None``. Injected only in tests.
         profiles: Clinical profiles. With them, the patients come from a
             ``ClinicalSampler`` with streams 1 to 7 of ``child_streams(seed,
-            8)`` and the log is of version 2; without them, the provisional
+            8)`` and the log is of version 3; without them, the provisional
             model, exactly as before (ADR candidate 44).
 
     Returns:
@@ -246,7 +251,9 @@ def simulate_ed(
     else:
         streams = child_streams(seed, N_CLINICAL_STREAMS)
         sampler = ClinicalSampler(profiles, profile.start_date, center, streams[1:])
-        log = EventLog(run_id, profile.start_date, sink, schema_version=CLINICAL_SCHEMA_VERSION)
+        log = EventLog(
+            run_id, profile.start_date, sink, schema_version=CURRENT_CLINICAL_SCHEMA_VERSION
+        )
     arrivals = iter_arrivals(profile, days, streams[0], on_day=day_records.append)
     run = run_engine(center, arrivals, sampler, log, days)
     return EDResult(

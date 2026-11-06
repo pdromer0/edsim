@@ -69,70 +69,85 @@ def exact_minimum(profiles, contexts):
 
 
 def test_minimo_de_la_mezcla_con_config(profiles):
-    # Lo esperado exacto pide 13 993 por contexto; para que la mezcla pare por falta de
-    # pacientes con una probabilidad menor que 1e-6 hacen falta 15 234 (+8,9 %).
-    assert exact_minimum(profiles, all_contexts()) == 13_993
-    assert mixing_minimum(profiles) == 15_234
-    assert mixing_error_probability(profiles, 15_234) < MAX_MIXING_ERROR
-    assert mixing_error_probability(profiles, 15_233) >= MAX_MIXING_ERROR
+    # Lo esperado exacto pide 20 491 por contexto; para que la mezcla pare por falta de
+    # pacientes con una probabilidad menor que 1e-6 hacen falta 21 379 (+4,3 %). Hasta la
+    # tarea 4.6a, con la parada al 0,5 %, eran 13 993 y 15 234.
+    assert exact_minimum(profiles, all_contexts()) == 20_491
+    assert mixing_minimum(profiles) == 21_379
+    assert mixing_error_probability(profiles, 21_379) < MAX_MIXING_ERROR
+    assert mixing_error_probability(profiles, 21_378) >= MAX_MIXING_ERROR
 
 
 def test_la_categoria_mas_justa_y_sus_probabilidades(profiles):
-    # La categoría más justa es intoxicacion en 80-99 años, tarde laborable de invierno:
-    # P(banda) = 18,0 % y P(motivo | banda) = 0,199 %. Con n_banda binomial, la
-    # probabilidad de que espere menos de 5 pacientes (y check_mixing pare) es del 49,9 %
-    # en el mínimo exacto, del 13,5 % con un 2 % más, del 0,32 % con un 5 % y de 4,3e-8
-    # con un 10 % (la cifra del ajuste, 13,6 %, sale de redondear N de otra forma).
+    # Desde la tarea 4.6a, la categoría más justa es la parada en 15-44 años, tarde
+    # laborable de invierno: P(banda) = 38,0 % y P(motivo | banda) = 0,0642 %. Con n_banda
+    # binomial, la probabilidad de que espere menos de 5 pacientes (y check_mixing pare)
+    # es del 50,0 % en el mínimo exacto, del 1,3 % con un 2 % más, de 2,0e-8 con un 5 % y
+    # de 2,7e-27 con un 10 %: la banda es la más grande y su recuento varía menos en
+    # proporción que el de 80-99 años (18 %), que mandaba con la parada al 0,5 %.
     context = ArrivalContext(1, 0, 0)
-    share = float(band_probabilities(profiles.population, context)[3])
-    p = reason_probabilities(profiles, context, 3)
+    share = float(band_probabilities(profiles.population, context)[0])
+    p = reason_probabilities(profiles, context, 0)
     worst = float(min(p.min(), 1 - p.max()))
 
-    assert REASON_KEYS[int(p.argmin())] == "intoxicacion"
-    assert (round(share, 3), round(100 * worst, 3)) == (0.180, 0.199)
-    assert math.ceil(5 / (share * worst)) == 13_993
+    assert REASON_KEYS[int(p.argmin())] == "parada"
+    assert (round(share, 3), round(100 * worst, 4)) == (0.380, 0.0642)
+    assert math.ceil(5 / (share * worst)) == 20_491
     fewest = math.ceil(5 / worst)
     chances = [
-        stats.binom.cdf(fewest - 1, math.ceil(13_993 * f), share) for f in (1, 1.02, 1.05, 1.10)
+        stats.binom.cdf(fewest - 1, math.ceil(20_491 * f), share) for f in (1, 1.02, 1.05, 1.10)
     ]
-    assert [round(x, 3) for x in chances[:2]] == [0.499, 0.135]
-    assert round(chances[2], 4) == 0.0032
-    assert f"{chances[3]:.1e}" == "4.3e-08"
+    assert [round(x, 3) for x in chances[:2]] == [0.500, 0.013]
+    assert f"{chances[2]:.1e}" == "2.0e-08"
+    assert f"{chances[3]:.1e}" == "2.7e-27"
 
 
 def test_minimo_de_un_solo_contexto(profiles):
-    # Mañana laborable de invierno: 13 845,5 sin margen (13 846 pacientes) y 15 081 con
-    # él. Con 14 000, el margen sería del 1 % y un test pasaría o pararía según la
-    # semilla: los tests rápidos con este contexto usan mixing_minimum.
-    assert exact_minimum(profiles, MORNING) == 13_846
-    assert mixing_minimum(profiles, MORNING) == 15_081
-    assert mixing_error_probability(profiles, 14_000, MORNING) > 0.01
+    # Mañana laborable de invierno: 20 022 sin margen y 20 898 con él (13 846 y 15 081
+    # hasta la tarea 4.6a). Con 20 000, por debajo de lo esperado, un test pararía según
+    # la semilla (cota de 0,55): los tests rápidos con este contexto usan mixing_minimum.
+    assert exact_minimum(profiles, MORNING) == 20_022
+    assert mixing_minimum(profiles, MORNING) == 20_898
+    assert mixing_error_probability(profiles, 20_000, MORNING) > 0.01
+
+
+@pytest.mark.parametrize(
+    "path", [CONFIG / "perfiles.toml", CONFIG.parent / "tests/data/perfiles_ejemplo.toml"]
+)
+def test_los_pacientes_por_defecto_bastan_para_la_mezcla(path):
+    # DEFAULT_MIXING_PATIENTS (25 000) por encima de mixing_minimum (21 379, +16,9 %),
+    # en config/ y en tests/data: perfiles validar por defecto no puede parar por falta
+    # de pacientes. Con 20 000 (hasta la tarea 4.6a) ya no bastaría.
+    assert validation.DEFAULT_MIXING_PATIENTS == 25_000
+    assert validation.DEFAULT_MIXING_PATIENTS >= mixing_minimum(load_profiles(path)) == 21_379
 
 
 def test_minimo_del_ano(profiles, arrivals):
-    # El nivel real 1 (0,42 %) necesita 50 pacientes esperados.
-    assert year_minimum(profiles, arrivals) == 11_826
+    # Desde la tarea 4.6a manda la parada (0,302 % de los pacientes), que necesita 50
+    # pacientes esperados en las medianas por motivo: 16 545. Hasta entonces mandaba el
+    # nivel real 1 (0,42 %), con 11 826.
+    assert year_minimum(profiles, arrivals) == 16_545
 
 
 def test_pacientes_por_defecto_y_minimos(profiles, arrivals):
-    assert check_profiles_validation_counts(profiles, arrivals) == (20_000, 109_542)
+    assert check_profiles_validation_counts(profiles, arrivals) == (25_000, 109_542)
     assert year_patients(profiles, arrivals) == 109_542
     n = mixing_minimum(profiles, MORNING)
     assert check_profiles_validation_counts(profiles, arrivals, n, MORNING) == (n, n)
-    with pytest.raises(ValueError, match="15233 < 15234"):
-        check_profiles_validation_counts(profiles, arrivals, 15_233)
+    with pytest.raises(ValueError, match="21378 < 21379"):
+        check_profiles_validation_counts(profiles, arrivals, 21_378)
     with pytest.raises(ValueError, match="patients"):
         check_profiles_validation_counts(profiles, arrivals, 0)
 
 
 def test_el_ano_tambien_tiene_su_minimo(profiles, arrivals, monkeypatch):
-    # Con el mismo N en las dos muestras manda siempre la mezcla (15 081 > 11 826), aunque
+    # Con el mismo N en las dos muestras manda siempre la mezcla (20 898 > 16 545), aunque
     # N baste para el año. El mínimo del año se ve con los valores por defecto y un perfil
-    # de llegadas de menos de 11 826 pacientes al año (aquí, simulado).
-    with pytest.raises(ValueError, match="mix: 12000 < 15081"):
-        check_profiles_validation_counts(profiles, arrivals, 12_000, MORNING)
+    # de llegadas de menos de 16 545 pacientes al año (aquí, simulado).
+    with pytest.raises(ValueError, match="mix: 17000 < 20898"):
+        check_profiles_validation_counts(profiles, arrivals, 17_000, MORNING)
     monkeypatch.setattr(validation, "year_patients", lambda *args: 1000)
-    with pytest.raises(ValueError, match="triage, the tests and the durations: 1000 < 11826"):
+    with pytest.raises(ValueError, match="triage, the tests and the durations: 1000 < 16545"):
         check_profiles_validation_counts(profiles, arrivals)
 
 
@@ -204,7 +219,8 @@ def test_filas_de_la_tabla(validated):
 
 def test_los_fallos_cuentan_categorias_tambien_en_la_mezcla(profiles, arrivals):
     # Con el sesgo del triaje desplazado +1 en el muestreador (no en la hipótesis), falla
-    # el triaje, con 18 categorías con esta semilla. Las pruebas y las duraciones dependen
+    # el triaje, con 17 categorías con esta semilla (18 hasta la tarea 4.6a, con otro N y
+    # otros umbrales). Las pruebas y las duraciones dependen
     # de G y del nivel real, no del asignado, y la mezcla no depende del triaje: pasan.
     patients = mixing_minimum(profiles, MORNING)
     sampled = dataclasses.replace(
@@ -216,7 +232,7 @@ def test_los_fallos_cuentan_categorias_tambien_en_la_mezcla(profiles, arrivals):
 
     triage = result.check("triage")
     assert not triage.passed and not result.passed
-    assert triage.failures == int(triage.result.statistic) == 18
+    assert triage.failures == int(triage.result.statistic) == 17
     assert all(result.check(name).passed for name in ("mixing", "workup", "durations"))
 
 
@@ -224,23 +240,26 @@ def test_los_fallos_cuentan_categorias_tambien_en_la_mezcla(profiles, arrivals):
 
 
 def test_error_detectable_con_las_cifras_de_la_especificacion(profiles, arrivals):
-    # Pedir analítica en el quintil central (45,0 %) se ve si pasa a 48,8 % con 20 000 y
-    # a 46,6 % en un año; la mediana de la valoración del nivel real 3, a 52,7 % y 51,2 %;
-    # el nivel 1 asignado (0,40 %), a 0,61 % y 0,49 %.
-    small = detectable_errors(profiles, arrivals, 20_000, 20_000)
-    year = detectable_errors(profiles, arrivals, 20_000, 109_542)
+    # Pedir analítica en el quintil central (44,9 %; 45,0 % hasta la tarea 4.6a) se ve si
+    # pasa a 48,7 % con 20 000 y a 46,5 % en un año; la mediana de la valoración del nivel
+    # real 3, a 52,7 % y 51,2 %; el nivel 1 asignado (0,40 %), a 0,61 % y 0,49 %. En la
+    # mezcla, con los 25 000 por contexto por defecto, un motivo del 5 % que pasa a 5,76 %
+    # (5,85 % con los 20 000 de antes).
+    small = detectable_errors(profiles, arrivals, 25_000, 20_000)
+    year = detectable_errors(profiles, arrivals, 25_000, 109_542)
 
     assert small["workup"].category == "pedir/analitica/quintil_3"
-    assert round(100 * small["workup"].p0, 1) == 45.0
-    assert round(100 * small["workup"].p1, 1) == 48.8
-    assert round(100 * year["workup"].p1, 1) == 46.6
+    assert round(100 * small["workup"].p0, 1) == 44.9
+    assert round(100 * small["workup"].p1, 1) == 48.7
+    assert round(100 * year["workup"].p1, 1) == 46.5
     assert small["durations"].category == "valoracion/real_3/mediana"
     assert round(100 * small["durations"].p1, 1) == 52.7
     assert round(100 * year["durations"].p1, 1) == 51.2
     assert round(100 * small["triage"].p0, 2) == 0.40
     assert round(100 * small["triage"].p1, 2) == 0.61
     assert round(100 * year["triage"].p1, 2) == 0.49
-    assert (small["mixing"].p0, small["mixing"].patients) == (0.05, 20_000)
+    assert (small["mixing"].p0, small["mixing"].patients) == (0.05, 25_000)
+    assert round(100 * small["mixing"].p1, 2) == 5.76
 
 
 # --- Intervalos de las gráficas ---------------------------------------------------------------

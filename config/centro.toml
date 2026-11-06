@@ -11,6 +11,14 @@ enfermeria_triaje = [3, 3, 2]
 medicos = [12, 12, 7]
 # Capacidad física, igual en todos los turnos
 boxes = 30
+# Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
+# los resultados fuera, en una sala sin límite de capacidad; con los resultados
+# vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
+# tarea 4.6a). Niveles 2 a 5, en orden creciente; el 1 nunca sale del box. Solo
+# la usa el modelo clínico: el provisional la ignora y no cambia. Es opcional y,
+# si falta, vale [] (nadie espera fuera), no [4, 5]: así la copia de centro.toml
+# de una ejecución anterior a la 4.6a sigue significando lo que significaba.
+espera_resultados_fuera = [4, 5]
 
 [triaje]
 # % de pacientes por nivel, del 1 al 5 (Emergencias 2013; nivel 1 supuesto)
