@@ -27,7 +27,7 @@ def test_raw_values_keep_percentages_lists_and_numeric_types(values):
     assert values["triaje.reparto_niveles"] == [0.3, 12.1, 33.6, 52.6, 1.4]
     assert type(values["duraciones.triaje"][0]) is int
     assert type(values["pruebas.probabilidad"][2]) is float
-    assert len(values) == 11
+    assert len(values) == 12  # 11 + recursos.espera_resultados_fuera (tarea 4.6a)
     before = copy.deepcopy(values)
     assert validate_center_values(values) == {}
     assert center_from_values(values) == load_center(BASE)
@@ -157,3 +157,25 @@ def test_literal_root_key_does_not_supply_a_missing_table(tmp_path):
     assert str(caught.value) == (
         f"{path}: missing keys: destino; unknown keys: destino.probabilidad_ingreso"
     )
+
+
+# --- Clave opcional espera_resultados_fuera (tarea 4.6a) ------------------------------
+
+EJEMPLO = Path(__file__).parent / "data" / "centro_ejemplo.toml"
+
+
+def test_sin_la_clave_opcional_no_hay_errores_y_vale_vacia():
+    values = read_center_values(EJEMPLO)
+    assert "recursos.espera_resultados_fuera" not in values
+    assert validate_center_values(values) == {}
+    assert center_from_values(values).results_wait_outside == ()
+
+
+def test_la_clave_opcional_invalida_da_su_error_por_clave(values):
+    values["recursos.espera_resultados_fuera"] = [1, 5]
+    assert validate_center_values(values) == {
+        "recursos.espera_resultados_fuera": (
+            "recursos.espera_resultados_fuera[0] cannot be 1: level 1 is classified at the "
+            "door and never waits outside the box"
+        )
+    }

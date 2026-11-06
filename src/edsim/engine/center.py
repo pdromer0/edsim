@@ -35,6 +35,7 @@ _KEYS = {
     "recursos.enfermeria_triaje": "triage_nurses",
     "recursos.medicos": "doctors",
     "recursos.boxes": "boxes",
+    "recursos.espera_resultados_fuera": "results_wait_outside",
     "triaje.reparto_niveles": "level_shares",
     "duraciones.triaje": "triage_time",
     "duraciones.valoracion": "assessment_time",
@@ -44,6 +45,12 @@ _KEYS = {
     "destino.probabilidad_ingreso": "admission_probability",
 }
 _SECTIONS = {key.split(".")[0] for key in _KEYS}
+
+# Keys that may be missing, with the value they mean then. Only one: a center
+# written before task 4.6a (such as the copy kept in a saved run) has no
+# espera_resultados_fuera, and it means what it meant then, nobody waits
+# outside. That is why the default is () and not the (4, 5) of config/.
+_OPTIONAL: dict[str, object] = {"recursos.espera_resultados_fuera": ()}
 
 
 def _check_staff(key: str, value: object) -> int:
@@ -93,6 +100,27 @@ def _check_shares(key: str, values: object) -> tuple[float, ...]:
     return tuple(x / total for x in shares)
 
 
+def _check_wait_outside(key: str, values: object) -> tuple[int, ...]:
+    """Assigned levels that wait for their results outside the box: 2 to 5, increasing.
+
+    Level 1 is classified at the door and keeps its box; a list may be empty.
+    """
+    if not isinstance(values, list | tuple):
+        raise ValueError(f"{key} must be a list of levels from 2 to {N_LEVELS}, got {values!r}")
+    levels = [check_integer(f"{key}[{i}]", x) for i, x in enumerate(values)]
+    for i, level in enumerate(levels):
+        if level == 1:
+            raise ValueError(
+                f"{key}[{i}] cannot be 1: level 1 is classified at the door and never "
+                "waits outside the box"
+            )
+        if not 2 <= level <= N_LEVELS:
+            raise ValueError(f"{key}[{i}] must be a level from 2 to {N_LEVELS}, got {level!r}")
+    if any(a >= b for a, b in pairwise(levels)):
+        raise ValueError(f"{key} must be increasing, without repeats, got {levels!r}")
+    return tuple(levels)
+
+
 def _check_duration(key: str, values: object) -> tuple[float, float]:
     """``[median, p90]`` of a lognormal: median > 0 and p90 > median."""
     median, p90 = (check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, 2)))
@@ -121,6 +149,7 @@ _VALIDATORS = dict(
             _check_shift_staff,
             _check_shift_staff,
             _check_staff,
+            _check_wait_outside,
             _check_shares,
             _check_duration,
             _check_duration,
@@ -166,7 +195,7 @@ def read_center_values(path: str | Path) -> dict[str, object]:
 
 def _structure_errors(values: Mapping[str, object]) -> tuple[list[str], list[str], list[str]]:
     malformed = sorted(_SECTIONS & values.keys())
-    missing = [key for key in _KEYS if key not in values]
+    missing = [key for key in _KEYS if key not in values and key not in _OPTIONAL]
     unknown = sorted(values.keys() - _KEYS.keys() - _SECTIONS)
     return malformed, missing, unknown
 
@@ -185,6 +214,8 @@ def validate_center_values(values: Mapping[str, object]) -> dict[str, str]:
             errors[key] = f"{section} must be a table, got {values[section]!r}"
         elif key in missing:
             errors[key] = f"missing keys: {key}"
+        elif key not in values:
+            continue  # an optional key, with its default
         else:
             try:
                 validator(key, values[key])
@@ -203,7 +234,9 @@ def center_from_values(values: Mapping[str, object]) -> CenterConfig:
     errors = validate_center_values(values)
     if errors:
         raise ValueError("; ".join(errors.values()))
-    return CenterConfig(**{field: values[key] for key, field in _KEYS.items()})
+    return CenterConfig(
+        **{field: values.get(key, _OPTIONAL.get(key)) for key, field in _KEYS.items()}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +259,12 @@ class CenterConfig:
         triage_nurses: Triage nurses on each shift (``recursos.enfermeria_triaje``).
         doctors: Doctors on each shift (``recursos.medicos``).
         boxes: Number of boxes, the same in every shift (``recursos.boxes``).
+        results_wait_outside: Assigned levels whose patients leave the box when
+            they order tests and wait for the results outside, in a room without
+            a capacity limit (``recursos.espera_resultados_fuera``; ADR
+            candidate 45). Levels 2 to 5, increasing; ``()`` if the key is
+            missing, as in a center written before task 4.6a. Only the clinical
+            model uses it: the provisional model ignores it.
         level_shares: Share of patients in each triage level, summing to 1
             (``triaje.reparto_niveles``, which accepts any non-negative
             weights, such as percentages). A level may have share 0.
@@ -247,6 +286,7 @@ class CenterConfig:
     triage_nurses: tuple[int, ...]
     doctors: tuple[int, ...]
     boxes: int
+    results_wait_outside: tuple[int, ...]
     level_shares: tuple[float, ...]
     triage_time: tuple[float, float]
     assessment_time: tuple[float, float]

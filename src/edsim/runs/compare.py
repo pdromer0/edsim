@@ -31,6 +31,8 @@ DRAW_EFFECTS: Mapping[str, frozenset[DrawField]] = MappingProxyType(
         "recursos.enfermeria_triaje": frozenset(),
         "recursos.medicos": frozenset(),
         "recursos.boxes": frozenset(),
+        # The results room changes the flow, never a draw (task 4.6a).
+        "recursos.espera_resultados_fuera": frozenset(),
         "triaje.reparto_niveles": frozenset({"level", "needs_tests", "admitted"}),
         "duraciones.triaje": frozenset({"triage_time"}),
         "duraciones.valoracion": frozenset({"assessment_time"}),

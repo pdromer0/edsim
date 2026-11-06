@@ -79,6 +79,12 @@ def _variant_bytes(base: Path, values: Mapping[str, object]) -> bytes:
     document = tomlkit.parse(text)
     changed = False
     for key in _KEYS:
+        if (key in values) != (key in original):
+            # Only an optional key can be missing; a variant edits values, it
+            # never adds or removes a key of its base.
+            raise ValueError(f"{key} must be in both the base and the values, or in neither")
+        if key not in values:
+            continue
         value = values[key]
         if original[key] != value:
             section, name = key.split(".")
