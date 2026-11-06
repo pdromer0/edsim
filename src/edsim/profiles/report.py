@@ -175,7 +175,7 @@ def plot_triage(figures: ProfilesFigures) -> Figure:
 
 def plot_workup(figures: ProfilesFigures) -> Figure:
     """Ordering each type of test by fifth of G: exact line and observed points with IC."""
-    fig = _figure(7, 4.5)
+    fig = _figure(10, 4.5)
     ax = fig.add_subplot()
     for i, c in enumerate(figures.workup):
         x = np.arange(1, len(c.labels) + 1) + (i - 1.5) * 0.06

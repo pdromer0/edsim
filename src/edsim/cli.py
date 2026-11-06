@@ -380,7 +380,7 @@ def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser
         f"{mixing} pacientes por contexto en la mezcla · {year} en la muestra del año"
         f" · semilla {args.semilla}\n\n"
         "Validando el muestreador: mezcla de motivos, triaje, pruebas y duraciones. Con los"
-        " valores por defecto tarda unos 25 segundos.\n",
+        " valores por defecto tarda unos 30 segundos.\n",
         flush=True,
     )
     validation = validate_profiles(
