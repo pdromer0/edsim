@@ -21,6 +21,8 @@ and without the engine, so that it can be tested and validated on its own:
 - ``derivation``: the cascade of derived values (base weights, noise and
   bias, thresholds) rounded as written, and the criterion that chooses the
   mean severity of a reason by its shares of level 1.
+- ``coupling``: how many patients change category when the weights change,
+  with Gumbel-max and with the inverse CDF, exactly and simulated.
 
 See docs/specs/hito-4.md.
 """
