@@ -11,6 +11,7 @@ from types import MappingProxyType
 import pytest
 
 from edsim.engine.events import (
+    ARRIVAL_MODES,
     CATALOG,
     CATALOG_V1,
     CATALOG_V2,
@@ -18,6 +19,8 @@ from edsim.engine.events import (
     CLINICAL_SCHEMA_VERSION,
     PROVISIONAL_SCHEMA_VERSION,
     SCHEMA_VERSIONS,
+    SEXES,
+    TEST_RESULTS,
     Event,
     EventLog,
     JsonlSink,
@@ -28,6 +31,7 @@ from edsim.engine.events import (
     read_events,
     to_json,
 )
+from edsim.profiles.config import REASON_KEYS, TEST_TYPES
 
 START = date(2026, 1, 5)
 RUN = "r2026"
@@ -627,6 +631,84 @@ def test_catalogo_2_literal():
     # Los de la versión 1 no cambian.
     for name in ("triage_started", "box_assigned", "staffing_changed"):
         assert CATALOG_V2[name] is CATALOG_V1[name]
+
+
+# Los valores que acepta el catálogo 2, literales. Fijan el esquema del log igual que las
+# claves: un cambio de cualquiera de ellos (un motivo nuevo, otro nombre de prueba, otro
+# medio de llegada) cambia lo que significa un log de la versión 2 y exige una versión 3
+# del catálogo, no editar esta lista.
+CATALOG_V2_VALUES = {
+    ("triage_completed", "motivo"): (
+        "traumatismo",
+        "dolor_abdominal",
+        "fiebre",
+        "disnea",
+        "malestar",
+        "dolor_toracico",
+        "neurologico",
+        "sincope",
+        "urologico",
+        "cutaneo",
+        "orl",
+        "digestivo",
+        "psiquiatrico",
+        "palpitaciones",
+        "intoxicacion",
+        "parada",
+        "otros",
+    ),
+    ("patient_arrived", "medio"): ("ambulancia", "propios_medios"),
+    ("patient_registered", "sexo"): ("mujer", "hombre"),
+    ("test_ordered", "pruebas"): ("analitica", "radiografia", "ecg", "imagen"),
+    ("test_resulted", "resultados"): ("normal", "alterado"),
+}
+
+
+def test_valores_del_catalogo_2_literales():
+    # Las constantes de las que salen los valores son las de la lista literal.
+    assert REASON_KEYS == CATALOG_V2_VALUES["triage_completed", "motivo"]
+    assert ARRIVAL_MODES == CATALOG_V2_VALUES["patient_arrived", "medio"]
+    assert SEXES == CATALOG_V2_VALUES["patient_registered", "sexo"]
+    assert TEST_TYPES == CATALOG_V2_VALUES["test_ordered", "pruebas"]
+    assert TEST_RESULTS == CATALOG_V2_VALUES["test_resulted", "resultados"]
+
+
+def _accepted(event_type, key, value):
+    """Si el catálogo 2 acepta ``value`` como ``key`` de ``event_type``."""
+    payload = {**SAMPLES_V2[event_type], key: value}
+    try:
+        clinical_log()[0].emit(event_type, 1.0, arrival_id=0, **payload)
+    except ValueError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("event_type", "key"),
+    [("triage_completed", "motivo"), ("patient_arrived", "medio"), ("patient_registered", "sexo")],
+)
+def test_el_catalogo_2_acepta_exactamente_los_valores_literales(event_type, key):
+    values = CATALOG_V2_VALUES[event_type, key]
+    assert all(_accepted(event_type, key, v) for v in values)
+    # Cualquier otro valor, aunque se parezca, se rechaza.
+    for other in ("otro", values[0].upper(), values[0] + "_", "", "dolor torácico"):
+        assert not _accepted(event_type, key, other), other
+
+
+def test_pruebas_y_resultados_aceptan_exactamente_los_valores_literales():
+    types = CATALOG_V2_VALUES["test_ordered", "pruebas"]
+    results = CATALOG_V2_VALUES["test_resulted", "resultados"]
+    # Todos los tipos, solos y juntos en su orden; y todos los resultados de cada tipo.
+    for t in types:
+        assert _accepted("test_ordered", "pruebas", [t])
+        for r in results:
+            assert _accepted("test_resulted", "resultados", {t: r})
+    assert _accepted("test_ordered", "pruebas", list(types))
+    for other in ("tac", "eco", "Analitica", "analítica"):
+        assert not _accepted("test_ordered", "pruebas", [other]), other
+        assert not _accepted("test_resulted", "resultados", {other: "normal"}), other
+    for other in ("anormal", "Normal", "positivo"):
+        assert not _accepted("test_resulted", "resultados", {"ecg": other}), other
 
 
 FORBIDDEN = {
