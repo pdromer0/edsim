@@ -511,6 +511,13 @@ Pretriaje medio por mes:
   enfermeras (u nominal 0,83 en el día medio) el pretriaje de los llegados sube de 1,7 min
   a las 8 h a 16,7 a las 13 h (con [3, 2, 1], 0,3 y 1,3), y la cola pasa a la tarde y a
   la noche.
+- **La ejecución principal del notebook 04** (91 días desde el 5 de enero, semilla 2026)
+  cae en los meses de más carga: reloj A de los niveles 2 a 5 de 82,0 min y del nivel 5 de
+  627 (con [12, 11, 5], 49,3 y 229). La semana del 19 al 25 de enero, con cuatro días
+  seguidos de más llegadas, da 306 y 3897 min: a las 8:00 llega a haber 129 pacientes
+  clasificados esperando médico (el 23) y la cola no se vacía hasta el 30. Sin censurados
+  al final, y la semana siguiente vuelve a 84 min. Es el mismo efecto que en la tarea 4.7,
+  más fuerte con un médico menos de noche.
 - **Refuerzo de invierno, para versiones posteriores.** Con una plantilla anual, enero
   queda cerca de la saturación: reloj A de 105 min con 2026 y 8 censurados. Un refuerzo de
   invierno (por ejemplo, el quinto médico de noche solo en los meses de más carga) es
