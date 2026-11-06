@@ -429,3 +429,19 @@ def test_construccion_directa_valida_la_clave(center):
     with pytest.raises(ValueError, match=r"espera_resultados_fuera\[0\] cannot be 1"):
         dataclasses.replace(center, results_wait_outside=(1,))
     assert dataclasses.replace(center, results_wait_outside=[4, 5]).results_wait_outside == (4, 5)
+
+
+def test_el_centro_de_ejemplo_es_el_del_hito_3():
+    # Los tests del modelo provisional que usaban config/centro.toml usan desde la tarea
+    # 4.6b tests/data/centro_ejemplo.toml: el centro base con la plantilla del hito 3
+    # (antes de la calibración) y sin la sala de resultados, que el provisional ignora.
+    # Solo difieren en la plantilla y la sala. Este test se quita en la tarea 4.9, cuando
+    # centro.toml pierda sus secciones provisionales.
+    example = load_center(EXAMPLE)
+    hito_3 = dataclasses.replace(
+        load_center(CONFIG),
+        triage_nurses=(3, 3, 2),
+        doctors=(12, 12, 7),
+        results_wait_outside=(),
+    )
+    assert example == hito_3
