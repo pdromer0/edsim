@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "run_id": "referencia-v1",
+  "created_at": "2026-11-06T07:50:37.777674+00:00",
+  "origin": "cli",
+  "edsim_version": "0.1.0",
+  "seed": 7,
+  "days": 2,
+  "warmup_days": 1,
+  "variant": "centro_ejemplo",
+  "center_fingerprint": "5b86440058ee",
+  "profile_fingerprint": "63d0ae1fb4f0",
+  "center_path": "tests/data/centro_ejemplo.toml",
+  "profile_path": "tests/data/llegadas_ejemplo.toml",
+  "invariant_violations": 0,
+  "window_arrivals": 307,
+  "simulation_seconds": 0.2585975030087866
+}

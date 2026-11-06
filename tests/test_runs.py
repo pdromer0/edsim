@@ -691,3 +691,19 @@ def test_configuration_fingerprint_is_public(tmp_path):
     path.write_bytes(b"abc")
     assert "config_fingerprint" in runs.__all__
     assert runs.config_fingerprint(path) == "ba7816bf8f01"
+
+
+# --- run.json de la versión 1 ----------------------------------------------------------
+
+# Escrito con simulate_run en main, antes de la tarea 4.5b, y guardado tal cual: la
+# versión 1 solo se lee desde entonces.
+RUN_V1 = Path(__file__).parent / "data" / "run_v1.json"
+
+
+def test_run_json_de_la_version_1_de_referencia():
+    info = RunInfo.read(RUN_V1)
+
+    assert info.format_version == 1
+    assert (info.run_id, info.seed, info.days, info.warmup_days) == ("referencia-v1", 7, 2, 1)
+    assert (info.center_fingerprint, info.profile_fingerprint) == ("5b86440058ee", "63d0ae1fb4f0")
+    assert len(json.loads(RUN_V1.read_text())) == 16
