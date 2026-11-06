@@ -12,11 +12,18 @@ files with their fingerprints, days, warm-up, seed and run identifier)
 repeated in every row, so each file records how it was generated. Floats are
 written with ``repr``, all their digits, so reading them back gives the same
 value.
+
+The episodes CSV of the clinical model (task 4.5b) has the columns of the
+provisional one, then the clinical truth (``CLINICAL_TRUTH_COLUMNS``), then the
+run parameters and the clinical profiles (``PROFILES_COLUMNS``): everything
+``EpisodeTruth`` has, so ``read_episodes_csv`` gives back the same episodes,
+floats bit for bit. The CSV of the provisional model does not change.
 """
 
 import csv
+import math
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import astuple, dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,6 +38,8 @@ from edsim.arrivals.thinning import DayRecord
 from edsim.arrivals.validation import ValidationResult
 from edsim.engine.analysis import SHIFTS, LevelMetrics, RunAnalysis, StepCurves, WindowMetrics
 from edsim.engine.center import CenterConfig
+from edsim.engine.clinical_sampler import ClinicalTruth
+from edsim.engine.events import ARRIVAL_MODES, SEXES, episode_id
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
 from edsim.engine.targets import (
@@ -50,6 +59,12 @@ from edsim.engine.validation import (
     HourlyCensus,
     MG1Replicas,
 )
+from edsim.profiles.config import N_BANDS, N_LEVELS, REASON_KEYS, TEST_TYPES
+from edsim.profiles.context import DAY_TYPES, SEASONS, SHIFT_BANDS, ArrivalContext
+from edsim.profiles.population import Person
+from edsim.profiles.sampler import SeverityAndTriage
+from edsim.profiles.severity import CORRECT, OVER, UNDER, triage_quality
+from edsim.profiles.workup import Workup
 
 # --- Run parameters ---------------------------------------------------------------------
 
@@ -91,7 +106,7 @@ PARAMETER_COLUMNS = (
 )
 """The fields of ``RunParameters``, in its order, as CSV columns."""
 
-EPISODE_COLUMNS = (
+EPISODE_DATA_COLUMNS = (
     "episodio",
     "llegada",
     "minuto_llegada",
@@ -102,8 +117,69 @@ EPISODE_COLUMNS = (
     "pruebas",
     "respuesta_pruebas",
     "destino",
-    *PARAMETER_COLUMNS,
 )
+"""The draws of an episode, the same with both models; ``nivel`` is the assigned level."""
+
+EPISODE_COLUMNS = (*EPISODE_DATA_COLUMNS, *PARAMETER_COLUMNS)
+"""The columns of the episodes CSV of the provisional model."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProfilesParameters:
+    """The clinical profiles of a run, in the last two columns of its clinical CSV.
+
+    Attributes:
+        profiles: Path of ``perfiles.toml``, as given.
+        profiles_fingerprint: ``config_fingerprint`` of that file.
+    """
+
+    profiles: str
+    profiles_fingerprint: str
+
+
+PROFILES_COLUMNS = ("perfiles", "huella_perfiles")
+"""The fields of ``ProfilesParameters``, in its order, as CSV columns."""
+
+_WORKUP_DRAWS = ("pedida", "alterada", "respuesta")
+"""The three standard draws of each type of test, in the order of ``Workup.draws``."""
+
+CLINICAL_TRUTH_COLUMNS = (
+    "franja",
+    "tipo_dia",
+    "estacion",
+    "banda",
+    "edad",
+    "sexo",
+    "medio",
+    "motivo",
+    "z_gravedad",
+    "gravedad",
+    "nivel_real",
+    "calidad_triaje",
+    "salto",
+    *(f"pedida_{t}" for t in TEST_TYPES),
+    *(f"alterada_{t}" for t in TEST_TYPES),
+    *(f"respuesta_base_{t}" for t in TEST_TYPES),
+    *(f"sorteo_{d}_{t}" for t in TEST_TYPES for d in _WORKUP_DRAWS),
+)
+"""The clinical truth of an episode, in the order of ``ClinicalTruth``: 37 columns.
+
+The context (``franja``, ``tipo_dia`` and ``estacion``, by name), the person
+(``banda`` is the index of the age band, 0 to 3; ``sexo`` and ``medio`` use the
+words of the log), the reason, the triage (``z_gravedad``, ``gravedad``,
+``nivel_real``, ``calidad_triaje`` and ``salto``; the assigned level is the
+column ``nivel``) and the tests: whether each type is ordered, whether it is
+abnormal and its base turnaround (factor 1), and then the 12 standard draws of
+stream 3, three per type in the order of ``TEST_TYPES``.
+"""
+
+CLINICAL_EPISODE_COLUMNS = (
+    *EPISODE_DATA_COLUMNS,
+    *CLINICAL_TRUTH_COLUMNS,
+    *PARAMETER_COLUMNS,
+    *PROFILES_COLUMNS,
+)
+"""The columns of the episodes CSV of the clinical model: 10 + 37 + 8 + 2 = 57."""
 
 DAY_COLUMNS = (
     "dia",
@@ -439,8 +515,60 @@ def format_engine_validation(results: Sequence[ValidationResult]) -> str:
 # --- CSV ------------------------------------------------------------------------------------
 
 
+def _episode_cells(e: EpisodeTruth) -> tuple:
+    return (
+        e.episode_id,
+        e.arrival_id,
+        e.arrival_time,
+        e.level,
+        e.triage_time,
+        e.assessment_time,
+        e.reassessment_time,
+        e.needs_tests,
+        "" if e.test_turnaround is None else e.test_turnaround,
+        "ingreso" if e.admitted else "alta",
+    )
+
+
+def _clinical_cells(e: EpisodeTruth) -> tuple:
+    """The 37 clinical cells of an episode, or ``ValueError`` if they cannot be read back."""
+    truth = e.clinical
+    if truth is None:
+        raise ValueError(f"{e.episode_id} is of the provisional model")
+    t, w = truth.triage, truth.workup
+    if e.test_turnaround is not None:
+        raise ValueError(f"{e.episode_id}: test_turnaround must be None with the clinical model")
+    if e.level != t.level:
+        raise ValueError(f"{e.episode_id}: level {e.level} is not the assigned one ({t.level})")
+    if e.needs_tests != w.has_round:
+        raise ValueError(f"{e.episode_id}: needs_tests does not match the ordered tests")
+    c, person = truth.context, truth.person
+    return (
+        SHIFT_BANDS[c.shift_band],
+        DAY_TYPES[c.day_type],
+        SEASONS[c.season],
+        person.band,
+        person.age,
+        truth.sex,
+        truth.arrival_mode,
+        truth.reason,
+        t.z,
+        t.severity,
+        t.true_level,
+        t.quality,
+        t.jump,
+        *w.ordered,
+        *w.abnormal,
+        *w.turnarounds,
+        *w.draws,
+    )
+
+
 def write_episodes_csv(
-    episodes: Sequence[EpisodeTruth], path: Path, parameters: RunParameters
+    episodes: Sequence[EpisodeTruth],
+    path: Path,
+    parameters: RunParameters,
+    profiles: ProfilesParameters | None = None,
 ) -> None:
     """Write the ground truth of the episodes as a tidy CSV, one row per episode.
 
@@ -451,34 +579,185 @@ def write_episodes_csv(
     ``ingreso``, as in the log) and the run parameters. Durations are drawn
     even when not used, such as the turnaround of a patient without tests.
 
+    With ``profiles``, the CSV of the clinical model: ``CLINICAL_EPISODE_COLUMNS``,
+    with the clinical truth after ``destino``, the profiles after the run
+    parameters and ``respuesta_pruebas`` empty (``None``: the turnaround of a
+    round depends on the shift band of its order).
+
     Raises:
-        NotImplementedError: If some episode is of the clinical model; its CSV
-            comes in task 4.5b. It is checked before the file is created.
+        ValueError: If ``profiles`` is given and some episode is provisional,
+            or not given and some episode is clinical, or a clinical episode
+            cannot be read back (its ``test_turnaround`` is not ``None``, or
+            its level or ``needs_tests`` contradict its clinical truth). It is
+            checked before the file is created.
     """
-    if any(e.clinical is not None for e in episodes):
-        raise NotImplementedError(
-            "the ground truth CSV of the clinical model comes in task 4.5b; "
-            "this one is only for the provisional model"
-        )
+    if profiles is None:
+        clinical = [e.episode_id for e in episodes if e.clinical is not None]
+        if clinical:
+            raise ValueError(f"{clinical[0]} is of the clinical model: its CSV needs the profiles")
+        header = EPISODE_COLUMNS
+        rows = [(*_episode_cells(e), *astuple(parameters)) for e in episodes]
+    else:
+        header = CLINICAL_EPISODE_COLUMNS
+        rows = [
+            (*_episode_cells(e), *_clinical_cells(e), *astuple(parameters), *astuple(profiles))
+            for e in episodes
+        ]
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(EPISODE_COLUMNS)
-        for e in episodes:
-            writer.writerow(
-                (
-                    e.episode_id,
-                    e.arrival_id,
-                    e.arrival_time,
-                    e.level,
-                    e.triage_time,
-                    e.assessment_time,
-                    e.reassessment_time,
-                    e.needs_tests,
-                    e.test_turnaround,
-                    "ingreso" if e.admitted else "alta",
-                    *astuple(parameters),
-                )
-            )
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
+def _token(row: Mapping[str, str], column: str, choices: Sequence[str]) -> str:
+    value = row[column]
+    if value not in choices:
+        raise ValueError(f"{column} must be one of {tuple(choices)}, got {value!r}")
+    return value
+
+
+def _boolean(row: Mapping[str, str], column: str) -> bool:
+    return _token(row, column, ("True", "False")) == "True"
+
+
+def _integer(row: Mapping[str, str], column: str, low: int, high: int) -> int:
+    text = row[column]
+    try:
+        value = int(text)
+    except ValueError:
+        raise ValueError(f"{column} must be an integer, got {text!r}") from None
+    if str(value) != text or not low <= value <= high:
+        raise ValueError(f"{column} must be an integer in {low}-{high}, got {text!r}")
+    return value
+
+
+def _real(row: Mapping[str, str], column: str, *, non_negative: bool = False) -> float:
+    text = row[column]
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f"{column} must be a number, got {text!r}") from None
+    if not math.isfinite(value) or (non_negative and value < 0):
+        qualifier = "finite and non-negative" if non_negative else "finite"
+        raise ValueError(f"{column} must be {qualifier}, got {text!r}")
+    return value
+
+
+def _clinical_truth(row: Mapping[str, str], level: int, needs_tests: bool) -> ClinicalTruth:
+    true_level = _integer(row, "nivel_real", 1, N_LEVELS)
+    quality = _token(row, "calidad_triaje", (CORRECT, UNDER, OVER))
+    jump = _integer(row, "salto", 0, N_LEVELS - 1)
+    if (quality, jump) != triage_quality(level, true_level):
+        raise ValueError(
+            f"calidad_triaje and salto ({quality}, {jump}) do not match "
+            f"nivel {level} and nivel_real {true_level}"
+        )
+    ordered = tuple(_boolean(row, f"pedida_{t}") for t in TEST_TYPES)
+    if any(ordered) != needs_tests:
+        raise ValueError("pruebas does not match the ordered tests (pedida_*)")
+    return ClinicalTruth(
+        context=ArrivalContext(
+            shift_band=SHIFT_BANDS.index(_token(row, "franja", SHIFT_BANDS)),
+            day_type=DAY_TYPES.index(_token(row, "tipo_dia", DAY_TYPES)),
+            season=SEASONS.index(_token(row, "estacion", SEASONS)),
+        ),
+        person=Person(
+            band=_integer(row, "banda", 0, N_BANDS - 1),
+            age=_integer(row, "edad", 0, 150),
+            female=_token(row, "sexo", SEXES) == SEXES[0],
+            ambulance=_token(row, "medio", ARRIVAL_MODES) == ARRIVAL_MODES[0],
+        ),
+        reason=_token(row, "motivo", REASON_KEYS),
+        triage=SeverityAndTriage(
+            z=_real(row, "z_gravedad"),
+            severity=_real(row, "gravedad"),
+            level=level,
+            true_level=true_level,
+            quality=quality,
+            jump=jump,
+        ),
+        workup=Workup(
+            ordered=ordered,
+            abnormal=tuple(_boolean(row, f"alterada_{t}") for t in TEST_TYPES),
+            turnarounds=tuple(
+                _real(row, f"respuesta_base_{t}", non_negative=True) for t in TEST_TYPES
+            ),
+            draws=tuple(_real(row, f"sorteo_{d}_{t}") for t in TEST_TYPES for d in _WORKUP_DRAWS),
+        ),
+    )
+
+
+def episode_from_row(row: Mapping[str, str]) -> EpisodeTruth:
+    """The ``EpisodeTruth`` of one row of an episodes CSV, of either model.
+
+    A row with the clinical columns (``CLINICAL_TRUTH_COLUMNS``) is of the
+    clinical model: its ``respuesta_pruebas`` must be empty and is read as
+    ``None``. Tokens are exact (``True``/``False``, the words of the log and of
+    the contexts), integers are written as Python writes them, and floats are
+    finite and read bit for bit. The run parameters are not read here.
+
+    Raises:
+        ValueError: If a value is invalid or contradicts another one.
+        KeyError: If a column is missing.
+    """
+    arrival_id = _integer(row, "llegada", 0, 10**12)
+    if row["episodio"] != episode_id(arrival_id):
+        raise ValueError("episodio does not match llegada")
+    level = _integer(row, "nivel", 1, N_LEVELS)
+    needs_tests = _boolean(row, "pruebas")
+    clinical = "franja" in row
+    if clinical:
+        if row["respuesta_pruebas"] != "":
+            raise ValueError("respuesta_pruebas must be empty with the clinical model")
+        turnaround = None
+    else:
+        turnaround = _real(row, "respuesta_pruebas", non_negative=True)
+    return EpisodeTruth(
+        episode_id=row["episodio"],
+        arrival_id=arrival_id,
+        arrival_time=_real(row, "minuto_llegada", non_negative=True),
+        level=level,
+        triage_time=_real(row, "triaje", non_negative=True),
+        assessment_time=_real(row, "valoracion", non_negative=True),
+        reassessment_time=_real(row, "reevaluacion", non_negative=True),
+        needs_tests=needs_tests,
+        test_turnaround=turnaround,
+        admitted=_token(row, "destino", ("alta", "ingreso")) == "ingreso",
+        clinical=_clinical_truth(row, level, needs_tests) if clinical else None,
+    )
+
+
+def read_episodes_csv(path: Path) -> tuple[EpisodeTruth, ...]:
+    """Read an episodes CSV of either model, as ``write_episodes_csv`` wrote it.
+
+    The header must be exactly ``EPISODE_COLUMNS`` or
+    ``CLINICAL_EPISODE_COLUMNS``, and the run parameters (and profiles) the
+    same in every row. Each row is read with ``episode_from_row``.
+
+    Raises:
+        ValueError: With ``path:line``, if the header, a row or its
+            parameters are invalid.
+    """
+    episodes = []
+    with Path(path).open(encoding="utf-8", newline="") as source:
+        reader = csv.DictReader(source, strict=True)
+        try:
+            header = tuple(reader.fieldnames or ())
+            if header not in (EPISODE_COLUMNS, CLINICAL_EPISODE_COLUMNS):
+                raise ValueError("invalid episode ground truth header")
+            parameter_columns = header[header.index(PARAMETER_COLUMNS[0]) :]
+            first = None
+            for row in reader:
+                if None in row or any(value is None for value in row.values()):
+                    raise ValueError("incomplete or extra CSV fields")
+                parameters = tuple(row[c] for c in parameter_columns)
+                first = parameters if first is None else first
+                if parameters != first:
+                    raise ValueError("the run parameters change between rows")
+                episodes.append(episode_from_row(row))
+        except (ValueError, KeyError, csv.Error) as error:
+            raise ValueError(f"{path}:{max(1, reader.line_num)}: {error}") from error
+    return tuple(episodes)
 
 
 def write_ground_truth_days_csv(

@@ -27,7 +27,6 @@ from edsim.engine.engine import N_CLINICAL_STREAMS, run_engine, simulate_ed
 from edsim.engine.events import CATALOG_V2, JsonlSink, MemorySink
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import check_invariants
-from edsim.engine.report import RunParameters, write_episodes_csv
 from edsim.profiles.config import load_profiles
 from edsim.profiles.context import context_indices
 from edsim.seeds import child_streams
@@ -362,27 +361,7 @@ def test_ningun_payload_lleva_un_valor_oculto(clinical):
             assert type(value) is not float, (e.event_type, value)
 
 
-# --- El CSV del ground truth clínico es de la 4.5b ----------------------------------------
-
-PARAMETERS = RunParameters(
-    center="c.toml",
-    center_fingerprint="0" * 64,
-    profile="l.toml",
-    profile_fingerprint="1" * 64,
-    days=DAYS,
-    warmup_days=1,
-    seed=SEED,
-    run_id="r2026",
-)
-
-
-def test_el_csv_clinico_no_existe_todavia(clinical, tmp_path):
-    _, result = clinical
-    path = tmp_path / "ground_truth_episodios.csv"
-
-    with pytest.raises(NotImplementedError, match="4.5b"):
-        write_episodes_csv(result.ground_truth.episodes, path, PARAMETERS)
-    assert not path.exists()
+# El CSV del ground truth clínico (tarea 4.5b) se prueba en test_clinical_csv.py.
 
 
 # --- Invariantes -----------------------------------------------------------------------
