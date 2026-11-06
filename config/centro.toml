@@ -16,12 +16,10 @@ inicio = [8, 15, 22]
 #   [2, 2, 1] (13,21 min, la más cercana a 12,4), pero la semilla 2027 la vetó (15,16:
 #   fuera de la horquilla) y se tomó la siguiente, [3, 2, 1] (6,78 con 2026 y 7,86 con
 #   2027): u de 0,795 a 0,8325 (decisión 41, revisada en la tarea 4.6c);
-#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje
-#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje --semilla 2027
+#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje --comprobacion 2027
 # - médicos, con esa enfermería, contra el reloj A de los niveles 2 a 5 (35-70 min):
 #   [12, 11, 4], la única que pasa (42,10 min), con u de 0,85; con 2027, 43,29, pasa;
-#   uv run edsim calibracion sensibilidad --mando medicos
-#   uv run edsim calibracion evaluar --semilla 2027
+#   uv run edsim calibracion sensibilidad --mando medicos --comprobacion 2027
 # Comprobación independiente, después del veto de 2027 (pretriaje 7,76 y reloj A 41,20):
 #   uv run edsim calibracion evaluar --semilla 2028
 # Es una plantilla para todo el año: enero queda cerca de la saturación (reloj A de

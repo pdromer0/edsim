@@ -350,7 +350,10 @@ regla del cumplidor (días enteros) y la de elección (veto de la semilla de com
   de elección (la siguiente más cercana a la referencia o al centro de la horquilla) que
   pase los objetivos de ajuste con 2026 y con 2027. Si ninguna pasa con las dos, no se
   elige. Como 2027 ha intervenido en la elección, la comprobación independiente pasa a la
-  semilla 2028. En el paquete, `choose_staffing(filas, mando, check=…)`.
+  semilla 2028. En el paquete, `choose_staffing(filas, mando, check=…)`; en la CLI,
+  `calibracion sensibilidad --comprobacion 2027`, que evalúa con 2027, con la misma ventana
+  y el resto de opciones, solo las candidatas que hagan falta, en el orden de la elección
+  (revisión del PR #50).
 - **Orden.** Como en la 4.6b: la enfermería contra el pretriaje, con los médicos del
   centro; con ella fija, los médicos contra el reloj A.
 
@@ -388,9 +391,10 @@ con [2, 2, 1]). La tabla de 2027 se ejecutó con el `config/` final (médicos [1
 
 Sin censurados en ninguna. Con 2026 pasan [3, 2, 1] y [2, 2, 1], y la regla elige
 [2, 2, 1], la más cercana a la referencia (12,4). Con 2027 [2, 2, 1] no pasa: el veto la
-descarta y queda [3, 2, 1] (ver «El veto de la semilla 2027»). La salida de la CLI con
-`--semilla 2027` dice «Elección: [3, 2, 1]»: aplica la regla a la semilla que se le da; que
-2027 solo vete lo decide `choose_staffing` con `check`.
+descarta y queda [3, 2, 1] (ver «El veto de la semilla 2027»). La tabla de 2027 es la
+sensibilidad entera con `--semilla 2027`, que aplica la regla a esa semilla; la elección
+con el veto la da `uv run edsim calibracion sensibilidad --mando enfermeria_triaje
+--comprobacion 2027`, que con 2027 evalúa solo [2, 2, 1] (vetada) y [3, 2, 1] (elegida).
 
 ### Sensibilidad de los médicos (enfermería [3, 2, 1])
 
@@ -517,7 +521,7 @@ Pretriaje medio por mes:
   seguidos de más llegadas, da 306 y 3897 min: a las 8:00 llega a haber 129 pacientes
   clasificados esperando médico (el 23) y la cola no se vacía hasta el 30. Sin censurados
   al final, y la semana siguiente vuelve a 84 min. Es el mismo efecto que en la tarea 4.7,
-  más fuerte con un médico menos de noche.
+  más fuerte con un médico menos de noche. Los 3897 min (unas 65 horas) del nivel 5 en esa semana no son realistas: el modelo aún no tiene abandono sin ser visto (`patient_left_wbs`, hito 5), y en un hospital real buena parte de esos pacientes se iría. Lo acotan el abandono del hito 5 y el refuerzo de invierno.
 - **Refuerzo de invierno, para versiones posteriores.** Con una plantilla anual, enero
   queda cerca de la saturación: reloj A de 105 min con 2026 y 8 censurados. Un refuerzo de
   invierno (por ejemplo, el quinto médico de noche solo en los meses de más carga) es
