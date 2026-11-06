@@ -50,7 +50,9 @@ SEED = 2026
 
 @pytest.fixture(scope="module")
 def center():
-    return load_center(ROOT / "config" / "centro.toml")
+    # Modelo provisional con el centro del hito 3: config/centro.toml antes de la
+    # calibración de la tarea 4.6b, sin la sala (el provisional la ignora).
+    return load_center(ROOT / "tests" / "data" / "centro_ejemplo.toml")
 
 
 @pytest.fixture(scope="module")

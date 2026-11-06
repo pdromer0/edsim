@@ -104,7 +104,11 @@ def test_loader_keeps_grouped_structure_messages(tmp_path):
 
 def test_loader_keeps_first_value_error(values, tmp_path):
     path = tmp_path / "bad.toml"
-    path.write_bytes(BASE.read_bytes().replace(b"medicos = [12, 12, 7]", b"medicos = [0, 0, 0]"))
+    # La plantilla se lee del fichero: la calibración (tarea 4.6b) la cambia.
+    doctors = ", ".join(str(n) for n in values["recursos.medicos"])
+    line = f"medicos = [{doctors}]".encode()
+    assert line in BASE.read_bytes()
+    path.write_bytes(BASE.read_bytes().replace(line, b"medicos = [0, 0, 0]"))
     with pytest.raises(ValueError) as caught:
         load_center(path)
     assert str(caught.value) == "recursos.medicos[0] must be at least 1, got 0"

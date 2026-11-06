@@ -31,7 +31,6 @@ DATA = Path(__file__).parent / "data"
 EXAMPLE_CENTER = DATA / "centro_ejemplo.toml"
 EXAMPLE_PROFILE = DATA / "llegadas_ejemplo.toml"
 CONFIG = Path(__file__).parent.parent / "config"
-REAL_CENTER = CONFIG / "centro.toml"
 REAL_PROFILE = CONFIG / "llegadas.toml"
 REAL_SEED = 2026
 
@@ -152,11 +151,16 @@ def engine_validation_pequena():
 
 @pytest.fixture(scope="session")
 def engine_validation_real():
-    """La validación completa de verdad: ``validate_engine`` con ``config/centro.toml``,
+    """La validación completa de verdad: ``validate_engine`` con el centro del hito 3,
     ``config/llegadas.toml``, la semilla 2026 y los valores por defecto.
+
+    El centro es ``tests/data/centro_ejemplo.toml``: los valores de ``config/centro.toml``
+    antes de la calibración de la tarea 4.6b (plantilla del hito 3), sin la sala de
+    resultados, que el modelo provisional ignora. La validación del motor usa el modelo
+    provisional, que no se recalibra.
 
     Tarda unos 2 minutos, así que se ejecuta una sola vez por sesión: la comparten los
     tests slow de test_engine_validation.py y el de ``motor validar`` en test_cli.py,
     que la recibe con ``monkeypatch`` en lugar de repetirla.
     """
-    return validate_engine(load_center(REAL_CENTER), load_profile(REAL_PROFILE), seed=REAL_SEED)
+    return validate_engine(load_center(EXAMPLE_CENTER), load_profile(REAL_PROFILE), seed=REAL_SEED)

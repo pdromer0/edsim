@@ -24,7 +24,9 @@ DISCRETIZATION_MINUTES = {"enfermeria_triaje": 0.5, "medicos": 2.0, "boxes": 1.0
 
 @pytest.fixture(scope="module")
 def center():
-    return load_center(CONFIG / "centro.toml")
+    # Modelo provisional con el centro del hito 3: config/centro.toml antes de la
+    # calibración de la tarea 4.6b, sin la sala (el provisional la ignora).
+    return load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
 
 
 @pytest.fixture(scope="module")

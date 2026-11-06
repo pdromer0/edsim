@@ -506,7 +506,10 @@ def test_subida_con_reservas_sin_conceder(center):
 
 @pytest.fixture(scope="module")
 def real() -> tuple[CenterConfig, ArrivalProfile]:
-    return load_center(CONFIG / "centro.toml"), load_profile(CONFIG / "llegadas.toml")
+    # Modelo provisional con el centro del hito 3 (config/centro.toml antes de la
+    # calibración de la tarea 4.6b, sin la sala, que el provisional ignora).
+    center = load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
+    return center, load_profile(CONFIG / "llegadas.toml")
 
 
 def run(center: CenterConfig, profile: ArrivalProfile, days: int, seed: int):

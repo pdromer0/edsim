@@ -26,6 +26,13 @@ from edsim.runs import (
 )
 
 BASE = Path(__file__).parents[1] / "config" / "centro.toml"
+# La plantilla de médicos de config/centro.toml, leída del fichero: la calibración
+# (tarea 4.6b) la cambia, y estos tests prueban el formato, no unos valores.
+MORNING, AFTERNOON, NIGHT = read_center_values(BASE)["recursos.medicos"]
+DOCTORS_LINE = f"medicos = [{MORNING}, {AFTERNOON}, {NIGHT}]".encode()
+MULTILINE_DOCTORS = (
+    f"medicos = [\n  {MORNING}, # morning\n  {AFTERNOON}, # afternoon\n  {NIGHT}, # night\n]"
+).encode()
 
 
 @pytest.fixture
@@ -51,17 +58,21 @@ def test_one_array_element_changes_without_losing_format_or_comments(tmp_path, n
     original = (
         BASE.read_bytes()
         .replace(
-            b"medicos = [12, 12, 7]",
-            b"medicos = [\n  12, # morning\n  12, # afternoon\n  7, # night\n]",
+            DOCTORS_LINE,
+            MULTILINE_DOCTORS,
         )
         .replace(b"\n", newline)
     )
+    assert MULTILINE_DOCTORS.replace(b"\n", newline) in original  # el replace se aplicó
     base = tmp_path / "base.toml"
     base.write_bytes(original)
     values = read_center_values(base)
     values["recursos.medicos"][1] = 15
     destination = write_variant(base, values, tmp_path / "draft.toml")
-    assert destination.read_bytes() == original.replace(b"12, # afternoon", b"15, # afternoon")
+    assert AFTERNOON != 15  # el cambio es de verdad
+    assert destination.read_bytes() == original.replace(
+        f"{AFTERNOON}, # afternoon".encode(), b"15, # afternoon"
+    )
     assert read_center_values(destination) == values
 
 
@@ -283,10 +294,11 @@ def test_diff_normalizes_percentages_and_fractions(values):
 
 def test_diff_order_values_and_small_real_changes(values):
     before = center_from_values(values)
-    after = dataclasses.replace(before, boxes=31, doctors=(13, 12, 7), triage_time=(5, 11))
+    more = (MORNING + 1, AFTERNOON, NIGHT)
+    after = dataclasses.replace(before, boxes=31, doctors=more, triage_time=(5, 11))
     changes = center_diff(before, after)
     assert [(d.key, d.before, d.after) for d in changes] == [
-        ("recursos.medicos", (12, 12, 7), (13, 12, 7)),
+        ("recursos.medicos", (MORNING, AFTERNOON, NIGHT), more),
         ("recursos.boxes", 30, 31),
         ("duraciones.triaje", (5.0, 10.0), (5.0, 11.0)),
     ]
@@ -426,6 +438,7 @@ def test_la_red_de_seguridad_no_deja_escribir_otro_valor(values, tmp_path, monke
     # ningún fichero, en lugar de una variante que no es la pedida.
     values["recursos.medicos"][1] = 15
     monkeypatch.setattr(variants.tomlkit, "dumps", lambda document: BASE.read_text("utf-8"))
-    with pytest.raises(ValueError, match=r"would write recursos\.medicos = \[12, 12, 7\]"):
+    written = rf"would write recursos\.medicos = \[{MORNING}, {AFTERNOON}, {NIGHT}\]"
+    with pytest.raises(ValueError, match=written):
         write_variant(BASE, values, tmp_path / "draft.toml")
     assert list(tmp_path.iterdir()) == []

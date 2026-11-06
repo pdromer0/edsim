@@ -673,8 +673,10 @@ def test_motor_ficheros_por_defecto(monkeypatch, tmp_path):
 def test_validar_motor_de_verdad(tmp_path, monkeypatch, capsys, engine_validation_real):
     # La validación completa con los valores por defecto, la misma que el fixture de
     # sesión: la CLI la recibe en lugar de repetirla, y se comprueba que la pide igual.
+    # El centro del hito 3 (tests/data/centro_ejemplo.toml), como el fixture.
     root = Path(__file__).parent.parent
-    center, profile = root / "config" / "centro.toml", root / "config" / "llegadas.toml"
+    center = root / "tests" / "data" / "centro_ejemplo.toml"
+    profile = root / "config" / "llegadas.toml"
     calls = []
 
     def same_validation(*args, **kwargs):

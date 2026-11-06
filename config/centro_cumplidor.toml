@@ -1,0 +1,46 @@
+# Centro cumplidor: el centro base (config/centro.toml) con los médicos que cumplen
+# Manchester. Ver docs/specs/hito-4.md («Calibración») y docs/calibracion/registro.md.
+# Solo cambian los médicos; el resto es igual que el centro base.
+
+[turnos]
+# Hora de inicio de los turnos de mañana, tarde y noche
+inicio = [8, 15, 22]
+
+[recursos]
+# Plantilla por turno: mañana, tarde, noche. La enfermería de triaje es la del centro
+# base (calibrada en la tarea 4.6b). Los médicos salen de la misma regla, ⌈carga del
+# turno / u⌉, con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene, de
+# media entre réplicas, como mucho un 10 % de días fuera del cumplimiento Manchester
+# con el reloj C: u de 0,625 a 0,635 (en el centro base, 0,81 a 0,8475).
+#   uv run edsim calibracion sensibilidad --mando medicos
+enfermeria_triaje = [3, 2, 1]
+medicos = [15, 15, 6]
+# Capacidad física, igual en todos los turnos
+boxes = 30
+# Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
+# los resultados fuera, en una sala sin límite de capacidad; con los resultados
+# vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
+# tarea 4.6a). Niveles 2 a 5, en orden creciente; el 1 nunca sale del box. Solo
+# la usa el modelo clínico: el provisional la ignora y no cambia. Es opcional y,
+# si falta, vale [] (nadie espera fuera), no [4, 5]: así la copia de centro.toml
+# de una ejecución anterior a la 4.6a sigue significando lo que significaba.
+espera_resultados_fuera = [4, 5]
+
+[triaje]
+# % de pacientes por nivel, del 1 al 5 (Emergencias 2013; nivel 1 supuesto)
+reparto_niveles = [0.3, 12.1, 33.6, 52.6, 1.4]
+
+[duraciones]
+# Minutos: [mediana, p90] de una lognormal
+triaje = [5, 10]
+valoracion = [20, 45]
+reevaluacion = [10, 20]
+respuesta_pruebas = [60, 150]
+
+[pruebas]
+# Probabilidad de pedir pruebas por nivel, del 1 al 5
+probabilidad = [0.95, 0.85, 0.70, 0.40, 0.20]
+
+[destino]
+# Probabilidad de ingreso por nivel, del 1 al 5; el resto, alta
+probabilidad_ingreso = [0.80, 0.45, 0.15, 0.04, 0.01]

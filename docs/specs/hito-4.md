@@ -12,7 +12,7 @@ Dentro del alcance
 - El nivel 1 asignado se clasifica en la puerta y va directo al box.
 - Pruebas de cuatro tipos con probabilidad logística, resultado y tiempo de respuesta; duraciones lognormales por nivel real y motivo.
 - Tres relojes hasta el médico con nombre propio; cumplimiento Manchester desde la clasificación; indicador de pretriaje.
-- Primera calibración: parámetros directos contra datos y plantilla de médicos contra horquillas observadas, con objetivos de ajuste y de comprobación en `config/objetivos.toml`.
+- Primera calibración: parámetros directos contra datos y plantilla (enfermería de triaje y médicos) contra horquillas observadas, con objetivos de ajuste y de comprobación en `config/objetivos.toml`.
 - `config/perfiles.toml`, validación estadística del muestreador, CLI, tests y el notebook `04_perfiles_clinicos.ipynb`.
 - El incremento de la app para el hito 4 (tareas 4.8a y 4.8b), documentado en la pestaña «App web — incrementos».
 
@@ -360,19 +360,19 @@ El centro base es realista: se calibra a lo observado en hospitales españoles, 
 
 El reparto de triaje se cumple por construcción, porque los umbrales salen de él: elegirlo es fijar un dato, no validar el modelo.
 
-**Parámetros indirectos: un solo mando, la plantilla de médicos por turno.** Menos médicos y valoraciones más largas alargan igual el tiempo hasta el médico, y en el hito 4 no hay ningún objetivo que los distinga (la estancia, que sí depende de las duraciones, se calibra en el hito 5). Calibrar los dos sería un problema no identificable. Las duraciones quedan fijas por criterio clínico y se ajusta solo la plantilla, que es una «plantilla equivalente» del modelo, no una recomendación de dotación.
+**Parámetros indirectos: dos mandos con objetivos separados, la enfermería de triaje y los médicos por turno** (decisión candidata 41, revisada el 6 de noviembre para la tarea 4.6b). La enfermería de triaje mueve el pretriaje y casi nada más; los médicos mueven la espera desde la clasificación y no tocan el pretriaje. Como cada mando tiene su objetivo, los dos son identificables y se ajustan en orden: primero la enfermería contra el pretriaje y, con ella fija, los médicos contra el tiempo hasta el médico (reloj A, que incluye el pretriaje). Con la enfermería de antes (`[3, 3, 2]`), ocupada en torno al 40 % del tiempo, el pretriaje medio era de 1,4 minutos y ningún cambio de médicos podía acercarlo a su horquilla. Menos médicos y valoraciones más largas alargan igual el tiempo hasta el médico, y en el hito 4 no hay ningún objetivo que los distinga (la estancia, que sí depende de las duraciones, se calibra en el hito 5). Calibrar los dos sería un problema no identificable. Las duraciones quedan fijas por criterio clínico y se ajusta solo la plantilla, que es una «plantilla equivalente» del modelo, no una recomendación de dotación.
 
-**Boxes fijos y espera de resultados fuera del box** (decisión candidata 45, tarea 4.6a). Con el modelo clínico, el 64 % del tiempo de box (91,2 minutos por paciente en 14 días) era esperar resultados, y los 30 boxes llegaban al pico mientras los médicos estaban a unos 7 de 12 de media: la plantilla no habría podido mover las esperas de los niveles 4 y 5. Desde la 4.6a, los pacientes de los niveles asignados de `espera_resultados_fuera` (en `centro.toml`, `[4, 5]` en el centro base) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y, con los resultados, vuelven a pedir box con su misma clave de prioridad, como un paciente desalojado, para la reevaluación. Los boxes quedan fijos (30) y no se calibran: con objetivos de tiempo hasta el médico, plantilla y boxes no serían identificables. Antes de ajustar se mide la sensibilidad de los dos mandos (regla 5). El modelo provisional no cambia (sus huellas y la validación del motor siguen iguales). Con la sala (14 días, `config/`, semilla 2026, plantilla \[12, 12, 7\]), el tiempo de box por paciente sin esperas de médico baja de 91,0 a 69,8 minutos; los boxes ocupados, de 21,0 a 16,5 de media (el pico sigue en 30); la espera de box de los niveles 4 y 5, de 35,3 y 85,4 a 12,8 y 20,4 minutos (11,6 y 13,9 la inicial; 1,1 y 0,2 la de la vuelta); y el reloj C del nivel 4, del 82,7 % con 5 días fuera de 12 al 95,4 % con 2. Los médicos siguen en 7,0 de media. Lo que anticipa para la 4.6b, sin calibrar nada: con esa plantilla el tiempo medio hasta el médico (reloj A) es de 18,8 minutos en los niveles 2 a 5 y de 9,3 en el nivel 3, por debajo de sus horquillas (35–70 y 45–75), y el pretriaje medio, de 1,4 minutos, por debajo de 6–15. El pretriaje depende de la enfermería de triaje, no de los médicos: el único mando de la decisión 41 no puede moverlo.
+**Boxes fijos y espera de resultados fuera del box** (decisión candidata 45, tarea 4.6a). Con el modelo clínico, el 64 % del tiempo de box (91,2 minutos por paciente en 14 días) era esperar resultados, y los 30 boxes llegaban al pico mientras los médicos estaban a unos 7 de 12 de media: la plantilla no habría podido mover las esperas de los niveles 4 y 5. Desde la 4.6a, los pacientes de los niveles asignados de `espera_resultados_fuera` (en `centro.toml`, `[4, 5]` en el centro base) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y, con los resultados, vuelven a pedir box con su misma clave de prioridad, como un paciente desalojado, para la reevaluación. Los boxes quedan fijos (30) y no se calibran: con objetivos de tiempo hasta el médico, plantilla y boxes no serían identificables. Antes de ajustar se mide la sensibilidad de los dos mandos (regla 5). El modelo provisional no cambia (sus huellas y la validación del motor siguen iguales). Con la sala (14 días, `config/`, semilla 2026, plantilla \[12, 12, 7\]), el tiempo de box por paciente sin esperas de médico baja de 91,0 a 69,8 minutos; los boxes ocupados, de 21,0 a 16,5 de media (el pico sigue en 30); la espera de box de los niveles 4 y 5, de 35,3 y 85,4 a 12,8 y 20,4 minutos (11,6 y 13,9 la inicial; 1,1 y 0,2 la de la vuelta); y el reloj C del nivel 4, del 82,7 % con 5 días fuera de 12 al 95,4 % con 2. Los médicos siguen en 7,0 de media. Lo que anticipa para la 4.6b, sin calibrar nada: con esa plantilla el tiempo medio hasta el médico (reloj A) es de 18,8 minutos en los niveles 2 a 5 y de 9,3 en el nivel 3, por debajo de sus horquillas (35–70 y 45–75), y el pretriaje medio, de 1,4 minutos, por debajo de 6–15. El pretriaje depende de la enfermería de triaje, no de los médicos: el único mando de la decisión 41 no puede moverlo. Por eso la decisión 41 se revisa: la enfermería de triaje entra como segundo mando, ajustado solo al pretriaje (6 de noviembre).
 
 **Paradas** (decisión candidata 46, tarea 4.6a). La parada / crítico pesaba un 0,54 % con una gravedad media de 3,38 y desviación 0,38, justo por encima del umbral del nivel 1 (3,26): solo el 62 % eran nivel real 1, y el 44 % recibía nivel 2 y esperaba el triaje hasta 32 minutos. Con el nivel 1 asignado del 0,4 % no había sitio para todas. Desde la 4.6a, la parada pesa un 0,3 % en el catálogo (sigue siendo «< 1 %») y su gravedad es alta y poco dispersa, de modo que casi todas son nivel 1 real y asignado, a la puerta. Se rederivan con sus funciones y se escriben los pesos base, el ruido y el sesgo, los umbrales y las marginales de pruebas. Valores finales: media 4,21 y desviación 0,25 (la menor media que cumple ≥ 99 % de nivel real 1 y ≥ 97 % de nivel 1 asignado; ver «Paradas a la puerta»), peso base 0,324, ruido 0,334 y sesgo −0,081, umbrales \[3,341; 1,130; −0,047; −2,164\]. En un año, el 99,975 % de las paradas es nivel real 1 y el 97,05 % va a la puerta.
 
-**Objetivos indirectos** (horquillas orientativas; se fijan en `config/objetivos.toml` en la tarea 4.6). El CMBD del SAS es de 2013 e incluye niños, así que da el orden de magnitud y las horquillas son anchas.
+**Objetivos indirectos** (fijados en `config/objetivos.toml` en la tarea 4.6b). El CMBD del SAS es de 2013 e incluye niños, así que da el orden de magnitud y las horquillas son anchas.
 
 | Objetivo | Reloj | Referencia observada | Horquilla | Uso |
 | --- | --- | --- | --- | --- |
 | Pretriaje medio | — | SAS 12,4 min | 6–15 min | Ajuste |
 | Tiempo medio hasta el médico, niveles 2 a 5 | A | SAS 35,6 a 68,5 min según el nivel | 35–70 min | Ajuste |
-| Tiempo medio hasta el médico, nivel 3 | A | SAS 59,0 min | 45–75 min | Ajuste |
+| Tiempo medio hasta el médico, nivel 3 | A | SAS 59,0 min | 45–75 min | Comprobación (de ajuste hasta la tarea 4.6b; ver «El nivel 3, de ajuste a comprobación») |
 | Porcentaje por encima del tiempo recomendado | A | SAS 18,95 % | 10–30 % | Comprobación |
 | Porcentaje con pretriaje de más de 5 minutos | — | SAS 46,3 % | 30–60 % | Comprobación |
 
@@ -387,6 +387,23 @@ Fuera de la calibración del hito 4, a propósito (decisión candidata 34): el p
 5. Sensibilidad antes de ajustar: si mover un mando apenas cambia un KPI, ese KPI no puede calibrarlo.
 
 **Por qué días fuera de objetivo y percentiles.** Manchester es una regla por paciente, las colas crecen de forma no lineal cerca de la saturación y el servicio se juzga por sus días malos: en el hito 3, una ocupación media del 64 % convivía con lunes de 572 minutos de espera de box en el nivel 5. Cada objetivo se informa también por día, con su porcentaje de días fuera y su p90.
+
+**Regla de la plantilla equivalente** (tarea 4.6b). La plantilla de cada mando sale de un solo número u, una ocupación objetivo del turno: personal del turno = ⌈carga del turno / u⌉, al menos 1. La carga es el personal que la demanda del turno tendría ocupado sin colas: para la enfermería, llegadas por hora × (1 − p₁) × media del triaje / 60, con p₁ la proporción de nivel 1 asignado (va a la puerta); para los médicos, llegadas por hora × carga del médico por paciente / 60. Las llegadas por hora del turno son las del día medio del perfil: `base_diaria` × (reparto de las horas del turno) / horas. Con `config/` (turnos de 8, 15 y 22 h; p₁ = 0,40 %; media del triaje 5,79 min; carga del médico 32,37 min): 17,36 / 16,5 / 6,3 llegadas por hora, cargas de enfermería 1,668 / 1,585 / 0,605 y de médicos 9,365 / 8,903 / 3,399. Así la búsqueda es de una dimensión y se puede explicar: con u de 0,55 a 0,99 en pasos de 0,0025 salen 5 plantillas de enfermería, de `[4, 3, 2]` a `[2, 2, 1]`, y 20 de médicos, de `[18, 17, 7]` a `[10, 9, 4]`. No se buscan combinaciones fuera de la regla.
+
+**Evaluación de un candidato.** 10 réplicas con números aleatorios comunes (el hijo i de la semilla es la réplica i para todos los candidatos), 14 días con 2 de calentamiento y **un día de vaciado**: cada réplica simula un día más, con llegadas, y solo se mide a los llegados en la ventana `[2, 14)`. Sin él, los que llegan en las últimas horas y siguen dentro, que son los que más esperan, quedarían fuera de las medias, y el sesgo sería mayor justo en las plantillas apretadas. Los llegados en la ventana sin salida al final del horizonte (censurados) se cuentan por réplica, y la CLI avisa por encima del 0,1 %. Las medias son por paciente en la ventana, por réplica; el % de días fuera es la media entre réplicas del % de días de cada una con su valor diario fuera de la horquilla. Un objetivo pasa con la regla 4. La evaluación es una función pura de los episodios de cada réplica, aparte de la simulación.
+
+**Criterios de elección.** Primero la enfermería y, con ella fija, los médicos (decisión 41). Entre las plantillas de la regla que pasan todos los objetivos de ajuste del mando, la de media más cercana a la referencia del objetivo que decide o, si no la tiene, al centro de su horquilla: la enfermería, con el pretriaje (12,4 min); los médicos, con el reloj A de los niveles 2 a 5, sin referencia única en el SAS (52,5 min, el centro de 35–70). Si ninguna pasa, no se fuerza. Una comprobación nunca decide. El centro cumplidor tiene la misma enfermería y los médicos de la regla con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene, de media entre réplicas, como mucho un 10 % de días fuera del cumplimiento Manchester (reloj C). Semilla de ajuste 2026 y de comprobación 2027.
+
+**El nivel 3, de ajuste a comprobación** (6 de noviembre, tarea 4.6b). Con prioridad estricta en un solo grupo de médicos, el nivel 3 casi no espera box ni médico (reloj C de 4,4 min) y las esperas recaen en los niveles 4 y 5, así que ninguna plantilla de la regla lleva su reloj A por encima de 22,9 min (horquilla 45–75) y los dos objetivos del reloj A no se pueden cumplir a la vez. En los hospitales reales los niveles 4 y 5 suelen tener circuito propio y el nivel 3 compite con el 2: es una discrepancia estructural, y el objetivo pasó a comprobación después de medir la sensibilidad (regla 5), no antes.
+
+**Resultados de la calibración** (tarea 4.6b; tablas, comandos y tiempos en el [registro de calibración](../calibracion/registro.md)). La sensibilidad confirma la separación de los mandos: con la misma semilla, el pretriaje es el mismo, bit a bit, con cualquier plantilla de médicos mientras no haya censurados, y la enfermería no mueve la espera desde la clasificación.
+
+| Mando | Antes | Después (u) | KPI con la semilla 2026 | Con la semilla 2027 |
+| --- | --- | --- | --- | --- |
+| Enfermería de triaje | [3, 3, 2] | **[3, 2, 1]** (0,795–0,8325) | Pretriaje 1,37 → 10,65 min [8,92; 12,37] | 11,99 [9,71; 14,26] |
+| Médicos | [12, 12, 7] | **[12, 11, 5]** (0,81–0,8475) | Reloj A, niveles 2 a 5: 25,0 → 54,5 min [47,0; 62,1] | 49,9 [41,9; 57,9] |
+
+Con [3, 2, 1] solo esa plantilla de enfermería pasa el pretriaje (con [3, 3, 1], 5,0 min; con [2, 2, 1], 26,8). Con esa enfermería, pasan el reloj A de los niveles 2 a 5 las plantillas de médicos de `[13, 13, 5]` a `[12, 11, 5]` (35,0 a 54,5 min); con un médico menos de noche, 88 min. Las comprobaciones con 2027: porcentaje sobre Manchester con el reloj A, 20,0 % (horquilla 10–30; el nivel 2 queda por encima en el 57 % de sus pacientes y aporta 7,5 puntos); pretriaje de más de 5 minutos, 39,4 % (30–60); el nivel 3, 24,2 min, fuera, por la discrepancia. Sin censurados en ninguna réplica. El centro cumplidor (`config/centro_cumplidor.toml`) tiene los médicos `[15, 15, 6]` (u de 0,625 a 0,635): días fuera de Manchester con el reloj C de 0,8 / 0 / 10,0 / 10,0 % en los niveles 2 a 5, y reloj A de los niveles 2 a 5 de 23,5 min, por debajo de la horquilla, como se espera de un centro que cumple. Con la plantilla calibrada, el pretriaje de noche es de 18,6 min de media (p90 58,9): la regla reparte con la carga media del turno, y a las 22 h la carga de enfermería es de 1,21 para una enfermera (ver el registro).
 
 ## Ficheros de configuración
 
@@ -457,11 +474,13 @@ niveles = [3]
 estadistico = "media"
 referencia = 59.0
 horquilla = [45, 75]
-uso = "ajuste"                      # ajuste o comprobacion
+uso = "comprobacion"                # ajuste o comprobacion (de ajuste hasta la tarea 4.6b)
 fuente = "SAS, CMBD de urgencias 2013"
 enlace = "https://www.sspa.juntadeandalucia.es/..."
 nota = "Incluye menores de 15 años"
 ```
+
+Reglas de `objetivos.toml` (tarea 4.6b): claves desconocidas prohibidas y errores con la clave completa (`objetivos.<nombre>.<clave>`); `medida`, `niveles`, `estadistico`, `horquilla`, `uso`, `fuente` y `enlace` obligatorias. `estadistico` es `"media"` o `"porcentaje_sobre_umbral"`; con el porcentaje, `umbral` es obligatorio (minutos o `"manchester"`, el máximo del nivel asignado de cada paciente; cuenta quien queda estrictamente por encima) y la horquilla va en [0, 100]; con la media, `umbral` no se admite. La horquilla exige mínimo < máximo. `referencia` es opcional (el SAS no da una cifra única para los niveles 2 a 5) y, si está, cae dentro de la horquilla; `nota` es opcional. `uso` es `"ajuste"` o `"comprobacion"`. Lo que busca la elección es la referencia o, sin ella, el centro de la horquilla (`Target.aim`).
 
 ## Salidas: CLI
 
@@ -471,6 +490,7 @@ La CLI sigue siendo fina: lee argumentos, llama al paquete y escribe.
 edsim motor simular --perfiles config/perfiles.toml --dias 14 --calentamiento 2 --semilla 2026 --salida resultados/motor
 edsim perfiles validar --perfiles config/perfiles.toml --pacientes 20000 --semilla 2026 --salida resultados/perfiles
 edsim calibracion evaluar --perfiles config/perfiles.toml --objetivos config/objetivos.toml --replicas 10 --semilla 2026 --salida resultados/calibracion
+edsim calibracion sensibilidad --mando enfermeria_triaje --replicas 10 --semilla 2026 --salida resultados/calibracion
 ```
 
 - `motor simular` acepta `--perfiles`, sin valor por defecto; sin él usa el modelo provisional, como hasta ahora (decisión 44). La ejecución se escribe con `simulate_run`, y `run.json` guarda el modelo y la huella de los perfiles cuando los hay. La cabecera dice el modelo («Modelo clínico · perfiles … (huella …)» o «Modelo provisional»). Si el fichero de perfiles no existe o no es válido, código 2 antes de imprimir nada o de crear ningún fichero.
@@ -481,7 +501,8 @@ edsim calibracion evaluar --perfiles config/perfiles.toml --objetivos config/obj
   - **Falsa alarma conjunta.** Cada comprobación usa α = 0,01 con Bonferroni dentro de ella. Con las cuatro, un muestreador correcto da código 1 hasta un 4 % de las veces (desigualdad de Boole); la tabla y la ayuda lo dicen.
   - Cuatro gráficas (`profiles/report.py`), cada una con lo exacto y el IC al 95 % de lo observado (Wilson para las proporciones; estadísticos de orden para los cuantiles): `motivos.png` (los 17 motivos del año), `triaje.png` (P(asignado | real), un panel por nivel real), `pruebas_por_gravedad.png` (pedir cada tipo por quintil de G) y `duraciones_por_nivel.png` (mediana y p90 de la valoración y la reevaluación por nivel real). Se escriben siempre, también si algo falla.
   - Tiempos con los valores por defecto y `config/` (tarea 4.5b): 29 s en total; la mezcla, 11,1 s con su sorteo; la muestra del año, 14,3 s; la evaluación del triaje, las pruebas y las duraciones, 0,0, 0,2 y 0,2 s. Sortear el año para cada comprobación por separado costaría unos 14 s más.
-- `calibracion evaluar` ejecuta las réplicas, compara cada objetivo con su horquilla e imprime una tabla con la media, su IC, la horquilla, el uso, el porcentaje de días fuera y el resultado. Guarda un CSV para el registro de calibración.
+- `calibracion evaluar` (tarea 4.6b) ejecuta las réplicas, compara cada objetivo con su horquilla e imprime una tabla con la media, su IC, la horquilla, el uso, el porcentaje de días fuera y el resultado, los censurados (aviso por encima del 0,1 %) y el desglose por nivel de los porcentajes (porcentaje del nivel y contribución a la cifra global). Opciones: `--centro`, `--llegadas`, `--perfiles` y `--objetivos` (los de `config/` por defecto), `--replicas` (10), `--dias` (14, con el calentamiento y sin el día de vaciado), `--calentamiento` (2), `--semilla` (2026, la de ajuste; 2027 para la comprobación) y `--salida` (`resultados/calibracion`). Escribe `evaluacion.csv`, `evaluacion_replicas.csv` y `evaluacion_niveles.csv`, con los parámetros y las huellas de los cuatro ficheros en cada fila. Código 1 si falla un objetivo de ajuste; los de comprobación se informan.
+- `calibracion sensibilidad --mando {enfermeria_triaje,medicos}` (tarea 4.6b), con las mismas opciones y `--u-min` (0,55), `--u-max` (0,99) y `--paso` (0,0025): evalúa cada plantilla distinta de la regla con el otro mando como en el centro, imprime cada fila al acabarla (todos los objetivos, los censurados y, para los médicos, los días fuera de Manchester con el reloj C de los niveles 2 a 5), la elección y, para los médicos, el cumplidor, y escribe `sensibilidad_<mando>.csv`. Código 1 si ninguna plantilla pasa los objetivos de ajuste del mando.
 - Códigos de salida como en los hitos 2 y 3: 0 si todo va bien, 1 si alguna comprobación falla (escribiendo igualmente los ficheros) y 2 para errores de uso, sin crear ficheros a medias.
 - Las opciones `--perfiles` y `--objetivos` usan por defecto los ficheros de `config/` en los subcomandos nuevos.
 
@@ -493,7 +514,9 @@ Un subpaquete nuevo para el modelo clínico y otro para la calibración; el moto
 config/
   perfiles.toml          población y perfiles clínicos
   objetivos.toml         objetivos de calibración con horquilla y fuente
-  centro_cumplidor.toml  variante que cumple Manchester (tarea 4.6)
+  centro_cumplidor.toml  variante que cumple Manchester (tarea 4.6b)
+docs/calibracion/
+  registro.md            registro de calibración: parámetro, antes, después, KPI, motivo y tablas (tarea 4.6b)
 src/edsim/profiles/
   __init__.py
   config.py              ClinicalProfiles, load_profiles (tomllib), validación
@@ -510,7 +533,9 @@ src/edsim/profiles/
 src/edsim/calibration/
   __init__.py
   targets.py             objetivos.toml: Target, load_targets
-  evaluate.py            réplicas, comparación con horquillas, días fuera
+  staffing.py            regla de la plantilla equivalente: cargas por turno, ⌈carga / u⌉, plantillas de la regla (tarea 4.6b)
+  evaluate.py            réplicas con día de vaciado, comparación con horquillas, días fuera, sensibilidad y elección
+  report.py              tablas y CSV de calibracion evaluar y sensibilidad (tarea 4.6b)
 src/edsim/engine/        cambios acotados
   clinical_sampler.py    ClinicalSampler, ClinicalDraws, ClinicalTruth y TurnaroundShifts (tarea 4.5a)
   clinical.py            PatientDraws con clinical y test_turnaround opcional; ProvisionalSampler
@@ -524,11 +549,13 @@ src/edsim/engine/        cambios acotados
   ground_truth.py        EpisodeTruth.clinical (ClinicalTruth)
   validation.py          M/G/1 con λ·(1 − p₁)
 src/edsim/lognormal.py   lognormal por mediana y p90 (tarea 4.4; engine/clinical.py la reexporta)
-src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar
+src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar y sensibilidad
 notebooks/04_perfiles_clinicos.ipynb
 tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.py,
       test_severity.py, test_workup.py, test_durations.py, test_sampler.py,
-      test_profiles_validation.py, test_calibration.py, test_door_triage.py,
+      test_profiles_validation.py, test_calibration.py, test_calibration_targets.py,
+      test_calibration_sensitivity.py, test_staffing.py, test_calibrated_center.py,
+      test_cli_calibracion.py, test_door_triage.py,
       test_clinical_sampler.py, test_clinical_engine.py, clinical_factory.py
 ```
 
@@ -548,7 +575,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
 | Motor | Asignación de flujos con sorteos a mano; consumo fijo con generadores instrumentados; el motor como tubería del `ClinicalSampler`; respuesta con la franja del pedido (75 / 82,5 / 67,5; 84 de noche; 260 a las 7:59; pedido a las 15:10 de una llegada a las 14:00); destino con el nivel asignado; payloads del catálogo 2 en un escenario a mano, sin campos ocultos; invariantes `door`, `schema_version` y `clinical`, y cero violaciones en 14 días; huellas del modelo provisional (sin cambios) y del clínico (log y ground truth) |
 | Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
-| Calibración (slow) | Objetivos cargados con su fuente; evaluación con réplicas; semillas de ajuste y de comprobación distintas |
+| Calibración (tarea 4.6b) | `objetivos.toml` real y sus errores con la clave completa; cargas con `config/` (a 1e-3), regla a mano (`u` = 0,60 → `[3, 3, 2]`; 0,80 → `[12, 12, 5]` en médicos…) y las listas de plantillas distintas; IC a mano (10, 12, 14: media dentro de [6, 15] e IC de 9,94, no pasa; t₉ = 2,262); días fuera (5, 8, 16, 10 → 50 %); media diaria por paciente; ventana sin calentamiento; umbral de Manchester en el borde; desglose por nivel; pureza de la evaluación; vaciado a mano (una llegada en el minuto 1430 que sale después de la ventana) y su espía; el pretriaje igual con otros médicos (igualdad exacta) y distinto con otra enfermería; semillas de ajuste y de comprobación distintas; sensibilidad corta con un espía de la plantilla de cada candidato; elección y cumplidor a mano (el centro de la horquilla sin referencia); CLI con códigos 0, 1 y 2 sin ficheros; centros calibrado y cumplidor desde la regla con sus u. Slow: la fila corta del registro |
 | CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso. `motor simular --perfiles`: caracterización con los argumentos de la del provisional (log igual al de `simulate_ed` y CSV de días con la huella del provisional), la CLI y `simulate_run` dan el mismo log, y código 2 con perfiles que no existen o no son válidos. `perfiles validar`: tabla y gráficas con un contexto (rápido), código 1 con el sesgo del triaje desplazado en el muestreador (`sampled_profiles`), código 2 sin ficheros y los valores por defecto con `config/` (slow) |
 | Sala de resultados (tarea 4.6a) | Escenario a mano (un box, tres niveles 4): el motor lo escribe evento a evento, A ocupa el box 20 + 10 minutos, vuelve por delante de C con su clave, y esperas, curvas, Little y utilización exactas; quién deja el box (nivel 3, infratriado, sobretriado, nivel 4 sin pruebas); el provisional con `[4, 5]`, igual y con su huella; números comunes con y sin sala y con otra plantilla; una copia de `centro.toml` sin la clave da el log de antes; la clave y sus errores; catálogo 3 literal y lectura de las versiones 1, 2 y 3; violaciones a mano de las invariantes nuevas; Replay y Episodios sin dos pacientes en un box; 14 días con `config/`: cero violaciones, utilización exacta y la cola de box contada por dos caminos |
 | Ejecuciones (tarea 4.5b) | Ida y vuelta del CSV clínico con `==` y tipos exactos; cabecera literal y fila a mano; `run.json` v1 de `tests/data` y v2 con los dos modelos; `simulate_run` pasa los perfiles a `check_invariants` (espía y comportamiento); `pairing_blockers` con los dos modelos |
@@ -603,6 +630,19 @@ Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en l
 | `step_curves` sin `box_released` en los boxes ocupados | Fallan las curvas a mano y la identidad de utilización de los boxes (escenario y 14 días); pasan las invariantes y las huellas. Exacta (tarea 4.6a) |
 | La cola de box sin la vuelta de la sala | Fallan la curva a mano, Little en el escenario y la cola de box por dos caminos en 14 días; pasan las invariantes. Exacta (tarea 4.6a) |
 | Replay sin `box_released` (el de la sala conserva su box) | Fallan «nunca dos pacientes en el mismo box» y los estados de A; pasan motor, invariantes y análisis. Exacta (tarea 4.6a, añadida) |
+| `round` en lugar de `ceil` en la regla | Fallan los 7 casos a mano y las dos listas de plantillas; pasan cargas, evaluación y `objetivos.toml`. El caso u = 0,85 de enfermería pasó (`round` también da `[2, 2, 1]`) y falló el test de redondear hacia arriba; los tres casos de los centros calibrado y cumplidor desde la regla, exacta (tarea 4.6b) |
+| Un objetivo pasa solo con la media, sin el IC | Falla solo el IC a mano de tres réplicas. Exacta (tarea 4.6b) |
+| IC con z = 1,96 en lugar de la t de Student | Fallan el IC a mano y el de t₉. Exacta (tarea 4.6b) |
+| La misma semilla para ajuste y comprobación | Fallan los literales de las semillas y «otras llegadas». Exacta (tarea 4.6b) |
+| El candidato se evalúa con la plantilla del centro | Fallan el espía de la sensibilidad y «otro pretriaje con cada plantilla». Exacta (tarea 4.6b) |
+| Media diaria como media de las medias por nivel | Falla la media diaria con recuentos desiguales. Exacta (tarea 4.6b) |
+| La ventana incluye el calentamiento | Falla la ventana a mano. Exacta (tarea 4.6b) |
+| `>=` en el umbral de un porcentaje | Falla el borde de Manchester; falló también el borde en minutos (tarea 4.6b) |
+| Carga de enfermería sin (1 − p₁) | Fallan las cargas de enfermería y la lista de enfermería, por los cuatro bordes de u que se mueven; pasan los casos a mano. Exacta (tarea 4.6b) |
+| La elección entre todas las plantillas, no solo las que pasan | Falla la elección a mano; fallaron también «ninguna pasa» y el código 1 de la CLI. Tras pasar el nivel 3 a comprobación, la elección de médicos a mano no la veía y se reforzó con una plantilla que no pasa más cerca del centro de la horquilla (tarea 4.6b) |
+| El cumplidor con el reloj A | Falla el cumplimiento a mano con A ≠ C. Exacta (tarea 4.6b) |
+| La CLI crea `--salida` antes de validar | Fallan los tests de código 2 sin ficheros (15). Exacta (tarea 4.6b) |
+| Sin día de vaciado | Fallan el vaciado a mano, el espía del horizonte y la fila corta del registro (slow). Exacta (tarea 4.6b) |
 
 Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
 
@@ -639,7 +679,7 @@ Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptua
 | 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo; umbrales derivados una vez para el reparto asignado y escritos en el TOML, sin recalcularse al cargar; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje; un escenario con más gravedad da más niveles urgentes |
 | 39 | El nivel 1 asignado se clasifica en la puerta (triaje de duración 0, `circuito: "puerta"`, sin enfermera) y va directo al box; sin desalojo de médicos | El crítico no hace cola de triaje sin cambiar el orden de los eventos; el desalojo de médicos ahorraría un minuto a un paciente al día con una regla clínica sin datos (v1) |
 | 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
-| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; la plantilla de médicos es el único mando indirecto, y los boxes quedan fijos (30), con la sensibilidad de los dos mandos medida antes de ajustar | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia, y plantilla y boxes tampoco con objetivos de tiempo hasta el médico |
+| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; dos mandos indirectos con objetivos separados, la enfermería de triaje (pretriaje) y los médicos (tiempo hasta el médico), ajustados en ese orden; los boxes quedan fijos (30), y la sensibilidad de los mandos se mide antes de ajustar | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia, y plantilla y boxes tampoco con objetivos de tiempo hasta el médico; los médicos no mueven el pretriaje (1,4 minutos con la enfermería de antes) |
 | 42 | Pruebas de cuatro tipos en una ronda, con un solo `test_ordered` (lista de pruebas) y un solo `test_resulted` (resultados) | Mismo comportamiento del paciente sin cambiar el contrato del log; un evento por tipo queda para versiones posteriores |
 | 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,6 % de los pacientes y no el 17,3 % |
 | 44 | Modelo clínico opcional durante el hito (`profiles=None` usa el provisional) y por defecto en el cierre, cuando la app ya lo soporta; el `ProvisionalSampler` se queda para la validación del motor | `main` estable y `tests-app` obligatorio en todo el hito; la app no se rompe a mitad de camino |
@@ -661,7 +701,7 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | 4.5a | `ClinicalSampler` en el motor como opción (44): `PatientDraws` ampliado, `simulate_ed` con perfiles, catálogo versión 2 y payloads, ground truth clínico en memoria, invariantes y huellas | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
 | 4.5b | CSV del ground truth clínico, `simulate_run` con perfiles, `run.json` versión 2 con la huella de los perfiles (adelantado de la 4.8a), `motor simular --perfiles` y `perfiles validar` | Claude Code | `feat/h4-cli-perfiles` | Ejecuciones clínicas en `resultados/` y validación del muestreador desde la CLI |
 | 4.6a | Paradas al 0,3 % con gravedad alta (46) y rederivación; espera de resultados fuera del box en los niveles 4 y 5 con el catálogo versión 3 (45). `@codex review` | Claude Code | `feat/h4-paradas-sala` | Paradas a la puerta, boxes sin la ronda de los niveles 4 y 5 y el provisional bit a bit igual |
-| 4.6b | `objetivos.toml`, sensibilidad de los mandos, `calibracion evaluar` y `calibracion sensibilidad`, primera calibración de la plantilla (41) y registro; `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
+| 4.6b | `objetivos.toml`, sensibilidad de los mandos, `calibracion evaluar` y `calibracion sensibilidad`, primera calibración de la enfermería de triaje y de los médicos (41) y registro; `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
 | 4.7 | Notebook `04_perfiles_clinicos.ipynb` | Claude Code | `feat/h4-notebook` | Notebook ejecutable de principio a fin en el CI |
 | 4.8a | Núcleo de la app con perfiles (`runs/`); `run.json` versión 2 se adelanta a la 4.5b | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
 | 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
@@ -701,7 +741,7 @@ El hito 4 está cerrado cuando se cumplen todos:
 - Cada parámetro de `perfiles.toml` tiene su estado (calibrado, derivado u orientativo) y cada objetivo de `objetivos.toml`, su fuente.
 - La app trabaja con perfiles (ver «App web — incrementos») y existe la etiqueta `app-v0.2.0`.
 - `notebooks/04_perfiles_clinicos.ipynb` se ejecuta de principio a fin en el CI y se versiona sin resultados.
-- Pedro sabe explicar cómo se mezcla un motivo con su contexto, por qué el nivel asignado no es el real y qué consecuencias tiene, por qué el cumplimiento se mide desde la clasificación, y por qué se calibra a lo observado con un solo mando.
+- Pedro sabe explicar cómo se mezcla un motivo con su contexto, por qué el nivel asignado no es el real y qué consecuencias tiene, por qué el cumplimiento se mide desde la clasificación, y por qué se calibra a lo observado con dos mandos de objetivos separados.
 - `docs/` contiene esta especificación, los ADR 0034 a 0044, la entrada del diario y el anexo de referencia del hito.
 - La etiqueta `v0.4-hito4` existe en GitHub.
 
@@ -719,6 +759,7 @@ Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo llev
 | Destino multinomial, abandono, boarding y su calibración (ingreso, estancia, días punta) | Dependen unos de otros | Hito 5 |
 | Editar los perfiles desde la app | Tarea grande: 17 motivos con validación en vivo | Fase 2 de la app |
 | Pediatría y centros mixtos | Catálogo y gravedad propios | Perfiles de centro de la v3 |
+| Circuitos separados para los niveles 4 y 5 (consultas o vía rápida) | Cambia el reparto de médicos y boxes; con prioridad estricta en un solo grupo de médicos, el nivel 3 casi no espera y no se puede calibrar su reloj A (tarea 4.6b) | Por decidir: es lo que permitiría calibrar el nivel 3 |
 
 ## Fuentes
 
@@ -1193,7 +1234,7 @@ PR #44 (rama `feat/h4-muestreador`), fusionado con *squash and merge*: catorce c
 
 Repartos: 2 de 21 motivos fuera del IC al 95 % frente a lo exacto de esos 14 días (lo esperado por azar es uno); bandas dentro; niveles y pruebas, 3 de 15 fuera frente al año, que no es la referencia de 14 días de enero. Reloj C por nivel real con el clínico: 75,0 / 94,8 / 95,6 / 83,7 / 86,4 %. Respuesta de la ronda por franja del pedido (media / mediana / p90): mañana 78,0 / 56,7 / 158,4; tarde 81,6 / 61,8 / 164,7; noche 80,8 / 55,4 / 174,1 min.
 
-Paradas en 60 días: 120 de 19.499 llegadas. 67 asignadas nivel 1 (puerta) y 53 nivel 2 (enfermería); 81 de nivel real 1 y 39 de nivel real 2. Las de la puerta esperan 0,6 min de media (p90 1,8); las de la enfermería, 10,5 min hasta el triaje (p90 19,4; máximo 32,2) y 3,2 min con el reloj C.
+Paradas en 60 días: 120 de 19.499 llegadas. 67 asignadas nivel 1 (puerta) y 53 nivel 2 (enfermería); 81 de nivel real 1 y 39 de nivel real 2. Las de la puerta esperan 0,6 min de media (p90 1,8); las de la enfermería, 10,5 min hasta el médico (reloj A; p90 19,4; máximo 32,2), 1,4 min hasta el inicio del triaje (p90 4,7; máximo 23,4), 7,3 hasta la clasificación (p90 11,7; máximo 25,4) y 3,2 min con el reloj C. (Hasta la tarea 4.6b, la cifra del reloj A figuraba como «hasta el triaje»; se comprobó con un worktree de `5ba157a`.)
 
 **Comprobación de las versiones incorrectas** (temporales, con predicción firme)
 
@@ -1312,3 +1353,83 @@ El chat recalculó el mínimo de la mezcla con la rama: 15 234 da una probabilid
 - Tarea 4.8a: `runs/truth.py` con `episode_from_row`, emparejamiento clínico, `read_run_results` que recalcula invariantes sin perfiles.
 - Tarea 4.8b: payload de `resultados` en la app y etiquetas de los campos nuevos en Comparar.
 - Menor: el aviso «tarda unos 30 segundos» de `perfiles validar` se imprime también con `--pacientes`.
+
+### Tarea 4.6a: paradas y espera de resultados fuera del box
+
+**Qué se hizo**
+
+PR #46 (rama `feat/h4-paradas-sala`), fusionado con *squash and merge*: diez commits en dos fases (A, paradas; B, sala de resultados) y dos más de la revisión, con `@codex review`. Es la primera mitad de la 4.6: la calibración queda para la 4.6b, sin mezclarla con cambios del modelo.
+
+- Fase A. `profiles/derivation.py`: `derive_written_values` (la cascada de pesos base, ruido y sesgo y umbrales, redondeados como se escriben), `reason_level1_shares` y `severity_mean_for` (el criterio de la gravedad de un motivo). Parada al 0,3 % con media 4,21 y desviación 0,25, cascada rederivada en `config/` y `tests/data`, y `DEFAULT_MIXING_PATIENTS` de 20 000 a 25 000.
+- Fase B. `recursos.espera_resultados_fuera` en `centro.toml` (opcional, `[]` si falta; `[4, 5]` en `config/`), catálogo versión 3 con `box_released`, sala de resultados en `patient.py`, invariantes de la sala y `results_wait`, `initial_box_wait` y `results_box_wait` en `EpisodeRecord`, curvas y Replay (`waiting_tests` sin box), y `tests/data/centro_sala_ejemplo.toml` con su caracterización.
+- Revisión. `_variant_bytes` con listas de otra longitud (P2 de Codex) y la convención de idiomas de los auxiliares de `tests/`, escrita en la ADR 0015 y en `AGENTS.md` (P1).
+
+**Conceptos**
+
+- **Un valor orientativo elegido por criterio.** Sin dato, se escribe la condición que debe cumplir (≥ 99 % de nivel real 1 y ≥ 97 % de asignado 1) y una función busca el menor valor que la cumple. Un literal y una guarda con Φ a mano la vigilan.
+- **Derivados en cascada.** Pesos base, ruido y sesgo y umbrales dependen unos de otros: al mover un motivo se rederivan todos en orden, y un test comprueba que la cascada entera reproduce lo escrito.
+- **El cuello de botella se mueve.** Soltar el box mientras se esperan resultados baja el tiempo de box un 23 % y deja a los médicos igual: ahora la plantilla es el mando que mueve los tiempos.
+- **Una invariante reconstruye desde el log.** «Nadie se cuela» no ve la clave del motor, sino la que se deduce de los eventos (nivel, llegada). Si el motor usa otra, la invariante lo detecta.
+- **Una versión de catálogo por modelo, no por configuración.** El clínico escribe siempre la 3: el número dice qué eventos pueden aparecer, no cómo estaba configurado el centro.
+- **Una clave opcional conserva el significado antiguo.** Si falta, vale lo que valía antes (`[]`), no el valor nuevo de `config/`: las ejecuciones guardadas siguen significando lo mismo.
+
+**Decisiones**
+
+- Decisión 45: la sala decide con el nivel *asignado* (4 y 5 en `config/`); el paciente vuelve con su clave de siempre y el provisional no cambia.
+- Decisión 46: parada al 0,3 %, media 4,21 y desviación 0,25 por criterio (con 0,20 la media sería 4,16; con 0,30, 4,27).
+- Huellas regeneradas una vez por fase. La caracterización existente sigue con `centro_ejemplo.toml`, y la sala tiene la suya, cuyos CSV solo difieren en `centro` y `huella_centro`.
+- En `tests/`, los auxiliares y las fixtures pueden ir en inglés; los nombres de los tests, los docstrings y los comentarios, en español.
+
+**Resultados**
+
+14 días, `config/`, semilla 2026 y plantilla \[12, 12, 7\], salvo las paradas (60 días). Tiempos en minutos.
+
+| Medida | Antes | Después |
+| --- | --- | --- |
+| Tests | 2.344 en la suite completa y 2.321 rápidos | 2.427 (9 min 34 s) y 2.404 (3 min 50 s); 241 de la app |
+| Tiempo de box por paciente, sin esperas de médico | 91,0 | 69,8 |
+| Boxes ocupados, media / pico | 21,0 / 30 | 16,5 / 30 |
+| Médicos ocupados, media / pico | 7,0 / 12 | 7,0 / 12 |
+| Espera de box, niveles 2 / 3 / 4 / 5 | 1,4 / 2,9 / 36,0 / 87,5 | 0,6 / 0,8 / 12,8 / 20,4 (inicial 11,6 y 13,9 y vuelta 1,1 y 0,2 en los niveles 4 y 5) |
+| Reloj C, niveles 4 y 5 (cumplimiento; días fuera de 12) | 82,4 %, 5; 88,0 %, 3 | 95,4 %, 2; 92,6 %, 2 |
+| Paradas en 60 días | 120 de 19.499; 67,5 % de nivel real 1, 55,8 % a la puerta, 53 por enfermería | 78; 100 %, 98,7 %, 1 |
+| `perfiles validar` por defecto | 29 s | 35 s (la mezcla, 16,6 s con 25 000 por contexto) |
+| Huellas del provisional | Log `70323516…`; CLI `220eb8c6…`, `55a623b9…`, `af940fff…` | Sin cambios |
+| Huellas del clínico, log y ground truth | `1ee7e1ba…` y `c4f2c069…` | `0a593f3f…` y `10617910…` |
+| Huellas de la CLI clínica, log y episodios | `306392fe…` y `3f59dd25…` | `2a8df1e8…` y `0d18f0a0…`; con sala, `d033762d…` (223 `box_released`) |
+
+Lo que anticipa para la 4.6b, sin calibrar: el reloj A es de 18,8 minutos en los niveles 2 a 5 (objetivo 35–70) y de 9,3 en el nivel 3 (45–75), y el pretriaje, de 1,4 (6–15). Los 60 días de las paradas son enero y febrero, con más disnea y fiebre que el año.
+
+**Comprobación de las versiones incorrectas**
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Umbrales rederivados con el ruido y el sesgo de antes | Fallan «escritos = calibrados» y el literal del ejemplo; pasan umbrales, infra y sobre, la guarda y las huellas clínicas | No cumplida en dos «pasan»: fallaron también la guarda, el shock, la cascada y las huellas (0,53 cambios de nivel esperados en 3 días, no 0,3, y la huella de `perfiles.toml` va en el CSV clínico) |
+| V2. Parada al 0,3 % sin rederivar los pesos base | Fallan pesos, umbrales, ruido, reparto asignado, mínimos y huellas | Cumplida (29 fallos), con fallos de más explicados |
+| V3. La sala decidida con el nivel real | Fallan el infratriado y el sobretriado a mano, `results_wait` en 14 días y la huella con sala | Exacta |
+| V4. La vuelta con una clave nueva | Fallan el escenario a mano y «nadie se cuela» | Exacta (1.735 violaciones en 14 días). El chat había predicho que pasaban las invariantes |
+| V5. La sala también con el provisional | `ValueError` en las guardas y en los tests provisionales con `config/centro.toml`; pasan huellas y validación | Cumplida (12 fallos) |
+| V6. Soltar el box antes del `test_ordered` | Fallan `transitions`, el orden del escenario y la huella con sala | Exacta (4.021 violaciones en 14 días) |
+| V7. La capacidad cuenta a los de la sala | Falla `capacity` en el escenario y en 14 días | Cumplida, más cuatro tests de violaciones a mano |
+| V8. `step_curves` sin `box_released` | Fallan las curvas a mano y la utilización de boxes | Exacta |
+| V9. La cola de box sin la vuelta | Fallan la curva a mano y Little | Exacta |
+| V10. Parada con media 4,20 y su cascada | Fallan la guarda y el literal del criterio | Cumplida, más los literales que dependen de c₁ |
+| V11. Replay sin `box_released` | Fallan «nunca dos pacientes en el mismo box» y los estados de A | Exacta |
+
+**Revisión**
+
+Codex dejó dos comentarios. P2, un fallo real: `_variant_bytes` editaba las listas posición a posición y, con la base `[4, 5]`, pedir `[]` dejaba `[4, 5]` sin avisar, `[5]` escribía `[5, 5]` y `[2, 4, 5]` daba `IndexError`. Ahora sustituye el array si cambia la longitud y relee lo escrito. P1: los auxiliares nuevos de un test del núcleo estaban en inglés, como en toda la carpeta; se escribió la práctica en lugar de renombrar.
+
+**Lecciones aprendidas**
+
+- Las predicciones de «pasa» siguen fallando más que las de «falla» (V1).
+- Antes de predecir sobre una invariante, hay que mirar qué reconstruye del log (V4).
+- Un supuesto implícito, como las listas de longitud fija, se rompe cuando entra una clave de otro tipo. Hay que releer los escritores y lectores que la tocan.
+- Una regla escrita debe describir la práctica real: un revisor automático la aplica al pie de la letra.
+- Una cifra sin su medida escrita no se puede reproducir (las esperas de las paradas del anexo 4.5a).
+
+**Pendiente**
+
+- Tarea 4.6b: calibrar la plantilla con la sala. Habrá que quitar médicos. El pretriaje depende de la enfermería de triaje, y el único mando de la decisión 41 no lo mueve: hay que decidirlo antes de calibrar.
+- Medida de las esperas de las paradas por enfermería del anexo 4.5a (10,5 / 19,4 / 32,2 min): de la llegada al inicio del triaje salen 1,4 / 4,7 / 23,4 con la misma población. Hay que medir de la llegada a la clasificación y corregir el texto.
+- Tareas 4.8a y 4.8b: Episodios y Replay con los dos tramos de box, un estado y una etiqueta propios de la sala, y `initial_box_wait` y `results_box_wait` en las tablas de la app.
