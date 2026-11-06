@@ -151,7 +151,9 @@ def example():
 
 @pytest.fixture(scope="module")
 def annual(example):
-    """La ventana anual con los datos de ejemplo, con un espía de cada simulación."""
+    """La ventana anual con los datos de ejemplo, con un espía de cada simulación. Las
+    fechas salen de la ventana (window_start_dates), no de la lista escrita a mano: los
+    tests que comparan con fechas a mano prueban así el camino entero."""
     calls = []
     real = evaluate.simulate_ed
 
@@ -167,7 +169,7 @@ def annual(example):
             days=DAYS,
             warmup_days=WARMUP,
             seed=SEED,
-            start_dates=MONDAYS_2026,
+            start_dates=window_start_dates(ANNUAL, example[1]),
         )
     return replicas, calls
 
