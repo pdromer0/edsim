@@ -13,8 +13,12 @@ inside have no ``patient_departed``.
 with ``child_streams(seed, 5)`` (ADR 0007). Stream 0 goes as it is to
 ``iter_arrivals``, so the arrivals are the same as the arrival generator's
 with that stream; streams 1 to 4 go to the ``ProvisionalSampler`` (level,
-durations, tests and destination). Adding a stream in milestone 4 will not
-change these, because each child depends only on its index.
+durations, tests and destination).
+
+With clinical profiles (task 4.5a), ``simulate_ed`` derives eight streams with
+``child_streams(seed, 8)``: the first five are the same five children, because
+each child depends only on its index, so the arrivals do not change; streams 1
+to 7 go to the ``ClinicalSampler``, and the log is of version 2 of the catalog.
 """
 
 from collections.abc import Callable, Iterable
@@ -28,15 +32,20 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, arrival_source, iter_arrivals
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler
-from edsim.engine.events import EventLog, EventSink
+from edsim.engine.clinical_sampler import ClinicalSampler
+from edsim.engine.events import CLINICAL_SCHEMA_VERSION, EventLog, EventSink
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.patient import patient
 from edsim.engine.resources import make_pools
 from edsim.engine.shifts import start_shifts
+from edsim.profiles.config import ClinicalProfiles
 from edsim.seeds import child_streams
 
 N_STREAMS = 5
 """Streams of a run: arrivals, then the four of the sampler."""
+
+N_CLINICAL_STREAMS = 8
+"""Streams of a run with clinical profiles: arrivals, then the seven of the sampler."""
 
 DEFAULT_WARMUP_DAYS = 2
 """Warm-up of a run in full days (docs/specs/hito-3.md: 24-48 h in the design)."""
@@ -190,6 +199,7 @@ def simulate_ed(
     warmup_days: int = DEFAULT_WARMUP_DAYS,
     run_id: str | None = None,
     sampler: Sampler | None = None,
+    profiles: ClinicalProfiles | None = None,
 ) -> EDResult:
     """Simulate the emergency department for ``days`` full days.
 
@@ -207,25 +217,37 @@ def simulate_ed(
         run_id: Identifier of the run; ``default_run_id(seed)`` if ``None``.
         sampler: Draws of each patient; a ``ProvisionalSampler`` with streams
             1 to 4 if ``None``. Injected only in tests.
+        profiles: Clinical profiles. With them, the patients come from a
+            ``ClinicalSampler`` with streams 1 to 7 of ``child_streams(seed,
+            8)`` and the log is of version 2; without them, the provisional
+            model, exactly as before (ADR candidate 44).
 
     Returns:
         The run identifier, the ground truth, the patients still inside and
         the warm-up.
 
     Raises:
-        ValueError: If ``days`` is not a positive integer, or ``warmup_days``
-            is not an integer in [0, ``days``).
+        ValueError: If ``days`` is not a positive integer, ``warmup_days`` is
+            not an integer in [0, ``days``), or both ``sampler`` and
+            ``profiles`` are given.
     """
     days, warmup_days = check_horizon(days, warmup_days)
-    streams = child_streams(seed, N_STREAMS)
+    if sampler is not None and profiles is not None:
+        raise ValueError("give sampler or profiles, not both: the profiles choose the sampler")
     if run_id is None:
         run_id = default_run_id(seed)
-    if sampler is None:
-        sampler = ProvisionalSampler(center, streams[1:])
 
     day_records: list[DayRecord] = []
+    if profiles is None:
+        streams = child_streams(seed, N_STREAMS)
+        if sampler is None:
+            sampler = ProvisionalSampler(center, streams[1:])
+        log = EventLog(run_id, profile.start_date, sink)
+    else:
+        streams = child_streams(seed, N_CLINICAL_STREAMS)
+        sampler = ClinicalSampler(profiles, profile.start_date, center, streams[1:])
+        log = EventLog(run_id, profile.start_date, sink, schema_version=CLINICAL_SCHEMA_VERSION)
     arrivals = iter_arrivals(profile, days, streams[0], on_day=day_records.append)
-    log = EventLog(run_id, profile.start_date, sink)
     run = run_engine(center, arrivals, sampler, log, days)
     return EDResult(
         run_id=run_id,

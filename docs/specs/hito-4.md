@@ -183,9 +183,9 @@ El TOML da p\_{t,m}, el porcentaje para un adulto de menos de 65 años con G = 0
 
 **El porcentaje del TOML no es el del paciente típico del motivo.** Es el de un adulto con G = 0, y el motivo tiene su propia gravedad y su mezcla de edades: la parada escribe un 36 % de analítica y pide un 98 % en el año. Por eso cada p se eligió por su **marginal de un año** (el porcentaje de los pacientes del motivo a los que se pide), que es la que se lee clínicamente, y el TOML la lleva en un comentario, calculada con los enteros escritos (`workup_model(...).order_by_reason()`). Su estado es «orientativo, elegido por su marginal». Un test compara las 68 marginales, el porcentaje global de cada tipo y el de alguna prueba con una tabla literal (a 0,05 puntos), y otro comprueba que los comentarios siguen siendo las marginales exactas: si cambian los odds ratios, la gravedad, la mezcla o el perfil de llegadas, hay que actualizarlos.
 
-**Resultado y respuesta.** Cada tipo sortea también su resultado (normal o alterado, otra logística sobre G: `logit(base) + ln(OR)·G`; con base 30 y OR 2,5, 30,00 / 51,72 / 72,82 % con G = 0, 1 y 2) y su tiempo de respuesta (lognormal por mediana y p90, con un factor por franja). El paciente espera a la prueba más lenta de las pedidas; con ninguna pedida no hay ronda, y `round_turnaround` devuelve `None` (en la 4.5, `needs_tests=False`). El resultado no lo usa nadie todavía: lo usará el destino del hito 5, y se sortea ya para que el flujo de pruebas no cambie de consumo entre hitos. Una prueba se pide si su uniforme es estrictamente menor que la probabilidad, y sale alterada igual, como en el `ProvisionalSampler`.
+**Resultado y respuesta.** Cada tipo sortea también su resultado (normal o alterado, otra logística sobre G: `logit(base) + ln(OR)·G`; con base 30 y OR 2,5, 30,00 / 51,72 / 72,82 % con G = 0, 1 y 2) y su tiempo de respuesta (lognormal por mediana y p90, con un factor por franja). El paciente espera a la prueba más lenta de las pedidas; con ninguna pedida no hay ronda, y `round_turnaround` devuelve `None` (en la 4.5a, `needs_tests=False`). El resultado no lo usa nadie todavía: lo usará el destino del hito 5, y se sortea ya para que el flujo de pruebas no cambie de consumo entre hitos. Una prueba se pide si su uniforme es estrictamente menor que la probabilidad, y sale alterada igual, como en el `ProvisionalSampler`.
 
-**La franja se aplica al pedir** (decisión de la tarea 4.4). El muestreador da la respuesta *base* de cada tipo (factor 1) y el motor, en la 4.5, la multiplica por el factor de la franja del *pedido*, no de la llegada: `round_turnaround(pedidas, respuestas, turnaround_shift_factors(perfiles, franja_del_pedido))`. Es exacto, porque multiplicar una lognormal por k equivale a multiplicar su mediana por k, y la máxima se calcula entonces porque los factores son distintos por tipo. Ejemplo: analítica (75) y ECG (12) pedidas e imagen (200) no; la ronda dura 75 de mañana y 82,5 de tarde (analítica ×1,1).
+**La franja se aplica al pedir** (decisión de la tarea 4.4). El muestreador da la respuesta *base* de cada tipo (factor 1) y el motor, desde la 4.5a, la multiplica por el factor de la franja del *pedido*, no de la llegada: `round_turnaround(pedidas, respuestas, turnaround_shift_factors(perfiles, franja_del_pedido))`. Es exacto, porque multiplicar una lognormal por k equivale a multiplicar su mediana por k, y la máxima se calcula entonces porque los factores son distintos por tipo. Ejemplo: analítica (75) y ECG (12) pedidas e imagen (200) no; la ronda dura 75 de mañana y 82,5 de tarde (analítica ×1,1).
 
 **Consumo fijo** (flujo 3): tres sorteos por tipo, en el orden analítica, radiografía, ECG e imagen (uniforme de pedir, uniforme de resultado y normal de respuesta), doce por paciente, se pida o no cada prueba. Las pruebas usan G y no G + ε: con otro ruido de triaje, ninguna prueba ni duración cambia.
 
@@ -201,29 +201,31 @@ Multiplicar la mediana por k desplaza la lognormal sin cambiar σ, y la media ta
 
 **Regla de los k.** Los k reparten la duración entre motivos sin cambiar la carga: con los k, la carga de valoración de un año queda a 1 ± 0,05 de la carga sin ellos (un test lo comprueba sobre `config/perfiles.toml`). Con los valores orientativos, la razón es 1,0052 y la media simple de k por paciente, 0,9905.
 
-**Carga del médico por paciente**: E[valoración] + E[reevaluación · 1{alguna prueba}], con G dentro de la integral, porque mueve el nivel real y las pruebas a la vez. Las medias por nivel real, sin k, son 48,87 / 37,33 / 27,01 / 18,66 / 12,91 minutos de valoración y 17,36 / 14,14 / 11,58 / 9,02 / 6,95 de reevaluación; con el reparto real exacto, 24,07 y 10,60. Con los k y las pruebas del perfil, 24,20 + 8,18 = 32,38 minutos, frente a los 30,84 del modelo provisional (24,43 + 55,41 % × 11,58): la valoración baja un poco y toda la subida viene de la reevaluación, porque el 72,79 % de los pacientes tiene alguna prueba (55,41 % en el provisional). Es una comprobación clínica, no un objetivo.
+**Carga del médico por paciente**: E\[valoración\] + E\[reevaluación · 1{alguna prueba}\], con G dentro de la integral, porque mueve el nivel real y las pruebas a la vez. Las medias por nivel real, sin k, son 48,87 / 37,33 / 27,01 / 18,66 / 12,91 minutos de valoración y 17,36 / 14,14 / 11,58 / 9,02 / 6,95 de reevaluación; con el reparto real exacto, 24,07 y 10,60. Con los k y las pruebas del perfil, 24,20 + 8,18 = 32,38 minutos, frente a los 30,84 del modelo provisional (24,43 + 55,41 % × 11,58): la valoración baja un poco y toda la subida viene de la reevaluación, porque el 72,79 % de los pacientes tiene alguna prueba (55,41 % en el provisional). Es una comprobación clínica, no un objetivo.
 
 ## El muestreador clínico en el motor
 
-El `ClinicalSampler` tiene el mismo contrato que el `ProvisionalSampler` del hito 3, `sampler(arrival) → PatientDraws`: el motor sigue leyendo nivel, duraciones, pruebas y destino, y el resto de campos solo los copia a los payloads y al ground truth.
+El `ClinicalSampler` tiene el mismo contrato que el `ProvisionalSampler` del hito 3, `sampler(arrival) → PatientDraws`: el motor sigue leyendo nivel, duraciones, pruebas y destino, y el resto de campos solo los copia a los payloads y al ground truth (tarea 4.5a).
+
+**Dónde vive.** En `src/edsim/engine/clinical_sampler.py`, no en `profiles/`: necesita `PatientDraws` y el destino de `CenterConfig`, y `profiles/` no importa el motor (un test lo comprueba en un subproceso). Une los tres muestreadores de `profiles/sampler.py`, que siguen sin conocer el motor.
 
 ```python
 class ClinicalSampler:
     """Same contract as ProvisionalSampler: sampler(arrival) -> PatientDraws."""
 
     def __call__(self, arrival):
-        ctx = self._calendar.context(arrival.time)  # shift band, day type, season
-        person = self._population(ctx)  # stream 5: 4 Gumbel + 3 uniforms
-        reason = self._reason(ctx, person)  # stream 6: 17 Gumbel draws
-        g = self._severity(reason, person)  # stream 7: 1 normal
-        level, true_level = self._triage(g)  # stream 1: 1 normal (noise)
-        tests = self._tests(g, reason, person)  # stream 3: 3 draws per test type
-        times = self._durations(true_level, reason)  # stream 2: 3 normals
-        disposition = self._disposition(level)  # stream 4: 1 uniform (provisional)
-        return PatientDraws(...)
+        # Context, person and reason: streams 5 (4 Gumbel + 3 uniforms) and 6 (17 Gumbel).
+        person_reason = self._person_reason(arrival)
+        # G and the triage: streams 7 (z of G) and 1 (error of the nurse), 1 normal each.
+        severity_triage = self._severity_triage(person_reason)
+        # Tests and durations, with G and the true level: streams 3 (12) and 2 (3 normals).
+        workup_durations = self._workup_durations(person_reason, severity_triage)
+        # Destination: stream 4, 1 uniform, with the assigned level.
+        u = self._destination_rng.random()
+        return PatientDraws(..., test_turnaround=None, clinical=ClinicalDraws(truth, shifts))
 ```
 
-**Flujos y consumo** (decisión candidata 43). `child_streams(seed, 8)` da los mismos cinco primeros hijos que `child_streams(seed, 5)`, porque cada hijo depende solo de su índice: las llegadas (flujo 0) no cambian ni un bit.
+**Flujos y consumo** (decisión candidata 43). `child_streams(seed, 8)` da los mismos cinco primeros hijos que `child_streams(seed, 5)`, porque cada hijo depende solo de su índice: las llegadas (flujo 0) no cambian ni un bit. `simulate_ed` pasa los hijos 1 a 7 al `ClinicalSampler`, que los reparte así: `[5, 6]` a la persona y el motivo, `[7, 1]` a la gravedad y el triaje, `[3, 2]` a las pruebas y las duraciones, y el 4 al destino.
 
 | Flujo | Fuente | Sorteos fijos por paciente |
 | --- | --- | --- |
@@ -238,17 +240,54 @@ class ClinicalSampler:
 
 Tres reglas: orden fijo y número fijo de sorteos por flujo, salga lo que salga; un flujo por fuente; y sortear lo estándar (uniformes, normales, Gumbel) y transformarlo después con los parámetros. Con la tercera, al cambiar un parámetro clínico el paciente conserva su percentil, y los números aleatorios comunes sirven también para escenarios clínicos, no solo de plantilla.
 
+**Contrato de `PatientDraws`.** El motor lee los mismos campos con los dos modelos: `level` (con el clínico, el nivel *asignado*: la prioridad, la puerta y el destino lo usan), `triage_time`, `assessment_time`, `reassessment_time`, `needs_tests` (con el clínico, si se pide alguna prueba: hay ronda) y `admitted`. Un campo nuevo, `clinical`, es `None` con el provisional y un `ClinicalDraws` congelado con el clínico: la verdad del paciente (`ClinicalTruth`) y los factores de la respuesta por franja de la ejecución (`TurnaroundShifts`). Con el clínico, `test_turnaround` es `None`, sin un valor inventado: la respuesta de la ronda no se conoce en la llegada.
+
+**La franja del pedido.** Al pedir las pruebas, en el instante `t` del `test_ordered`, el motor calcula `clinical.round_turnaround(t)`: la máxima, sobre las pruebas pedidas, del factor de la franja de `t` (la de `arrival_context(t, fecha_inicio, franjas del perfil)`, no la de la llegada) por la respuesta base. Ejemplos con los factores de `perfiles_ejemplo.toml`: analítica y ECG pedidas a las 14:59, 75 minutos; a las 15:00, 82,5; a las 22:00, 67,5. Analítica y radiografía a las 22:00, 84, porque de noche la más lenta pasa a ser la radiografía (70 × 1,2). Un paciente que llega a las 14:00 y al que piden a las 15:10 usa el factor de la tarde. `patient.py` tiene una rama explícita: sin `clinical`, exactamente el código del hito 3.
+
+**Catálogo versión 2** (tarea 4.5a). Hay un catálogo por versión (`CATALOGS`) y `SCHEMA_VERSIONS = {1, 2}`; `SCHEMA_VERSION` desaparece, para que un uso antiguo falle al importar en vez de comparar un entero con un conjunto. La versión 1 es el catálogo del hito 3 con el `circuito` de la tarea 4.1, sin cambios: el modelo provisional la sigue escribiendo, con las mismas huellas. La versión 2 es la 1 más estos payloads:
+
+| Evento | Payload nuevo | Valores |
+| --- | --- | --- |
+| `patient_arrived` | `medio` | `"ambulancia"` o `"propios_medios"` |
+| `patient_registered` | `edad`, `sexo` | Entero; `"mujer"` o `"hombre"` |
+| `triage_completed` | `motivo` (además de `nivel`, el asignado) | Una de las 17 claves |
+| `test_ordered` | `pruebas` | Lista no vacía de tipos, en el orden de `TEST_TYPES` y sin repetir, como `["analitica", "ecg"]` |
+| `test_resulted` | `resultados` | Objeto con los mismos tipos que el `test_ordered` del episodio, cada uno `"normal"` o `"alterado"`, como `{"analitica": "alterado", "ecg": "normal"}` |
+
+En memoria, `pruebas` es una tupla y `resultados` un mapping de solo lectura con las claves en el orden de `TEST_TYPES`: el evento sigue inmutable, comparable con `==` y con pickle y deepcopy, y la ida y vuelta por JSONL da el mismo evento. Cada `test_resulted` se lee solo, sin buscar su pedido. Un log lleva una sola versión, la de su `EventLog(..., schema_version=...)`; `read_events` valida cada evento con el catálogo de su versión, y `_upgrade` (el `circuito` de los logs anteriores a la 4.1) solo actúa en la versión 1. Ningún catálogo lleva G, z, nivel real, calidad, salto, banda ni respuestas; un test lo comprueba.
+
 **Cambios en el motor**, pequeños y explícitos; la lógica de colas, recursos y turnos no cambia:
 
-1. Payloads que el catálogo del hito 3 dejó para el hito 4: `patient_arrived` lleva `medio`; `patient_registered`, `edad` y `sexo`; `triage_completed`, `motivo` además de `nivel`; `triage_started`, `circuito`; `test_ordered`, `pruebas`; `test_resulted`, `resultados`.
+1. Los payloads del catálogo versión 2, con el modelo clínico; `triage_started` lleva `circuito` en las dos versiones.
 2. El nivel 1 en la puerta: una rama en `patient.py` sin petición de enfermera.
 3. `check_capacity`, la escalera de enfermeras y la identidad de utilización no cuentan los triajes con `circuito: "puerta"`; «nadie se cuela» se amplía al triaje (nadie adelanta en su cola salvo un nivel 1).
+4. La respuesta de la ronda con la franja del pedido (ver arriba).
 
-**Ground truth de episodios**, añadido a lo del hito 3: G, nivel real, calidad del triaje y salto en niveles, z de gravedad, motivo, banda y edad, pruebas pedidas con su resultado y su tiempo de respuesta por tipo. La paciencia llega en el hito 5.
+**Invariantes nuevas** (tarea 4.5a), en `CHECKS`:
 
-**Modelo opcional durante el hito** (decisión candidata 44). `simulate_ed` y la CLI aceptan unos perfiles. Con ellos usan el `ClinicalSampler`; sin ellos, el `ProvisionalSampler`, y la app y `runs/` siguen funcionando sin cambios. El cambio de modelo por defecto y la separación de `centro.toml` (decisión candidata 36) se hacen en la tarea de cierre, cuando la app ya trabaje con perfiles. El `ProvisionalSampler` se queda para la validación del motor (M/G/1, escenario de tres boxes), que necesita un modelo sencillo con teoría conocida.
+- `door`, con los dos modelos: un triaje con `circuito: "puerta"` va con un `triage_completed` de nivel 1, y al revés; en la puerta, `triage_started` y `triage_completed` ocurren en el instante de la llegada. Lo contrario no se exige: un triaje de enfermería también puede empezar al llegar, si hay una enfermera libre.
+- `schema_version`: una sola versión en el log.
 
-**Huellas.** Con el modelo clínico, el log y el ground truth cambian. Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito.
+**Logs anteriores a la tarea 4.1.** `_upgrade` los lee con `circuito: "enfermeria"` en todos sus triajes, también en los de sus niveles 1, porque entonces el nivel 1 pasaba por la enfermera. Si se recalculan sus invariantes con las reglas de hoy, `door` marca cada uno de esos niveles 1. Es lo esperado: esas ejecuciones guardaron 0 violaciones en `run.json` con las reglas de su momento, y `runs/results.py` solo recalcula las invariantes de una ejecución que guardó alguna, así que en la app no cambian.
+- `clinical`, con logs de la versión 2: los tipos de `resultados` son los `pruebas` del pedido del episodio; con el ground truth, `medio`, `edad`, `sexo`, `nivel` (el asignado), `motivo`, `pruebas` y `resultados` coinciden con la verdad; con el ground truth y los perfiles (`check_invariants(..., profiles=...)`), la respuesta observada de cada ronda (`test_resulted − test_ordered`) es la máxima de factor(franja del pedido) × base, calculada aparte, con una tolerancia absoluta de 1e-8 minutos.
+
+**Ground truth de episodios.** `EpisodeTruth` gana un campo `clinical` (`None` con el provisional, sin otros cambios) con la verdad clínica, `ClinicalTruth`, compuesta de los resultados congelados de los muestreadores de `profiles/`:
+
+| Campo | Contenido |
+| --- | --- |
+| `context` | Franja, tipo de día y estación de la llegada |
+| `person` | Banda, edad, sexo y medio de llegada |
+| `reason` | Motivo |
+| `triage` (`SeverityAndTriage`) | z de la gravedad, G, nivel asignado y real, calidad del triaje y salto |
+| `workup` (`Workup`) | Por tipo, si se pide, si sale alterada y su respuesta base (factor 1), con los 12 sorteos estándar del flujo 3 |
+
+`level` sigue siendo el nivel asignado y `test_turnaround` es `None`: la respuesta de cada ronda depende de la franja del pedido y se reconstruye con la base y el instante del log. De los sorteos estándar, la verdad guarda la z de la gravedad y los 12 de las pruebas, porque vienen en `SeverityAndTriage` y `Workup`; no guarda los 7 + 17 de persona y motivo ni los 3 de duraciones, porque se reconstruyen con la semilla y la asignación de flujos, y el emparejamiento clínico de la tarea 4.8a se detecta por la semilla. La paciencia llega en el hito 5. El CSV del ground truth clínico es de la tarea 4.5b: hasta entonces, `write_episodes_csv` con episodios clínicos lanza un error antes de crear el fichero, y con provisionales escribe el CSV de siempre, byte a byte.
+
+**Modelo opcional durante el hito** (decisión candidata 44). `simulate_ed(..., profiles=...)` y, desde la tarea 4.5b, la CLI aceptan unos perfiles. Con ellos usan `child_streams(seed, 8)`, el `ClinicalSampler` y un log de la versión 2; sin ellos, `child_streams(seed, 5)` y el `ProvisionalSampler`, y la app y `runs/` siguen funcionando sin cambios. Dar `profiles` y `sampler` a la vez es un error de uso. El cambio de modelo por defecto y la separación de `centro.toml` (decisión candidata 36) se hacen en la tarea de cierre, cuando la app ya trabaje con perfiles. El `ProvisionalSampler` se queda para la validación del motor (M/G/1, escenario de tres boxes), que necesita un modelo sencillo con teoría conocida.
+
+**Huellas.** Las huellas SHA-256 del modelo provisional cambian una sola vez, en la tarea 4.1, por el nivel 1 en la puerta y el campo `circuito`; su PR lo justifica. Después no deben cambiar en ninguna tarea del hito, y no cambiaron en la 4.5a. El modelo clínico tiene sus propias huellas desde la tarea 4.5a, con el centro, las llegadas y los perfiles de ejemplo, semilla 2026 y 3 días: la del log y la del ground truth, una línea JSON por episodio (`json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":"))`, con el `EpisodeTruth` entero). Se regeneran solo con un cambio a propósito de los muestreadores o de `ClinicalTruth`, explicado en el commit; el formato estable del ground truth será el CSV de la tarea 4.5b.
+
+**Pendiente para la tarea 4.5b.** `simulate_run` debe pasar `profiles` a `check_invariants`: sin ellos, la comprobación de la respuesta de la ronda no se hace. La 4.5b añade un test que lo vigile. La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: la 4.8a tendrá que usar `to_json` o un payload plano. Si la 4.8a guarda una ejecución antigua como dato de prueba, debe ser posterior a la tarea 4.1 o tener en cuenta que `door` marca sus niveles 1 (ver «Logs anteriores a la tarea 4.1»).
 
 ## Relojes y cumplimiento
 
@@ -418,27 +457,30 @@ src/edsim/profiles/
   severity.py            gravedad latente, umbrales derivados, triaje con error
   workup.py              pruebas por tipo, resultado y respuesta; WorkupModel exacto
   durations.py           lognormales por nivel real y motivo; DurationModel y carga del médico
-  sampler.py             ClinicalSampler y PatientDraws ampliado
+  sampler.py             PersonReasonSampler, SeverityTriageSampler y WorkupDurationSampler
   validation.py          comprobaciones estadísticas del muestreador
 src/edsim/calibration/
   __init__.py
   targets.py             objetivos.toml: Target, load_targets
   evaluate.py            réplicas, comparación con horquillas, días fuera
 src/edsim/engine/        cambios acotados
-  patient.py             nivel 1 en la puerta, payloads nuevos
-  events.py              catálogo: circuito, medio, edad, sexo, motivo, pruebas, resultados
+  clinical_sampler.py    ClinicalSampler, ClinicalDraws, ClinicalTruth y TurnaroundShifts (tarea 4.5a)
+  clinical.py            PatientDraws con clinical y test_turnaround opcional; ProvisionalSampler
+  patient.py             nivel 1 en la puerta, payloads clínicos, respuesta con la franja del pedido
+  events.py              catálogos 1 y 2 (CATALOGS, SCHEMA_VERSIONS): circuito, medio, edad, sexo, motivo, pruebas, resultados
   engine.py              simulate_ed(..., profiles=None)
   analysis.py            triage_start_to_doctor y classified_to_doctor
   targets.py             cumplimiento con medida, pretriaje, nivel 1 sin porcentaje
-  invariants.py          capacidad sin triajes de puerta, nadie se cuela en el triaje
-  ground_truth.py        campos clínicos del episodio
+  invariants.py          capacidad sin triajes de puerta, nadie se cuela en el triaje; door, schema_version y clinical
+  ground_truth.py        EpisodeTruth.clinical (ClinicalTruth)
   validation.py          M/G/1 con λ·(1 − p₁)
 src/edsim/lognormal.py   lognormal por mediana y p90 (tarea 4.4; engine/clinical.py la reexporta)
 src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar
 notebooks/04_perfiles_clinicos.ipynb
 tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.py,
       test_severity.py, test_workup.py, test_durations.py, test_sampler.py,
-      test_profiles_validation.py, test_calibration.py, test_door_triage.py
+      test_profiles_validation.py, test_calibration.py, test_door_triage.py,
+      test_clinical_sampler.py, test_clinical_engine.py, clinical_factory.py
 ```
 
 `ProvisionalSampler` sigue en `engine/clinical.py` para la validación del motor. Sin dependencias nuevas: `tomllib`, NumPy y SciPy cubren la Gumbel, la logística y la búsqueda de umbrales. Los nombres de módulos los confirma el plan de cada tarea.
@@ -455,7 +497,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje; matriz real × asignado casilla a casilla; umbrales escritos = derivados y el shock con los escritos; orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
 | Pruebas y duraciones | logit(0,40) = −0,4055 y 40,00 / 59,74 / 68,88 / 83,13 %; bordes u = P; máxima de las pedidas (75; 82,5 de tarde; `None` sin pruebas); media lognormal 24,43 → 29,32 con el factor 1,2; lo exacto contra `quad`; marginales por motivo y regla de los k sobre `config/perfiles.toml`; `check_workup` y `check_durations` |
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
-| Motor | Payloads del catálogo, sin campos ocultos; invariantes con triajes de puerta; huellas del modelo provisional y del clínico |
+| Motor | Asignación de flujos con sorteos a mano; consumo fijo con generadores instrumentados; el motor como tubería del `ClinicalSampler`; respuesta con la franja del pedido (75 / 82,5 / 67,5; 84 de noche; 260 a las 7:59; pedido a las 15:10 de una llegada a las 14:00); destino con el nivel asignado; payloads del catálogo 2 en un escenario a mano, sin campos ocultos; invariantes `door`, `schema_version` y `clinical`, y cero violaciones en 14 días; huellas del modelo provisional (sin cambios) y del clínico (log y ground truth) |
 | Relojes | Las tres medidas en un log a mano; cumplimiento con C; pretriaje; nivel 1 sin porcentaje; cumplimiento por nivel real |
 | Calibración (slow) | Objetivos cargados con su fuente; evaluación con réplicas; semillas de ajuste y de comprobación distintas |
 | CLI | Subcomandos nuevos, ficheros y código 2 ante errores de uso |
@@ -487,6 +529,10 @@ Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en l
 | Hora en UTC en lugar de +01:00 | Falla la franja en el borde de las 8:00 |
 | Triaje de puerta contado como enfermera | Falla la capacidad con las enfermeras ocupadas |
 | Prioridad de triaje por nivel completo (1 a 5) | Falla «los niveles 2 a 5 siguen en FIFO entre sí» |
+| Respuesta de la ronda con la franja de la llegada en lugar de la del pedido | Fallan el pedido a las 15:10 de una llegada a las 14:00, la respuesta con otra plantilla, la invariante `clinical` en 14 días y la huella del log clínico; pasa la del ground truth (tarea 4.5a, cumplida) |
+| Destino con el nivel real en lugar del asignado | Fallan la asignación de flujos a mano y las dos huellas clínicas; pasa el destino a mano, que es una función pura (tarea 4.5a, cumplida) |
+| Puerta decidida con el nivel real | Fallan los payloads a mano del infratriado y el sobretriado, la invariante `door` en 14 días y la huella del log; pasa la del ground truth (tarea 4.5a, cumplida) |
+| Factor del tipo de mayor base sobre la máxima de las bases, en lugar de la máxima de factor × base | Falla solo el caso a mano de las 22:00 (84) y pasa el de las 15:00 (82,5); fallan la respuesta con otra plantilla, la invariante `clinical` y la huella del log (tarea 4.5a, cumplida) |
 
 Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
 
@@ -540,10 +586,11 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | 4.2 | `perfiles.toml` y `ClinicalProfiles`; contexto; población; motivos con Gumbel-max y `base_weights_for` (35, 36, 37, 43) | Claude Code | `feat/h4-perfiles` | Población y motivo validados sin el motor |
 | 4.3 | Gravedad latente, umbrales derivados y triaje con ruido y sesgo; nivel real y calidad (38) | Claude Code | `feat/h4-triaje` | Reparto asignado, infra y sobretriaje en verde |
 | 4.4 | Pruebas por tipo con resultado y respuesta (42); duraciones por nivel real y motivo | Claude Code | `feat/h4-pruebas` | Logísticas y lognormales validadas |
-| 4.5 | `ClinicalSampler` en el motor como opción (44): payloads, catálogo, ground truth, `--perfiles`, `run.json` con la huella de los perfiles; `perfiles validar` | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
+| 4.5a | `ClinicalSampler` en el motor como opción (44): `PatientDraws` ampliado, `simulate_ed` con perfiles, catálogo versión 2 y payloads, ground truth clínico en memoria, invariantes y huellas | Claude Code | `feat/h4-muestreador` | Primer log con pacientes con perfil, sin invariantes violadas |
+| 4.5b | CSV del ground truth clínico, `simulate_run` con perfiles, `run.json` versión 2 con la huella de los perfiles (adelantado de la 4.8a), `motor simular --perfiles` y `perfiles validar` | Claude Code | `feat/h4-cli-perfiles` | Ejecuciones clínicas en `resultados/` y validación del muestreador desde la CLI |
 | 4.6 | `objetivos.toml`, `calibracion evaluar` y primera calibración de la plantilla (41); `centro_cumplidor.toml` | Claude Code | `feat/h4-calibracion` | Objetivos de ajuste dentro de horquilla y registro de calibración |
 | 4.7 | Notebook `04_perfiles_clinicos.ipynb` | Claude Code | `feat/h4-notebook` | Notebook ejecutable de principio a fin en el CI |
-| 4.8a | Núcleo de la app con perfiles (`runs/`) | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
+| 4.8a | Núcleo de la app con perfiles (`runs/`); `run.json` versión 2 se adelanta a la 4.5b | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
 | 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
 | 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0044; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
 
@@ -565,7 +612,7 @@ En cada tarea, como en el hito 3:
 4. Pedro revisa el PR completo con este chat, espera el CI en verde y fusiona con *squash and merge*. `gh pr merge` sigue denegado para los dos agentes.
 5. Sincronización: `git switch main && git pull && git branch -D <rama>`.
 
-Solo una rama abierta a la vez. La revisión automática con `@codex review` se pide solo en las tareas críticas: en este hito, la 4.5 (el muestreador en el motor) y la 4.9 (el cambio de modelo por defecto).
+Solo una rama abierta a la vez. La revisión automática con `@codex review` se pide solo en las tareas críticas: en este hito, la 4.5a (el muestreador en el motor) y la 4.9 (el cambio de modelo por defecto).
 
 ## Criterios de aceptación
 
@@ -892,3 +939,121 @@ Ninguna predicción de fallo quedó sin cumplirse; las sorpresas fueron fallos d
 - Para la 4.4: `duracion` de `[triaje]` (mediana 5 y p90 10 minutos, niveles 2 a 5) entra en el esquema con `[duraciones]` y las pruebas, que usan la gravedad real y el nivel real.
 - Para la 4.5: unir `PersonReasonSampler` y `SeverityTriageSampler` en el `ClinicalSampler`; la prioridad usa el nivel asignado; el ground truth lleva z, G, nivel real, calidad y salto.
 - Para la 4.5 y el notebook 04: medir la espera de las paradas que reciben nivel 2 (el 47 %), el coste del límite conocido.
+
+### Tarea 4.4: pruebas por tipo y duraciones por nivel real y motivo
+
+**Qué se hizo**
+
+PR #43 (rama `feat/h4-pruebas`), fusionado por Pedro con *squash and merge*: nueve commits del plan, con los tres ajustes de la aprobación, y uno de corrección que destapó la versión incorrecta V4; sin commits de revisión. No toca el motor: el muestreador de pruebas y duraciones se une a los otros dos en el `ClinicalSampler` de la tarea 4.5.
+
+- **Refactors.** `lognormal_params` y `Z90` pasan a `edsim/lognormal.py`, porque `profiles` no puede importar el motor; `engine/clinical.py` los reexporta. `severity.interval_nodes` es el único integrador de Gauss-Legendre por componente e intervalo de G, y lo usan `triage_matrix`, `workup.py` y `durations.py` (la matriz de la 4.3 cambia como mucho 3,9e-16).
+- **Esquema.** `TEST_TYPES` = analitica, radiografia, ecg, imagen. `[triaje] duracion`; `[duraciones]` con `valoracion` y `reevaluacion` (5 pares por nivel real); `[pruebas.<tipo>]` con `respuesta`, `respuesta_franja` (opcional), `or_gravedad`, `or_mayor` (opcional) y `alterado = { base, or_gravedad }`; en cada motivo, `pruebas` (los 4 tipos, % para un adulto de menos de 65 años con G = 0, en (0, 100)) y `duracion` = k (opcional).
+- **`workup.py`.** Logísticas de pedir y de alterado, respuesta base (factor 1), `turnaround_shift_factors`, `round_turnaround` (la máxima de las pedidas, o `None`), `Workup` y el modelo exacto `WorkupModel`: % global, por motivo, por nivel real y por quintiles de G; alguna prueba; alterado; pedir si infratriado; y la distribución de la ronda.
+- **`durations.py`.** `duration_params` (μ = ln(k·mediana) y la σ de su par), `durations_from_draws` y el modelo exacto `DurationModel`: medias, CDF por nivel real y por motivo, y `physician_load`.
+- **Muestreo.** `WorkupDurationSampler`, con los flujos 3 y 2 y 12 + 3 sorteos fijos por paciente, devuelve `WorkupAndDurations`.
+- **Validación.** `check_workup` (134 categorías) y `check_durations` (64), con lo exacto como hipótesis, χ² o binomial exacta y Bonferroni. Un año por defecto (unos 14 s cada una) y 20.000 pacientes en los tests rápidos (2,5 s).
+- **Guardas de la configuración.** Las 68 marginales, los globales y «alguna prueba» contra una tabla literal; los comentarios del TOML al día; y la regla de los k.
+- 2.098 tests en la suite completa (9 min 26 s); 2.076 rápidos; 241 de la app, sin cambios.
+
+**Conceptos**
+
+- **La logística trabaja en odds.** Un odds ratio multiplica las odds, y en la escala del logit se suma: a + b·G + c·mayor. Con p = 40 %, b = 1,2 y c = 0,8: 40,00 % en un adulto con G = 0, 59,74 % en un mayor y 68,88 % en un adulto con G = 1.
+- **El médico ve la gravedad real.** La prioridad usa el nivel asignado; las pruebas y las duraciones, G y el nivel real. Un infratriado espera como su nivel asignado y recibe las pruebas de su gravedad.
+- **El % del TOML no es el del paciente típico.** Es el de G = 0; el que se lee clínicamente es la marginal del año: la parada escribe un 36 % de analítica y pide un 98 %.
+- **La ronda dura lo que la más lenta.** Dado G, los tipos son independientes: P(ronda ≤ x) = Π(1 − P\_t + P\_t·F\_t(x)) − Π(1 − P\_t), dividido por P(ronda). La media de la máxima es mayor que la máxima de las medias.
+- **Multiplicar una lognormal por k es multiplicar su mediana.** Por eso el factor de la franja se puede aplicar al pedir sobre la respuesta base, y k mueve la mediana, la p90 y la media sin cambiar σ.
+- **Los k reparten, no añaden.** Con la carga de valoración a 1 ± 0,05 de la carga sin k, las bases por nivel siguen significando «el motivo medio de ese nivel», y la carga de los médicos no cambia a escondidas.
+- **Un error que comparten el muestreador y lo exacto no lo ve la estadística**, porque mueve también la hipótesis: solo lo ven los valores a mano y los literales (V4, V6). Un error solo del muestreador sí lo ve la estadística (V4b, V6b).
+
+**Decisiones**
+
+- El factor de la franja de la respuesta se aplica al pedir, en la 4.5; el muestreador da la respuesta base.
+- Una ronda sin pruebas es `None`; en la 4.5 equivale a `needs_tests=False`.
+- Los p de cada motivo son «orientativos, elegidos por su marginal»: el TOML lleva en un comentario la marginal que dan los enteros escritos, y dos tests la vigilan.
+- Regla de los k: la carga de valoración de un año con los k, a 1 ± 0,05 de la carga sin ellos (razón 1,0052; media simple 0,9905).
+- Se acepta que la carga del médico suba un 5 % respecto al modelo provisional: 32,38 frente a 30,84 min por paciente. La valoración baja (24,20 frente a 24,43) y toda la subida viene de la reevaluación (8,18 frente a 6,42), porque el 72,79 % tiene alguna prueba (55,41 % en el provisional). La 4.6 lo absorberá con la plantilla, a la vista.
+- Alterado y respuesta se prueban sobre todos los pacientes, porque se sortean siempre.
+- Cada grupo condicionado necesita al menos 50 pacientes esperados (exactos): el nivel real 1 pide 12.000.
+
+**Valores orientativos por tipo de prueba**
+
+| Tipo | Respuesta \[mediana, p90\] (min) | Franja (mañana / tarde / noche) | OR gravedad | OR mayor | Alterado (base %; OR) | Razón |
+| --- | --- | --- | --- | --- | --- | --- |
+| Analítica | \[60, 150\] | 1,0 / 1,1 / 0,9 | 3,3 | 2,2 | 30; 2,5 | Pico de muestras por la tarde; sigue a la gravedad; pluripatología en mayores |
+| Radiografía | \[30, 75\] | 1,0 / 1,0 / 1,2 | 1,5 | 1,8 | 25; 2,0 | Depende más del motivo que de la gravedad; un solo técnico de noche |
+| ECG | \[10, 25\] | sin factor | 2,0 | 3,0 | 20; 2,0 | A pie de cama; casi rutina en mayores |
+| Imagen (eco o TC) | \[100, 240\] | 1,0 / 1,1 / 1,3 | 2,0 | 1,8 | 35; 2,0 | Radiólogo de guardia y sin eco programada de noche; TC craneal en caídas con anticoagulantes |
+
+**Pruebas y k por motivo** (p en el TOML para un adulto de menos de 65 años con G = 0; marginal exacta de un año de `config/llegadas.toml`)
+
+| Motivo | p (an / rx / ecg / img) | Marginal del año (%) | Alguna (%) | k |
+| --- | --- | --- | --- | --- |
+| Traumatismo | 9 / 72 / 4 / 7 | 8,1 / 69,7 / 4,6 / 6,4 | 74,1 | 0,85 |
+| Dolor abdominal | 67 / 14 / 7 / 25 | 75,0 / 19,5 / 14,9 / 35,1 | 85,3 | 1,1 |
+| Fiebre | 72 / 46 / 6 / 4 | 69,8 / 49,6 / 10,2 / 5,4 | 84,1 | 1,0 |
+| Disnea | 59 / 73 / 32 / 2 | 84,8 / 85,0 / 65,0 / 7,3 | 98,2 | 1,1 |
+| Malestar | 68 / 24 / 38 / 4 | 79,9 / 35,4 / 59,9 / 8,4 | 92,4 | 1,2 |
+| Dolor torácico | 65 / 56 / 96 / 2 | 84,9 / 69,9 / 98,2 / 5,9 | 99,8 | 1,0 |
+| Neurológico | 40 / 4 / 13 / 40 | 59,7 / 7,3 / 30,5 / 54,6 | 81,0 | 1,15 |
+| Síncope | 49 / 9 / 92 / 8 | 64,9 / 14,5 / 94,9 / 14,9 | 97,7 | 1,1 |
+| Urológico | 59 / 17 / 3 / 32 | 60,0 / 20,0 / 5,0 / 35,5 | 77,3 | 0,9 |
+| Cutáneo | 14 / 3 / 3 / 2 | 9,9 / 2,9 / 3,2 / 1,6 | 16,4 | 0,8 |
+| ORL | 8 / 4 / 2 / 4 | 5,2 / 3,7 / 2,0 / 3,1 | 13,1 | 0,8 |
+| Digestivo | 72 / 12 / 9 / 11 | 69,6 / 15,2 / 15,6 / 15,2 | 77,1 | 1,0 |
+| Psiquiátrico | 12 / 2 / 8 / 2 | 19,8 / 2,5 / 12,2 / 2,9 | 31,9 | 1,3 |
+| Palpitaciones | 58 / 18 / 97 / 2 | 70,1 / 25,3 / 98,0 / 3,7 | 99,3 | 0,9 |
+| Intoxicación | 78 / 7 / 46 / 6 | 74,7 / 8,3 / 49,7 / 8,4 | 85,2 | 1,1 |
+| Parada | 36 / 61 / 83 / 4 | 98,0 / 90,1 / 99,0 / 40,4 | 100 | 1,0 |
+| Otros | 22 / 10 / 7 / 4 | 19,7 / 10,4 / 8,5 / 3,9 | 35,1 | 0,9 |
+
+**Resultados**
+
+| Comprobación | Valor |
+| --- | --- |
+| Pruebas en un año | Analítica 48,08 %, radiografía 37,32 %, ECG 28,09 %, imagen 13,14 %; alguna prueba 72,79 % (55,41 % en el provisional) |
+| Alguna prueba por nivel real | 100 / 98,2 / 86,7 / 57,1 / 26,9 % (provisional: 95 / 85 / 70 / 40 / 20) |
+| Alterado entre los pedidos | 42,3 / 30,0 / 30,8 / 44,9 %; alguna alterada en la ronda, 46,8 % |
+| Pedir si infratriado | 59,8 / 39,3 / 35,1 / 15,9 % (infratriaje del 10,10 %) |
+| Ronda (factor 1) | Media 78,19 min, mediana 57,67, p90 161,78 |
+| Valoración y reevaluación por nivel real, con k | 50,24 / 40,44 / 27,95 / 17,48 / 12,17 min y 17,85 / 15,32 / 11,98 / 8,45 / 6,54 min |
+| Carga del médico por paciente | 24,20 + 8,18 = 32,38 min (provisional 30,84) |
+| Regla de los k | Razón 1,0052; media simple 0,9905 |
+| Quintiles de G (un año) | −0,8435 / −0,3202 / 0,1796 / 0,8128 |
+| Potencia (80 %) | Pedir analítica en el quintil central, 45,0 → 48,8 % con 20.000 y 46,6 % en un año; infratriados, 59,8 → 65,0 y 62,0 %; mediana de valoración del nivel 3, 50 → 52,7 y 51,2 % |
+| Detección | Alterado de analítica 30 → 36, otro OR de pedir y el k de traumatismo 0,85 → 1: potencia mayor que 0,999 |
+| Tiempos | `check_workup` y `check_durations`, 2,5 s con 20.000 y 14 s en un año; lo exacto, milisegundos |
+| Verificación del chat | Globales, alguna prueba, por nivel real, infratriados, carga, razón de los k, quintiles y las 68 marginales, reproducidos con una integración independiente |
+
+**Comprobación con versiones incorrectas** (temporales; aplicadas y deshechas en el mismo turno)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| V1. Pedir con G + ε | Fallan el muestreador a mano, «otro ruido no cambia las pruebas» e infra/analítica con 20.000; con un año, los infratriados y real 3/analítica | Cumplida, con fallos de más: infra/imagen y real 3/analítica con 20.000, y 12 categorías con un año (quintiles 3 a 5). Un primer intento (V1′) pasó G + ε también al resultado y falló alterado: se limitó al pedido |
+| V2. Duraciones con el nivel asignado | Fallan el muestreador a mano, «otro ruido no cambia las duraciones» y siete categorías por nivel real con un año | Cumplida, más los p90 del nivel 2 (potencia 0,91 y 0,71, sin predicción) |
+| V3. Resultado y respuesta solo si se pide | Fallan el consumo, «otro p no cambia resultados ni respuestas», las 20 de alterado y las 8 de respuesta | Cumplida casilla a casilla, más dos tests que también comprueban resultados y respuestas |
+| V4. k sobre σ en `duration_params`, compartida | Fallan los valores a mano con k y los literales; `check_durations` pasa | No cumplida a la primera: fallaron los p90, porque `DurationModel` tomaba σ sin k. Corregido en un commit aparte, con un test casilla a casilla; después, cumplida |
+| V4b. k sobre σ solo al sortear | Fallan el muestreador a mano y `check_durations` en varios motivos | Fallan las categorías firmes (23 con 20.000 y 33 con un año). El muestreador «a mano» pasó, porque usa `durations_from_draws` como referencia; lo vieron los valores a mano de esa función |
+| V5. Suma de las respuestas en lugar de la máxima | Fallan la ronda a mano y la mediana y el p90 de la ronda | Exacta |
+| V6. «Mayor» desde 45, compartida | Fallan los valores a mano y los literales; `check_workup` pasa | Cumplida: 11 tests, incluida la guarda de la tabla |
+| V6b. «Mayor» desde 45 solo en el muestreador | Fallan el muestreador a mano y analítica y ECG por nivel real con un año | Cumplida: 64 categorías con un año y 15 con 20.000 |
+| V7. Un solo flujo para pruebas y duraciones | Fallan el consumo y «otra semilla de un flujo no cambia el otro» | Exacta |
+| V8. Factor de la franja de la llegada en la respuesta | Fallan el muestreador a mano, imagen con los dos tamaños y radiografía con un año | Cumplida, más radiografía con 20.000 y analítica y la ronda con un año |
+| V9. `<=` en lugar de `<` al pedir | Solo el borde a mano | Exacta |
+
+Una predicción fallida (V4) destapó un error real del modelo exacto; las demás se cumplieron, con fallos de más explicados.
+
+**Lecciones aprendidas**
+
+- **Una predicción fallida puede encontrar un error de verdad.** V4 debía pasar la validación y falló, porque lo exacto suponía cómo actúa k en lugar de usar la función del muestreador. Lo exacto y el muestreador comparten las funciones de parámetros, y un test lo comprueba casilla a casilla.
+- **Los errores compartidos solo los ven los valores a mano y los literales; los del muestreador, la estadística.** Por eso conviene probar cada versión incorrecta en las dos variantes (V4 y V4b, V6 y V6b).
+- **Un test de integración que usa las funciones como referencia comprueba el cableado, no las fórmulas** (V4b). Las fórmulas las cubren los valores a mano de cada función.
+- **Lo elegido con un script también necesita guarda.** Los p salieron de su marginal objetivo; sin la tabla literal, los comentarios del TOML mentirían en cuanto cambiase la mezcla.
+- **Una sola copia de la cuadratura.** Extraer `interval_nodes` antes de usarla en dos módulos más evitó tres integradores con sus propias colas.
+- **Un test por cosa.** El test de la regla de los k comprueba también el literal 1,0052: con V4 falló por el literal aunque la regla se cumplía.
+- **Los ajustes llegaron al agente.** Con «No, keep planning» y el texto, los tres ajustes estaban en el plan y en la sección «Ajustes de la aprobación» del PR: la primera tarea del hito sin ajustes perdidos.
+
+**Pendiente**
+
+- **Para la 4.5:** unir los tres muestreadores en el `ClinicalSampler`. El motor aplica `turnaround_shift_factors` con la franja del momento del pedido y llama a `round_turnaround`; `None` equivale a `needs_tests=False`. La reevaluación solo se usa si hay ronda, y el triaje no se usa en el nivel 1. Payloads `pruebas` y `resultados`; ground truth con las pruebas pedidas, su resultado y su respuesta por tipo. `perfiles validar` incluye `check_workup` y `check_durations`.
+- **Para la 4.6:** la carga del médico es un 5 % mayor que en el modelo provisional (32,38 frente a 30,84 min por paciente); la plantilla lo absorberá.
+- **Mejora menor:** separar en dos el test de la regla de los k (la regla y el literal).

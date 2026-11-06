@@ -12,7 +12,11 @@ still alive in SimPy). Comparing with them is what makes conservation a real
 check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
-Task 4.1 adds the triage queue to "nobody jumps the queue" and leaves the
+Task 4.5a adds three checks: ``door`` (a triage at the door is a level 1
+classified on arrival), ``schema_version`` (one version per log) and
+``clinical`` (the clinical payloads of a log of version 2 against the clinical
+ground truth, and the turnaround of each round against the shift band of its
+order). Task 4.1 adds the triage queue to "nobody jumps the queue" and leaves the
 triages at the door (a level 1, without a nurse) out of the capacity of the
 nurses. Task 3.4 adds displacement: ``patient_displaced`` and interrupted assessments
 are edges of ``TRANSITIONS``, ``patient_displaced`` frees the box in the
@@ -28,8 +32,17 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.engine.center import CenterConfig
-from edsim.engine.events import DOOR, Event
-from edsim.engine.ground_truth import GroundTruth
+from edsim.engine.events import CLINICAL_SCHEMA_VERSION, DOOR, Event
+from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
+from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
+from edsim.profiles.context import context_indices
+
+TURNAROUND_TOLERANCE = 1e-8
+"""Minutes between the observed and the expected turnaround of a round.
+
+``test_resulted - test_ordered`` comes from SimPy's ``env.now``, which adds
+the turnaround to the instant of the order in floating point; over two weeks
+the error is about 1e-12 minutes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,11 +79,15 @@ class InvariantContext:
             must have exactly one ``patient_arrived`` in the log, and no other.
         inside: Patient processes still alive in SimPy at the end of the run;
             if given, it must equal the patients inside according to the log.
+        profiles: Clinical profiles of the run; with them and the ground truth,
+            ``clinical`` checks the turnaround of each round against the shift
+            band of its order. Without them that comparison is not made.
     """
 
     center: CenterConfig
     ground_truth: GroundTruth | None = None
     inside: int | None = None
+    profiles: ClinicalProfiles | None = None
 
 
 Check = Callable[[Sequence[Event], InvariantContext], list[Violation]]
@@ -669,6 +686,211 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
     return out
 
 
+def check_door(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """A triage at the door is the one of a level 1, in the instant it arrives.
+
+    - A ``triage_started`` with ``circuito`` ``DOOR`` goes with a
+      ``triage_completed`` of ``nivel`` 1, and a triage by a nurse with any
+      other level: the door is decided by the assigned level, the one in the
+      log.
+    - At the door, ``triage_started`` and ``triage_completed`` happen in the
+      instant of the ``patient_arrived``. Not the other way round: a triage by
+      a nurse may also start in the instant of the arrival, when a nurse is
+      free.
+    """
+    name = "door"
+    out: list[Violation] = []
+    arrival: dict[str, float] = {}
+    at_the_door: dict[str, bool] = {}
+
+    def on_arrival(e: Event, what: str) -> None:
+        if e.episode_id in arrival and e.sim_time != arrival[e.episode_id]:
+            out.append(
+                _at(
+                    name,
+                    e,
+                    f"{what} at the door at {e.sim_time!r}, not in the instant of the "
+                    f"arrival {arrival[e.episode_id]!r}",
+                )
+            )
+
+    for e in events:
+        episode = e.episode_id
+        match e.event_type:
+            case "patient_arrived":
+                arrival.setdefault(episode, e.sim_time)
+            case "triage_started":
+                at_the_door[episode] = e.payload["circuito"] == DOOR
+                if at_the_door[episode]:
+                    on_arrival(e, "triage_started")
+            case "triage_completed" if episode in at_the_door:
+                level = e.payload["nivel"]
+                if at_the_door[episode]:
+                    if level != 1:
+                        out.append(_at(name, e, f"triage at the door with nivel {level}, not 1"))
+                    on_arrival(e, "triage_completed")
+                elif level == 1:
+                    out.append(_at(name, e, "a level 1 triaged by a nurse, not at the door"))
+    return out
+
+
+def check_schema_version(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """Every event of the log has the same ``schema_version``.
+
+    Each event is valid in its own version, but a log is written by one
+    ``EventLog``, with one version. The first event of another version than
+    the first one gives one violation.
+    """
+    name = "schema_version"
+    if not events:
+        return []
+    first = events[0].schema_version
+    for e in events:
+        if e.schema_version != first:
+            versions = Counter(x.schema_version for x in events)
+            counts = ", ".join(f"{v}: {n}" for v, n in sorted(versions.items()))
+            return [
+                _at(
+                    name,
+                    e,
+                    f"schema_version {e.schema_version} in a log of version {first} "
+                    f"(events by version: {counts})",
+                )
+            ]
+    return []
+
+
+def _results(truth: EpisodeTruth) -> dict[str, str]:
+    """The ``resultados`` that the truth gives: the ordered types, normal or abnormal."""
+    workup = truth.clinical.workup
+    return {
+        t: "alterado" if abnormal else "normal"
+        for t, ordered, abnormal in zip(TEST_TYPES, workup.ordered, workup.abnormal, strict=True)
+        if ordered
+    }
+
+
+def _expected_turnaround(
+    truth: EpisodeTruth, ordered_at: float, ground_truth: GroundTruth, profiles: ClinicalProfiles
+) -> float:
+    """``max(factor_t(shift band of the order) * base_t)`` over the ordered types.
+
+    Computed here on its own, from the profiles and the instant of the order
+    in the log, not with ``ClinicalDraws``, so that an error there shows. Day
+    0 of the ground truth is the ``start_date`` of the run.
+    """
+    start = ground_truth.days[0].date
+    (band,), _, _ = context_indices([ordered_at], start, profiles.shift_band_starts)
+    workup = truth.clinical.workup
+    return max(
+        test.turnaround_shift_factors[int(band)] * base
+        for test, base, ordered in zip(
+            profiles.diagnostic_tests, workup.turnarounds, workup.ordered, strict=True
+        )
+        if ordered
+    )
+
+
+def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """The clinical payloads of a log of version 2 are the ones of its patients.
+
+    Only for a log with events of version 2 (``CLINICAL_SCHEMA_VERSION``):
+
+    - From the log alone: the types of ``resultados`` of each
+      ``test_resulted`` are the ``pruebas`` of the episode's ``test_ordered``.
+    - With a ground truth: a log of version 2 needs the clinical ground truth,
+      and a log of version 1 the provisional one (one violation if not). The
+      ``medio``, ``edad``, ``sexo``, ``nivel`` (the assigned level),
+      ``motivo``, ``pruebas`` and ``resultados`` of each episode are the ones
+      of its truth.
+    - With a ground truth and the profiles: the observed turnaround of each
+      round (``test_resulted`` minus ``test_ordered``) is the slowest ordered
+      test with the factor of the shift band of the order, within
+      ``TURNAROUND_TOLERANCE``.
+    """
+    name = "clinical"
+    out: list[Violation] = []
+    clinical_log = any(e.schema_version == CLINICAL_SCHEMA_VERSION for e in events)
+    ground_truth = context.ground_truth
+    truth: dict[str, EpisodeTruth] = {}
+    if ground_truth is not None:
+        kinds = {e.clinical is not None for e in ground_truth.episodes}
+        if clinical_log and False in kinds:
+            out.append(Violation(name, "a log of version 2 with a provisional ground truth"))
+            return out
+        if not clinical_log and True in kinds:
+            out.append(Violation(name, "a log of version 1 with a clinical ground truth"))
+            return out
+        truth = {e.episode_id: e for e in ground_truth.episodes}
+    if not clinical_log:
+        return out
+
+    def differs(e: Event, key: str, logged: object, expected: object) -> None:
+        if logged != expected:
+            out.append(_at(name, e, f"{key} {logged!r} in the log, {expected!r} in the truth"))
+
+    ordered: dict[str, Event] = {}
+    for e in events:
+        if e.schema_version != CLINICAL_SCHEMA_VERSION:
+            continue  # reported by schema_version
+        episode = e.episode_id
+        mine = truth.get(episode)
+        payload = e.payload
+        match e.event_type:
+            case "patient_arrived" if mine is not None:
+                medio = "ambulancia" if mine.clinical.person.ambulance else "propios_medios"
+                differs(e, "medio", payload["medio"], medio)
+            case "patient_registered" if mine is not None:
+                differs(e, "edad", payload["edad"], mine.clinical.person.age)
+                differs(
+                    e, "sexo", payload["sexo"], "mujer" if mine.clinical.person.female else "hombre"
+                )
+            case "triage_completed" if mine is not None:
+                differs(e, "nivel", payload["nivel"], mine.level)
+                differs(e, "motivo", payload["motivo"], mine.clinical.reason)
+            case "test_ordered":
+                ordered[episode] = e
+                if mine is not None:
+                    pruebas = tuple(
+                        t
+                        for t, o in zip(TEST_TYPES, mine.clinical.workup.ordered, strict=True)
+                        if o
+                    )
+                    differs(e, "pruebas", payload["pruebas"], pruebas)
+            case "test_resulted":
+                order = ordered.get(episode)
+                if order is None:
+                    continue  # reported by transitions
+                if tuple(payload["resultados"]) != order.payload["pruebas"]:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"resultados of {list(payload['resultados'])}, but the tests "
+                            f"ordered were {list(order.payload['pruebas'])}",
+                        )
+                    )
+                if mine is None:
+                    continue
+                differs(e, "resultados", dict(payload["resultados"]), _results(mine))
+                if context.profiles is not None and mine.clinical.workup.has_round:
+                    observed = e.sim_time - order.sim_time
+                    expected = _expected_turnaround(
+                        mine, order.sim_time, ground_truth, context.profiles
+                    )
+                    if abs(observed - expected) > TURNAROUND_TOLERANCE:
+                        out.append(
+                            _at(
+                                name,
+                                e,
+                                f"turnaround {observed!r} of the tests ordered at "
+                                f"{order.sim_time!r}, expected {expected!r} with the "
+                                "shift band of the order",
+                            )
+                        )
+    return out
+
+
 CHECKS: Mapping[str, Check] = MappingProxyType(
     {
         "conservation": check_conservation,
@@ -677,6 +899,9 @@ CHECKS: Mapping[str, Check] = MappingProxyType(
         "capacity": check_capacity,
         "nobody_jumps_the_queue": check_nobody_jumps_the_queue,
         "displacement": check_displacement,
+        "door": check_door,
+        "schema_version": check_schema_version,
+        "clinical": check_clinical,
     }
 )
 """The invariants, by name, in the order ``check_invariants`` runs them."""
@@ -688,6 +913,7 @@ def check_invariants(
     *,
     ground_truth: GroundTruth | None = None,
     inside: int | None = None,
+    profiles: ClinicalProfiles | None = None,
 ) -> list[Violation]:
     """Run every check of ``CHECKS`` on a log.
 
@@ -698,10 +924,12 @@ def check_invariants(
         ground_truth: Ground truth of the run, to compare the arrivals with.
         inside: Patient processes alive in SimPy at the end of the run, to
             compare with the patients inside according to the log.
+        profiles: Clinical profiles of the run, to check the turnaround of
+            each round of a clinical log; needs the ground truth.
 
     Returns:
         The violations, by check and then in file order; empty if none.
     """
     events = list(events)
-    context = InvariantContext(center, ground_truth, inside)
+    context = InvariantContext(center, ground_truth, inside, profiles)
     return [v for check in CHECKS.values() for v in check(events, context)]

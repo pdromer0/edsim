@@ -11,8 +11,16 @@ from types import MappingProxyType
 import pytest
 
 from edsim.engine.events import (
+    ARRIVAL_MODES,
     CATALOG,
-    SCHEMA_VERSION,
+    CATALOG_V1,
+    CATALOG_V2,
+    CATALOGS,
+    CLINICAL_SCHEMA_VERSION,
+    PROVISIONAL_SCHEMA_VERSION,
+    SCHEMA_VERSIONS,
+    SEXES,
+    TEST_RESULTS,
     Event,
     EventLog,
     JsonlSink,
@@ -23,6 +31,7 @@ from edsim.engine.events import (
     read_events,
     to_json,
 )
+from edsim.profiles.config import REASON_KEYS, TEST_TYPES
 
 START = date(2026, 1, 5)
 RUN = "r2026"
@@ -172,7 +181,8 @@ def test_sobre_completo():
     assert [f.name for f in dataclasses.fields(Event)] == ENVELOPE
     assert e.event_id == "r2026-000000000"
     assert e.event_type == "triage_completed"
-    assert e.schema_version == SCHEMA_VERSION == 1
+    assert e.schema_version == PROVISIONAL_SCHEMA_VERSION == 1
+    assert SCHEMA_VERSIONS == {1, 2}
     assert e.run_id == RUN
     assert (e.episode_id, e.patient_id) == ("EP-000137", "PT-000137")
     assert e.source_system == "triaje"
@@ -385,6 +395,11 @@ def test_construccion_directa_tambien_valida():
     with pytest.raises(ValueError, match="patient_id"):
         dataclasses.replace(e, patient_id="PT-000002")
     with pytest.raises(ValueError, match="schema_version"):
+        dataclasses.replace(e, schema_version=3)
+    with pytest.raises(ValueError, match="schema_version"):
+        dataclasses.replace(e, schema_version=True)
+    # Con la versión 2, el mismo payload se valida con su catálogo: le falta el motivo.
+    with pytest.raises(ValueError, match="triage_completed: missing payload keys: motivo"):
         dataclasses.replace(e, schema_version=2)
 
 
@@ -547,3 +562,320 @@ def test_solo_la_lectura_admite_triage_started_sin_circuito():
     )
     with pytest.raises(ValueError, match=r"missing payload keys: circuito"):
         dataclasses.replace(event, payload={})
+
+
+# --- Versiones del esquema y catálogo 2 (tarea 4.5a) -----------------------------------
+
+# Un payload válido de cada tipo del catálogo 2, en el orden de la especificación.
+SAMPLES_V2 = {
+    **SAMPLES,
+    "patient_arrived": {"medio": "ambulancia"},
+    "patient_registered": {"edad": 83, "sexo": "mujer"},
+    "triage_completed": {"nivel": 2, "motivo": "disnea"},
+    "test_ordered": {"pruebas": ["analitica", "ecg"]},
+    "test_resulted": {"resultados": {"analitica": "alterado", "ecg": "normal"}},
+}
+
+
+def clinical_log(sink=None) -> tuple[EventLog, MemorySink]:
+    sink = MemorySink() if sink is None else sink
+    return EventLog(RUN, START, sink, schema_version=CLINICAL_SCHEMA_VERSION), sink
+
+
+def emit_all_v2(log: EventLog) -> None:
+    times = [0.0, 0.0, 0.1 + 0.2, 1 / 3, 739.02, 739.02, 1000.000001, 1439.9999999]
+    times += [2000.5, 2880.0, 3000.25, 4321.123456789, 5000.0]
+    for event_type, t in zip(SAMPLES_V2, times, strict=True):
+        kwargs = {"arrival_id": 137} if CATALOG_V2[event_type].patient else {}
+        log.emit(event_type, t, **kwargs, **SAMPLES_V2[event_type])
+
+
+def test_schema_version_ya_no_existe():
+    # Ajuste de la aprobación: un uso antiguo falla al importar, en vez de comparar
+    # un int con el conjunto de versiones.
+    with pytest.raises(ImportError):
+        from edsim.engine.events import SCHEMA_VERSION  # noqa: F401
+
+
+def test_catalogos_por_version():
+    assert dict(CATALOGS) == {1: CATALOG_V1, 2: CATALOG_V2}
+    assert CATALOG is CATALOG_V1
+    assert SCHEMA_VERSIONS == frozenset({PROVISIONAL_SCHEMA_VERSION, CLINICAL_SCHEMA_VERSION})
+    with pytest.raises(TypeError):
+        CATALOGS[3] = CATALOG_V2
+
+
+def test_catalogo_2_literal():
+    # La versión 2 es la 1 con los payloads clínicos: mismos tipos, mismo orden,
+    # mismos sistemas de origen, y estas claves.
+    assert list(CATALOG_V2) == list(CATALOG_V1)
+    for name, spec in CATALOG_V2.items():
+        assert spec.source_system == CATALOG_V1[name].source_system
+        assert spec.patient == CATALOG_V1[name].patient
+    keys = {name: list(spec.payload) for name, spec in CATALOG_V2.items()}
+    assert keys == {
+        "patient_arrived": ["medio"],
+        "patient_registered": ["edad", "sexo"],
+        "triage_started": ["circuito"],
+        "triage_completed": ["nivel", "motivo"],
+        "box_assigned": ["box"],
+        "patient_displaced": ["box", "desalojado_por"],
+        "assessment_started": ["tipo", "pool", "box"],
+        "assessment_ended": ["tipo", "interrumpida"],
+        "test_ordered": ["pruebas"],
+        "test_resulted": ["resultados"],
+        "disposition_decided": ["destino"],
+        "patient_departed": ["destino"],
+        "staffing_changed": ["recurso", "anterior", "nueva"],
+    }
+    # Los de la versión 1 no cambian.
+    for name in ("triage_started", "box_assigned", "staffing_changed"):
+        assert CATALOG_V2[name] is CATALOG_V1[name]
+
+
+# Los valores que acepta el catálogo 2, literales. Fijan el esquema del log igual que las
+# claves: un cambio de cualquiera de ellos (un motivo nuevo, otro nombre de prueba, otro
+# medio de llegada) cambia lo que significa un log de la versión 2 y exige una versión 3
+# del catálogo, no editar esta lista.
+CATALOG_V2_VALUES = {
+    ("triage_completed", "motivo"): (
+        "traumatismo",
+        "dolor_abdominal",
+        "fiebre",
+        "disnea",
+        "malestar",
+        "dolor_toracico",
+        "neurologico",
+        "sincope",
+        "urologico",
+        "cutaneo",
+        "orl",
+        "digestivo",
+        "psiquiatrico",
+        "palpitaciones",
+        "intoxicacion",
+        "parada",
+        "otros",
+    ),
+    ("patient_arrived", "medio"): ("ambulancia", "propios_medios"),
+    ("patient_registered", "sexo"): ("mujer", "hombre"),
+    ("test_ordered", "pruebas"): ("analitica", "radiografia", "ecg", "imagen"),
+    ("test_resulted", "resultados"): ("normal", "alterado"),
+}
+
+
+def test_valores_del_catalogo_2_literales():
+    # Las constantes de las que salen los valores son las de la lista literal.
+    assert REASON_KEYS == CATALOG_V2_VALUES["triage_completed", "motivo"]
+    assert ARRIVAL_MODES == CATALOG_V2_VALUES["patient_arrived", "medio"]
+    assert SEXES == CATALOG_V2_VALUES["patient_registered", "sexo"]
+    assert TEST_TYPES == CATALOG_V2_VALUES["test_ordered", "pruebas"]
+    assert TEST_RESULTS == CATALOG_V2_VALUES["test_resulted", "resultados"]
+
+
+def _accepted(event_type, key, value):
+    """Si el catálogo 2 acepta ``value`` como ``key`` de ``event_type``."""
+    payload = {**SAMPLES_V2[event_type], key: value}
+    try:
+        clinical_log()[0].emit(event_type, 1.0, arrival_id=0, **payload)
+    except ValueError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("event_type", "key"),
+    [("triage_completed", "motivo"), ("patient_arrived", "medio"), ("patient_registered", "sexo")],
+)
+def test_el_catalogo_2_acepta_exactamente_los_valores_literales(event_type, key):
+    values = CATALOG_V2_VALUES[event_type, key]
+    assert all(_accepted(event_type, key, v) for v in values)
+    # Cualquier otro valor, aunque se parezca, se rechaza.
+    for other in ("otro", values[0].upper(), values[0] + "_", "", "dolor torácico"):
+        assert not _accepted(event_type, key, other), other
+
+
+def test_pruebas_y_resultados_aceptan_exactamente_los_valores_literales():
+    types = CATALOG_V2_VALUES["test_ordered", "pruebas"]
+    results = CATALOG_V2_VALUES["test_resulted", "resultados"]
+    # Todos los tipos, solos y juntos en su orden; y todos los resultados de cada tipo.
+    for t in types:
+        assert _accepted("test_ordered", "pruebas", [t])
+        for r in results:
+            assert _accepted("test_resulted", "resultados", {t: r})
+    assert _accepted("test_ordered", "pruebas", list(types))
+    for other in ("tac", "eco", "Analitica", "analítica"):
+        assert not _accepted("test_ordered", "pruebas", [other]), other
+        assert not _accepted("test_resulted", "resultados", {other: "normal"}), other
+    for other in ("anormal", "Normal", "positivo"):
+        assert not _accepted("test_resulted", "resultados", {"ecg": other}), other
+
+
+FORBIDDEN = {
+    "gravedad",
+    "severidad",
+    "g",
+    "z",
+    "nivel_real",
+    "calidad",
+    "calidad_triaje",
+    "salto",
+    "banda",
+    "banda_edad",
+    "respuesta",
+    "respuestas",
+    "respuesta_base",
+    "tiempo_respuesta",
+}
+
+
+@pytest.mark.parametrize("version", sorted(SCHEMA_VERSIONS))
+def test_ningun_catalogo_lleva_lo_oculto(version):
+    # G, z, nivel real, calidad, salto, banda y respuestas son ground truth.
+    keys = {key for spec in CATALOGS[version].values() for key in spec.payload}
+    assert not keys & FORBIDDEN
+
+
+def test_eventlog_con_version():
+    log, sink = clinical_log()
+    e = log.emit("patient_arrived", 0.0, arrival_id=0, medio="propios_medios")
+
+    assert log.schema_version == 2 and e.schema_version == 2
+    assert e.payload == {"medio": "propios_medios"}
+    assert EventLog(RUN, START, MemorySink()).schema_version == 1
+
+
+@pytest.mark.parametrize("version", [0, 3, True, 2.0, "2", None])
+def test_eventlog_con_version_invalida(version):
+    with pytest.raises(ValueError, match="schema_version"):
+        EventLog(RUN, START, MemorySink(), schema_version=version)
+
+
+def test_cada_log_con_su_catalogo():
+    v1, _ = memory_log()
+    v2, _ = clinical_log()
+    with pytest.raises(ValueError, match="patient_arrived: unknown payload keys: medio"):
+        v1.emit("patient_arrived", 0.0, arrival_id=0, medio="ambulancia")
+    with pytest.raises(ValueError, match="patient_arrived: missing payload keys: medio"):
+        v2.emit("patient_arrived", 0.0, arrival_id=0)
+    with pytest.raises(ValueError, match="test_ordered: missing payload keys: pruebas"):
+        v2.emit("test_ordered", 0.0, arrival_id=0)
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload", "match"),
+    [
+        ("patient_arrived", {"medio": "helicoptero"}, "payload medio"),
+        ("patient_registered", {"edad": -1, "sexo": "mujer"}, "payload edad"),
+        ("patient_registered", {"edad": 40.0, "sexo": "mujer"}, "payload edad"),
+        ("patient_registered", {"edad": True, "sexo": "mujer"}, "payload edad"),
+        ("patient_registered", {"edad": 40, "sexo": "otro"}, "payload sexo"),
+        ("triage_completed", {"nivel": 3, "motivo": "gripe"}, "payload motivo"),
+        ("test_ordered", {"pruebas": []}, "non-empty list"),
+        ("test_ordered", {"pruebas": "analitica"}, "non-empty list"),
+        ("test_ordered", {"pruebas": {"analitica": 1}}, "non-empty list"),
+        ("test_ordered", {"pruebas": ["analitica", "analitica"]}, "without repeats"),
+        ("test_ordered", {"pruebas": ["ecg", "analitica"]}, "order"),
+        ("test_ordered", {"pruebas": ["tac"]}, "must hold types"),
+        ("test_ordered", {"pruebas": [1]}, "must hold types"),
+        ("test_resulted", {"resultados": {}}, "non-empty object"),
+        ("test_resulted", {"resultados": ["analitica"]}, "non-empty object"),
+        ("test_resulted", {"resultados": {"tac": "normal"}}, "as keys"),
+        ("test_resulted", {"resultados": {"ecg": "dudoso"}}, "map each type"),
+        ("test_resulted", {"resultados": {"ecg": True}}, "map each type"),
+    ],
+)
+def test_payloads_clinicos_invalidos(event_type, payload, match):
+    log, _ = clinical_log()
+    with pytest.raises(ValueError, match=match):
+        log.emit(event_type, 1.0, arrival_id=0, **payload)
+
+
+def test_pruebas_y_resultados_inmutables_y_normalizados():
+    log, _ = clinical_log()
+    pruebas = ["analitica", "radiografia", "imagen"]
+    resultados = {"imagen": "normal", "analitica": "alterado"}
+    ordered = log.emit("test_ordered", 1.0, arrival_id=0, pruebas=pruebas)
+    resulted = log.emit("test_resulted", 2.0, arrival_id=0, resultados=resultados)
+    pruebas.append("ecg")
+    resultados["ecg"] = "normal"
+
+    assert ordered.payload["pruebas"] == ("analitica", "radiografia", "imagen")
+    assert type(ordered.payload["pruebas"]) is tuple
+    assert isinstance(resulted.payload["resultados"], MappingProxyType)
+    # Claves en el orden de TEST_TYPES, sea cual sea el de quien llama.
+    assert list(resulted.payload["resultados"]) == ["analitica", "imagen"]
+    assert resulted.payload["resultados"] == {"analitica": "alterado", "imagen": "normal"}
+    with pytest.raises(TypeError):
+        resulted.payload["resultados"]["ecg"] = "normal"
+    assert '"resultados": {"analitica": "alterado", "imagen": "normal"}' in to_json(resulted)
+    assert '"pruebas": ["analitica", "radiografia", "imagen"]' in to_json(ordered)
+
+
+@pytest.mark.parametrize("event_type", list(SAMPLES_V2))
+def test_pickle_y_deepcopy_v2(event_type):
+    log, _ = clinical_log()
+    kwargs = {"arrival_id": 137} if CATALOG_V2[event_type].patient else {}
+    e = log.emit(event_type, 739.02, **kwargs, **SAMPLES_V2[event_type])
+
+    for copied in (pickle.loads(pickle.dumps(e)), copy.deepcopy(e)):
+        assert copied == e
+        assert copied is not e
+        assert copied.schema_version == 2
+        assert isinstance(copied.payload, MappingProxyType)
+        for value in copied.payload.values():
+            assert isinstance(value, int | str | bool | tuple | MappingProxyType)
+
+
+def test_ida_y_vuelta_v2(tmp_path):
+    # JSON escribe listas y objetos; al leer, la lista vuelve a ser una tupla y el
+    # objeto un mapping de solo lectura: los eventos leídos son iguales a los emitidos.
+    path = tmp_path / "eventos.jsonl"
+    _memory, sink = clinical_log()
+    emit_all_v2(_memory)
+    with JsonlSink(path) as jsonl:
+        emit_all_v2(clinical_log(jsonl)[0])
+
+    read = list(read_events(path))
+
+    assert read == sink.events
+    assert all(e.schema_version == 2 for e in read)
+    ordered = next(e for e in read if e.event_type == "test_ordered")
+    resulted = next(e for e in read if e.event_type == "test_resulted")
+    assert type(ordered.payload["pruebas"]) is tuple
+    assert isinstance(resulted.payload["resultados"], MappingProxyType)
+    assert [to_json(e) for e in read] == [to_json(e) for e in sink.events]
+
+
+def test_un_fichero_con_versiones_mezcladas_se_lee(tmp_path):
+    # Cada evento se valida con el catálogo de su versión; la mezcla la señala la
+    # invariante schema_version, no la lectura.
+    v1, s1 = memory_log()
+    v2, s2 = clinical_log()
+    v1.emit("box_assigned", 1.0, arrival_id=0, box=1)
+    v2.emit("patient_arrived", 2.0, arrival_id=1, medio="ambulancia")
+    path = tmp_path / "eventos.jsonl"
+    path.write_text(to_json(s1.events[0]) + "\n" + to_json(s2.events[0]) + "\n", encoding="utf-8")
+
+    assert [e.schema_version for e in read_events(path)] == [1, 2]
+
+
+def test_upgrade_solo_en_la_version_1(tmp_path):
+    # Un triage_started de la versión 2 sin circuito no se completa: falla al leer.
+    log, sink = clinical_log()
+    log.emit("triage_started", 2.0, arrival_id=0, circuito="enfermeria")
+    line = json.loads(to_json(sink.events[0]))
+    line["payload"] = {}
+    path = tmp_path / "eventos.jsonl"
+    path.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"eventos\.jsonl:1: .*missing payload keys: circuito"):
+        list(read_events(path))
+
+
+def test_lectura_con_version_desconocida(tmp_path):
+    path = write_with(tmp_path, lambda d: d.update(schema_version=3))
+    events = read_events(path)
+    next(events)
+    with pytest.raises(ValueError, match=r"eventos\.jsonl:2: .*schema_version"):
+        next(events)

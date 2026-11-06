@@ -1,3 +1,4 @@
+import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -249,3 +250,36 @@ def test_franjas_propias_cambian_los_pesos(arrivals):
 def test_dias_no_validos(arrivals):
     with pytest.raises(ValueError, match="days"):
         context_weights(arrivals, STARTS, days=0)
+
+
+# --- arrival_context es context_indices, bit a bit (tarea 4.5a) ---------------------
+
+
+def _edges(shift_band_starts, days=800):
+    """Bordes de franja y de día, con el float anterior y el siguiente, y tiempos al azar."""
+    times = [0.0]
+    for day in range(days):
+        for minute in (0, *(60 * h for h in shift_band_starts)):
+            t = float(day * 1440 + minute)
+            times += [math.nextafter(t, 0.0), t, math.nextafter(t, math.inf)]
+    rng = np.random.default_rng(45)
+    times += list(rng.uniform(0, days * 1440, size=5000))
+    return [t for t in times if t >= 0]
+
+
+@pytest.mark.parametrize("start", [date(2026, 1, 5), date(2025, 12, 27), date(2028, 2, 26)])
+@pytest.mark.parametrize("bands", [(8, 15, 22), (7, 14, 21), (0, 12, 23)])
+def test_arrival_context_igual_que_context_indices(start, bands):
+    # arrival_context hace con números de Python la aritmética de context_indices (y de
+    # rate.split_days): el mismo contexto en los bordes de franja, de día, de mes y de
+    # año, con los floats contiguos, y en tiempos al azar de dos años.
+    times = _edges(bands)
+    shift, day_type, season = context_indices(times, start, bands)
+    for t, s, d, e in zip(times, shift, day_type, season, strict=True):
+        assert arrival_context(t, start, bands) == ArrivalContext(int(s), int(d), int(e)), t
+
+
+@pytest.mark.parametrize("t", [-1.0, float("nan"), float("inf"), -1e-300])
+def test_arrival_context_rechaza_tiempos_invalidos(t):
+    with pytest.raises(ValueError, match="finite and not negative"):
+        arrival_context(t, date(2026, 1, 5), (8, 15, 22))

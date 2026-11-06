@@ -15,13 +15,15 @@ Numbers drawn per patient, from each of the four streams:
 3. tests: one uniform (whether there are tests) and one lognormal (turnaround);
 4. destination: one uniform (admission or discharge).
 
-The model is provisional (docs/specs/hito-3.md): milestone 4 will replace the
-inside of the sampler, with latent severity and reasons for consultation,
-without changing its interface.
+The model is provisional (docs/specs/hito-3.md). The clinical model of
+milestone 4 (``clinical_sampler.ClinicalSampler``) has the same interface and
+fills ``PatientDraws.clinical``; the provisional sampler stays for the
+validation of the engine, which needs a simple model with known theory.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -29,6 +31,9 @@ from edsim.arrivals.thinning import ArrivalRecord
 from edsim.engine.center import N_LEVELS, CenterConfig
 from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before 4.4
 from edsim.lognormal import lognormal_params
+
+if TYPE_CHECKING:
+    from edsim.engine.clinical_sampler import ClinicalDraws
 
 N_STREAMS = 4
 """Streams of the sampler: level, durations, tests and destination."""
@@ -80,19 +85,33 @@ def triage_duration(level: int, triage_time: float) -> float:
 class PatientDraws:
     """What a patient draws on arrival; the hidden truth of the episode.
 
-    Values are Python ``int``, ``float`` and ``bool``, not NumPy scalars.
+    Values are Python ``int``, ``float`` and ``bool``, not NumPy scalars. The
+    engine reads the first seven fields with both models; ``clinical`` exists
+    only with the clinical model.
 
     Attributes:
-        level: Triage level, 1 (most urgent) to 5.
+        level: Triage level, 1 (most urgent) to 5. With the clinical model it
+            is the *assigned* level: the priority, the door and the
+            destination use it.
         triage_time: Duration of the triage, in minutes; drawn always, not
             used by a level 1 (see ``classified_at_the_door``).
         assessment_time: Duration of the first assessment.
         reassessment_time: Duration of the reassessment, used only if the
             patient has tests.
-        needs_tests: Whether the doctor orders tests.
+        needs_tests: Whether the doctor orders tests; with the clinical
+            model, whether some type of test is ordered (there is a round).
         test_turnaround: From ordering the tests to their results; drawn
-            always, used only if ``needs_tests``.
+            always, used only if ``needs_tests``. ``None`` with the clinical
+            model, whose turnaround depends on the shift band of the order and
+            is known only then (``clinical.round_turnaround``).
         admitted: Whether the patient is admitted; otherwise discharged.
+        clinical: What the clinical model drew (``ClinicalDraws``), or
+            ``None`` with the provisional model.
+
+    Raises:
+        ValueError: If ``test_turnaround`` and ``clinical`` are both given or
+            both missing, or ``needs_tests`` is not whether the clinical
+            patient has a round.
     """
 
     level: int
@@ -100,8 +119,21 @@ class PatientDraws:
     assessment_time: float
     reassessment_time: float
     needs_tests: bool
-    test_turnaround: float
+    test_turnaround: float | None
     admitted: bool
+    clinical: "ClinicalDraws | None" = None
+
+    def __post_init__(self) -> None:
+        if (self.clinical is None) == (self.test_turnaround is None):
+            raise ValueError(
+                "give test_turnaround with the provisional model, or clinical without it: "
+                f"got test_turnaround={self.test_turnaround!r} and clinical={self.clinical!r}"
+            )
+        if self.clinical is not None and self.needs_tests != self.clinical.truth.workup.has_round:
+            raise ValueError(
+                f"needs_tests={self.needs_tests!r} but the clinical patient "
+                f"{'has' if self.clinical.truth.workup.has_round else 'has no'} round of tests"
+            )
 
 
 class ProvisionalSampler:

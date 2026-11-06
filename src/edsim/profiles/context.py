@@ -18,9 +18,10 @@ The day and the calendar come from ``rate.split_days`` and
 which day a time falls.
 """
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -137,9 +138,37 @@ def context_indices(
 
 
 def arrival_context(t: float, start_date: date, shift_band_starts: Sequence[int]) -> ArrivalContext:
-    """The context of one arrival at time ``t``; see ``context_indices``."""
-    shift, day_type, season = context_indices(t, start_date, shift_band_starts)
-    return ArrivalContext(int(shift), int(day_type), int(season))
+    """The context of one arrival at time ``t``; see ``context_indices``.
+
+    It is called for every patient (and again when its tests are ordered), so
+    it does the arithmetic of ``context_indices`` on Python numbers instead of
+    NumPy arrays: the same float division, floor and subtraction as
+    ``rate.split_days``, and the calendar of the same day, so the result is
+    the same bit for bit (a test compares both at the edges).
+
+    Raises:
+        ValueError: If ``t`` is negative or not finite.
+    """
+    if isinstance(t, bool) or not isinstance(t, int | float | np.floating):
+        shift, day_type, season = context_indices(t, start_date, shift_band_starts)
+        return ArrivalContext(int(shift), int(day_type), int(season))
+    t = float(t)
+    if not math.isfinite(t) or t < 0:
+        raise ValueError(
+            f"t must be finite and not negative (minutes since fecha_inicio), got {t!r}"
+        )
+    day = math.floor(t / MINUTES_PER_DAY)
+    minute = t - day * MINUTES_PER_DAY
+    morning, afternoon, night = (60 * h for h in shift_band_starts)
+    if morning <= minute < afternoon:
+        shift = 0
+    elif afternoon <= minute < night:
+        shift = 1
+    else:
+        shift = 2
+    weekday = (day + start_date.weekday()) % 7
+    month = (start_date + timedelta(days=day)).month - 1
+    return ArrivalContext(shift, int(weekday >= 5), (month + 1) % 12 // 3)
 
 
 def context_weights(

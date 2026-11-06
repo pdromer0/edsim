@@ -450,7 +450,16 @@ def write_episodes_csv(
     (``True`` or ``False``), ``respuesta_pruebas``, ``destino`` (``alta`` or
     ``ingreso``, as in the log) and the run parameters. Durations are drawn
     even when not used, such as the turnaround of a patient without tests.
+
+    Raises:
+        NotImplementedError: If some episode is of the clinical model; its CSV
+            comes in task 4.5b. It is checked before the file is created.
     """
+    if any(e.clinical is not None for e in episodes):
+        raise NotImplementedError(
+            "the ground truth CSV of the clinical model comes in task 4.5b; "
+            "this one is only for the provisional model"
+        )
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(EPISODE_COLUMNS)

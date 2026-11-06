@@ -25,7 +25,7 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 - Las páginas viven en `src/edsim_app/views/`. No crees una carpeta `pages/`
   junto a `main.py`: activa la navegación antigua de Streamlit y puede saltarse
   el estado compartido del punto de entrada, por ejemplo al abrir Replay.
-- Código, nombres y docstrings en inglés; interfaz y documentación en español.
+- Código, nombres y docstrings en inglés, también en los tests de `app/tests/`; interfaz y documentación en español. Los tests del núcleo (`tests/`) van en español ([ADR 0015](../docs/decisiones/0015-idiomas-del-proyecto.md)).
 - Commits de funcionalidad y correcciones con ámbito: `feat(app)` y `fix(app)`.
 - Las decisiones van en `docs/decisiones/` con serie `APP-0001`… si obligan solo
   a la app; si obligan al núcleo, van en la serie del núcleo. Las ADR de la fase 1

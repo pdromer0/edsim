@@ -60,8 +60,21 @@ def draw_person_standard(rng: np.random.Generator) -> NDArray[np.float64]:
     return np.concatenate([rng.gumbel(size=N_BANDS), rng.random(3)])
 
 
-def person_from_draws(population: Population, context: ArrivalContext, draws: ArrayLike) -> Person:
+def person_from_draws(
+    population: Population,
+    context: ArrivalContext,
+    draws: ArrayLike,
+    weights: ArrayLike | None = None,
+) -> Person:
     """The person that the seven standard draws give in a context.
+
+    Args:
+        population: The population of the profiles.
+        context: The context of the arrival.
+        draws: The seven draws of ``draw_person_standard``.
+        weights: ``band_weights(population, context)`` if already computed,
+            such as by a sampler that keeps them per context; computed here
+            if ``None``.
 
     Raises:
         ValueError: If ``draws`` does not have seven values.
@@ -69,7 +82,9 @@ def person_from_draws(population: Population, context: ArrivalContext, draws: Ar
     draws = np.asarray(draws, dtype=float)
     if draws.shape != (N_PERSON_DRAWS,):
         raise ValueError(f"draws must have {N_PERSON_DRAWS} values, got shape {draws.shape}")
-    band = gumbel_max(band_weights(population, context), draws[:N_BANDS])
+    if weights is None:
+        weights = band_weights(population, context)
+    band = gumbel_max(weights, draws[:N_BANDS])
     u_age, u_sex, u_mode = draws[N_BANDS:]
     low, high = age_range(population, band)
     return Person(
