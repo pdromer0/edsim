@@ -224,3 +224,70 @@ censurados. El test slow `test_reproduce_la_fila_corta_del_registro` la comprueb
   de la decisión 41, que incumple a veces.
 - **Sin colas que crezcan de un día a otro.** A las 8:00, la cola de box solo tiene
   pacientes el primer día después del calentamiento (14); el resto de días está vacía.
+
+### El reloj A según el horizonte (tarea 4.7, revisión del PR #49)
+
+El reloj A de los niveles 2 a 5 del centro calibrado parecía crecer con el horizonte: 54,5
+min en la calibración (10 réplicas, días 2 a 13), 57,1 en la sección 9 del notebook 04 (5
+réplicas), 73,5 en una ejecución de 28 días de la sección 12 y, en el nivel 5, de 107 min
+a 229 en la ejecución de 91 días. Se midió si era sesgo de inicialización (cada réplica
+empieza vacía) o acumulación en días malos, sin tocar la calibración ni `config/`. Todo con
+las funciones del paquete (`clinical_run`, `replica_values`, `step_curves` y
+`summarize`); el script está en la descripción del PR #49.
+
+**(a) Ejecución principal del notebook 04: 91 días, semilla 2026, centro calibrado.** Por semana de calendario (lunes a domingo; la primera, sin los 2 días de calentamiento). Medias por paciente llegado en la semana; censo y cola de box a las 8:00, media de los días de la semana (y máximo de la cola).
+
+| Semana | Días | Reloj A, niveles 2 a 5 | Reloj A, nivel 4 | Reloj A, nivel 5 (pacientes) | Espera de box, nivel 5 | Censo a las 8:00 | Cola de box a las 8:00 (máx.) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 7/1–11/1 | 41,7 | 59,4 | 71,7 (22) | 31,7 | 20,6 | 2,8 (14) |
+| 2 | 12/1–18/1 | 38,6 | 56,5 | 131,8 (32) | 49,5 | 11,0 | 0,0 (0) |
+| 3 | 19/1–25/1 | 131,8 | 183,3 | 984,5 (46) | 1060,3 | 43,1 | 14,3 (51) |
+| 4 | 26/1–1/2 | 62,8 | 86,8 | 284,9 (33) | 227,2 | 25,0 | 4,1 (29) |
+| 5 | 2/2–8/2 | 34,7 | 44,0 | 83,3 (35) | 15,2 | 13,0 | 0,0 (0) |
+| 6 | 9/2–15/2 | 36,4 | 50,9 | 130,6 (32) | 45,0 | 15,0 | 0,0 (0) |
+| 7 | 16/2–22/2 | 50,5 | 69,1 | 57,0 (31) | 23,1 | 22,1 | 3,9 (27) |
+| 8 | 23/2–1/3 | 37,3 | 52,6 | 73,7 (29) | 14,6 | 16,1 | 0,4 (3) |
+| 9 | 2/3–8/3 | 32,5 | 42,4 | 70,0 (31) | 14,2 | 11,6 | 0,0 (0) |
+| 10 | 9/3–15/3 | 28,7 | 36,8 | 95,4 (34) | 38,7 | 11,4 | 0,0 (0) |
+| 11 | 16/3–22/3 | 46,7 | 68,5 | 189,6 (35) | 123,8 | 19,1 | 1,4 (10) |
+| 12 | 23/3–29/3 | 47,2 | 61,4 | 306,2 (35) | 291,5 | 17,1 | 3,7 (26) |
+| 13 | 30/3–5/4 | 35,7 | 49,0 | 84,0 (25) | 51,5 | 12,3 | 0,0 (0) |
+| Total | 7/1–5/4 | 49,3 | | 229,4 | | | |
+
+**(b) 5 semillas × 56 días, centro calibrado, `config/llegadas.toml`.** Semillas: los hijos 0 a 4 de `child_streams(2026, 5)`, las 5 primeras réplicas de la calibración; 2 días de calentamiento y uno de vaciado; sin censurados. Media entre semillas e IC al 95 % (t₄ = 2,776).
+
+| Bloque (días medidos) | Fechas | Reloj A, niveles 2 a 5 | Reloj A, nivel 5 | Por semilla (niveles 2 a 5) |
+| --- | --- | --- | --- | --- |
+| 2–13 | 7/1–18/1 | 57,1 [46,2; 68,0] | 236,4 [189,9; 282,9] | 65,4 / 49,4 / 58,4 / 46,9 / 65,7 |
+| 14–27 | 19/1–1/2 | 61,8 [33,9; 89,7] | 265,1 [45,9; 484,3] | 67,9 / 53,5 / 97,3 / 52,3 / 38,1 |
+| 28–41 | 2/2–15/2 | 34,3 [30,2; 38,3] | 87,7 [69,9; 105,5] | 34,5 / 33,5 / 35,4 / 38,5 / 29,5 |
+| 42–55 | 16/2–1/3 | 43,4 [26,1; 60,8] | 189,3 [18,4; 360,1] | 40,6 / 31,9 / 38,4 / 67,7 / 38,6 |
+
+**(c) Lo mismo con el factor mensual neutro** (todos los meses a 1, con `dataclasses.replace` en memoria; la media de los doce factores reales es 1,0008). Semillas: los hijos 0 a 4 de `child_streams(2026, 5)`, las 5 primeras réplicas de la calibración; 2 días de calentamiento y uno de vaciado; sin censurados. Media entre semillas e IC al 95 % (t₄ = 2,776).
+
+| Bloque (días medidos) | Fechas | Reloj A, niveles 2 a 5 | Reloj A, nivel 5 | Por semilla (niveles 2 a 5) |
+| --- | --- | --- | --- | --- |
+| 2–13 | 7/1–18/1 | 28,3 [25,6; 30,9] | 56,7 [41,8; 71,5] | 26,6 / 31,2 / 28,2 / 29,3 / 25,9 |
+| 14–27 | 19/1–1/2 | 33,9 [23,1; 44,7] | 129,2 [67,7; 190,8] | 35,3 / 45,0 / 36,6 / 31,3 / 21,1 |
+| 28–41 | 2/2–15/2 | 28,4 [21,7; 35,1] | 75,1 [36,7; 113,6] | 21,8 / 28,0 / 27,3 / 36,9 / 27,8 |
+| 42–55 | 16/2–1/3 | 26,8 [22,2; 31,4] | 58,8 [35,4; 82,2] | 26,3 / 21,8 / 31,4 / 25,2 / 29,4 |
+
+**Conclusión.** No es sesgo de inicialización: con el factor mensual neutro, los cuatro
+bloques de 14 días quedan entre 26,8 y 33,9 min y el primero (28,3) no queda por debajo de
+los demás, así que los 2 días de calentamiento bastan; la primera semana medida (días 2 a
+6) da 25,2 min frente a 26,3–35,1 de las siguientes, dentro del ruido. Lo que mueve las
+cifras es el mes (con los factores reales, enero da 57,1 y 61,8 min y febrero, 34,3 y 43,4)
+y la acumulación en días malos: en la semilla 2026, del 19 al 22 de enero llegan cuatro
+días seguidos más pacientes de lo esperado (efecto diario de 1,03 a 1,18; 390, 369, 404 y
+363 llegadas frente a unas 320), la cola de box de la noche pasa al día siguiente (19, 51,
+15 y 15 pacientes a las 8:00) y no se vacía hasta el viernes 23. Esa semana sola da 131,8
+min de reloj A a los niveles 2 a 5 y 985 al nivel 5, el 47 % de los minutos de espera del
+nivel 5 en los 89 días (sin ella, 137 min).
+
+**Lo que queda por decidir.** La calibración no subestima el reloj A por el horizonte: con
+el mismo mes, el segundo bloque de enero da 4,7 min más que el primero (61,8 frente a 57,1),
+con un IC que los contiene a los dos. Pero la ventana de 14 días es la primera quincena de
+enero, el mes de más carga (factor 1,10), y con el factor neutro, que es la carga media del
+año, el mismo centro da unos 28 min, por debajo de la horquilla de 35–70. La plantilla no
+cambia en esta tarea; queda pendiente de decidir si se recalibra con más calentamiento o con
+una ventana más larga (y qué meses debe cubrir).
