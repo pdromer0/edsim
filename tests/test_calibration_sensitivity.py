@@ -25,6 +25,7 @@ from edsim.calibration.evaluate import (
     evaluate_staffings,
     sensitivity,
 )
+from edsim.calibration.report import format_check
 from edsim.calibration.staffing import DOCTORS, NURSES, RuleStaffing, nurse_loads, rule_staffings
 from edsim.calibration.targets import CHECK, FIT, Target, load_targets
 from edsim.engine.center import load_center
@@ -194,6 +195,17 @@ def test_el_veto_de_los_medicos_mira_sus_objetivos_de_ajuste():
     }
     chosen = choose_staffing(rows, DOCTORS, check=checker(checked, []))
     assert chosen.staffing.staff == (12, 12, 5)
+
+
+def test_la_comprobacion_impresa_dice_vetada_y_elegida():
+    vetoed = row((2, 2, 1), 0.85, [result(PRETRIAGE, 15.2, passed=False)])
+    chosen = row((3, 2, 1), 0.80, [result(PRETRIAGE, 7.9)])
+    text = format_check(NURSES, 2027, [vetoed, chosen]).splitlines()
+    assert text[0].startswith("Comprobación con la semilla 2027")
+    assert text[1].startswith("  [2, 2, 1]")
+    assert text[1].endswith("pretriaje_medio 15.20 [14.50, 15.90] FALLA → vetada")
+    assert text[2].endswith("pretriaje_medio 7.90 [7.20, 8.60] pasa → elegida")
+    assert "no hay nada que comprobar" in format_check(NURSES, 2027, [])
 
 
 def test_tres_semillas_distintas():

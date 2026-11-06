@@ -25,6 +25,7 @@ from edsim.calibration.evaluate import (
     SensitivityRow,
     TargetResult,
     level_breakdown,
+    passes_fit,
     pooled_value,
 )
 from edsim.calibration.staffing import DOCTORS
@@ -383,24 +384,63 @@ def format_sensitivity_row(row: SensitivityRow, knob: str) -> str:
     return line
 
 
+def format_check(knob: str, seed: int, checked: Sequence[SensitivityRow]) -> str:
+    """The check of the candidates with the check seed, in the order of the choice, until
+    one passes its fit targets: each one with its mean and interval, vetoed or chosen."""
+    names, _ = KNOB_TARGETS[knob]
+    lines = [
+        f"Comprobación con la semilla {seed} (las candidatas en el orden de la elección, hasta"
+        f" la primera que pasa {', '.join(names)}; decisión 41):"
+    ]
+    for row in checked:
+        cells = "; ".join(
+            f"{name} {r.mean:.2f} [{r.summary.ci_low:.2f}, {r.summary.ci_high:.2f}]"
+            f" {'pasa' if r.passed else 'FALLA'}"
+            for name in names
+            for r in (row.result(name),)
+        )
+        verdict = "elegida" if passes_fit(row, knob) else "vetada"
+        lines.append(f"  {_staff(row.staffing.staff):<13} {cells} → {verdict}")
+    if not checked:
+        lines.append("  ninguna candidata pasa con la semilla de ajuste: no hay nada que comprobar")
+    return "\n".join(lines)
+
+
 def format_choice(
-    knob: str, chosen: SensitivityRow | None, compliant: SensitivityRow | None = None
+    knob: str,
+    chosen: SensitivityRow | None,
+    compliant: SensitivityRow | None = None,
+    *,
+    seeds: tuple[int, int] | None = None,
 ) -> str:
-    """The lines below the table: the staffing chosen and, for the doctors, the compliant one."""
+    """The lines below the table: the staffing chosen and, for the doctors, the compliant one.
+
+    Args:
+        seeds: The fit seed and the check seed, when the check seed may veto the choice
+            (``choose_staffing`` with ``check``); without them, the choice is the one of
+            the fit seed, and the line says that the check seed may veto it.
+    """
     names, chooser = KNOB_TARGETS[knob]
+    passing = ", ".join(names)
+    if seeds is not None:
+        passing += f" con las semillas {seeds[0]} y {seeds[1]}"
     lines = []
     if chosen is None:
-        lines.append(
-            f"Elección: ninguna plantilla de la regla pasa {', '.join(names)}; no se fuerza"
-        )
+        lines.append(f"Elección: ninguna plantilla de la regla pasa {passing}; no se fuerza")
     else:
         r = chosen.result(chooser)
         aim = "a la referencia" if r.target.reference is not None else "al centro de la horquilla"
+        veto = (
+            ""
+            if seeds is not None
+            else ", con la semilla de ajuste; la de comprobación puede vetarla (--comprobacion,"
+            " decisión 41)"
+        )
         lines.append(
-            f"Elección (entre las que pasan {', '.join(names)}, la más cercana {aim} de"
+            f"Elección (entre las que pasan {passing}, la más cercana {aim} de"
             f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
             f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
-            f" {chooser} {r.mean:.2f}"
+            f" {chooser} {r.mean:.2f}{veto}"
         )
     if knob == DOCTORS:
         if compliant is None:

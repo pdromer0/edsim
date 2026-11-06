@@ -40,11 +40,13 @@ from edsim.calibration.evaluate import (
     check_knob_targets,
     choose_staffing,
     compliant_staffing,
+    evaluate_staffings,
     sensitivity,
     simulate_replicas,
     summarize_targets,
 )
 from edsim.calibration.report import (
+    format_check,
     format_choice,
     format_evaluation,
     format_sensitivity_row,
@@ -539,10 +541,20 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         u_grid(args.u_min, args.u_max, args.paso)
     except ValueError as error:
         parser.error(str(error))
+    if args.comprobacion == args.semilla:
+        parser.error(
+            f"la semilla de comprobación ({args.comprobacion}) tiene que ser distinta de la de"
+            f" ajuste ({args.semilla}) (regla 3)"
+        )
+    check_text = (
+        ""
+        if args.comprobacion is None
+        else f"; comprobación con la semilla {args.comprobacion}, que puede vetar la elección"
+    )
     print(
         f"{_calibration_header(args)}\nSensibilidad del mando {args.mando} con u de"
         f" {args.u_min:g} a {args.u_max:g} en pasos de {args.paso:g}; el otro mando, como en"
-        f" el centro\n\n{sensitivity_header(targets, args.mando)}",
+        f" el centro{check_text}\n\n{sensitivity_header(targets, args.mando)}",
         flush=True,
     )
     rows = sensitivity(
@@ -561,9 +573,36 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         start_dates=args.fechas,
         on_row=lambda row: print(format_sensitivity_row(row, args.mando), flush=True),
     )
-    chosen = choose_staffing(rows, args.mando)
+    if args.comprobacion is None:
+        chosen = choose_staffing(rows, args.mando)
+        seeds = None
+    else:
+        checked = []
+
+        def check(row):
+            # The same staffing with the check seed, the same window and the rest of the
+            # options; asked only for the candidates the choice needs, in its order.
+            (row_checked,) = evaluate_staffings(
+                center,
+                profile,
+                profiles,
+                targets,
+                args.mando,
+                [row.staffing],
+                replicas=args.replicas,
+                days=args.dias,
+                warmup_days=args.calentamiento,
+                seed=args.comprobacion,
+                start_dates=args.fechas,
+            )
+            checked.append(row_checked)
+            return row_checked
+
+        chosen = choose_staffing(rows, args.mando, check=check)
+        seeds = (args.semilla, args.comprobacion)
+        print(f"\n{format_check(args.mando, args.comprobacion, checked)}")
     compliant = compliant_staffing(rows) if args.mando == DOCTORS else None
-    print(f"\n{format_choice(args.mando, chosen, compliant)}")
+    print(f"\n{format_choice(args.mando, chosen, compliant, seeds=seeds)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / SENSITIVITY_CSV.format(knob=args.mando)
@@ -942,7 +981,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Evalúa todos los objetivos con cada plantilla distinta que da la regla de "
         "la plantilla equivalente (⌈carga del turno / u⌉) para un mando, con el otro mando "
         "como en el centro, e indica la elección (la más cercana a la referencia entre las "
-        "que pasan) y, para los médicos, el centro cumplidor. Guarda "
+        "que pasan; con --comprobacion, la primera que pasa también con esa semilla) y, para "
+        "los médicos, el centro cumplidor. Guarda "
         f"{SENSITIVITY_CSV.format(knob='<mando>')}. Termina con código 1 si ninguna plantilla "
         "pasa los objetivos del mando.",
     )
@@ -951,6 +991,16 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=KNOBS,
         help="mando que se mueve: enfermeria_triaje o medicos",
+    )
+    sensitivity_parser.add_argument(
+        "--comprobacion",
+        type=int,
+        default=None,
+        metavar="SEMILLA",
+        help="semilla de comprobación, que puede vetar la elección y no elegir (decisión 41): "
+        "las candidatas que pasan con la semilla de ajuste se evalúan con esta, con la misma "
+        "ventana y el resto de opciones, en el orden de la elección y solo hasta la primera "
+        "que pasa; la elegida es esa (sin la opción, la elección es la de la semilla de ajuste)",
     )
     sensitivity_parser.add_argument(
         "--u-min",

@@ -1,11 +1,13 @@
 """CLI de la calibración: calibracion evaluar y calibracion sensibilidad (tarea 4.6b)."""
 
 import csv
+import dataclasses
 from pathlib import Path
 
 import pytest
 
 from edsim.arrivals.profile import load_profile
+from edsim.calibration import evaluate
 from edsim.calibration.evaluate import pooled_value, simulate_replicas, summarize_targets
 from edsim.calibration.targets import load_targets
 from edsim.calibration.window import first_mondays
@@ -207,6 +209,10 @@ def test_salida_que_es_un_fichero(command, tmp_path, capsys, monkeypatch):
             ["--mando", "medicos", "--objetivos", "{incomplete}"],
             "objetivos.tiempo_medico_niveles_2_5",
         ),
+        (
+            ["--mando", "medicos", "--comprobacion", "2026"],
+            "la semilla de comprobación (2026) tiene que ser distinta de la de ajuste (2026)",
+        ),
     ],
 )
 def test_sensibilidad_errores_de_uso(extra, message, tmp_path, capsys, monkeypatch):
@@ -240,6 +246,10 @@ def test_sensibilidad_de_la_enfermeria_elige_y_escribe_el_csv(tmp_path, capsys):
     assert code == 0
     assert "Sensibilidad del mando enfermeria_triaje con u de 0.6 a 0.9" in out
     assert "Elección (entre las que pasan pretriaje_medio" in out
+    assert (
+        "con la semilla de ajuste; la de comprobación puede vetarla (--comprobacion, decisión 41)"
+        in out
+    )
     assert "Cumplidor" not in out
     rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
     staffings = {(r["manana"], r["tarde"], r["noche"]) for r in rows}
@@ -395,3 +405,132 @@ def test_sensibilidad_de_los_medicos_con_la_ventana_anual(tmp_path, capsys):
     # Un día medido por réplica: 12 días medidos por nivel, sumados en las 12 réplicas.
     assert {r[f"dias_medidos_c_nivel_{k}"] for r in rows for k in (2, 3, 4)} == {"12"}
     assert all(0 <= int(r["dias_fuera_c_nivel_4"]) <= 12 for r in rows)
+
+
+# --- El veto de la semilla de comprobación (revisión del PR #50) -----------------------------
+
+NURSE_SHORT = ["--mando", "enfermeria_triaje", "--u-min", "0.6", "--u-max", "0.9"]
+
+
+def check_spy(monkeypatch, verdicts):
+    """Espía de la comprobación: evaluate_staffings real con lo que pide la CLI, y cada
+    candidata pasa o falla según ``verdicts`` en el orden en que se piden (las que faltan,
+    fallan). Devuelve la lista de llamadas: (semilla, plantillas, réplicas, días, fechas)."""
+    calls = []
+
+    def spy(center, profile, profiles, targets, knob, staffings, **kwargs):
+        calls.append(
+            (
+                kwargs["seed"],
+                [s.staff for s in staffings],
+                kwargs["replicas"],
+                kwargs["days"],
+                kwargs["start_dates"],
+            )
+        )
+        rows = evaluate.evaluate_staffings(
+            center, profile, profiles, targets, knob, staffings, **kwargs
+        )
+        passed = verdicts[len(calls) - 1] if len(calls) <= len(verdicts) else False
+        return tuple(
+            dataclasses.replace(
+                row,
+                results=tuple(
+                    dataclasses.replace(r, within=passed, narrow=passed) for r in row.results
+                ),
+            )
+            for row in rows
+        )
+
+    monkeypatch.setattr("edsim.cli.evaluate_staffings", spy)
+    return calls
+
+
+def chosen_in_csv(out_dir):
+    rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
+    return {(r["manana"], r["tarde"], r["noche"]) for r in rows if r["elegida"] == "True"}
+
+
+def test_la_comprobacion_veta_una_candidata_y_elige_la_siguiente(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [False, True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    # Dos llamadas, una plantilla en cada una, con la semilla de comprobación y el resto
+    # de opciones de la de ajuste.
+    assert [(c[0], len(c[1]), c[2], c[3], c[4]) for c in calls] == [(8, 1, 2, 2, None)] * 2
+    vetoed, chosen = calls[0][1][0], calls[1][1][0]
+    assert vetoed != chosen
+    assert "Comprobación con la semilla 8" in out
+    assert f"{list(vetoed)}".replace(" ", "") in out.replace(" ", "")
+    assert "vetada" in out and "elegida" in out
+    assert "Elección (entre las que pasan pretriaje_medio con las semillas 7 y 8" in out
+    assert f"): {list(chosen)} con u" in out
+    assert chosen_in_csv(out_dir) == {tuple(str(x) for x in chosen)}
+
+
+def test_la_comprobacion_se_pide_solo_hasta_la_primera_que_pasa(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert len(calls) == 1
+    assert "vetada" not in out
+    assert chosen_in_csv(out_dir) == {tuple(str(x) for x in calls[0][1][0])}
+
+
+def test_si_ninguna_pasa_con_las_dos_semillas_codigo_1(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [])
+    targets = targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["calibracion", "sensibilidad", *NURSE_SHORT, *EXAMPLE, "--objetivos", str(targets)]
+        + [*SHORT, "--comprobacion", "8", "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+    rows = read_rows(out_dir / "sensibilidad_enfermeria_triaje.csv")
+    passing = {
+        (r["manana"], r["tarde"], r["noche"])
+        for r in rows
+        if r["objetivo"] == "pretriaje_medio" and r["resultado"] == "pasa"
+    }
+
+    assert code == 1
+    assert len(passing) >= 2  # el caso ocurre: hay más de una candidata que vetar
+    # Se piden todas las que pasan con la de ajuste, y solo esas.
+    assert {tuple(str(x) for x in c[1][0]) for c in calls} == passing
+    assert len(calls) == len(passing)
+    assert "ninguna plantilla de la regla pasa pretriaje_medio con las semillas 7 y 8" in out
+    assert chosen_in_csv(out_dir) == set()
+
+
+def test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas(tmp_path, capsys, monkeypatch):
+    calls = check_spy(monkeypatch, [True])
+    targets = targets_file(tmp_path / "objetivos.toml")
+
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "enfermeria_triaje", *EXAMPLE]
+        + ["--objetivos", str(targets), *ANNUAL_SHORT, "--u-min", "0.85", "--u-max", "0.9"]
+        + ["--comprobacion", "8", "--salida", str(tmp_path / "salida")]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    ((seed, _, replicas, days, dates),) = calls
+    assert (seed, replicas, days) == (8, 12, 2)
+    assert [d.isoformat() for d in dates] == MONDAYS_2026
