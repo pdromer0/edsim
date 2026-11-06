@@ -345,3 +345,45 @@ def test_triage_error_for_da_los_objetivos(arrivals, standard):
 def test_triage_error_for_sin_converger(arrivals):
     with pytest.raises(RuntimeError, match="did not converge"):
         triage_error_for(make_profiles(), arrivals, max_evaluations=1)
+
+
+# --- Densidad de la mezcla (notebook 04, sección 5) -----------------------------------
+
+
+def test_densidad_de_una_mezcla_a_mano():
+    # 0,25 · N(0, 1) y 0,75 · N(2, 0,5) en x = 1: 0,25 · φ(1) + 0,75 · φ(−2) / 0,5
+    # = 0,25 · 0,2419707 + 0,75 · 0,1079819 = 0,0604927 + 0,0809865 = 0,1414791.
+    m = mixture([0.25, 0.75], [0.0, 2.0], [1.0, 0.5])
+
+    assert m.pdf(1.0) == pytest.approx(0.1414791, abs=1e-7)
+    assert m.pdf([0.0, 2.0]) == pytest.approx(
+        [
+            0.25 * stats.norm.pdf(0) + 0.75 * stats.norm.pdf(-4) / 0.5,
+            0.25 * stats.norm.pdf(2) + 0.75 * stats.norm.pdf(0) / 0.5,
+        ],
+        rel=1e-12,
+    )
+
+
+def test_la_densidad_integra_uno():
+    # Necesario pero no basta: una media simple de las densidades, sin los pesos,
+    # también integra 1 (versión incorrecta V7 de la tarea 4.7).
+    m = mixture([0.25, 0.75], [0.0, 2.0], [1.0, 0.5])
+    total, _ = integrate.quad(lambda x: float(m.pdf(x)), -np.inf, np.inf)
+
+    assert total == pytest.approx(1.0, abs=1e-10)
+
+
+def test_la_densidad_da_la_media():
+    m = mixture([0.25, 0.75], [0.0, 2.0], [1.0, 0.5])
+    first, _ = integrate.quad(lambda x: x * float(m.pdf(x)), -np.inf, np.inf)
+
+    assert first == pytest.approx(m.mean, abs=1e-10)  # 1,5
+
+
+def test_densidad_de_la_mezcla_de_un_año(arrivals):
+    m = severity_mixture(make_profiles(), arrivals)
+    total, _ = integrate.quad(lambda x: float(m.pdf(x)), -12, 12, limit=200)
+
+    assert m.pdf(np.zeros((2, 3))).shape == (2, 3)
+    assert total == pytest.approx(1.0, abs=1e-8)

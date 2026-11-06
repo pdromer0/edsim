@@ -14,6 +14,7 @@ from edsim.engine.targets import (
     PRETRIAGE_LONG_WAIT,
     PRETRIAGE_MAX_WAIT,
     PRETRIAGE_TARGET,
+    classified_late,
     clock_quantiles,
     daily_waits,
     manchester_compliance,
@@ -265,3 +266,40 @@ def test_cumplimiento_acumulado_en_el_tramo():
     c = manchester_compliance(table, 0, 2)
     assert c.pooled_within[2] == pytest.approx(17 / 20)
     assert np.isnan(c.pooled_within[0])
+
+
+# --- Clasificados tarde (notebook 04, sección 8) --------------------------------------
+
+
+def test_clasificados_tarde_en_el_borde():
+    # Nivel 2 (máximo 10): pretriaje 4 + triaje 6 = 10, justo en el máximo, no está tarde;
+    # 4,5 + 6 = 10,5 sí. El nivel 1 se clasifica en la puerta, al llegar. Sin pacientes de
+    # los niveles 3 a 5, nan.
+    table = [
+        record(1, DAY + 10, 2, 30, pretriage=4.0, triage=6.0),
+        record(2, DAY + 20, 2, 30, pretriage=4.5, triage=6.0),
+        record(3, DAY + 30, 1, 1),
+    ]
+    late = classified_late(table, 1, 2)
+
+    assert late[:2].tolist() == [0.0, 0.5]
+    assert np.isnan(late[2:]).all()
+
+
+def test_clasificados_tarde_con_otros_maximos_y_fuera_del_tramo():
+    table = [
+        record(1, DAY + 10, 3, 30, pretriage=20.0, triage=5.0),
+        record(2, 10, 3, 30, pretriage=90.0, triage=5.0),  # día 0, fuera del tramo
+        record(3, DAY + 40, 3, 30, pretriage=50.0, triage=5.0, departed=False),  # sigue dentro
+    ]
+
+    assert classified_late(table, 1, 2)[2] == 0.0  # 25 ≤ 60
+    assert classified_late(table, 1, 2, max_wait=(0, 10, 20, 120, 240))[2] == 1.0
+    assert classified_late(table, 0, 2)[2] == 0.5
+
+
+def test_clasificados_tarde_argumentos():
+    with pytest.raises(ValueError, match="max_wait must be 5 values"):
+        classified_late([], 1, 2, max_wait=(0, 10))
+    with pytest.raises(ValueError, match="first_day < end_day"):
+        classified_late([], 2, 2)

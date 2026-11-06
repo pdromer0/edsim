@@ -100,6 +100,13 @@ class SeverityMixture:
         second = (self.weights * (self.sds**2 + self.means**2)).sum()
         return float(np.sqrt(second - self.mean**2))
 
+    def pdf(self, x: ArrayLike) -> NDArray[np.float64]:
+        """Density of G at ``x``: the normal densities of the components, weighted."""
+        x = np.asarray(x, dtype=float)
+        w, m, s = self.weights.ravel(), self.means.ravel(), self.sds.ravel()
+        z = (x[..., None] - m) / s
+        return (np.exp(-0.5 * z**2) / (s * np.sqrt(2 * np.pi))) @ w
+
 
 def severity_mixture(
     profiles: ClinicalProfiles, arrival_profile: ArrivalProfile
