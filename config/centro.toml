@@ -1,14 +1,23 @@
-# Centro base para el motor. Ver docs/specs/hito-3.md.
-# Valores provisionales hasta la calibración del hito 4.
+# Centro base para el motor. Ver docs/specs/hito-3.md y docs/specs/hito-4.md («Calibración»).
+# La plantilla (enfermería de triaje y médicos) está calibrada en la tarea 4.6b; el resto
+# de valores siguen siendo los provisionales del hito 3.
 
 [turnos]
 # Hora de inicio de los turnos de mañana, tarde y noche
 inicio = [8, 15, 22]
 
 [recursos]
-# Plantilla por turno: mañana, tarde, noche
-enfermeria_triaje = [3, 3, 2]
-medicos = [12, 12, 7]
+# Plantilla por turno: mañana, tarde, noche. Calibrada en la tarea 4.6b con la regla de
+# la plantilla equivalente, ⌈carga del turno / u⌉, un u por mando (registro en
+# docs/calibracion/registro.md; antes, [3, 3, 2] y [12, 12, 7]):
+# - enfermería de triaje, contra el pretriaje medio (6-15 min): u de 0,795 a 0,8325;
+#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje
+# - médicos, con esa enfermería, contra el reloj A de los niveles 2 a 5 (35-70 min):
+#   u de 0,81 a 0,8475;
+#   uv run edsim calibracion sensibilidad --mando medicos
+# Comprobación con otra semilla: uv run edsim calibracion evaluar --semilla 2027
+enfermeria_triaje = [3, 2, 1]
+medicos = [12, 11, 5]
 # Capacidad física, igual en todos los turnos
 boxes = 30
 # Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
