@@ -375,3 +375,57 @@ def test_diferencia_en_la_clave(values):
     assert [(d.key, d.before, d.after) for d in center_diff(before, after)] == [
         ("recursos.espera_resultados_fuera", (4, 5), (5,))
     ]
+
+
+# --- Listas de longitud variable: espera_resultados_fuera (revisión del PR #46) ------
+
+WAIT = "recursos.espera_resultados_fuera"
+COMMENT = "  # niveles que esperan los resultados fuera del box"
+
+
+@pytest.fixture
+def base_with_comment(tmp_path):
+    """El centro base con un comentario en la línea de la clave, que debe conservarse."""
+    text = BASE.read_text(encoding="utf-8")
+    line = "espera_resultados_fuera = [4, 5]\n"
+    assert text.count(line) == 1
+    base = tmp_path / "base.toml"
+    base.write_text(text.replace(line, line.rstrip("\n") + COMMENT + "\n"), encoding="utf-8")
+    return base
+
+
+@pytest.mark.parametrize("levels", [[], [5], [2, 4, 5]])
+def test_cambiar_la_longitud_de_la_lista(base_with_comment, tmp_path, levels):
+    # Con otra longitud se sustituye el array entero: antes, [] dejaba [4, 5] en silencio,
+    # [5] escribía [5, 5] y [2, 4, 5] daba IndexError.
+    values = read_center_values(base_with_comment)
+    values[WAIT] = list(levels)
+    destination = write_variant(base_with_comment, values, tmp_path / "draft.toml")
+
+    written = read_center_values(destination)
+    assert written[WAIT] == levels
+    assert center_from_values(written).results_wait_outside == tuple(levels)
+    assert {k: v for k, v in written.items() if k != WAIT} == {
+        k: v for k, v in values.items() if k != WAIT
+    }
+
+
+def test_misma_longitud_se_edita_elemento_a_elemento(base_with_comment, tmp_path):
+    # [4, 5] → [3, 5]: la misma longitud conserva el comentario de la línea.
+    values = read_center_values(base_with_comment)
+    values[WAIT] = [3, 5]
+    destination = write_variant(base_with_comment, values, tmp_path / "draft.toml")
+
+    text = destination.read_text(encoding="utf-8")
+    assert "espera_resultados_fuera = [3, 5]" + COMMENT + "\n" in text
+    assert read_center_values(destination)[WAIT] == [3, 5]
+
+
+def test_la_red_de_seguridad_no_deja_escribir_otro_valor(values, tmp_path, monkeypatch):
+    # Si la escritura con tomlkit perdiera un cambio, la relectura lo ve: ValueError y
+    # ningún fichero, en lugar de una variante que no es la pedida.
+    values["recursos.medicos"][1] = 15
+    monkeypatch.setattr(variants.tomlkit, "dumps", lambda document: BASE.read_text("utf-8"))
+    with pytest.raises(ValueError, match=r"would write recursos\.medicos = \[12, 12, 7\]"):
+        write_variant(BASE, values, tmp_path / "draft.toml")
+    assert list(tmp_path.iterdir()) == []
