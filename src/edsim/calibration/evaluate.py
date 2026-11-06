@@ -436,11 +436,18 @@ def simulate_replicas(
 KNOB_TARGETS: Mapping[str, tuple[tuple[str, ...], str]] = MappingProxyType(
     {
         NURSES: (("pretriaje_medio",), "pretriaje_medio"),
-        DOCTORS: (("tiempo_medico_niveles_2_5", "tiempo_medico_nivel_3"), "tiempo_medico_nivel_3"),
+        DOCTORS: (("tiempo_medico_niveles_2_5",), "tiempo_medico_niveles_2_5"),
     }
 )
-"""The fit targets of each knob, and the one whose reference chooses among the
-staffings that pass (ADR candidate 41, revised)."""
+"""The fit targets of each knob, and the one whose aim (its reference or, without
+one, the centre of its band) chooses among the staffings that pass (ADR candidate
+41, revised).
+
+The doctors were to be fitted also to clock A of level 3 (59.0 minutes, band
+45-75), but the sensitivity showed that no staffing of the rule takes it above
+23 minutes: with a strict priority in one pool of doctors, level 3 hardly waits
+and the waits fall on levels 4 and 5. ``tiempo_medico_nivel_3`` became a check
+target after measuring it (rule 5), and a check never chooses (task 4.6b)."""
 
 _CENTER_FIELD = {NURSES: "triage_nurses", DOCTORS: "doctors"}
 
@@ -453,24 +460,20 @@ def candidate_center(center: CenterConfig, knob: str, staff: Sequence[int]) -> C
 
 
 def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
-    """Check that the targets have the fit targets of ``knob``, with the reference
-    of the one that chooses, before simulating anything.
+    """Check that the targets have the fit targets of ``knob`` before simulating anything.
 
     Raises:
-        ValueError: If a target is missing, is not of fit, or the choosing one
-            has no reference.
+        ValueError: If a target is missing or is not of fit.
     """
     if knob not in KNOBS:
         raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
     by_name = {t.name: t for t in targets}
-    names, chooser = KNOB_TARGETS[knob]
+    names, _ = KNOB_TARGETS[knob]
     for name in names:
         if name not in by_name:
             raise ValueError(f"the knob {knob} needs the target objetivos.{name}")
         if by_name[name].use != FIT:
             raise ValueError(f"objetivos.{name} must be of use {FIT!r} to fit {knob}")
-    if by_name[chooser].reference is None:
-        raise ValueError(f"objetivos.{chooser}.referencia is needed to choose {knob}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,8 +556,9 @@ def sensitivity(
 
 def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow | None:
     """Among the rows that pass every fit target of ``knob``, the one whose mean
-    of the choosing target is closest to its reference; on a tie, the smaller
-    staff. ``None`` if none passes: the choice is never forced.
+    of the choosing target is closest to its aim (``Target.aim``: the reference,
+    or the centre of the band without one); on a tie, the smaller staff. ``None``
+    if none passes: the choice is never forced.
     """
     if knob not in KNOBS:
         raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
@@ -565,9 +569,7 @@ def choose_staffing(rows: Sequence[SensitivityRow], knob: str) -> SensitivityRow
 
     def distance(row: SensitivityRow) -> tuple[float, int]:
         r = row.result(chooser)
-        if r.target.reference is None:
-            raise ValueError(f"objetivos.{chooser}.referencia is needed to choose {knob}")
-        return abs(r.mean - r.target.reference), sum(row.staffing.staff)
+        return abs(r.mean - r.target.aim), sum(row.staffing.staff)
 
     return min(passing, key=distance)
 

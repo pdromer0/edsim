@@ -47,10 +47,18 @@ def test_carga_los_cinco_objetivos_reales_con_su_fuente():
     assert targets["tiempo_medico_nivel_3"].reference == 59.0
     assert targets["porcentaje_sobre_manchester"].threshold == MANCHESTER
     assert targets["porcentaje_pretriaje_mas_5"].threshold == 5.0
-    assert [t.use for t in targets.values()] == [FIT, FIT, FIT, CHECK, CHECK]
+    # El nivel 3 es de comprobación desde la tarea 4.6b, después de medir la sensibilidad.
+    assert [t.use for t in targets.values()] == [FIT, FIT, CHECK, CHECK, CHECK]
+    assert targets["tiempo_medico_nivel_3"].note.startswith("Discrepancia estructural")
     assert all(
         t.source.startswith("SAS") and t.link.startswith("https://") for t in targets.values()
     )
+
+
+def test_lo_que_busca_el_ajuste_es_la_referencia_o_el_centro_de_la_horquilla():
+    targets = {t.name: t for t in load_targets(CONFIG)}
+    assert targets["pretriaje_medio"].aim == 12.4
+    assert targets["tiempo_medico_niveles_2_5"].aim == 52.5  # sin referencia: (35 + 70) / 2
 
 
 def test_umbral_de_manchester_por_nivel():

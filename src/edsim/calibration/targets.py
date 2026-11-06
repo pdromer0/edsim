@@ -160,6 +160,13 @@ class Target:
         return minutes
 
     @property
+    def aim(self) -> float:
+        """The value a fit aims at: the reference or, without one, the centre of the band."""
+        if self.reference is not None:
+            return self.reference
+        return (self.band[0] + self.band[1]) / 2
+
+    @property
     def is_percentage(self) -> bool:
         """Whether the statistic is a percentage of patients."""
         return self.statistic == PERCENTAGE

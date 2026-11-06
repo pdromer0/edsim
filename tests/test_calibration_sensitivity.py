@@ -76,13 +76,19 @@ def test_enfermeria_la_mas_cercana_a_la_referencia_entre_las_que_pasan():
     assert choose_staffing(rows, NURSES).staffing.staff == (3, 3, 1)
 
 
-def test_medicos_tienen_que_pasar_los_dos_objetivos_y_decide_el_nivel_3():
+def test_medicos_eligen_por_el_centro_de_la_horquilla_y_el_nivel_3_no_decide():
+    # Los niveles 2 a 5 no tienen referencia: decide el centro de [35, 70], 52,5. Entre
+    # las que pasan, la de 54,5 (a 2,0) gana a la de 43,8 (a 8,7). La de 52,0 estaría
+    # más cerca, pero no pasa (su IC es más ancho que la horquilla); y la de 30,0 tiene
+    # el nivel 3 más cercano a 59, pero una comprobación no decide el ajuste.
     rows = [
-        row((12, 12, 5), 0.80, [result(CLOCK_A, 30.0, passed=False), result(LEVEL_3, 58.0)]),
-        row((11, 10, 4), 0.90, [result(CLOCK_A, 40.0), result(LEVEL_3, 50.0)]),
-        row((10, 10, 4), 0.95, [result(CLOCK_A, 55.0), result(LEVEL_3, 70.0)]),
+        row((13, 13, 5), 0.72, [result(CLOCK_A, 30.0, passed=False), result(LEVEL_3, 58.0)]),
+        row((12, 12, 5), 0.80, [result(CLOCK_A, 43.8), result(LEVEL_3, 22.0)]),
+        row((12, 11, 5), 0.85, [result(CLOCK_A, 54.5), result(LEVEL_3, 22.9)]),
+        row((12, 11, 4), 0.85, [result(CLOCK_A, 52.0, passed=False), result(LEVEL_3, 29.0)]),
     ]
-    assert choose_staffing(rows, DOCTORS).staffing.staff == (11, 10, 4)
+    assert CLOCK_A.reference is None and CLOCK_A.aim == 52.5
+    assert choose_staffing(rows, DOCTORS).staffing.staff == (12, 11, 5)
 
 
 def test_ninguna_pasa_y_no_se_fuerza():
@@ -114,13 +120,13 @@ def test_el_cumplidor_es_el_de_u_mas_alto_con_todos_los_niveles_al_10_por_ciento
 
 def test_objetivos_de_cada_mando():
     assert KNOB_TARGETS[NURSES] == (("pretriaje_medio",), "pretriaje_medio")
+    assert KNOB_TARGETS[DOCTORS] == (("tiempo_medico_niveles_2_5",), "tiempo_medico_niveles_2_5")
     real = load_targets(ROOT / "config" / "objetivos.toml")
     check_knob_targets(real, NURSES)
     check_knob_targets(real, DOCTORS)
-    with pytest.raises(ValueError, match="needs the target objetivos.tiempo_medico_nivel_3"):
-        check_knob_targets([PRETRIAGE, CLOCK_A], DOCTORS)
-    with pytest.raises(ValueError, match="objetivos.pretriaje_medio.referencia is needed"):
-        check_knob_targets([target("pretriaje_medio")], NURSES)
+    with pytest.raises(ValueError, match="needs the target objetivos.tiempo_medico_niveles_2_5"):
+        check_knob_targets([PRETRIAGE, LEVEL_3], DOCTORS)
+    check_knob_targets([target("pretriaje_medio")], NURSES)  # sin referencia: el centro
     with pytest.raises(ValueError, match="must be of use 'ajuste'"):
         check_knob_targets([target("pretriaje_medio", 12.4, use=CHECK)], NURSES)
     with pytest.raises(ValueError, match="knob must be one of"):

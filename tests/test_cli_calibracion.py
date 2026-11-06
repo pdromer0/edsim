@@ -187,7 +187,10 @@ def test_salida_que_es_un_fichero(command, tmp_path, capsys, monkeypatch):
         (["--mando", "boxes"], "invalid choice: 'boxes'"),
         (["--mando", "medicos", "--u-min", "0.9", "--u-max", "0.8"], "need u_min <= u_max"),
         (["--mando", "medicos", "--paso", "0"], "step must be a number > 0"),
-        (["--mando", "medicos", "--objetivos", "{incomplete}"], "objetivos.tiempo_medico_nivel_3"),
+        (
+            ["--mando", "medicos", "--objetivos", "{incomplete}"],
+            "objetivos.tiempo_medico_niveles_2_5",
+        ),
     ],
 )
 def test_sensibilidad_errores_de_uso(extra, message, tmp_path, capsys, monkeypatch):
@@ -195,7 +198,7 @@ def test_sensibilidad_errores_de_uso(extra, message, tmp_path, capsys, monkeypat
     monkeypatch.setattr("edsim.cli.sensitivity", lambda *a, **k: pytest.fail("simuló"))
     incomplete = targets_file(tmp_path / "objetivos.toml")
     text = incomplete.read_text()
-    incomplete.write_text(text[: text.index("[objetivos.tiempo_medico_nivel_3]")])
+    incomplete.write_text(text[: text.index("[objetivos.tiempo_medico_niveles_2_5]")])
     extra = [str(incomplete) if x == "{incomplete}" else x for x in extra]
     out_dir = tmp_path / "salida"
 
@@ -234,8 +237,8 @@ def test_sensibilidad_codigo_1_si_ninguna_pasa(tmp_path, capsys):
     targets = targets_file(tmp_path / "objetivos.toml")
     targets.write_text(
         targets.read_text().replace(
-            "referencia = 10.0\nhorquilla = [0, 100000]",
-            "referencia = 0.0005\nhorquilla = [0, 0.001]",
+            'estadistico = "media"\nhorquilla = [0, 100000]',
+            'estadistico = "media"\nhorquilla = [0, 0.001]',
         )
     )
     out_dir = tmp_path / "salida"

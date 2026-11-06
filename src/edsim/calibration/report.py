@@ -315,9 +315,10 @@ def format_choice(
         )
     else:
         r = chosen.result(chooser)
+        aim = "la referencia" if r.target.reference is not None else "el centro de la horquilla"
         lines.append(
-            f"Elección (entre las que pasan {', '.join(names)}, la más cercana a la referencia"
-            f" de {chooser}, {r.target.reference:g}): {_staff(chosen.staffing.staff)}"
+            f"Elección (entre las que pasan {', '.join(names)}, la más cercana a {aim} de"
+            f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
             f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
             f" {chooser} {r.mean:.2f}"
         )

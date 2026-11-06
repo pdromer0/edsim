@@ -22,7 +22,8 @@ enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/defa
 nota = "Incluye menores de 15 años"
 
 [objetivos.tiempo_medico_niveles_2_5]
-# Mando: médicos. Reloj A (TPAM del SAS), de la llegada al primer médico.
+# Mando: médicos. Reloj A (TPAM del SAS), de la llegada al primer médico. Sin
+# referencia, la elección busca el centro de la horquilla (52,5 minutos).
 medida = "door_to_doctor"
 niveles = [2, 3, 4, 5]
 estadistico = "media"
@@ -33,16 +34,17 @@ enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/defa
 nota = "Sin referencia única: el SAS da de 35,6 a 68,5 minutos según el nivel. Incluye menores de 15 años"
 
 [objetivos.tiempo_medico_nivel_3]
-# Mando: médicos. Su referencia decide la elección entre las plantillas que pasan.
+# De ajuste a comprobación en la tarea 4.6b (6 de noviembre de 2026), después de
+# medir la sensibilidad: ver la nota. Una comprobación nunca decide el ajuste.
 medida = "door_to_doctor"
 niveles = [3]
 estadistico = "media"
 referencia = 59.0
 horquilla = [45, 75]
-uso = "ajuste"
+uso = "comprobacion"
 fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
 enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
-nota = "Incluye menores de 15 años"
+nota = "Discrepancia estructural: con prioridad estricta en un solo grupo de médicos, el nivel 3 casi no espera (reloj C de 4,4 minutos) y las esperas recaen en los niveles 4 y 5; en los hospitales reales los niveles 4 y 5 suelen tener circuito propio (consultas o vía rápida) y el nivel 3 compite con el 2. Pasó a comprobación después de medir la sensibilidad (regla 5: ninguna plantilla de la regla lo lleva por encima de 22,9 minutos), no antes. Incluye menores de 15 años"
 
 [objetivos.porcentaje_sobre_manchester]
 # % de pacientes con el reloj A por encima del máximo de Manchester de su nivel
