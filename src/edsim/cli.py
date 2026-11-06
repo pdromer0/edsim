@@ -3,12 +3,15 @@
 Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
 ``simulate_arrivals``, ``validate_arrivals``, ``simulate_run``,
-``validate_engine``, ``validate_profiles``) and hands the results to the
-report modules for the tables, the CSV files and the plots.
+``validate_engine``, ``validate_profiles``, ``simulate_replicas``,
+``sensitivity``) and hands the results to the report modules for the tables,
+the CSV files and the plots.
 
 Exit codes: 0 if all goes well; 1 if ``llegadas validar``, ``motor validar``
-or ``perfiles validar`` runs and some check fails, or ``motor simular`` finds a
-broken invariant (the files are written anyway, to find out why); 2 for usage
+or ``perfiles validar`` runs and some check fails, ``motor simular`` finds a
+broken invariant, ``calibracion evaluar`` finds a fit target out of its band or
+``calibracion sensibilidad`` finds no staffing that passes the targets of its
+knob (the files are written anyway, to find out why); 2 for usage
 errors, including a missing or invalid configuration, invalid limits or a
 ``--salida`` that is not a directory, before anything is printed or computed
 and before any file is created.
@@ -31,6 +34,28 @@ from edsim.arrivals.report import (
 )
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
+from edsim.calibration.evaluate import (
+    FIT_SEED,
+    check_knob_targets,
+    choose_staffing,
+    compliant_staffing,
+    sensitivity,
+    simulate_replicas,
+    summarize_targets,
+)
+from edsim.calibration.report import (
+    format_choice,
+    format_evaluation,
+    format_sensitivity_row,
+    sensitivity_header,
+    write_evaluation_csv,
+    write_levels_csv,
+    write_replicas_csv,
+    write_sensitivity_csv,
+)
+from edsim.calibration.staffing import DOCTORS, KNOBS, U_MAX, U_MIN, U_STEP, u_grid
+from edsim.calibration.targets import FIT, load_targets
+from edsim.checks import check_count
 from edsim.engine.center import load_center
 from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
@@ -77,6 +102,12 @@ HOURLY_CENSUS_PLOT = "censo_por_hora.png"
 
 DEFAULT_PROFILES = "config/perfiles.toml"
 PROFILE_PLOTS = tuple(name for name, _ in PLOTS)
+
+DEFAULT_TARGETS = "config/objetivos.toml"
+EVALUATION_CSV = "evaluacion.csv"
+REPLICAS_CSV = "evaluacion_replicas.csv"
+LEVELS_CSV = "evaluacion_niveles.csv"
+SENSITIVITY_CSV = "sensibilidad_{knob}.csv"
 
 
 def parse_rhos(text: str) -> tuple[float, ...]:
@@ -397,6 +428,116 @@ def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser
     return 0 if validation.passed else 1
 
 
+def _load_calibration(args: argparse.Namespace, parser: argparse.ArgumentParser):
+    """Load the four files and check the counts, or stop with code 2 before simulating."""
+    center, args.huella_centro = _load_file(args.centro, "--centro", load_center, parser)
+    profile, args.huella_llegadas = _load_file(args.llegadas, "--llegadas", load_profile, parser)
+    profiles, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
+    targets, args.huella_objetivos = _load_file(args.objetivos, "--objetivos", load_targets, parser)
+    try:
+        check_count("replicas", args.replicas, 2)
+        check_horizon(args.dias, args.calentamiento)
+    except ValueError as error:
+        parser.error(str(error))
+    return center, profile, profiles, targets
+
+
+def _calibration_parameters(args: argparse.Namespace) -> dict:
+    return {
+        "centro": args.centro,
+        "huella_centro": args.huella_centro,
+        "llegadas": args.llegadas,
+        "huella_llegadas": args.huella_llegadas,
+        "perfiles": args.perfiles,
+        "huella_perfiles": args.huella_perfiles,
+        "objetivos": args.objetivos,
+        "huella_objetivos": args.huella_objetivos,
+        "replicas": args.replicas,
+        "dias": args.dias,
+        "calentamiento": args.calentamiento,
+        "semilla": args.semilla,
+    }
+
+
+def _calibration_header(args: argparse.Namespace) -> str:
+    return (
+        f"{_engine_header(args)}\n"
+        f"Perfiles {args.perfiles} (huella {args.huella_perfiles})"
+        f" · objetivos {args.objetivos} (huella {args.huella_objetivos})\n"
+        f"{args.replicas} réplicas de {args.dias} días ({args.calentamiento} de calentamiento"
+        f" y 1 de vaciado) · semilla {args.semilla}"
+    )
+
+
+def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
+    center, profile, profiles, targets = _load_calibration(args, parser)
+    print(f"{_calibration_header(args)}\n", flush=True)
+    replicas = simulate_replicas(
+        center,
+        profile,
+        profiles,
+        targets,
+        replicas=args.replicas,
+        days=args.dias,
+        warmup_days=args.calentamiento,
+        seed=args.semilla,
+    )
+    results = summarize_targets(replicas, targets)
+    print(format_evaluation(results, replicas))
+
+    # The files are written even if a target fails: they help to find out why.
+    out_dir.mkdir(parents=True, exist_ok=True)
+    parameters = _calibration_parameters(args)
+    write_evaluation_csv(results, out_dir / EVALUATION_CSV, parameters)
+    write_replicas_csv(results, replicas, out_dir / REPLICAS_CSV, parameters)
+    write_levels_csv(results, replicas, out_dir / LEVELS_CSV, parameters)
+    print()
+    for name in (EVALUATION_CSV, REPLICAS_CSV, LEVELS_CSV):
+        print(f"CSV: {out_dir / name}")
+    return 1 if any(r.target.use == FIT and not r.passed for r in results) else 0
+
+
+def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    out_dir = _output_dir(args, parser)
+    center, profile, profiles, targets = _load_calibration(args, parser)
+    try:
+        check_knob_targets(targets, args.mando)
+        u_grid(args.u_min, args.u_max, args.paso)
+    except ValueError as error:
+        parser.error(str(error))
+    print(
+        f"{_calibration_header(args)}\nSensibilidad del mando {args.mando} con u de"
+        f" {args.u_min:g} a {args.u_max:g} en pasos de {args.paso:g}; el otro mando, como en"
+        f" el centro\n\n{sensitivity_header(targets, args.mando)}",
+        flush=True,
+    )
+    rows = sensitivity(
+        center,
+        profile,
+        profiles,
+        targets,
+        args.mando,
+        replicas=args.replicas,
+        days=args.dias,
+        warmup_days=args.calentamiento,
+        seed=args.semilla,
+        u_min=args.u_min,
+        u_max=args.u_max,
+        step=args.paso,
+        on_row=lambda row: print(format_sensitivity_row(row, args.mando), flush=True),
+    )
+    chosen = choose_staffing(rows, args.mando)
+    compliant = compliant_staffing(rows) if args.mando == DOCTORS else None
+    print(f"\n{format_choice(args.mando, chosen, compliant)}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / SENSITIVITY_CSV.format(knob=args.mando)
+    write_sensitivity_csv(rows, args.mando, chosen, compliant, path, _calibration_parameters(args))
+    print(f"\nCSV: {path}")
+    return 0 if chosen is not None else 1
+
+
 def _add_engine_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--centro",
@@ -409,6 +550,58 @@ def _add_engine_options(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_CONFIG,
         metavar="FICHERO",
         help="perfil de llegadas en TOML (por defecto: %(default)s)",
+    )
+
+
+def _add_calibration_options(parser: argparse.ArgumentParser) -> None:
+    _add_engine_options(parser)
+    parser.add_argument(
+        "--perfiles",
+        default=DEFAULT_PROFILES,
+        metavar="FICHERO",
+        help="perfiles clínicos en TOML (por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--objetivos",
+        default=DEFAULT_TARGETS,
+        metavar="FICHERO",
+        help="objetivos de calibración en TOML (por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--replicas",
+        type=int,
+        default=10,
+        metavar="R",
+        help="réplicas, cada una con un hijo de la semilla (por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--dias",
+        type=int,
+        default=14,
+        metavar="N",
+        help="días completos de cada réplica, con el calentamiento y sin el día de vaciado "
+        "(por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--calentamiento",
+        type=int,
+        default=2,
+        metavar="N",
+        help="días completos de calentamiento, fuera de la ventana (por defecto: %(default)s)",
+    )
+    parser.add_argument(
+        "--semilla",
+        type=int,
+        default=FIT_SEED,
+        metavar="N",
+        help="semilla maestra: la de ajuste es 2026 y la de comprobación, 2027 (por defecto: "
+        "%(default)s)",
+    )
+    parser.add_argument(
+        "--salida",
+        default="resultados/calibracion",
+        metavar="DIR",
+        help="directorio de salida; se crea si no existe (por defecto: %(default)s)",
     )
 
 
@@ -457,7 +650,8 @@ def _add_output_options(parser: argparse.ArgumentParser, *, output_help: str | N
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the ``edsim`` parser: ``mm1``, ``llegadas``, ``motor`` and ``perfiles``."""
+    """Build the ``edsim`` parser: ``mm1``, ``llegadas``, ``motor``, ``perfiles`` and
+    ``calibracion``."""
     parser = argparse.ArgumentParser(
         prog="edsim",
         description="Simulador de urgencias hospitalarias que genera datos "
@@ -674,6 +868,66 @@ def build_parser() -> argparse.ArgumentParser:
     profiles_validate.set_defaults(
         handler=_validate_profiles, subparser=profiles_validate, salida="resultados/perfiles"
     )
+
+    calibration = commands.add_parser(
+        "calibracion",
+        help="calibración del centro base: evaluación y sensibilidad",
+        description="Calibración del centro base contra los objetivos de config/objetivos.toml "
+        "(hito 4).",
+    )
+    calibration_actions = calibration.add_subparsers(dest="accion", required=True, metavar="accion")
+    evaluate = calibration_actions.add_parser(
+        "evaluar",
+        help="compara el centro con los objetivos en varias réplicas",
+        description="Simula R réplicas del modelo clínico con números aleatorios comunes (un "
+        "día de vaciado después de la ventana) y compara cada objetivo con su horquilla: "
+        "media entre réplicas, IC al 95 % con la t de Student, porcentaje de días fuera y "
+        "resultado (pasa si la media cae dentro y el IC no es más ancho que la horquilla). "
+        f"Guarda {EVALUATION_CSV}, {REPLICAS_CSV} y {LEVELS_CSV}. Termina con código 1 si "
+        "falla algún objetivo de ajuste; los de comprobación se informan.",
+    )
+    _add_calibration_options(evaluate)
+    evaluate.set_defaults(handler=_evaluate_calibration, subparser=evaluate)
+
+    sensitivity_parser = calibration_actions.add_parser(
+        "sensibilidad",
+        help="evalúa las plantillas de la regla para un mando",
+        description="Evalúa todos los objetivos con cada plantilla distinta que da la regla de "
+        "la plantilla equivalente (⌈carga del turno / u⌉) para un mando, con el otro mando "
+        "como en el centro, e indica la elección (la más cercana a la referencia entre las "
+        "que pasan) y, para los médicos, el centro cumplidor. Guarda "
+        f"{SENSITIVITY_CSV.format(knob='<mando>')}. Termina con código 1 si ninguna plantilla "
+        "pasa los objetivos del mando.",
+    )
+    sensitivity_parser.add_argument(
+        "--mando",
+        required=True,
+        choices=KNOBS,
+        help="mando que se mueve: enfermeria_triaje o medicos",
+    )
+    sensitivity_parser.add_argument(
+        "--u-min",
+        type=float,
+        default=U_MIN,
+        metavar="U",
+        help="u más bajo de la rejilla (por defecto: %(default)s)",
+    )
+    sensitivity_parser.add_argument(
+        "--u-max",
+        type=float,
+        default=U_MAX,
+        metavar="U",
+        help="u más alto de la rejilla (por defecto: %(default)s)",
+    )
+    sensitivity_parser.add_argument(
+        "--paso",
+        type=float,
+        default=U_STEP,
+        metavar="P",
+        help="paso de la rejilla de u (por defecto: %(default)s)",
+    )
+    _add_calibration_options(sensitivity_parser)
+    sensitivity_parser.set_defaults(handler=_calibration_sensitivity, subparser=sensitivity_parser)
 
     return parser
 
