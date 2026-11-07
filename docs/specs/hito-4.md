@@ -1639,3 +1639,71 @@ La sección 12 dio un reloj A de 73,5 min en 28 días y la ejecución de 91 día
 - Tarea 4.6c: recalibrar con una réplica por mes, de modo que la media sea la del año, y rehacer con la plantilla nueva las cifras del notebook 04, el registro y la especificación.
 - Menor: el cumplidor decidido con enteros (`compliant_staffing`).
 - Tarea 4.8a, después de la 4.6c.
+
+### Tarea 4.6c: recalibración con la ventana anual
+
+**Qué se hizo**
+
+PR #50 (rama `feat/h4-recalibracion-anual`): diez commits y dos de la revisión. El agente paró dos veces antes de escribir `config/`, como pedía el prompt, y Pedro decidió con las tablas delante.
+
+- `calibration/window.py`: la ventana anual (12 réplicas, la m desde el primer lunes del mes m+1, con el hijo m de la semilla) y la ventana `inicio` de la 4.6b; `with_start_date` cambia solo la fecha del perfil.
+- `evaluate.py`: `simulate_replicas`, `evaluate_staffings` y `sensitivity` con `start_dates`; `pooled_value` (media por paciente del año, informativa); el cumplidor con días enteros (`Fraction(1, 10)`, `complies`); `choose_staffing(…, check=…)` con el veto de la semilla de comprobación; `CONFIRMATION_SEED = 2028`.
+- CLI: `--ventana {anual,inicio}` en `calibracion evaluar` y `sensibilidad`, el perfil por mes y la media por paciente; en la revisión, `sensibilidad --comprobacion SEMILLA`, que aplica el veto.
+- `config/centro.toml`: médicos `[12, 11, 5]` → `[12, 11, 4]` (la enfermería sigue en `[3, 2, 1]`); `config/centro_cumplidor.toml`: `[15, 15, 6]` → `[14, 14, 6]`. `tests/data/centro_4_6b.toml` guarda el centro de antes para los tests de reproducción.
+- Registro (sección de la 4.6c con las sensibilidades, el veto, el perfil por mes, enero y el cumplidor), especificación y notebook 04 con la plantilla nueva.
+
+**Conceptos**
+
+- **La ventana representa lo que mide el objetivo.** Los objetivos del SAS son medias anuales: una réplica por mes hace que la media de las réplicas sea la del año. El IC entre réplicas incluye la variación entre meses y es conservador.
+- **Números comunes con fechas.** El hijo m de la semilla y su fecha son la réplica m para todos los candidatos; el hijo i es el mismo pidas 10 o 12, así que enero reproduce bit a bit la réplica 0 de la 4.6b.
+- **Una normalización que no es idempotente.** `dataclasses.replace` vuelve a pasar por `__post_init__`, que normaliza los factores otra vez y los mueve en el último bit; por eso la fecha se cambia sin reconstruir el perfil.
+- **Escalones de la regla.** Con una plantilla de números enteros, el paso de 5 a 4 médicos de noche lleva la ocupación nominal de 0,68 a 0,85 (0,93 en enero): el reloj A anual salta de 28 a 42 min y no hay nada en medio.
+- **Comprobar no es elegir, pero puede vetar.** Una plantilla que solo pasa con la semilla de ajuste está en el borde por azar. Si la comprobación interviene en la elección, deja de ser independiente y hace falta otra semilla.
+- **Las colas se arrastran entre turnos.** Con dos enfermeras de mañana, la cola de la mañana llega a la noche aunque la noche no cambie: la regla del día medio no lo ve.
+
+**Decisiones**
+
+- Opción (a): una réplica por mes, desde el primer lunes, con los mismos 14 días, calentamiento, día de vaciado y regla de elección.
+- Decisión 41 revisada: la semilla de comprobación (2027) puede vetar la elegida con la de ajuste (2026), y entonces se toma la siguiente candidata que pase con las dos; la confirmación independiente pasa a 2028.
+- Primera parada (la regla estricta, `[2, 2, 1]` + `[12, 11, 4]`, con enero en 123,9 min, censurados en enero y el pretriaje de noche peor): se siguió la regla, porque las alarmas eran del chat y el resultado era coherente. Segunda parada: `[2, 2, 1]` falló el pretriaje con 2027 (15,16 \[10,61; 19,71\]) y el veto dejó `[3, 2, 1]`.
+- Plantilla igual todo el año: enero cerca de la saturación queda escrito como rasgo conocido; el refuerzo de invierno, para versiones posteriores.
+- El cumplidor se decide con días enteros sumados en las réplicas.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Centro de la 4.6b con la ventana anual | Pretriaje 6,78 \[5,49; 8,06\]; reloj A de los niveles 2 a 5, 27,75 \[19,12; 36,38\]: fuera por abajo (la predicción del chat, 26–36) |
+| Enfermería, sensibilidad con 2026 | `[3, 3, 1]` 3,54 ✗; `[3, 2, 1]` 6,78 ✓; `[2, 2, 1]` 13,21 ✓ (la regla la elige); con 2027, `[2, 2, 1]` 15,16 ✗ (vetada) y `[3, 2, 1]` 7,86 ✓ |
+| Médicos, sensibilidad con `[3, 2, 1]` | Solo `[12, 11, 4]` pasa (42,10 \[28,02; 56,18\], u = 0,85); `[12, 11, 5]` 27,75 y `[11, 11, 4]` 50,23 con un IC de 44,87 de ancho |
+| `[3, 2, 1]` + `[12, 11, 4]` con 2026 / 2027 / 2028 | Pretriaje 6,78 / 7,86 / 7,76; reloj A 42,10 / 43,29 / 41,20; % sobre Manchester 16,13 / 16,79 / —; censurados 8 en enero (0,20 %) / 0 / 0 |
+| Reloj A por mes (2026) | Enero 105,2, febrero 58,7, agosto 24,6 (el más bajo); con 2027, enero 78,6 y noviembre 62,3 |
+| Pretriaje de noche, ventana anual | `[3, 2, 1]` 15,6 min (enero 23,8); `[2, 2, 1]` 18,4 (enero 38,7) |
+| Cumplidor | `[14, 14, 6]`: 1/144, 0/144, 2/144 y 6/142 días fuera en los niveles 2 a 5; reloj A 15,65. Con `--ventana inicio`, la regla con enteros sigue eligiendo `[15, 15, 6]` |
+| Notebook 04, ejecución principal (enero a abril) | Reloj A de los niveles 2 a 5, 82,0 min; nivel 5, 627; la semana del 19 al 25 de enero, 129 pacientes esperando médico a las 8:00 y 3897 min en el nivel 5 (sin abandono, que llega en el hito 5) |
+| Tiempos | Una evaluación anual, 36 s; sensibilidad de la enfermería, 3 min 13 s, y de los médicos, unos 16 min; notebook 04, 6 min 15 s y 603 MB (rápido, 13 s) |
+| Tests | 2.674 en 14 min 18 s (antes de la revisión); 241 de la app en 2 min 8 s, sin cambios |
+
+**Comprobación de las versiones incorrectas**
+
+Seis. V5 (el cumplidor con la media de proporciones) y V6 (elegir sin mirar la comprobación) fueron exactas. V2 a V4 se cumplieron con fallos de más explicados (sobre todo el espía). V1 (el día 1 del mes en lugar del primer lunes) no se cumplió a la primera: la fixture de julio y diciembre escribía los lunes a mano, así que no veía la función; se cambió para tomar las fechas de `window_start_dates` y la repetición se cumplió. La tabla completa está en «Tests y validación».
+
+**Revisión**
+
+Dos ajustes. La CLI no aplicaba el veto: `calibracion sensibilidad` imprimía «Elección: \[2, 2, 1\]», contra la plantilla escrita; se añadió `--comprobacion SEMILLA`, que evalúa solo las candidatas que hacen falta, y los comentarios de `centro.toml` usan ese comando. Y una frase en el registro, la especificación y el notebook: los 3897 min del nivel 5 en la peor semana de enero no son realistas porque el modelo aún no tiene abandono sin ser visto.
+
+**Lecciones aprendidas**
+
+- Las alarmas de un prompt son para detectar un resultado roto: cuando saltan, se mira el resultado antes de obedecerlas o descartarlas.
+- Una plantilla que pasa solo con una semilla está en el borde; la semilla de comprobación sirve para descubrirlo, y si decide, hace falta otra.
+- Un valor recalculado (la normalización del perfil) puede no ser idempotente: para comparar bit a bit, no reconstruir.
+- Una fixture con los valores esperados escritos a mano no prueba la función que los calcula: la V1 lo destapó.
+- Un valor escrito en `config/` tiene que salir de un solo comando; si la regla cambia (el veto), la CLI cambia con ella.
+- Una plantilla anual y un modelo sin abandono amplifican enero: el realismo de las colas largas depende de lo que el modelo todavía no tiene.
+
+**Pendiente**
+
+- Refuerzo de invierno (plantilla por mes en el motor y en la regla), para versiones posteriores.
+- Hito 5: con el abandono, volver a mirar la semana del 19 al 25 de enero de la semilla 2026.
+- Menor: la normalización del perfil de llegadas no es idempotente (`dataclasses.replace`).
+- `fecha_inicio` es el 5 de enero: las ejecuciones por defecto caen en el mes de más carga (ver la pestaña de la app).
