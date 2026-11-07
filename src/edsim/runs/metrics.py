@@ -80,8 +80,12 @@ class WindowCompliance:
     by_level: tuple[LevelCompliance, ...]
 
 
-APP_COMPLIANCE_MEASURE = "door_to_doctor"
-"""Default clock of ``window_compliance``: A, what the app shows until task 4.8b passes C."""
+APP_COMPLIANCE_MEASURE = "classified_to_doctor"
+"""Default clock of ``window_compliance``: C, from the classification (decision 40).
+
+Clock A until task 4.9, so that the app did not change before it passed C itself
+(task 4.8b); the name stays because it is public. ``RunResults.compliance`` uses it.
+"""
 
 
 def window_compliance(
@@ -94,9 +98,8 @@ def window_compliance(
     """Use Manchester's daily targets in [first_day, end_day), pooling patients.
 
     ``measure`` is the clock, a name of ``CLOCKS``. Its default is
-    ``APP_COMPLIANCE_MEASURE`` (clock A), passed explicitly so that the default
-    of ``manchester_compliance`` (clock C) does not change the app; task 4.8b
-    passes ``classified_to_doctor`` with its labels.
+    ``APP_COMPLIANCE_MEASURE``, clock C since task 4.9, as in
+    ``manchester_compliance``; ``door_to_doctor`` gives clock A, as before.
     """
     daily = manchester_compliance(table, first_day, end_day, measure=measure)
     done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)

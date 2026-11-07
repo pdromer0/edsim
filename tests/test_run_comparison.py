@@ -71,7 +71,9 @@ def test_each_pairing_blocker(comparison_runs, field, value):
 
 
 def test_draw_effects_are_exhaustive_and_immutable():
-    assert DRAW_EFFECTS.keys() == read_center_values("config/centro.toml").keys()
+    # Las doce claves del centro: el de la sala de ejemplo las tiene todas (config/centro.toml
+    # no tiene el bloque provisional desde la tarea 4.9).
+    assert DRAW_EFFECTS.keys() == read_center_values("tests/data/centro_sala_ejemplo.toml").keys()
     assert DRAW_EFFECTS["triaje.reparto_niveles"] == {"level", "needs_tests", "admitted"}
     for key in (
         "turnos.inicio",

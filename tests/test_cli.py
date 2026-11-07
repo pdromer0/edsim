@@ -1,5 +1,6 @@
 import csv
 import dataclasses
+import json
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
@@ -436,7 +437,7 @@ ENGINE_CENTER = Path(__file__).parent / "data" / "centro_ejemplo.toml"
 ENGINE_FILES = ("eventos.jsonl", "ground_truth_episodios.csv", "ground_truth_dias.csv")
 ENGINE_PLOTS = ("censo.png", "esperas_por_nivel.png", "mg1.png", "censo_por_hora.png")
 # Corridas mínimas: aquí se prueba la CLI, no el motor.
-SIMULATE_ARGS = [
+ENGINE_ARGS = [
     "--centro",
     str(ENGINE_CENTER),
     "--llegadas",
@@ -448,6 +449,9 @@ SIMULATE_ARGS = [
     "--semilla",
     "7",
 ]
+# Desde la tarea 4.9, motor simular usa el modelo clínico por defecto; estos tests de la
+# CLI comparan con simulate_ed sin perfiles, el modelo provisional.
+SIMULATE_ARGS = [*ENGINE_ARGS, "--provisional"]
 ENGINE_VALIDATE_ARGS = ["--centro", str(ENGINE_CENTER), "--llegadas", str(EXAMPLE)]
 
 
@@ -838,7 +842,7 @@ def test_simular_con_perfiles_dice_el_modelo_y_la_huella(tmp_path, capsys):
     out_dir = tmp_path / "salida"
 
     code = main(
-        ["motor", "simular", *SIMULATE_ARGS, "--perfiles", str(PROFILES), "--salida", str(out_dir)]
+        ["motor", "simular", *ENGINE_ARGS, "--perfiles", str(PROFILES), "--salida", str(out_dir)]
     )
     out = capsys.readouterr().out
 
@@ -852,7 +856,7 @@ def test_simular_con_perfiles_dice_el_modelo_y_la_huella(tmp_path, capsys):
     assert (out_dir / "perfiles.toml").read_bytes() == PROFILES.read_bytes()
 
 
-def test_simular_sin_perfiles_dice_el_modelo_provisional(tmp_path, capsys):
+def test_simular_con_provisional_dice_el_modelo_provisional(tmp_path, capsys):
     code = main(["motor", "simular", *SIMULATE_ARGS, "--salida", str(tmp_path / "salida")])
 
     assert code == 0
@@ -877,7 +881,7 @@ def test_simular_con_perfiles_invalidos_es_un_error_de_uso(kind, tmp_path, capsy
             [
                 "motor",
                 "simular",
-                *SIMULATE_ARGS,
+                *ENGINE_ARGS,
                 "--perfiles",
                 str(profiles),
                 "--salida",
@@ -893,6 +897,78 @@ def test_simular_con_perfiles_invalidos_es_un_error_de_uso(kind, tmp_path, capsy
     assert sorted(p.name for p in tmp_path.iterdir()) == (
         [] if kind == "missing" else ["perfiles.toml"]
     )
+
+
+# --- Modelo clínico por defecto y --provisional (tarea 4.9) ----------------------------
+
+
+def test_simular_sin_opciones_escribe_una_ejecucion_clinica(monkeypatch, tmp_path, capsys):
+    # Sin --perfiles ni --provisional: el modelo clínico con config/perfiles.toml (copia,
+    # huella y catálogo versión 3), como con --perfiles.
+    monkeypatch.chdir(REPO)
+    out_dir = tmp_path / "salida"
+
+    code = main(
+        ["motor", "simular", "--dias", "1", "--calentamiento", "0", "--salida", str(out_dir)]
+    )
+    header = capsys.readouterr().out.splitlines()
+
+    assert code == 0
+    fingerprint = config_fingerprint("config/perfiles.toml")
+    assert header[1] == f"Modelo clínico · perfiles config/perfiles.toml (huella {fingerprint})"
+    metadata = json.loads((out_dir / "run.json").read_text())
+    assert metadata["model"] == "clinico"
+    assert metadata["clinical_profiles_path"] == "config/perfiles.toml"
+    assert metadata["clinical_profiles_fingerprint"] == fingerprint
+    assert (out_dir / "perfiles.toml").read_bytes() == (
+        REPO / "config" / "perfiles.toml"
+    ).read_bytes()
+    events = list(read_events(out_dir / "eventos.jsonl"))
+    assert events and {e.schema_version for e in events} == {3}
+
+
+def test_provisional_y_perfiles_a_la_vez_es_un_error_de_argparse(tmp_path, capsys):
+    out_dir = tmp_path / "salida"
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            [
+                "motor",
+                "simular",
+                *SIMULATE_ARGS,
+                "--perfiles",
+                str(PROFILES),
+                "--salida",
+                str(out_dir),
+            ]
+        )
+    captured = capsys.readouterr()
+
+    assert exit_info.value.code == 2
+    assert "--perfiles" in captured.err and "--provisional" in captured.err
+    assert "not allowed with argument" in captured.err
+    assert captured.out == ""
+    assert not out_dir.exists()
+
+
+def test_validar_motor_usa_por_defecto_el_centro_del_provisional(
+    monkeypatch, tmp_path, capsys, engine_validation_pequena
+):
+    # config/centro.toml no tiene el bloque provisional: motor validar, que valida el motor
+    # con el modelo provisional, usa por defecto tests/data/centro_ejemplo.toml.
+    monkeypatch.chdir(REPO)
+    calls = []
+
+    def fake(*args, **kwargs):
+        calls.append((args, kwargs))
+        return engine_validation_pequena
+
+    monkeypatch.setattr("edsim.cli.validate_engine", fake)
+
+    assert main(["motor", "validar", "--salida", str(tmp_path)]) == 0
+    ((args, _),) = calls
+    assert args[0] == load_center(REPO / "tests" / "data" / "centro_ejemplo.toml")
+    out = capsys.readouterr().out
+    assert out.startswith("Motor · centro tests/data/centro_ejemplo.toml (huella ")
 
 
 # --- perfiles validar (tarea 4.5b) ----------------------------------------------------------

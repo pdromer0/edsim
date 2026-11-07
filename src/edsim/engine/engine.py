@@ -209,7 +209,10 @@ def simulate_ed(
     """Simulate the emergency department for ``days`` full days.
 
     Args:
-        center: Staff, boxes and the provisional clinical model.
+        center: Shifts, staff, boxes and destination. Without ``profiles``,
+            also the provisional block (``[triaje]``, ``[duraciones]`` and
+            ``[pruebas]``), which the provisional model needs, as
+            ``tests/data/centro_ejemplo.toml``.
         profile: Arrival profile; its ``start_date`` is minute 0 of the log.
         days: Horizon in full days, warm-up included; a positive integer.
         seed: Seed of the run: an integer or a ``SeedSequence``, which is not
@@ -225,7 +228,9 @@ def simulate_ed(
         profiles: Clinical profiles. With them, the patients come from a
             ``ClinicalSampler`` with streams 1 to 7 of ``child_streams(seed,
             8)`` and the log is of version 3; without them, the provisional
-            model, exactly as before (ADR candidate 44).
+            model, exactly as before (ADR 0044). The CLI uses the clinical
+            model by default since task 4.9; this function keeps the
+            profiles explicit.
 
     Returns:
         The run identifier, the ground truth, the patients still inside and
@@ -233,8 +238,9 @@ def simulate_ed(
 
     Raises:
         ValueError: If ``days`` is not a positive integer, ``warmup_days`` is
-            not an integer in [0, ``days``), or both ``sampler`` and
-            ``profiles`` are given.
+            not an integer in [0, ``days``), both ``sampler`` and
+            ``profiles`` are given, or the provisional model gets a center
+            without the provisional block.
     """
     days, warmup_days = check_horizon(days, warmup_days)
     if sampler is not None and profiles is not None:

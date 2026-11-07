@@ -109,6 +109,27 @@ def simulation_files(tmp_path, monkeypatch):
     st.cache_resource.clear()
 
 
+def write_center_with_provisional_block(base: Path, destination: Path) -> Path:
+    """Write ``base`` plus the provisional tables of ``tests/data/centro_ejemplo.toml``.
+
+    Since task 4.9, ``config/centro.toml`` has no ``[triaje]``, ``[duraciones]`` or
+    ``[pruebas]``. Tests that edit those keys build a base with them in a temporary
+    directory, never in ``config/`` or ``tests/data/``.
+    """
+    example = Path("tests/data/centro_ejemplo.toml").read_text(encoding="utf-8")
+    block = example[example.index("[triaje]") : example.index("[destino]")]
+    destination.write_text(base.read_text(encoding="utf-8") + "\n" + block, encoding="utf-8")
+    return destination
+
+
+@pytest.fixture
+def provisional_block_center(simulation_files):
+    """The isolated center plus the provisional block, as a temporary base for variants."""
+    return write_center_with_provisional_block(
+        simulation_files / "centro.toml", simulation_files / "centro-con-bloque.toml"
+    )
+
+
 @pytest.fixture
 def center_template(simulation_files):
     """Read the actual isolated center independently of the application loader."""
@@ -162,13 +183,15 @@ def clinical_run_templates(tmp_path_factory):
     values["recursos.medicos"][2] += 1
     staff = root / "staff.toml"
     write_variant(source, values, staff)
-    values = read_center_values(source)
+    # The absurd provisional values need a base with the provisional block (task 4.9).
+    with_block = write_center_with_provisional_block(source, root / "with-block.toml")
+    values = read_center_values(with_block)
     values["triaje.reparto_niveles"] = [96, 1, 1, 1, 1]
     for field in ("triaje", "valoracion", "reevaluacion", "respuesta_pruebas"):
         values[f"duraciones.{field}"] = [500, 1000]
     values["pruebas.probabilidad"] = [0] * 5
     absurd = root / "absurd.toml"
-    write_variant(source, values, absurd)
+    write_variant(with_block, values, absurd)
     document = tomlkit.parse(Path("config/perfiles.toml").read_text())
     document["motivos"]["disnea"]["peso_base"] *= 1.5
     flu = root / "flu.toml"
@@ -178,7 +201,9 @@ def clinical_run_templates(tmp_path_factory):
         ("staff", staff, "config/perfiles.toml"),
         ("flu", source, flu),
         ("absurd", absurd, "config/perfiles.toml"),
-        ("provisional", source, None),
+        # The provisional model needs the provisional block, which config/centro.toml lacks
+        # since task 4.9: its center is tests/data/centro_ejemplo.toml.
+        ("provisional", Path("tests/data/centro_ejemplo.toml"), None),
     ):
         simulate_run(
             center,

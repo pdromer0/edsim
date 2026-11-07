@@ -23,3 +23,7 @@ No se documentaron alternativas.
 
 - La marca está registrada en `pyproject.toml` con `--strict-markers`. Se comprobó con una marca mal escrita a propósito: sin esa opción, un error de tecleo convertiría en silencio un test lento en rápido.
 - [CLAUDE.md](../../CLAUDE.md) recoge los dos comandos: `uv run pytest`, con todos los tests, y `uv run pytest -m "not slow"`, con los rápidos.
+
+## Nota de actualización (2026-11-07)
+
+La [ADR 0047](0047-tests-por-niveles.md) matiza esta decisión (tarea P.1). Los tests estadísticos siguen marcados `slow` y el registro de la marca con `--strict-markers` no cambia, pero ya no es el hook el que los omite en cada turno: el `Stop` ejecuta la rápida con sello (`scripts/tests-rapidos.sh`), solo de las suites que afectan los cambios desde su último verde y nada en modo plan, y los `slow` corren antes de cada push (`scripts/tests-completos.sh`) y en el CI.

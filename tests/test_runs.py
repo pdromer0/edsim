@@ -514,6 +514,9 @@ def test_cli_and_service_share_artifact_format(simulate, tmp_path, monkeypatch):
             [
                 "motor",
                 "simular",
+                # simulate() es el modelo provisional; la CLI usa el clínico por defecto
+                # desde la tarea 4.9.
+                "--provisional",
                 "--centro",
                 "tests/data/centro_ejemplo.toml",
                 "--llegadas",

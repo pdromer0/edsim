@@ -93,7 +93,8 @@ def test_manchester_integer_counts_exact_threshold_immediate_and_weighted_days(s
     # Add a second day with fewer level-2 patients: patient shares and day shares differ.
     extra = dataclasses.replace(table[2], episode_id="EP-000010", arrival=3000, door_to_doctor=10)
     immediate_late = dataclasses.replace(table[3], episode_id="EP-000011", door_to_doctor=0.001)
-    result = window_compliance((*table, extra, immediate_late), 1, 3)
+    # The sample sets door_to_doctor by hand: clock A, explicit since task 4.9.
+    result = window_compliance((*table, extra, immediate_late), 1, 3, measure="door_to_doctor")
     immediate, level2, *empty = result.by_level
     assert (immediate.n, immediate.exceeded, immediate.exceeded_share) == (2, 1, 0.5)
     assert (level2.n, level2.exceeded, level2.exceeded_share) == (3, 1, 1 / 3)
@@ -109,9 +110,10 @@ def test_manchester_integer_counts_exact_threshold_immediate_and_weighted_days(s
     assert len(empty) == 3
 
 
-def test_manchester_of_the_app_still_uses_door_to_doctor():
+def test_manchester_of_runs_uses_classified_to_doctor_by_default():
     # Level 2 (maximum 10): arrives 1500, triage 1502-1507, doctor at 1512. Clock A is
-    # 12 (exceeded), clock C only 5. The app keeps clock A until task 4.8a.
+    # 12 (exceeded), clock C only 5. Since task 4.9 the default is clock C; clock A is
+    # still available explicitly.
     events = build(
         [
             (1500, 0, "patient_arrived", {}),
@@ -123,8 +125,11 @@ def test_manchester_of_the_app_still_uses_door_to_doctor():
         ]
     )
     result = window_compliance(episode_table(events), 1, 2)
-    assert result.daily.measure == "door_to_doctor"
+    assert result.daily.measure == "classified_to_doctor"
     level_2 = result.by_level[1]
+    assert (level_2.n, level_2.exceeded, level_2.share_out) == (1, 0, 0.0)
+    clock_a = window_compliance(episode_table(events), 1, 2, measure="door_to_doctor")
+    level_2 = clock_a.by_level[1]
     assert (level_2.n, level_2.exceeded, level_2.share_out) == (1, 1, 1.0)
 
 

@@ -42,11 +42,14 @@ def list_variants(root: str | Path) -> tuple[Path, ...]:
 
 @dataclass(frozen=True, slots=True)
 class CenterDifference:
-    """One changed TOML key and its normalized values, before and after."""
+    """One changed TOML key and its normalized values, before and after.
+
+    ``None`` is a field of the provisional block in a center without it (task 4.9).
+    """
 
     key: str
-    before: int | float | tuple[int | float, ...]
-    after: int | float | tuple[int | float, ...]
+    before: int | float | tuple[int | float, ...] | None
+    after: int | float | tuple[int | float, ...] | None
 
 
 def center_diff(a: CenterConfig, b: CenterConfig) -> tuple[CenterDifference, ...]:
@@ -54,13 +57,15 @@ def center_diff(a: CenterConfig, b: CenterConfig) -> tuple[CenterDifference, ...
 
     Only shares undergo arithmetic during normalization. An absolute tolerance
     of 1e-15 (about five float64 epsilons on [0, 1]) absorbs roundoff from
-    percentage/fraction conversions; other fields are compared exactly.
+    percentage/fraction conversions; other fields are compared exactly. A
+    center with the provisional block and one without it differ in its six
+    fields, with ``None`` on the side without it.
     """
     differences = []
     for key, field in _KEYS.items():
         before, after = getattr(a, field), getattr(b, field)
         equal = before == after
-        if field == "level_shares":
+        if field == "level_shares" and before is not None and after is not None:
             equal = all(
                 math.isclose(x, y, rel_tol=0, abs_tol=1e-15)
                 for x, y in zip(before, after, strict=True)

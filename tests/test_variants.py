@@ -25,9 +25,12 @@ from edsim.runs import (
     write_variant,
 )
 
-BASE = Path(__file__).parents[1] / "config" / "centro.toml"
-# La plantilla de médicos de config/centro.toml, leída del fichero: la calibración
-# (tarea 4.6b) la cambia, y estos tests prueban el formato, no unos valores.
+# Un centro con las doce claves (el bloque provisional y la sala de resultados), con
+# comentarios: desde la tarea 4.9, config/centro.toml no tiene el bloque provisional,
+# y estos tests prueban el formato de cualquier clave. Las variantes de un centro sin el
+# bloque se prueban aparte, con config/centro.toml. La plantilla de médicos se lee del
+# fichero: estos tests prueban el formato, no unos valores.
+BASE = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
 MORNING, AFTERNOON, NIGHT = read_center_values(BASE)["recursos.medicos"]
 DOCTORS_LINE = f"medicos = [{MORNING}, {AFTERNOON}, {NIGHT}]".encode()
 MULTILINE_DOCTORS = (
@@ -441,4 +444,78 @@ def test_la_red_de_seguridad_no_deja_escribir_otro_valor(values, tmp_path, monke
     written = rf"would write recursos\.medicos = \[{MORNING}, {AFTERNOON}, {NIGHT}\]"
     with pytest.raises(ValueError, match=written):
         write_variant(BASE, values, tmp_path / "draft.toml")
+    assert list(tmp_path.iterdir()) == []
+
+
+# --- Centros con y sin el bloque provisional (tarea 4.9) ------------------------------
+
+
+def test_diferencias_entre_un_centro_con_bloque_y_otro_sin_el():
+    # Seis diferencias, con None en el lado sin bloque, y sin excepción (antes, el
+    # reparto de niveles hacía zip con None).
+    with_block = load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
+    fields = (
+        "level_shares",
+        "triage_time",
+        "assessment_time",
+        "reassessment_time",
+        "test_turnaround",
+        "test_probability",
+    )
+    without = dataclasses.replace(with_block, **dict.fromkeys(fields))
+
+    changes = center_diff(with_block, without)
+    assert [d.key for d in changes] == [
+        "triaje.reparto_niveles",
+        "duraciones.triaje",
+        "duraciones.valoracion",
+        "duraciones.reevaluacion",
+        "duraciones.respuesta_pruebas",
+        "pruebas.probabilidad",
+    ]
+    assert all(d.after is None and d.before is not None for d in changes)
+    assert [(d.before, d.after) for d in center_diff(without, with_block)] == [
+        (None, d.before) for d in changes
+    ]
+    assert center_diff(without, without) == ()
+
+
+CONFIG_CENTER = Path(__file__).parents[1] / "config" / "centro.toml"
+EXAMPLE_CENTER = Path(__file__).parent / "data" / "centro_ejemplo.toml"
+PROVISIONAL_TABLES = ("triaje", "duraciones", "pruebas")
+
+
+def test_variante_de_un_centro_sin_bloque_no_lo_anade(tmp_path):
+    # config/centro.toml no tiene el bloque provisional (tarea 4.9): cambiar los médicos
+    # escribe un fichero sin [triaje], [duraciones] ni [pruebas] y con el resto de bytes
+    # intactos.
+    values = read_center_values(CONFIG_CENTER)
+    assert values["recursos.medicos"] == [12, 11, 4]
+    values["recursos.medicos"] = [13, 11, 4]
+
+    destination = write_variant(CONFIG_CENTER, values, tmp_path / "draft.toml")
+
+    written = destination.read_bytes()
+    assert written == CONFIG_CENTER.read_bytes().replace(
+        b"medicos = [12, 11, 4]", b"medicos = [13, 11, 4]"
+    )
+    # Las tablas leídas, no el texto: la cabecera de config/centro.toml las nombra.
+    tables = {key.split(".")[0] for key in read_center_values(destination)}
+    assert not tables & set(PROVISIONAL_TABLES)
+    assert not load_center(destination).has_provisional
+
+
+def test_variante_de_un_centro_sin_bloque_no_admite_las_claves_del_bloque(tmp_path):
+    # Unos valores válidos con el bloque entero (los de centro_ejemplo.toml) sobre una base
+    # sin él: una variante edita valores, nunca añade claves a su base.
+    values = read_center_values(CONFIG_CENTER)
+    example = read_center_values(EXAMPLE_CENTER)
+    values.update({k: v for k, v in example.items() if k.split(".")[0] in PROVISIONAL_TABLES})
+    assert validate_center_values(values) == {}
+
+    with pytest.raises(
+        ValueError,
+        match=r"^triaje\.reparto_niveles must be in both the base and the values, or in neither$",
+    ):
+        write_variant(CONFIG_CENTER, values, tmp_path / "draft.toml")
     assert list(tmp_path.iterdir()) == []

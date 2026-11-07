@@ -108,14 +108,17 @@ def test_cumplimiento_con_el_reloj_c_a_mano(table):
     assert level_2.share_out == 1.0
 
 
-def test_sin_medida_el_cumplimiento_sigue_con_el_reloj_a(table):
+def test_sin_medida_el_cumplimiento_usa_el_reloj_c(table):
+    # Desde la tarea 4.9, el reloj C por defecto (hasta entonces, el A).
     default = window_compliance(table, 1, 2)
-    explicit = window_compliance(table, 1, 2, measure="door_to_doctor")
+    explicit = window_compliance(table, 1, 2, measure="classified_to_doctor")
+    clock_a = window_compliance(table, 1, 2, measure="door_to_doctor")
 
-    assert default.daily.measure == "door_to_doctor"
-    # Con A (10, 24 y 36) exceden dos: la medida de verdad cambia el resultado.
-    assert default.by_level[1].exceeded == 2
+    assert default.daily.measure == "classified_to_doctor"
+    assert default.by_level[1].exceeded == 1
     assert default.by_level == explicit.by_level
+    # Con A (10, 24 y 36) exceden dos: la medida de verdad cambia el resultado.
+    assert clock_a.by_level[1].exceeded == 2
 
 
 def test_una_medida_desconocida_es_un_error(table):

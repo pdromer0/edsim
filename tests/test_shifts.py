@@ -506,8 +506,8 @@ def test_subida_con_reservas_sin_conceder(center):
 
 @pytest.fixture(scope="module")
 def real() -> tuple[CenterConfig, ArrivalProfile]:
-    # Modelo provisional con el centro del hito 3 (config/centro.toml antes de la
-    # calibración de la tarea 4.6b, sin la sala, que el provisional ignora).
+    # Modelo provisional con su centro, tests/data/centro_ejemplo.toml: la plantilla del
+    # hito 3 y el bloque provisional, que config/centro.toml no tiene (tarea 4.9).
     center = load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
     return center, load_profile(CONFIG / "llegadas.toml")
 

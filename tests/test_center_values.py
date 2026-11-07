@@ -15,7 +15,9 @@ from edsim.runs import (
     validate_center_values,
 )
 
-BASE = Path(__file__).parents[1] / "config" / "centro.toml"
+# Un centro con las doce claves (el bloque provisional y la sala de resultados): desde la
+# tarea 4.9, config/centro.toml no tiene el bloque provisional.
+BASE = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
 
 
 @pytest.fixture
@@ -84,7 +86,13 @@ def test_reader_retains_malformed_and_unknown_sections(tmp_path):
     values = read_center_values(path)
     assert values == {"turnos": [8, 15, 22], "personal": {"celadores": 2}}
     errors = validate_center_values(values)
-    assert len(errors) == 12
+    # Sin ninguna tabla del bloque provisional, sus seis claves no se exigen (tarea 4.9):
+    # turnos mal formada, recursos.{enfermeria_triaje, medicos, boxes} y destino ausentes
+    # y personal desconocida.
+    assert len(errors) == 6
+    assert (
+        not {"triaje.reparto_niveles", "duraciones.triaje", "pruebas.probabilidad"} & errors.keys()
+    )
     assert errors["turnos.inicio"] == "turnos must be a table, got [8, 15, 22]"
     assert errors["recursos.boxes"] == "missing keys: recursos.boxes"
     assert errors["personal"] == "unknown keys: personal"
@@ -96,8 +104,8 @@ def test_loader_keeps_grouped_structure_messages(tmp_path):
     with pytest.raises(ValueError) as caught:
         load_center(path)
     assert str(caught.value) == (
-        f"{path}: missing keys: destino, duraciones, pruebas, recursos.boxes, "
-        "recursos.enfermeria_triaje, recursos.medicos, triaje, turnos; "
+        f"{path}: missing keys: destino, recursos.boxes, "
+        "recursos.enfermeria_triaje, recursos.medicos, turnos; "
         "unknown keys: recursos.boxs"
     )
 

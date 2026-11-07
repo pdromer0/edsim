@@ -153,3 +153,23 @@ def test_los_perfiles_invalidos_de_la_copia_son_un_error_de_lectura(clinical_sto
 
     with pytest.raises(RunReadError, match="perfiles.toml"):
         read_run_results(RunStore(tmp_path), "clinica")
+
+
+# --- Cumplimiento con el reloj C por defecto (tarea 4.9) -------------------------------
+
+
+def test_el_cumplimiento_de_la_ejecucion_usa_el_reloj_c(clinical_store):
+    from edsim.runs import APP_COMPLIANCE_MEASURE, window_compliance
+
+    result = read_run_results(clinical_store, "clinica")
+    first, end = result.info.warmup_days, result.info.days
+    table = result.analysis.table
+    c = window_compliance(table, first, end, measure="classified_to_doctor")
+    a = window_compliance(table, first, end, measure="door_to_doctor")
+
+    assert APP_COMPLIANCE_MEASURE == "classified_to_doctor"
+    assert result.compliance.daily.measure == "classified_to_doctor"
+    assert result.compliance.by_level == c.by_level
+    # Guarda: en esta ejecución los dos relojes dan otro cumplimiento, así que el test no
+    # pasa en vacío.
+    assert any(x.exceeded != y.exceeded for x, y in zip(c.by_level, a.by_level, strict=True))

@@ -617,8 +617,12 @@ def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(
     assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
 
 
-def test_invalid_noneditable_field_is_visible_and_blocks_saving_and_simulation():
-    source = named_variant("invalid-duration")
+def test_invalid_noneditable_field_is_visible_and_blocks_saving_and_simulation(
+    provisional_block_center,
+):
+    # The invalid key is provisional: the variant comes from a base with that block (task 4.9).
+    source = defaults.VARIANTS_DIR / "invalid-duration.toml"
+    write_variant(provisional_block_center, read_center_values(provisional_block_center), source)
     source.write_bytes(replace_raw_value(source.read_bytes(), "triaje", "[10, 5]"))
     app = open_simulation()
     app.selectbox(key="source_widget").select(str(source)).run()

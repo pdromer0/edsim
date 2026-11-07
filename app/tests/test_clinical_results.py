@@ -61,7 +61,7 @@ def test_three_clocks_match_core(clinical_catalog):
 def test_manchester_uses_classification_clock(clinical_catalog):
     result = read_run_results(RunStore(clinical_catalog), "clinical")
     c = window_compliance(result.analysis.table, 1, 3, measure="classified_to_doctor")
-    a = window_compliance(result.analysis.table, 1, 3)
+    a = window_compliance(result.analysis.table, 1, 3, measure="door_to_doctor")
     assert any(
         x.exceeded != y.exceeded for x, y in zip(c.by_level[1:], a.by_level[1:], strict=True)
     )

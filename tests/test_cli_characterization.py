@@ -11,6 +11,8 @@ from edsim.engine.events import TIMEZONE, read_events
 
 
 def test_simulate_cli_characterization(tmp_path, monkeypatch):
+    # El modelo provisional: desde la tarea 4.9, con --provisional (el clínico es el de por
+    # defecto). Mismas huellas que antes.
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     output = tmp_path / "salida"
     assert not output.exists()
@@ -19,6 +21,7 @@ def test_simulate_cli_characterization(tmp_path, monkeypatch):
             [
                 "motor",
                 "simular",
+                "--provisional",
                 "--centro",
                 "tests/data/centro_ejemplo.toml",
                 "--llegadas",

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.engine.center import center_from_values
+from edsim.engine.center import center_from_values, require_provisional
 from edsim.engine.clinical import lognormal_params
 from edsim.profiles.config import REASON_KEYS, TEST_TYPES, ClinicalProfiles
 from edsim.profiles.durations import physician_load
@@ -45,10 +45,12 @@ class CenterSummary:
 def summarize_center(values: Mapping[str, object]) -> CenterSummary:
     """Validate raw values and summarize them without changing the input.
 
-    Raise ValueError on invalid values. Each curve contains the origin and
-    121 log-spaced points over mu ± 3 sigma, including the median.
+    Raise ValueError on invalid values, or if the center has no provisional
+    block: the summary is of the provisional model. Each curve contains the
+    origin and 121 log-spaced points over mu ± 3 sigma, including the median.
     """
     center = center_from_values(values)
+    require_provisional(center)
     durations = []
     for key, parameters in (
         ("duraciones.triaje", center.triage_time),
