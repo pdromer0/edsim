@@ -55,3 +55,7 @@ separado.
   borrar y recrear una ejecución cambia la huella de `run.json`, pero editar
   externamente solo su log no invalida resultados ya cacheados
   ([PR #35](https://github.com/pdromer0/edsim/pull/35)).
+
+## Nota de actualización (2026-11-07)
+
+Desde la tarea 4.5b, `run.json` está en la versión 2 del formato: la versión 1 más `model` (`"provisional"` o `"clinico"`) y, solo con el modelo clínico, `clinical_profiles_path` y `clinical_profiles_fingerprint`. Una ejecución clínica guarda además la copia de `perfiles.toml`, carga los perfiles desde ella y calcula su huella sobre ella ([especificación del hito 4, «Ejecuciones clínicas en disco»](../specs/hito-4.md#ejecuciones-clínicas-en-disco)). Se escribe solo la versión 2; las ejecuciones de la versión 1 se siguen leyendo, como provisionales, y la lectura exige las claves exactas de cada versión. Desde la tarea 4.9, `config/centro.toml` no tiene el bloque provisional (`[triaje]`, `[duraciones]` y `[pruebas]`; [ADR 0036](0036-perfiles-clinicos-aparte-del-centro.md)): las copias de `centro.toml` de las ejecuciones guardadas se leen como antes, y una ejecución provisional nueva necesita un centro con el bloque. La decisión no cambia.

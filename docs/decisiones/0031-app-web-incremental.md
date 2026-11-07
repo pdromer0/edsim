@@ -37,3 +37,7 @@ ruta del proyecto; la tecnología de la primera interfaz se registra en
 - La fase 1 queda limitada a uso local por un usuario. El alcance de la fase 2
   y su frontend se decidirán con el modo directo; no se anticipan contratos de
   control que el motor todavía no tiene.
+
+## Nota de actualización (2026-11-07)
+
+Los incrementos de la app no se documentan en la especificación de su hito, como preveía la segunda consecuencia, sino en su propia pestaña, «App web — incrementos» ([app/docs/specs/incrementos.md](../../app/docs/specs/incrementos.md)), con su objetivo, sus cambios en el núcleo y en las páginas, sus decisiones y su anexo. La pestaña del hito solo lista las tareas de la app y enlaza a ella. El incremento del hito 4 (tareas 4.8a, 4.8b y 4.8c) es el primero. La decisión no cambia.
