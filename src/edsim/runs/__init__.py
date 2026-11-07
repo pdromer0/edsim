@@ -99,10 +99,14 @@ from edsim.runs.store import RunInfo, RunStore
 from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
 from edsim.runs.truth import (
     TRUTH_ABS_TOL_MINUTES,
+    ClinicalTruthView,
+    DiagnosticTestTruth,
     TruthComparison,
     TruthStatus,
     compare_episode_truth,
+    episode_clinical_truth,
     read_run_episode_truth,
+    true_level_window_compliance,
 )
 from edsim.runs.variants import (
     MAX_VARIANT_NAME_LENGTH,
@@ -165,6 +169,10 @@ __all__ = [
     "TruthStatus",
     "compare_episode_truth",
     "read_run_episode_truth",
+    "ClinicalTruthView",
+    "DiagnosticTestTruth",
+    "episode_clinical_truth",
+    "true_level_window_compliance",
     "Displacement",
     "EpisodeSegment",
     "EpisodeSegments",
