@@ -67,17 +67,36 @@ def render_runs_help() -> None:
     """Explain persisted runs, reproducibility, and invalid catalog entries."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
-            "Una ejecución guarda los eventos, la verdad del simulador y los metadatos "
-            "de una simulación. Conserva una copia exacta de la configuración para "
-            "poder reproducirla aunque cambien los originales. Una carpeta no válida "
-            "no se puede abrir como ejecución porque sus metadatos faltan, no son "
-            "compatibles o su ruta no cumple las reglas."
+            "Cada ejecución muestra el modelo que usó y guarda los eventos, la verdad "
+            "del simulador y los metadatos. Conserva una copia exacta de la configuración "
+            "para poder reproducirla aunque cambien los originales; una clínica guarda "
+            "también la copia de sus perfiles y su huella."
+        )
+        st.write(
+            "Las ejecuciones provisionales del hito 3 se siguen abriendo, pero la app "
+            "ya no las crea. Una carpeta no válida no se puede abrir porque sus metadatos "
+            "faltan, no son compatibles o su ruta no cumple las reglas."
         )
 
 
 def render_simulate_help(prior_days: int | None = None) -> None:
     """Distinguish regime predictions from a run that starts empty."""
     with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "Las ejecuciones nuevas usan el modelo clínico. Cada paciente sale de los "
+            "perfiles: edad, sexo, medio de llegada, motivo, gravedad, triaje con error, "
+            "pruebas y duraciones."
+        )
+        st.write(
+            "Del centro solo cuentan turnos, plantilla, boxes, los niveles que esperan "
+            "los resultados fuera del box y el destino provisional. El resumen de los "
+            "perfiles muestra su expectativa anual, no lo que dará una ejecución."
+        )
+        st.write(
+            "La carga prevista sale de una muestra de pacientes del modelo clínico. "
+            "Tarda unos segundos la primera vez y se reutiliza al cambiar la plantilla. "
+            "Quien espera los resultados fuera no ocupa box durante esa espera."
+        )
         st.write(
             "La carga prevista muestra los recursos que la demanda ocuparía sin colas, "
             "en régimen y sin el efecto diario aleatorio Z. Una ejecución empieza vacía "
