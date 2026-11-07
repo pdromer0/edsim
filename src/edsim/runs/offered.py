@@ -51,7 +51,23 @@ class OfferedWork:
     window_kind: Literal["offered_in_regime"] = field(default="offered_in_regime", init=False)
 
 
-def offered_work(
+@dataclass(frozen=True, slots=True)
+class OfferedLoad:
+    """The first part of ``offered_work``: the load, without the center's staff.
+
+    ``load`` has the busy professionals/boxes without queues of each pool at
+    minutes 0..``days * 1440`` from ``start_date``, the same arrays as
+    ``OfferedWork.load``; ``prior_days`` is the prehistory of the sample.
+    Arrays must not be edited in place: a cached load is shared.
+    """
+
+    start_date: date
+    days: int
+    prior_days: int
+    load: dict[str, NDArray[np.float64]]
+
+
+def offered_load(
     center: CenterConfig,
     profile: ArrivalProfile,
     days: int = 7,
@@ -59,8 +75,22 @@ def offered_work(
     sample_size: int = 50_000,
     sample_seed: int = 73_001,
     profiles: ClinicalProfiles | None = None,
-) -> OfferedWork:
-    """Predict offered work without waits or daily random effects, from start_date.
+) -> OfferedLoad:
+    """Offered load without waits or daily random effects, from start_date.
+
+    The slow part of ``offered_work`` (the sample and the convolution). It
+    depends on the arrival profile, the clinical profiles and these fields of
+    the center, never on its staff (``shift_starts``, ``triage_nurses``,
+    ``doctors`` and ``boxes``), which only ``offered_work_from_load`` uses:
+
+    - Without ``profiles`` (provisional sample): ``level_shares``,
+      ``triage_time``, ``assessment_time``, ``reassessment_time``,
+      ``test_turnaround`` and ``test_probability``. ``admission_probability``
+      is drawn but never changes an interval.
+    - With ``profiles`` (clinical sample): ``results_wait_outside``, for the
+      box of the patients who leave it for the results room.
+      ``admission_probability`` is passed to the sampler for the destination
+      and never changes an interval.
 
     Sample patients with a fixed seed independent of an execution's seed.
     Reuse the engine validation's held intervals and midpoint convolution.
@@ -76,9 +106,6 @@ def offered_work(
     generally only an approximation with weekly/monthly factors: work crosses
     both edges of the window. Box load excludes waits while holding a box.
 
-    Shift utilization integrates load with one-minute trapezoids and divides
-    by the shift's constant scheduled capacity, including night across midnight.
-
     With ``profiles``, the patients come from the clinical sampler, each with
     the context of its own arrival instant (``_clinical_load``); without them,
     exactly the provisional sample above.
@@ -88,7 +115,7 @@ def offered_work(
     sample_seed = check_count("sample_seed", sample_seed, 0)
     if profiles is not None:
         load, prior_days = _clinical_load(center, profile, days, sample_size, sample_seed, profiles)
-        return _offered(center, profile, days, prior_days, load)
+        return OfferedLoad(profile.start_date, days, prior_days, load)
     draws = draws_sample(center, sample_size, seed=sample_seed)
     maximum_age = max(
         end
@@ -102,18 +129,21 @@ def offered_work(
     horizon = days * MINUTES_PER_DAY
     curves = offered_load_by_pool(previous_profile, draws, horizon=offset + horizon)
     load = {pool: curves[pool][offset : offset + horizon + 1].copy() for pool in _POOLS}
-    return _offered(center, profile, days, prior_days, load)
+    return OfferedLoad(profile.start_date, days, prior_days, load)
 
 
-def _offered(
-    center: CenterConfig,
-    profile: ArrivalProfile,
-    days: int,
-    prior_days: int,
-    load: dict[str, NDArray[np.float64]],
-) -> OfferedWork:
-    """Capacities and shift utilizations of a load given at minutes 0..``days * 1440``."""
-    horizon = days * MINUTES_PER_DAY
+def offered_work_from_load(center: CenterConfig, load: OfferedLoad) -> OfferedWork:
+    """The second part of ``offered_work``: capacity and utilization with the center's staff.
+
+    Uses only ``shift_starts``, ``triage_nurses``, ``doctors`` and ``boxes``,
+    so a load computed with another center that differs only in its staff
+    gives the same result as ``offered_work`` with this one.
+
+    Shift utilization integrates load with one-minute trapezoids and divides
+    by the shift's constant scheduled capacity, including night across midnight.
+    The arrays of ``load`` are shared, not copied.
+    """
+    horizon = load.days * MINUTES_PER_DAY
     minutes = np.arange(horizon + 1, dtype=np.int64)
     shifts = np.fromiter(
         (shift_at(center.shift_starts, int(t)) for t in minutes),
@@ -128,12 +158,41 @@ def _offered(
     capacity = {pool: np.asarray(staff[pool], dtype=np.int64)[shifts] for pool in _POOLS}
     utilization = {}
     for pool in _POOLS:
-        per_minute = (load[pool][:-1] + load[pool][1:]) / 2
+        per_minute = (load.load[pool][:-1] + load.load[pool][1:]) / 2
         utilization[pool] = tuple(
             float(per_minute[shifts[:-1] == shift].mean() / staff[pool][shift])
             for shift in range(3)
         )
-    return OfferedWork(profile.start_date, days, prior_days, minutes, load, capacity, utilization)
+    return OfferedWork(
+        load.start_date, load.days, load.prior_days, minutes, load.load, capacity, utilization
+    )
+
+
+def offered_work(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    days: int = 7,
+    *,
+    sample_size: int = 50_000,
+    sample_seed: int = 73_001,
+    profiles: ClinicalProfiles | None = None,
+) -> OfferedWork:
+    """Predict offered work without waits or daily random effects, from start_date.
+
+    ``offered_load`` followed by ``offered_work_from_load``: see them for the
+    sample, the prehistory, the fields of the center each part uses and the
+    shift utilization. An editor of the staff can compute the load once and
+    call ``offered_work_from_load`` for each staff.
+    """
+    load = offered_load(
+        center,
+        profile,
+        days,
+        sample_size=sample_size,
+        sample_seed=sample_seed,
+        profiles=profiles,
+    )
+    return offered_work_from_load(center, load)
 
 
 # --- Clinical sample (task 4.8a) -----------------------------------------------------------

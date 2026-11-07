@@ -20,7 +20,13 @@ from edsim.calibration.staffing import DOCTORS, NURSES, knob_loads
 from edsim.engine.validation import draws_sample, flat_profile, offered_load_by_pool
 from edsim.profiles.config import load_profiles
 from edsim.profiles.context import arrival_context
-from edsim.runs import load_center, load_profile, offered_work
+from edsim.runs import (
+    load_center,
+    load_profile,
+    offered_load,
+    offered_work,
+    offered_work_from_load,
+)
 
 CONFIG = Path(__file__).parents[1] / "config"
 DATA = Path(__file__).parent / "data"
@@ -193,3 +199,70 @@ def test_la_carga_con_perfiles_es_reproducible(center):
     for pool in ("medicos", "boxes", "enfermeria_triaje"):
         np.testing.assert_array_equal(first.load[pool], again.load[pool])
     assert first.prior_days >= 1 and math.isfinite(first.utilization["medicos"][0])
+
+
+# --- La carga en dos partes (revisión del PR #51) -------------------------------------
+#
+# offered_load hace la parte lenta (la muestra y la convolución) y offered_work_from_load
+# solo pone la plantilla. Un editor del centro calcula la carga una vez y repite la
+# segunda parte con cada plantilla.
+
+POOLS = ("medicos", "boxes", "enfermeria_triaje")
+
+
+def assert_same_work(a, b):
+    """Igualdad bit a bit de dos OfferedWork, campo a campo."""
+    assert (a.start_date, a.days, a.prior_days) == (b.start_date, b.days, b.prior_days)
+    np.testing.assert_array_equal(a.minutes, b.minutes)
+    for pool in POOLS:
+        np.testing.assert_array_equal(a.load[pool], b.load[pool])
+        np.testing.assert_array_equal(a.capacity[pool], b.capacity[pool])
+    assert a.utilization == b.utilization
+
+
+@pytest.fixture(scope="module")
+def short():
+    """Llegadas de ejemplo, 2 días y una muestra pequeña: lo que se prueba es el corte."""
+    return load_profile(DATA / "llegadas_ejemplo.toml"), {"days": 2, "sample_size": 3_000}
+
+
+@pytest.mark.parametrize("clinical", [False, True])
+def test_offered_work_son_las_dos_partes_seguidas(center, short, clinical):
+    profile, options = short
+    profiles = example_profiles() if clinical else None
+
+    whole = offered_work(center, profile, profiles=profiles, **options)
+    load = offered_load(center, profile, profiles=profiles, **options)
+
+    assert_same_work(whole, offered_work_from_load(center, load))
+
+
+@pytest.mark.parametrize("clinical", [False, True])
+def test_otra_plantilla_reutiliza_la_carga(center, short, clinical):
+    profile, options = short
+    profiles = example_profiles() if clinical else None
+    other = dataclasses.replace(
+        center, triage_nurses=(4, 3, 1), doctors=(13, 12, 5), boxes=center.boxes + 6
+    )
+    load = offered_load(center, profile, profiles=profiles, **options)
+
+    reused = offered_work_from_load(other, load)
+
+    assert_same_work(reused, offered_work(other, profile, profiles=profiles, **options))
+    # Guarda: la plantilla cambia de verdad la utilización.
+    assert reused.utilization != offered_work_from_load(center, load).utilization
+
+
+def test_otra_espera_fuera_del_box_da_otra_carga_de_box(center, short):
+    profile, options = short
+    room = dataclasses.replace(center, results_wait_outside=(4, 5))
+    plain = dataclasses.replace(center, results_wait_outside=())
+
+    with_room = offered_load(room, profile, profiles=example_profiles(), **options)
+    without = offered_load(plain, profile, profiles=example_profiles(), **options)
+
+    assert with_room.load["boxes"].sum() < without.load["boxes"].sum()
+    np.testing.assert_array_equal(with_room.load["medicos"], without.load["medicos"])
+    np.testing.assert_array_equal(
+        with_room.load["enfermeria_triaje"], without.load["enfermeria_triaje"]
+    )

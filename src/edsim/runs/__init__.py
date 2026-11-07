@@ -83,7 +83,13 @@ from edsim.runs.metrics import (
     window_kpis,
     window_pretriage,
 )
-from edsim.runs.offered import OfferedWork, offered_work
+from edsim.runs.offered import (
+    OfferedLoad,
+    OfferedWork,
+    offered_load,
+    offered_work,
+    offered_work_from_load,
+)
 from edsim.runs.replay import (
     ReplayCounts,
     ReplayDeparture,
@@ -241,6 +247,9 @@ __all__ = [
     "load_center",
     "load_profile",
     "offered_work",
+    "OfferedLoad",
+    "offered_load",
+    "offered_work_from_load",
     "read_center_values",
     "read_run_header",
     "build_episode_event_index",
