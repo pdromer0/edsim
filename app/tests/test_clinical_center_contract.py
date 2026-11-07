@@ -13,17 +13,12 @@ from edsim_app import defaults
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="la tarea 4.9 hace opcionales las secciones provisionales de CenterConfig",
-)
 def test_center_without_provisional_sections_can_save_preview_and_simulate(
     tmp_path, monkeypatch, catalog_root
 ):
     document = tomlkit.parse(defaults.CENTER_PATH.read_text())
     for section in ("triaje", "duraciones", "pruebas"):
-        del document[section]
+        document.pop(section, None)
     source = tmp_path / "clinical-center.toml"
     source.write_text(tomlkit.dumps(document))
     monkeypatch.setattr(defaults, "CENTER_PATH", source)

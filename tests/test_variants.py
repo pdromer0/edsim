@@ -442,3 +442,36 @@ def test_la_red_de_seguridad_no_deja_escribir_otro_valor(values, tmp_path, monke
     with pytest.raises(ValueError, match=written):
         write_variant(BASE, values, tmp_path / "draft.toml")
     assert list(tmp_path.iterdir()) == []
+
+
+# --- Centros con y sin el bloque provisional (tarea 4.9) ------------------------------
+
+
+def test_diferencias_entre_un_centro_con_bloque_y_otro_sin_el():
+    # Seis diferencias, con None en el lado sin bloque, y sin excepción (antes, el
+    # reparto de niveles hacía zip con None).
+    with_block = load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
+    fields = (
+        "level_shares",
+        "triage_time",
+        "assessment_time",
+        "reassessment_time",
+        "test_turnaround",
+        "test_probability",
+    )
+    without = dataclasses.replace(with_block, **dict.fromkeys(fields))
+
+    changes = center_diff(with_block, without)
+    assert [d.key for d in changes] == [
+        "triaje.reparto_niveles",
+        "duraciones.triaje",
+        "duraciones.valoracion",
+        "duraciones.reevaluacion",
+        "duraciones.respuesta_pruebas",
+        "pruebas.probabilidad",
+    ]
+    assert all(d.after is None and d.before is not None for d in changes)
+    assert [(d.before, d.after) for d in center_diff(without, with_block)] == [
+        (None, d.before) for d in changes
+    ]
+    assert center_diff(without, without) == ()

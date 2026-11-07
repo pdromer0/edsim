@@ -1,10 +1,16 @@
-"""Center configuration: staff, boxes and the provisional clinical model, from TOML.
+"""Center configuration: shifts, staff, boxes and destination, from TOML.
 
-The file has one table per topic (``turnos``, ``recursos``, ``triaje``,
-``duraciones``, ``pruebas`` and ``destino``); see ``config/centro.toml`` and
-docs/specs/hito-3.md. Keys are in Spanish (ADR 0015) and errors name them with
-their table, such as ``recursos.medicos[2]``, because that is what the user
-wrote.
+The file has one table per topic (``turnos``, ``recursos`` and ``destino``);
+see ``config/centro.toml`` and docs/specs/hito-3.md. Keys are in Spanish (ADR
+0015) and errors name them with their table, such as ``recursos.medicos[2]``,
+because that is what the user wrote.
+
+The provisional model of milestone 3 also reads ``triaje``, ``duraciones`` and
+``pruebas``: the provisional block (task 4.9). The three tables come together
+or not at all. Without them, their six fields are ``None`` and only the
+clinical model can use the center, which takes those values from the profiles;
+``tests/data/centro_ejemplo.toml`` is the center of the provisional model, and
+copies of ``centro.toml`` saved with older runs still read as they did.
 
 Durations are given as the median and the 90th percentile of a lognormal, in
 minutes: two numbers a clinician can estimate. ``edsim.engine.clinical`` turns
@@ -51,6 +57,14 @@ _SECTIONS = {key.split(".")[0] for key in _KEYS}
 # espera_resultados_fuera, and it means what it meant then, nobody waits
 # outside. That is why the default is () and not the (4, 5) of config/.
 _OPTIONAL: dict[str, object] = {"recursos.espera_resultados_fuera": ()}
+
+PROVISIONAL_TABLES = ("triaje", "duraciones", "pruebas")
+"""Tables of the provisional block: all three or none (task 4.9)."""
+
+# The six keys of the provisional block, in the order of the file. Without the
+# block they are all None; there is no hidden default for the provisional model.
+_PROVISIONAL_KEYS = tuple(key for key in _KEYS if key.split(".")[0] in PROVISIONAL_TABLES)
+_PROVISIONAL_FIELDS = tuple(_KEYS[key] for key in _PROVISIONAL_KEYS)
 
 
 def _check_staff(key: str, value: object) -> int:
@@ -193,9 +207,23 @@ def read_center_values(path: str | Path) -> dict[str, object]:
     return _flatten_center_data(_read_center_data(path))
 
 
+def _has_provisional_block(values: Mapping[str, object]) -> bool:
+    """Whether any table of the provisional block is there.
+
+    A table is there if it brings a key, known or unknown, or if it is
+    malformed (not a table). An empty table brings no key and counts as missing.
+    """
+    return any(
+        key in PROVISIONAL_TABLES or key.split(".")[0] in PROVISIONAL_TABLES for key in values
+    )
+
+
 def _structure_errors(values: Mapping[str, object]) -> tuple[list[str], list[str], list[str]]:
     malformed = sorted(_SECTIONS & values.keys())
-    missing = [key for key in _KEYS if key not in values and key not in _OPTIONAL]
+    optional = _OPTIONAL.keys()
+    if not _has_provisional_block(values):
+        optional = optional | set(_PROVISIONAL_KEYS)
+    missing = [key for key in _KEYS if key not in values and key not in optional]
     unknown = sorted(values.keys() - _KEYS.keys() - _SECTIONS)
     return malformed, missing, unknown
 
@@ -215,7 +243,7 @@ def validate_center_values(values: Mapping[str, object]) -> dict[str, str]:
         elif key in missing:
             errors[key] = f"missing keys: {key}"
         elif key not in values:
-            continue  # an optional key, with its default
+            continue  # an optional key, or the provisional block is missing
         else:
             try:
                 validator(key, values[key])
@@ -230,6 +258,7 @@ def center_from_values(values: Mapping[str, object]) -> CenterConfig:
 
     Invalid input raises ``ValueError`` containing all field errors. Use
     ``validate_center_values`` when the individual error keys are needed.
+    Without the provisional block, its six fields are ``None``.
     """
     errors = validate_center_values(values)
     if errors:
@@ -267,7 +296,9 @@ class CenterConfig:
             model uses it: the provisional model ignores it.
         level_shares: Share of patients in each triage level, summing to 1
             (``triaje.reparto_niveles``, which accepts any non-negative
-            weights, such as percentages). A level may have share 0.
+            weights, such as percentages). A level may have share 0. This
+            and the next five fields are the provisional block: all of them
+            or none are ``None`` (task 4.9).
         triage_time: ``(median, p90)`` of the triage time, in minutes
             (``duraciones.triaje``).
         assessment_time: ``(median, p90)`` of the first assessment
@@ -287,23 +318,56 @@ class CenterConfig:
     doctors: tuple[int, ...]
     boxes: int
     results_wait_outside: tuple[int, ...]
-    level_shares: tuple[float, ...]
-    triage_time: tuple[float, float]
-    assessment_time: tuple[float, float]
-    reassessment_time: tuple[float, float]
-    test_turnaround: tuple[float, float]
-    test_probability: tuple[float, ...]
+    level_shares: tuple[float, ...] | None
+    triage_time: tuple[float, float] | None
+    assessment_time: tuple[float, float] | None
+    reassessment_time: tuple[float, float] | None
+    test_turnaround: tuple[float, float] | None
+    test_probability: tuple[float, ...] | None
     admission_probability: tuple[float, ...]
 
     def __post_init__(self) -> None:
+        missing = [
+            key
+            for key, field in zip(_PROVISIONAL_KEYS, _PROVISIONAL_FIELDS, strict=True)
+            if getattr(self, field) is None
+        ]
+        if missing and len(missing) < len(_PROVISIONAL_KEYS):
+            raise ValueError(
+                "the provisional tables [triaje], [duraciones] and [pruebas] come together "
+                f"or not at all: missing keys: {', '.join(missing)}"
+            )
         for key, field in _KEYS.items():
+            if missing and key in _PROVISIONAL_KEYS:
+                continue
             object.__setattr__(self, field, _VALIDATORS[key](key, getattr(self, field)))
+
+    @property
+    def has_provisional(self) -> bool:
+        """Whether the center has the provisional block, which the provisional model needs."""
+        return self.level_shares is not None
+
+
+def require_provisional(center: CenterConfig) -> None:
+    """Fail early if the provisional model is asked for a center without its block.
+
+    Raises:
+        ValueError: If ``center`` has no ``[triaje]``, ``[duraciones]`` and
+            ``[pruebas]``; the message names the three tables.
+    """
+    if not center.has_provisional:
+        raise ValueError(
+            "the provisional model needs the tables [triaje], [duraciones] and [pruebas] "
+            "of the center, and this one has none of them"
+        )
 
 
 def load_center(path: str | Path) -> CenterConfig:
     """Load the center configuration from a TOML file.
 
-    The file must have exactly the tables and keys of ``config/centro.toml``.
+    The file has the tables and keys of ``config/centro.toml`` and, for the
+    provisional model, the provisional block (``triaje``, ``duraciones`` and
+    ``pruebas``, all three or none), as ``tests/data/centro_ejemplo.toml``.
     Unknown tables or keys are an error, so that a misspelt key does not go
     unnoticed.
 

@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from edsim.engine.center import CenterConfig, load_center
+from edsim.engine.center import (
+    PROVISIONAL_TABLES,
+    CenterConfig,
+    center_from_values,
+    load_center,
+    read_center_values,
+    require_provisional,
+    validate_center_values,
+)
 
 EXAMPLE = Path(__file__).parent / "data" / "centro_ejemplo.toml"
 CONFIG = Path(__file__).parents[1] / "config" / "centro.toml"
@@ -445,3 +453,123 @@ def test_el_centro_de_ejemplo_es_el_del_hito_3():
         results_wait_outside=(),
     )
     assert example == hito_3
+
+
+# --- Bloque provisional opcional (tarea 4.9) -------------------------------------------
+
+
+SIN_BLOQUE = {"triaje": None, "duraciones": None, "pruebas": None}
+CAMPOS_PROVISIONALES = (
+    "level_shares",
+    "triage_time",
+    "assessment_time",
+    "reassessment_time",
+    "test_turnaround",
+    "test_probability",
+)
+
+
+def test_las_tablas_del_bloque():
+    assert PROVISIONAL_TABLES == ("triaje", "duraciones", "pruebas")
+
+
+def test_con_el_bloque_los_seis_campos_son_los_de_siempre(center):
+    # Literales copiados a mano de tests/data/centro_ejemplo.toml, no leídos con el lector.
+    assert center.level_shares == pytest.approx(
+        (0.003, 0.121, 0.336, 0.526, 0.014), rel=0, abs=1e-15
+    )
+    assert center.triage_time == (5.0, 10.0)
+    assert center.assessment_time == (20.0, 45.0)
+    assert center.reassessment_time == (10.0, 20.0)
+    assert center.test_turnaround == (60.0, 150.0)
+    assert center.test_probability == (0.95, 0.85, 0.70, 0.40, 0.20)
+    assert center.has_provisional
+    require_provisional(center)  # no lanza
+
+
+def test_con_el_bloque_las_tres_rutas_dan_el_mismo_centro(center):
+    values = read_center_values(EXAMPLE)
+    assert validate_center_values(values) == {}
+    assert center_from_values(values) == center
+
+
+def test_sin_el_bloque_los_seis_campos_son_none_y_no_hay_errores(tmp_path):
+    path = write_center(tmp_path, SIN_BLOQUE)
+    values = read_center_values(path)
+
+    assert validate_center_values(values) == {}
+    for c in (load_center(path), center_from_values(values)):
+        assert all(getattr(c, field) is None for field in CAMPOS_PROVISIONALES)
+        assert not c.has_provisional
+        # El resto del centro no cambia.
+        assert c.doctors == (12, 12, 7)
+        assert c.admission_probability == (0.80, 0.45, 0.15, 0.04, 0.01)
+
+
+def test_sin_el_bloque_el_provisional_falla_con_las_tres_tablas(tmp_path):
+    c = load_center(write_center(tmp_path, SIN_BLOQUE))
+    with pytest.raises(ValueError, match=r"\[triaje\], \[duraciones\] and \[pruebas\]"):
+        require_provisional(c)
+
+
+@pytest.mark.parametrize(
+    ("quitadas", "faltan"),
+    [
+        (
+            ("duraciones", "pruebas"),
+            [
+                "duraciones.triaje",
+                "duraciones.valoracion",
+                "duraciones.reevaluacion",
+                "duraciones.respuesta_pruebas",
+                "pruebas.probabilidad",
+            ],
+        ),
+        (("triaje", "pruebas"), ["triaje.reparto_niveles", "pruebas.probabilidad"]),
+        (("pruebas",), ["pruebas.probabilidad"]),
+    ],
+    ids=["solo_triaje", "solo_duraciones", "sin_pruebas"],
+)
+def test_con_parte_del_bloque_un_error_por_clave_que_falta(tmp_path, quitadas, faltan):
+    path = write_center(tmp_path, dict.fromkeys(quitadas))
+    values = read_center_values(path)
+
+    assert validate_center_values(values) == {k: f"missing keys: {k}" for k in faltan}
+    with pytest.raises(ValueError) as caught:
+        center_from_values(values)
+    assert str(caught.value) == "; ".join(f"missing keys: {k}" for k in faltan)
+    # load_center agrupa por tabla, como siempre, si falta la tabla entera.
+    with pytest.raises(ValueError, match=f"missing keys: {', '.join(sorted(quitadas))}$"):
+        load_center(path)
+
+
+def test_una_clave_del_bloque_que_falta_se_nombra_con_su_tabla(tmp_path):
+    path = write_center(tmp_path, {"duraciones.valoracion": None})
+    values = read_center_values(path)
+
+    assert validate_center_values(values) == {
+        "duraciones.valoracion": "missing keys: duraciones.valoracion"
+    }
+    with pytest.raises(ValueError, match=r"missing keys: duraciones\.valoracion$"):
+        load_center(path)
+
+
+def test_una_tabla_del_bloque_mal_formada_cuenta_como_bloque(tmp_path):
+    values = read_center_values(
+        write_center(tmp_path, {"triaje": 3, **dict.fromkeys(("pruebas",))})
+    )
+    errors = validate_center_values(values)
+
+    assert errors["triaje.reparto_niveles"] == "triaje must be a table, got 3"
+    assert errors["pruebas.probabilidad"] == "missing keys: pruebas.probabilidad"
+
+
+def test_construccion_directa_con_parte_del_bloque_nombra_lo_que_falta(center):
+    with pytest.raises(
+        ValueError,
+        match=r"come together or not at all: missing keys: "
+        r"duraciones\.triaje, pruebas\.probabilidad$",
+    ):
+        dataclasses.replace(center, triage_time=None, test_probability=None)
+    sin = dataclasses.replace(center, **dict.fromkeys(CAMPOS_PROVISIONALES))
+    assert not sin.has_provisional
