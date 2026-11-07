@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop de Codex: formatea el código y ejecuta los tests rápidos antes de terminar.
+# Stop de Codex: formatea el código y ejecuta los tests rápidos con sello antes de terminar.
 # Un fallo devuelve código 2 y las últimas 50 líneas por stderr para que el agente continúe.
 set -u
 
@@ -44,13 +44,8 @@ if ! output=$(uv run ruff format . 2>&1); then
 fi
 printf '%s\n' "$output" >&2
 
-if ! output=$(uv run pytest -q -x -m "not slow" 2>&1); then
-  printf '%s\n' "$output" | tail -n 50 >&2
-  exit 2
-fi
-printf '%s\n' "$output" | tail -n 50 >&2
-
-if ! output=$(uv run --package edsim-app pytest app/tests -q -x -m "not slow" 2>&1); then
+# Tests rápidos con sello: solo las suites que afectan los cambios desde su último verde.
+if ! output=$(scripts/tests-rapidos.sh 2>&1); then
   printf '%s\n' "$output" | tail -n 50 >&2
   exit 2
 fi

@@ -20,6 +20,11 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 - Prueba las páginas con `AppTest` desde `main.py`; tras el primer `run()`, usa
   `switch_page` y otro `run()`. Comprueba los elementos de la página de destino,
   además de la ausencia de excepciones, para evitar tests que pasen en vacío.
+- Los tests de la app se ejecutan en serie, también en los scripts y en el CI: con
+  xdist y la CPU ocupada, algunos `AppTest` superan el límite de 3 s por página.
+  Hasta que ese límite se pueda configurar, un fallo de `AppTest` por tiempo
+  («AppTest script run timed out») con la máquina cargada se repite en serie antes
+  de investigarlo.
 - No arranques servidores de Streamlit: no terminan y bloquean la sesión.
   Pedro revisa la app en el navegador. El lanzador se prueba con un doble.
 - Las páginas viven en `src/edsim_app/views/`. No crees una carpeta `pages/`
@@ -33,7 +38,9 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 
 ### Selección de tests `slow`
 
-El hook Stop excluye `slow`; el CI y la suite completa ejecutan todas las marcas.
+Los hooks Stop ejecutan la rápida con sello (`scripts/tests-rapidos.sh`), que excluye `slow` y
+solo incluye la app si las rutas cambiadas la afectan; el CI y `scripts/tests-completos.sh`
+ejecutan todas las marcas.
 La selección de los AppTest que simulan se hace durante la colección en
 `tests/conftest.py`, sin editar los tests de caracterización de la A.5:
 
