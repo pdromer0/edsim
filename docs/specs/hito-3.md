@@ -415,7 +415,6 @@ Las tareas con código empiezan cuando exista la etiqueta `v0.2-hito2`. Cada tar
 | 3.7 | CLI `motor simular` y `motor validar` con resumen, tabla y gráficas | `feat/h3-cli` | Log, ground truth, tabla de validación y gráficas generados por EDsim |
 | 3.8 | Notebook `03_motor_exploracion.ipynb` | `feat/h3-notebook` | Notebook ejecutable de principio a fin en el CI |
 | 3.9 | Cierre: ADR 0024 a 0030, diario, anexo, exportación de pestañas, ajustes de la pestaña de diseño y etiqueta `v0.3-hito3` | `docs/h3-cierre` | Hito cerrado |
-|  |  |  |  |
 
 **Preparación en la tarea 3.1:** exportar esta pestaña a `docs/specs/hito-3.md` y apuntar en `CLAUDE.md` el hito en curso al hito 3.
 
@@ -538,7 +537,7 @@ Los 20 000 pacientes se sortean en unos 0,2 s.
 - Los tipos de cada clave del `payload` se definieron en la tarea, porque la especificación solo fijaba los nombres: `nivel` 1–5; `box` ≥ 1; `anterior` y `nueva` ≥ 0; `tipo`, `pool`, `destino` y `recurso` de un conjunto cerrado; `interrumpida` booleano; `desalojado_por` con formato de episodio.
 - `episode_id` y `patient_id` rechazan un `arrival_id` mayor que 999.999 en lugar de escribir siete cifras: el límite, unos 9 años a 300 urgencias al día, está documentado.
 - `sim_time` se valida en una sola función, que usan `emit`, `Event` y `event_time`. Un `sim_time` que decrece da `RuntimeError` (regla interna rota del motor) y no `ValueError`.
-- `Event` exige `ingest_time` nulo y `schema_version` 1. Los hitos 6 y 7 cambiarán esas reglas.
+- `Event` exige `ingest_time` nulo y `schema_version` 1. Los hitos siguientes cambian esas reglas así: el hito 4 admite las versiones 2 y 3 del catálogo; en el hito 6, `ingest_time` sigue nulo dentro del mensaje de Kafka (la hora de llegada es la marca `LogAppendTime` del broker), y el consumidor del hito 7 lo rellena al guardar en la capa bronce.
 
 **Resultados**
 
@@ -1035,3 +1034,49 @@ El lunes 12 de 8 a 15 h, el puerta-médico medio pasa de 29,8 a 46,9 min. Difere
 
 - Sección 9: contar las violaciones del log roto por comprobación, para ver cuáles saltan.
 - Sección 8: el texto cita días y porcentajes de la ejecución normal; debe decirlo, porque en modo rápido no coinciden con la gráfica.
+
+### Tarea 3.9: cierre del hito
+
+**Qué se hizo**
+
+PR #27 (rama `docs/h3-cierre`), abierto por Claude Code y fusionado por Pedro con squash and merge. Cinco commits, uno por parte de la tarea. La etiqueta `v0.3-hito3` apunta al commit de la fusión.
+
+- **Exportaciones:** `docs/diseno.md` y `docs/specs/hito-3.md`, idénticas byte a byte a las de la documentación en línea (anexo hasta la tarea 3.8). Antes se ajustó la pestaña de diseño: TOML en lugar de YAML, sobre común con `sim_time`, catálogo de eventos del hito 3, plantilla por turno en la v0, revisión del PR en la metodología y decisiones 24 a 30 en el registro.
+- **ADRs 0024 a 0030**, con el formato de la 0023 y las alternativas y consecuencias sacadas del anexo, y **notas de actualización** en la 0008 (revisión del PR completo desde la tarea 3.6) y en la 0019 (TOML para toda la configuración).
+- **Diario** `docs/diario/hito-3.md`, con una entrada por tarea y las preguntas abiertas para el hito 4.
+- **Deuda:** `src/edsim/checks.py` con `ValidationResult`, `check_number`, `check_count`, `interval_result`, `all_of` y `tolerance_result`, usado por `arrivals` y `engine`; `time_in_window` pública en `queueing/mm1.py` e importada por `engine/analysis.py`.
+- **Notebook 03:** la sección 9 cuenta las violaciones del log roto por comprobación; la sección 8 avisa de que sus números son los de la ejecución normal.
+- 1.041 tests en verde (suite completa en 4 min 3 s), huellas SHA-256 y semillas sin tocar.
+
+**Conceptos**
+
+- **Un ADR aceptado no se reescribe.** Si la práctica cambia, una nota de actualización con fecha conserva lo que se decidió y explica qué cambió y por qué.
+- **Una refactorización se demuestra sin tests nuevos.** La prueba es la suite completa en verde con las huellas intactas, más versiones incorrectas que comprueban que el código compartido lo usan de verdad todos los sitios.
+- **Mover código puede crear importaciones circulares.** `ValidationResult` tuvo que ir al módulo común, y `arrivals.validation` lo sigue exponiendo con el mismo nombre para no cambiar a quien lo importa.
+- **Un solo error propaga muchas violaciones.** Quitar un `box_assigned` da 2.515: 1 de transiciones, 1 de capacidad y 2.513 de "nadie se cuela", porque para el log ese paciente sigue esperando box toda la ejecución y todos los que reciben box después parecen colarse.
+
+**Decisiones**
+
+- El módulo común va en `src/edsim/`, junto a `seeds.py` y `stats.py`, porque lo usan dos subpaquetes; sus funciones son públicas porque se importan desde fuera.
+- Antes de unificar, un script comprobó que cada pareja de copias era idéntica carácter a carácter. `center._check_integer` se parece a `check_count` pero no es una copia, y no se tocó.
+- `time_in_window` se queda donde nació la regla (`queueing/mm1.py`). Si aparece un tercer usuario, pasará a `stats.py`.
+- La deuda no estaba exactamente donde decía el prompt: `_check_number` validaba los TOML, y `_all_of` y `_tolerance_result` no estaban duplicados. Se movieron igualmente para tener juntos todos los ayudantes de resultados.
+
+**Comprobación con versiones incorrectas** (temporales; resultado del PR)
+
+| Versión incorrecta | Predicción | Observado |
+| --- | --- | --- |
+| A. `check_count` con "≤" en lugar de "<" | Fallan los límites de las llegadas y los del motor y la CLI, porque usan la misma copia | Exacta: 11 fallos y 10 errores (los errores, de *fixtures* que usan el mínimo exacto) |
+| B. `time_in_window` sin recorte por la izquierda | Fallan las métricas de la M/M/1 y las identidades de utilización del motor | Exacta: 5 fallos |
+
+**Lecciones aprendidas**
+
+- **Comprobar el estado antes de la revisión:** las exportaciones se verificaron por su huella frente a los ficheros entregados, y los tres cambios no previstos (la sección "App web", nombres de evento sin formato de código y una fila vacía en la tabla de tareas) se explicaron. Los dos últimos se corrigieron en la documentación en línea y entrarán en la próxima exportación.
+- **Medir antes de explicar:** el texto de la sección 9 se escribió después de contar las violaciones por comprobación, no antes.
+
+**Pendiente menor para más adelante**
+
+- Añadir el prefijo `refactor` a la lista de CLAUDE.md.
+- Los `.md` de `docs/` tienen permiso de ejecución (100755) desde que se copiaron desde Windows: `git update-index --chmod=-x`.
+
+**Hito 3 cerrado** con la etiqueta `v0.3-hito3`. Lo siguiente es la app web (fase 1) y el hito 4, Perfiles clínicos, en un chat nuevo.

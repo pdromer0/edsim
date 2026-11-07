@@ -250,3 +250,45 @@ Aprobado con un commit de la revisión: comprobaciones de los datos de la sala, 
 - La app no muestra `true_level_window_compliance` (cumplimiento por nivel real).
 - Comparar no muestra las diferencias de los perfiles clave a clave.
 - Los notebooks fallan dentro del sandbox de Codex en `scripts/tests-completos.sh`: anotarlo en `AGENTS.md`.
+- **Desde la revisión de la 4.8c (PR #54):** ningún test comprueba ya el aviso «No hay diferencias frente al centro base» de Simular; la única aserción usaba el reparto de triaje normalizado, que salió del editor. Se fusionó sin el ajuste por ser menor: añadir el test con los campos del editor clínico (o explicar en qué estado se muestra el aviso) en la próxima tarea de la app.
+
+#### Tarea 4.8c: preparación del cierre en la app
+
+**Qué se hizo**
+
+PR #54 (rama `feat/app-h4-cierre`, Codex): cuatro commits, todos en `app/`. El primero es la exportación de esta pestaña, tal cual. Fusión `103e797`; etiqueta `app-v0.2.1`.
+
+- **Simular solo crea ejecuciones clínicas (APP-0005).** Desaparecen el selector de modelo, el ajuste `model` del estado y todo lo que solo servía al provisional: el resumen del centro (`summarize_center`), las curvas de duraciones (`duration_chart` y su test) y la rama provisional de la carga prevista. La ejecución siempre pasa los perfiles elegidos. La clave de `cached_offered_load` pierde el modelo y sigue sin la plantilla.
+- **Errores de claves que no se editan.** Antes solo se mostraban los de claves que no estaban en `FIELDS`. Una clave provisional no válida, que sigue en `FIELDS` por las etiquetas de Comparar, bloqueaba Simular sin decir por qué (ya pasaba con el modelo clínico de la 4.8b). Ahora se muestra todo error cuya clave no tenga campo en el editor, con su clave y el aviso de corregirlo fuera de la app. Lo encontró la validación del plan.
+- **Valores ausentes.** `format_change_value(None)` da «—», también en la tabla de cambios del centro, a cualquiera de los dos lados. En la ficha del episodio, las dos esperas de box ausentes muestran «—» sin unidad.
+- **Contrato con la 4.9.** `test_clinical_center_contract.py`: con un centro sin `[triaje]`, `[duraciones]` ni `[pruebas]`, Simular abre sin errores, guarda una variante sin esas tablas, calcula la carga prevista y simula un día como ejecución clínica. Está marcado `xfail(strict=True, raises=AssertionError)`: hoy falla la primera aserción porque el núcleo muestra seis errores «missing keys». La 4.9 quita la marca.
+- **Manual de usuario.** `app/README.md` presenta el modelo clínico, la tabla de las seis páginas con lo que añadió la 4.8b, `config/perfiles.toml` en «Datos en disco» y el enlace a esta especificación. Las ayudas de Simular y Ejecuciones explican el modelo clínico, qué cuenta del centro, el resumen como expectativa anual, la carga prevista y la copia de los perfiles.
+- **ADR** APP-0004 y APP-0005 en `app/docs/decisiones/`, con su índice. Nota en `app/AGENTS.md`: `scripts/tests-completos.sh` se ejecuta fuera del sandbox, porque el kernel de Jupyter necesita abrir sockets locales.
+- **Tests de Simular** pasan al modelo clínico. Se reescriben con turnos, recursos o destino los casos de errores múltiples, tipos, lista de cambios y cambios sin guardar. El de alternar modelos pasa a ser de navegación. El de parámetros provisionales absurdos comprueba además que no se recalcula la carga y que al guardar se conservan esas claves.
+
+**Conceptos**
+
+- **Un contrato entre dos tareas, escrito como test.** Un `xfail` estricto documenta lo que la tarea siguiente tiene que hacer posible. Si un día pasa sin que nadie quite la marca, el test falla: nadie puede olvidarlo, y la tarea del núcleo sabe cuándo ha terminado.
+- **Un bloqueo siempre dice por qué.** Si la validación impide guardar o simular, cada error tiene que verse, aunque su campo no esté en el editor.
+- **El manual de usuario de la app** es `app/README.md` más las ayudas «¿Qué estoy viendo?» de cada página; se revisan en cada incremento.
+
+**Decisiones**
+
+- APP-0005: Simular solo crea ejecuciones clínicas; las provisionales se siguen abriendo en las otras cinco páginas, y el núcleo las sigue creando para la validación del motor.
+- APP-0003 era ya «Codex para la fase 1»: la decisión de los perfiles de solo lectura pasa a ser APP-0004.
+- Lo que solo servía al provisional en Simular se borra, no se esconde.
+
+**Revisión**
+
+Aprobado en el código. La descripción del PR no se pudo leer desde el chat (límite de peticiones de GitHub): los tiempos de la suite de la app y los resultados de las versiones incorrectas están allí. Ajuste propuesto y no aplicado, por menor: ningún test comprueba ya el aviso «No hay diferencias frente al centro base» (ver «Pendiente»).
+
+**Lecciones aprendidas**
+
+- Al cambiar qué campos muestra un formulario, revisar también dónde se muestran sus errores: un filtro pensado para otro conjunto de campos puede esconderlos.
+- Al borrar los tests de un camino que desaparece, comprobar qué aserciones de otras cosas viajaban en ellos.
+- El contrato del `xfail` cubre el flujo de Simular, pero no los fixtures de los tests: varios tests de la app siguen leyendo las secciones provisionales de `config/centro.toml` (el catálogo clínico de `conftest.py`, que simula una ejecución provisional y escribe una variante con valores provisionales absurdos; el test de parámetros absurdos y el de errores de claves no editables). La 4.9 los adapta, con una excepción de zona limitada a `app/tests/`.
+
+**Pendiente**
+
+- Un test del aviso «No hay diferencias frente al centro base» con los campos del editor clínico, o la explicación de en qué estado se muestra (próxima tarea de la app).
+- Sin cambios desde la 4.8b: `true_level_window_compliance` no se muestra; Comparar no muestra las diferencias de los perfiles clave a clave.

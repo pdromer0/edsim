@@ -148,7 +148,7 @@ Los parámetros se escriben en términos que entiende un clínico (medianas, per
 | Sobredispersión | Efecto aleatorio diario gamma (media 1) | Recuentos diarios binomial negativa |
 | Incidentes múltiples | Llegadas en grupo | N pacientes casi simultáneos, gravedad alta |
 | Atributos | Categóricas log-lineales | Peso base × modificadores, renormalizado |
-| Gravedad y triaje | Gravedad latente normal; triaje ordinal = gravedad + ruido cortada por umbrales | Ruido creciente con la saturación |
+| Gravedad y triaje | Gravedad latente normal; triaje ordinal = gravedad + ruido cortada por umbrales | Ruido y sesgo constantes en el hito 4; ruido creciente con la saturación en el hito 5 |
 | Tiempos de actividad | Lognormal (alternativa: gamma) | Mediana y p90 por nivel y motivo |
 | Pruebas | Bernoulli con probabilidad logística | Gravedad, motivo, edad; respuesta lognormal según la hora |
 | Abandono | Paciencia individual Weibull o lognormal | Escala por nivel de triaje; abandona si espera > paciencia |
@@ -171,6 +171,8 @@ Conversión de mediana y p90 a parámetros de la lognormal:
 
 Hay dos tipos de parámetros. Los directos (mezcla de motivos, triaje, ingresos) se fijan contra datos. Los indirectos se consiguen iterando la simulación: plantilla y tiempos de servicio se ajustan hasta que los KPIs emergentes se parezcan a los objetivos.
 
+**Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en la pestaña del hito 4 y en `docs/calibracion/registro.md`.
+
 ## Motor de simulación y reloj
 
 El motor es una simulación de eventos discretos con SimPy que corre siempre en tiempo virtual (minutos); un marcapasos propio lo convierte en tiempo real cuando hace falta.
@@ -181,11 +183,11 @@ El log de eventos es la única salida del motor; el ground truth y la capa de ob
 
 - **SimPy:** cada paciente es un proceso que recorre la máquina de estados; los pools son recursos con prioridad (nivel de triaje, luego orden de llegada) y desalojo para el nivel 1.
 - **Pacer propio:** permite cambiar la velocidad en caliente (×1, ×10, ×60), pausar, y anclar el reloj al calendario real para que el dashboard muestre "ahora".
-- **Calentamiento:** 24–48 h simuladas a máxima velocidad sin emitir antes de empezar; más adelante, arranque desde una foto guardada.
-- **Tres modos de uso:** directo (pacer, publica en vivo, admite shocks), batch (sin pacer, réplicas en paralelo) y replay (re-emite una ejecución guardada, determinista y rebobinable).
+- **Calentamiento:** 24–48 h simuladas a máxima velocidad sin emitir antes de empezar. En el directo, al terminarlo se publica el censo inicial: los eventos del calentamiento de los episodios que siguen abiertos y los de recursos, en su orden (hito 6). Más adelante, arranque desde una foto guardada.
+- **Tres modos de uso:** directo (pacer, publica en vivo, admite shocks), batch (sin pacer, réplicas en paralelo) y replay (re-emite una ejecución guardada, determinista y rebobinable; llega en el hito 6, con el directo).
 - **Un flujo aleatorio por fuente de azar:** llegadas, motivos, tiempos y paciencia tienen flujos independientes derivados de la semilla con `SeedSequence` de NumPy. Esto habilita los números aleatorios comunes en los experimentos.
 - **Tres tiempos por evento:** `event_time` (cuándo ocurrió), `recorded_time` (cuándo se registró) e `ingest_time` (cuándo llegó al broker).
-- **Plano de control:** API FastAPI para pausar, cambiar la velocidad, modificar la plantilla o lanzar shocks; cada orden queda registrada como evento.
+- **Plano de control:** en el hito 6, el topic `ed.control`, con las órdenes `velocidad`, `pausar`, `reanudar` y `parar` que publica `edsim directo control`. Más adelante, una API FastAPI publicará en el mismo topic las órdenes para pausar, cambiar la velocidad, modificar la plantilla o lanzar shocks. Cada orden queda registrada: el topic es en sí un registro.
 
 ## Modelo de datos
 
@@ -230,11 +232,21 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 | `control_command` | Orden desde la API | Comando |
 | `system_snapshot` | Cada 5 minutos | Colas, ocupación, saturación |
 
+**Versiones del catálogo (hito 4).** Cada log lleva una sola versión en el `schema_version` del sobre, una por modelo y no por configuración:
+
+- **Versión 1**, modelo provisional: los eventos del hito 3 que el motor escribe, con `circuito` en `triage_started` (`puerta` para el nivel 1 o `enfermeria`).
+- **Versión 2**, modelo clínico (tarea 4.5a): `medio` en `patient_arrived`, `edad` y `sexo` en `patient_registered`, `motivo` en `triage_completed`, la lista de pruebas en `test_ordered` y el resultado de cada una en `test_resulted`.
+- **Versión 3**, modelo clínico desde la tarea 4.6a: la versión 2 más `box_released` (`box` y `espera`), cuando un paciente de los niveles de `espera_resultados_fuera` deja el box para esperar los resultados.
+
+Lo oculto para el hospital (gravedad real, nivel real, calidad del triaje, banda de edad y tiempos de respuesta de las pruebas) no está en ningún catálogo: va al ground truth.
+
 ### Topics
 
-- `ed.patient.events`, con clave `episode_id` para conservar el orden por episodio.
-- `ed.resource.events`, `ed.system.events`, `ed.snapshots` y `ed.control`.
-- Esquemas en JSON Schema en la v0; Avro con un registro de esquemas (Apicurio o Karapace) más adelante.
+- `ed.patient.events` (3 particiones), con clave `episode_id` para conservar el orden por episodio.
+- `ed.resource.events` (clave `recurso`), `ed.runs` (un mensaje `inicio` y otro `fin` por ejecución, con clave `run_id`) y `ed.control` (órdenes al simulador). Los crea y comprueba `edsim directo preparar`; el broker no los autocrea (hito 6).
+- `ed.system.events` y `ed.snapshots` no se crean hasta que existan los shocks y `system_snapshot`.
+- El valor de cada mensaje es la línea del JSONL tal cual, con `ingest_time` nulo. La hora de llegada es la marca de tiempo del broker (`LogAppendTime`), que el consumidor del hito 7 copiará en `ingest_time`.
+- Esquemas en JSON Schema en la v0 (uno por versión del catálogo, generados, en `schemas/`); Avro con un registro de esquemas (Apicurio o Karapace) más adelante.
 
 ### Ground truth
 
@@ -338,7 +350,7 @@ El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batc
 
 ### Perfiles de Docker Compose
 
-- `core`: simulador, API, Kafka, Redpanda Console y Postgres.
+- `core`: simulador, API, Kafka, Redpanda Console y Postgres. En el hito 6, `kafka` y `console` van sin perfil, porque son la base y arrancan siempre; el simulador, la API y Postgres entran en `core` cuando existan.
 - `analytics`: dbt, DuckDB, Metabase y Jupyter.
 - `realtime`: Grafana y consumidores de streaming.
 - `ml`: MLflow y entorno de modelos.
@@ -349,28 +361,29 @@ El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.
 
 ```
 edsim/
-├── sim/            # paquete del motor
-├── configs/        # centros, catálogos, escenarios, experimentos
-├── api/            # FastAPI de control
-├── consumers/      # ingesta y streaming
-├── dbt/            # bronce → plata → oro
-├── dashboards/     # Grafana como código, Streamlit
-├── ml/             # modelos
-├── notebooks/      # ejercicios
-├── docs/           # diseño, specs, ADRs, diario
-└── docker/
+├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6)
+├── app/            # EDsim Lab (Streamlit), paquete edsim-app
+├── config/         # centro, llegadas, perfiles y objetivos (TOML)
+├── schemas/        # JSON Schema de los eventos y de los mensajes (hito 6)
+├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6)
+├── notebooks/      # un notebook por hito
+├── docs/           # diseño, specs, ADRs, diario y calibración
+├── compose.yaml    # Kafka y Redpanda Console (hito 6)
+└── pyproject.toml  # workspace de uv con los dos paquetes
 ```
 
+Árbol real del repositorio, actualizado al preparar el hito 6. El diseño inicial proponía `sim/`, `configs/`, `api/`, `consumers/`, `dbt/`, `dashboards/`, `ml/` y `docker/`; las carpetas de los hitos 7 a 10 se deciden en su hito.
+
 ```bash
-edsim run --escenario hospital_medio_v0 --modo directo --velocidad 60
+edsim directo lanzar --velocidad 60 --anclar
 edsim experimento configs/experimentos/plantilla_tarde_invierno.toml
-edsim replay --run exp042_rep07 --velocidad 10
+edsim directo reemitir exp042_rep07 --velocidad 10
 edsim shock --tipo brote_gripe_moderado --intensidad 1.3
 ```
 
 ### Calidad
 
-Tests de invariantes (llegadas = salidas + dentro; ningún recurso por encima de su capacidad; ningún evento anterior a la llegada), tests de regresión con semilla fija y CI con GitHub Actions.
+Tests de invariantes (llegadas = salidas + dentro; ningún recurso por encima de su capacidad; ningún evento anterior a la llegada), tests de regresión con semilla fija y CI con GitHub Actions. Qué tests hay, cuánto cuestan y cuándo se ejecutan, en «Calidad y tests (QA)».
 
 ## Casos de uso
 
@@ -411,17 +424,17 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 
 ### Hitos
 
-0. **Entorno:** Python con uv, git, Cursor, Claude Code, `CLAUDE.md`, pytest y pre-commit.
-1. **Colas y SimPy:** eventos discretos, cola M/M/1 y ley de Little; validación contra la teoría.
-2. **Llegadas:** Poisson no homogéneo, *thinning*, sobredispersión y validación estadística.
-3. **Motor y eventos:** paciente, triaje, recursos con prioridad y desalojo, turnos, log de eventos en JSONL y validación del motor.
-4. **Perfiles clínicos:** catálogo de motivos, gravedad latente y primera calibración.
-5. **Cierre del flujo:** abandono, destino, boarding simple y ground truth.
-6. **Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
-7. **Persistencia:** consumidor hacia Postgres/Timescale y capa de observación con defectos.
-8. **Analítica:** dbt (medallón) y Grafana.
-9. **Experimentos:** runner con réplicas, números aleatorios comunes y MLflow.
-10. **Modelos:** casos de uso de ML, uno a uno.
+- **0 · Entorno:** Python con uv, git, Cursor, Claude Code, `CLAUDE.md`, pytest y pre-commit.
+- **1 · Colas y SimPy:** eventos discretos, cola M/M/1 y ley de Little; validación contra la teoría.
+- **2 · Llegadas:** Poisson no homogéneo, *thinning*, sobredispersión y validación estadística.
+- **3 · Motor y eventos:** paciente, triaje, recursos con prioridad y desalojo, turnos, log de eventos en JSONL y validación del motor.
+- **4 · Perfiles clínicos:** población adulta, 17 motivos, gravedad latente y triaje con error, pruebas por tipo y duraciones por nivel real y motivo, tres relojes, sala de resultados para los niveles 4 y 5 y primera calibración con la ventana anual.
+- **5 · Cierre del flujo:** abandono, destino, boarding simple y ground truth.
+- **6 · Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
+- **7 · Persistencia:** consumidor hacia Postgres/Timescale y capa de observación con defectos.
+- **8 · Analítica:** dbt (medallón) y Grafana.
+- **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow.
+- **10 · Modelos:** casos de uso de ML, uno a uno.
 
 ### Versiones del modelo
 
@@ -430,11 +443,21 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 - **v2:** observación, boarding realista, re-triaje y reconsultas en 72 h.
 - **v3:** perfiles de centro intercambiables, profesionales individuales y constantes vitales.
 
+**Aplazado en el hito 4**, con su destino:
+
+- **Hito 5:** destino multinomial, abandono, boarding y su calibración (ingreso, estancia, días punta); ruido de triaje que crece con la saturación.
+- **v1 (circuitos):** triaje dentro del box y equipo propio para el nivel 1, con desalojo de médicos; circuitos separados para los niveles 4 y 5 (consultas o vía rápida), lo que permitiría calibrar el reloj A del nivel 3.
+- **v3 (perfiles de centro):** pediatría y centros mixtos.
+- **Fase 2 de la app:** editar los perfiles desde la app.
+- **Versiones posteriores o por decidir:** un `test_ordered` y un `test_resulted` por tipo de prueba; reconocimiento en la puerta por la gravedad real; turnos escalonados por mando (pretriaje de noche); plantilla por temporada (refuerzo de invierno); la regla de la plantilla equivalente con la carga prevista por turno en lugar de la tasa de llegadas.
+
 ### App web
 
 La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al cerrar el hito 3, una tarea pequeña en los hitos siguientes y la aplicación completa después del hito 6 o de la v0. Decisión y especificación de la fase 1: App web — fase 1.
 
-Estado de la fase 1 (4 de noviembre de 2026): seis páginas hechas en las tareas A.0 a A.7; queda el cierre, la A.8, con las ADR 31 a 33 y APP-0001 a APP-0003 y la etiqueta `app-v0.1.0`.
+Fase 1 cerrada el 5 de noviembre de 2026 con la etiqueta `app-v0.1.0`: EDsim Lab, seis páginas (tareas A.0 a A.8) y las ADR 0031 a 0033 y APP-0001 a APP-0003.
+
+Incremento del hito 4 (tareas 4.8a, 4.8b y 4.8c): la app simula y muestra el modelo clínico, con las etiquetas `app-v0.2.0` y `app-v0.2.1` y las ADR APP-0004 (perfiles de solo lectura) y APP-0005 (Simular solo crea ejecuciones clínicas). Especificación y anexo: App web — incrementos.
 
 ## Metodología de trabajo con Claude Code y Cursor
 
@@ -476,10 +499,10 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 | 2 | Crear rama de la tarea | Claude Code | `git switch -c feat/h1-cola-mm1` |
 | 3 | Proponer el plan | Claude Code propone, Pedro aprueba | Modo plan |
 | 4 | Implementar código y tests | Claude Code | La tarea completa, con el plan aprobado |
-| 5 | Comprobar tras cada cambio | Automático | Hooks de Claude Code: linter y tests rápidos |
+| 5 | Comprobar al final de cada turno | Automático | Hook Stop: tests rápidos con sello (N2), nada en modo plan; ver «Calidad y tests (QA)» |
 | 6 | Commit local | Claude Code | Mensaje estándar: `feat(sim): cola M/M/1 con SimPy` |
 | 7 | Comprobar al hacer commit | Automático | Hooks de pre-commit; si fallan, no hay commit |
-| 8 | Comprobar la tarea completa | Claude Code | ruff, suite completa y revisión de sus propias gráficas |
+| 8 | Comprobar la tarea completa | Claude Code | scripts/tests-completos.sh (N3) una vez antes de cada push y revisión de sus propias gráficas |
 | 9 | Subir la rama | Claude Code, con permiso | `git push` |
 | 10 | Abrir el pull request | Claude Code | `gh pr create` con resumen y checklist |
 | 11 | Ejecutar el CI | Automático | GitHub Actions |
@@ -493,9 +516,144 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 - **Permisos de Claude Code:** lectura y tests sin preguntar; subidas con permiso; fusión reservada a Pedro.
 - **Aprendizaje de git:** en los hitos 0 y 1, Pedro ejecuta a mano los pasos de git (rama, commit, push, pull request) siguiendo las indicaciones de Claude; desde el hito 2 los ejecuta Claude Code.
 
+## Calidad y tests (QA)
+
+Los tests van por niveles (decisión 47, tarea P.1): cada punto del ciclo ejecuta solo lo que el último cambio puede haber roto, y el árbol que llega a `main` pasa siempre la suite completa en local y en el CI. Cifras de `main` en `f410f00` (7 de noviembre de 2026).
+
+### Qué tests hay
+
+Hay 3.000 tests en cinco suites. La marca `slow` separa los caros: en el núcleo, los estadísticos largos y los que reproducen una calibración (decisión 17); en la app, los `AppTest` que simulan, que marca `app/tests/conftest.py` al recolectar.
+
+| Suite | Tests | Qué incluye |
+| --- | --- | --- |
+| Núcleo rápido | 2.723 | Todo `tests/` salvo `slow` |
+| Núcleo `slow` | 32 | Validaciones estadísticas largas y reproducción de las filas del registro de calibración |
+| App rápida | 124 | Tests de `app/tests/` sin simulación |
+| App `slow` | 117 | `AppTest` que simulan y los del Replay |
+| Notebooks | 4 | Los cuatro notebooks de `notebooks/` en modo rápido (`EDSIM_NB_RAPIDO=1`) |
+
+El núcleo, por familias. Los tests usan valores calculados a mano y literales, no la función probada como referencia.
+
+| Familia | Tests | `slow` | Qué comprueba |
+| --- | --- | --- | --- |
+| Ejecuciones, métricas y análisis | 607 | 2 | `simulate_run`, `run.json`, CSV clínico, ground truth, relojes, cumplimiento, carga ofrecida, comparación y Replay |
+| Configuración | 563 | 0 | Lectura y validación de `centro.toml`, `perfiles.toml` y `llegadas.toml`; «escritos = recalculados» |
+| Motor, eventos e invariantes | 557 | 8 | Máquina de estados, prioridades, turnos, catálogo de eventos, invariantes del log, huellas y validación del motor |
+| Perfiles clínicos | 471 | 4 | Mezcla exacta de la gravedad, triaje, pruebas y duraciones; muestreadores frente a lo exacto |
+| Llegadas | 188 | 7 | λ(t), *thinning*, efecto diario Z y las cinco pruebas de validación |
+| CLI | 149 | 2 | Comandos de `edsim`, incluidos `motor validar` y `perfiles validar` de verdad |
+| Calibración | 139 | 7 | Plantilla equivalente, ventana anual, sensibilidad y reproducción del centro calibrado |
+| Colas de referencia | 75 | 2 | M/M/1 frente a la teoría, estadística y réplicas |
+| Frontera y humo | 6 | 0 | El núcleo no importa `streamlit`, `pandas` ni `edsim_app` |
+| **Total** | **2.755** | **32** |  |
+
+### Cuánto cuestan
+
+En el portátil de Pedro, la rápida del núcleo baja de unos 6 min en serie a 3 min 05 s en paralelo, y la comprobación completa antes del push, de 18 min 46 s a 12 min 32 s. Medidas del PR #52 sobre `main` en `462d0d1`: i7-1255U (2 núcleos de rendimiento y 8 de eficiencia, 12 hilos), 7,6 GB, WSL2, pytest 9.2.0 y pytest-xdist 3.8.0, 6 workers. Entre dos ejecuciones iguales hubo hasta un 40 % de diferencia.
+
+| Suite | En serie | Como se ejecuta ahora |
+| --- | --- | --- |
+| Núcleo rápido | 5 min 35 s – 6 min 05 s | 3 min 05 s (xdist, `loadfile`) |
+| Núcleo completo | 15 min 27 s | 9 min 00 s (xdist, `worksteal`) |
+| App rápida | 33 s | En serie |
+| App completa | 2 min 19 s – 2 min 33 s | En serie |
+| Notebooks | 1 min | En serie |
+| `scripts/tests-completos.sh` (todo lo anterior, con lint y formato) | 18 min 46 s | 12 min 32 s |
+
+- **Qué domina.** 40 tests rápidos de más de 2 s suman 204 de los 362 s de la rápida en serie. En la completa pesan los fixtures caros: `engine_validation_real` (unos 2 min, de sesión), `clinical_store` y `clinical_simulation` (de sesión) y los del centro calibrado (de módulo).
+- **Por qué xdist no gana más.** Cada worker es un proceso propio y recalcula esos fixtures. Con `loadfile` cada fichero va a un worker y la completa no baja del fichero más largo (`test_calibrated_center.py`); `worksteal` reparte mejor y gana en la completa. Con 12 workers se agota la memoria y aparece el swap.
+- **Por qué la app va en serie.** En paralelo no baja del 87 % de la serie, y con la CPU ocupada algunos `AppTest` superan su límite de 3 s por página.
+- **El CI.** En el runner (4 CPU) el núcleo completo tardó 463 s en serie, 470 s con `worksteal` y 382 s con `loadfile`. Ninguno llega al 60 % de la serie, así que el CI va en serie. La misma ejecución en serie ha tardado entre 463 y 933 s según la máquina asignada. Los tres jobs van en paralelo: `tests` tarda unos 8 min (hasta unos 16 con una máquina lenta), `tests-app` unos 2,5 y `notebooks` 1.
+- **El criterio.** xdist se adopta en una suite solo si en paralelo tarda como mucho el 60 % de la serie y da exactamente los mismos resultados test a test. Se fijó antes de medir.
+
+### Cuándo se ejecutan
+
+Cuatro niveles, de lo más barato a lo más completo: **N0** ruff; **N1** los ficheros de test del área tocada; **N2** la rápida con sello, solo de las suites afectadas; **N3** todo. Cada punto del ciclo usa el nivel más bajo que le basta.
+
+| Punto del ciclo | Nivel | Qué se ejecuta | Qué garantiza |
+| --- | --- | --- | --- |
+| Al editar un `.py` | N0 | `ruff format` del fichero (hook `PostToolUse` de Claude Code) | Formato |
+| Al final de cada turno (hook `Stop` de Claude Code y de Codex) | N2 | `scripts/tests-rapidos.sh`. En modo plan, nada. Sin cambios desde el último verde, o con solo documentación, nada. Si no, la rápida de cada suite afectada, con `-x`: el núcleo con xdist y la app en serie. Codex formatea antes con `ruff format .` | El agente no devuelve el turno con la rápida en rojo |
+| Antes de cada commit | N0 + N1 | pre-commit (nbstripout, `ruff check --fix`, `ruff format`, espacios, YAML, ficheros grandes) y los ficheros de test del área tocada | El paso está limpio y su área pasa |
+| Al probar una versión incorrecta | N1 | Los ficheros donde se predice el fallo y los que deben seguir pasando | El test detecta el error previsto |
+| Antes de cada push | N3 | `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa | Lo que se sube pasa todo |
+| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app` y `notebooks`, en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
+| Al fusionar en `main` | CI | Lo mismo sobre `main`, sin cancelar nunca | `main` sigue en verde |
+
+Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
+
+| Ruta cambiada | Suites que se ejecutan |
+| --- | --- |
+| `*.md`, `docs/`, `app/docs/`, `notebooks/` | Ninguna; se actualizan los sellos |
+| `app/` | App |
+| `src/edsim/`, `config/`, `pyproject.toml`, `uv.lock`, `tests/data/` | Núcleo y app (la app usa el núcleo y lee `tests/data/`) |
+| `tests/`, `scripts/`, `.claude/`, `.codex/`, `.github/`, `.pre-commit-config.yaml`, `.gitignore` | Núcleo |
+| Cualquier otra | Núcleo y app (lo conservador) |
+
+`uv run pytest tests/test_x.py` sigue en serie: xdist no va en `addopts`, y solo lo piden los dos scripts.
+
+### Workflow
+
+Una tarea pasa por siete pasos y cada uno tiene su nivel de tests; los dos bucles vuelven a la implementación.
+
+&#91;embedded content: ciclo de una tarea · los tests de cada paso\]
+
+Dentro de la implementación, cada paso lógico es un commit con N1, y al final de cada turno el `Stop` ejecuta N2 sobre lo que haya cambiado. N3 se ejecuta una vez por push, no por commit. Una revisión con ajustes o un CI en rojo vuelven a la implementación con commits nuevos en la misma rama, y el ciclo de tests se repite desde N1.
+
+**Cómo funciona el sello** (`scripts/sello.sh`):
+
+- **Qué es.** El manifiesto del árbol en el último verde de cada suite: una línea `sha1  ruta` por fichero seguido o sin seguir no ignorado (`git ls-files --cached --others --exclude-standard` y `sha1sum`). Hay un sello para el núcleo y otro para la app, en `.cache/edsim/`.
+- **Cómo decide.** Compara el manifiesto actual con el sello de cada suite, no con `HEAD`: un commit no obliga a repetir los tests, y un fichero nuevo sin seguir sí cuenta. Las rutas cambiadas se clasifican con la tabla anterior.
+- **Cuándo se escribe.** Solo con la suite en verde, y con el manifiesto tomado antes de pytest: lo que cambie durante los tests no queda como verde. Una suite a la que no afecta ningún cambio se vuelve a sellar sin ejecutarse.
+- **Ficheros borrados.** Un fichero seguido y borrado sigue en el índice; `sha1sum` no lo encuentra, falta en el manifiesto y cuenta como cambio.
+- **Por qué fuera de `.git`.** El `.git` de Codex es de solo lectura en su sandbox, y `git hash-object -w` escribiría objetos. `sha1sum` solo lee.
+
+### Qué cambió con la P.1 y cómo queda
+
+La espera en tests por tarea baja de unas 3 h a menos de 50 min. La ganancia viene sobre todo de no ejecutar nada cuando no hace falta (modo plan, árbol ya verde, commits); el paralelismo aporta menos en este portátil. Cambios del PR #52 (7 de noviembre de 2026):
+
+| Punto | Antes | Ahora | Por qué |
+| --- | --- | --- | --- |
+| `Stop` en modo plan | Rápida completa del núcleo, unos 6 min por turno | Nada | En plan el código no cambia |
+| `Stop` sin cambios que afecten | Rápida completa | Nada (0,26 s para decidirlo) | El árbol ya pasó |
+| `Stop` con cambios | Rápida del núcleo, siempre | La rápida de las suites afectadas: núcleo 3 min 05 s, app 33 s | Solo lo que el cambio puede romper |
+| Antes de cada commit | Rápida completa | ruff y los tests del área | Con *squash and merge*, los commits intermedios no llegan a `main` |
+| Antes del push | Completa, app y notebooks en serie, 18 min 46 s | `scripts/tests-completos.sh`, 12 min 32 s | Un solo comando, con el núcleo en paralelo |
+| CI | Job `tests` con lint, completa y notebook (8 min 22 s); `tests-app` aparte | `tests`, `tests-app` y `notebooks` en paralelo; un push nuevo cancela el anterior | El notebook no espera al núcleo y no se acumulan ejecuciones |
+| `Stop` de Codex | Rápida del núcleo y de la app, siempre | El mismo script, por rutas | Una sola lógica para los dos agentes |
+
+El coste por tarea es una estimación con las medidas de la tabla «Cuánto cuestan» y un supuesto de tarea típica, no una tarea medida:
+
+| Supuesto | Antes | Ahora |
+| --- | --- | --- |
+| 10 turnos en modo plan | 58 min | 0 |
+| 12 commits | 70 min | 12 min como mucho (N1 sin medir; cota de 1 min por commit) |
+| 3 turnos con cambios en el núcleo y la app | 17 min | 11 min |
+| 2 rondas de push | 38 min | 25 min |
+| **Total** | **unas 3 h** | **menos de 50 min** |
+
+**Por qué no se pierde calidad.** A `main` solo llega el árbol final del PR (*squash and merge*), y ese árbol pasa N3 en local y el CI completo en una máquina limpia, como antes. Lo único que deja de comprobarse uno a uno son los commits intermedios, que desaparecen al fusionar. El sello nunca da por verde un árbol que no pasó: se escribe solo en verde y compara contenidos, no commits.
+
+**Limitaciones conocidas:**
+
+- En este portátil no se alcanzan los tiempos orientativos (rápida en 1 min 30 s y N3 en 7 min): manda la CPU.
+- En el runner del CI, xdist no compensa: el CI va en serie y su tiempo varía hasta el doble según la máquina.
+- La app va en serie por el límite de 3 s por página de `AppTest`. Un fallo por tiempo con la máquina cargada se repite en serie antes de investigarlo.
+- `--dist loadgroup` no agrupa con pytest 9.2 ([pytest-xdist #1386](https://github.com/pytest-dev/pytest-xdist/issues/1386)); no se usa.
+
+**Pendiente (fase 2):**
+
+- Hacer configurable el límite de `AppTest` (3 s por defecto), con su test.
+- Revisar la marca `slow` de los 40 tests rápidos de más de 2 s.
+- `timeout-minutes` en cada job del CI: hoy no hay límite y GitHub deja un job colgado hasta 6 h.
+- Repartir los tests `slow` en jobs del CI aparte, cada uno en su máquina, para bajar el tiempo típico y el peor caso.
+- N1 automático con `pytest-testmon`: solo sigue el código Python, así que un cambio en `config/` o `tests/data/` seguiría pidiendo N2. Comprobar antes que admite pytest 9.2.
+- Saltar los tests del CI cuando el PR solo cambia documentación, con una comprobación dentro del job y no con `paths-ignore` (un check obligatorio que no se ejecuta bloquea la fusión).
+- Volver a mirar `loadgroup` cuando xdist publique una versión que admita pytest 9.2.
+
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su pestaña) y la 47, de la tarea de proceso P.1; cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -515,7 +673,7 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 14 | Repositorio público en GitHub, con ruleset que protege main | Los rulesets solo están disponibles en repositorios públicos del plan gratuito; datos sintéticos, sin secretos |
 | 15 | Código, nombres y docstrings en inglés; documentación, especificaciones y commits en español; claves de configuración en español | Estándar del código; la documentación sirve al aprendizaje en el idioma de Pedro |
 | 16 | Métricas derivadas de los registros por cliente, sin traza aparte en el modelo | Una única fuente de verdad: hechos registrados y estados derivados, como en el log de eventos |
-| 17 | Tests estadísticos marcados como slow: el hook de Claude Code los omite y el CI los ejecuta todos | Ciclo de trabajo rápido sin renunciar a la validación estadística |
+| 17 | Tests estadísticos marcados como slow: el hook de Claude Code los omite y el CI los ejecuta todos | Ciclo de trabajo rápido sin renunciar a la validación estadística. Matizada por la 47: el Stop ejecuta la rápida con sello y los slow corren antes del push y en el CI |
 | 18 | Notebooks de Jupyter sin lógica propia, con nbstripout en pre-commit y nbmake en el CI en modo rápido | Explorar y aprender sin estado oculto ni salidas en git; Jupyter por ser el estándar frente a marimo |
 | 19 | Perfiles de llegadas en TOML: repartos horario y semanal en porcentaje y factores mensuales de tasa, normalizados a media 1 en el código | Parámetros en términos que entiende un clínico; tomllib sin dependencias; la base conserva su significado |
 | 20 | λ(t) continua: interpolación lineal periódica entre los centros de las horas; día, mes y Z cambian a medianoche; reloj sin cambio de hora | Sin saltos artificiales a las en punto; Λ exacta con trapecios |
@@ -532,6 +690,20 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; cada una 
 | 31 | App incremental: fase 1 en Streamlit al cerrar el hito 3, una tarea de app en los hitos siguientes y la aplicación completa (API y frontend propio) después del hito 6 o de la v0 | Ver el modelo pronto sin rehacer la app cuando cambien el paciente, los eventos y la arquitectura |
 | 32 | Una ejecución es una carpeta resultados/ejecuciones/\<run\_id>/ con el log, el ground truth, la copia de la configuración y run.json, escrita por simulate\_run desde la CLI y desde la app | Los ficheros son la verdad, sin base de datos; cada ejecución se puede reproducir |
 | 33 | Las variantes del centro se escriben con tomlkit conservando los comentarios, en resultados/variantes/; config/ guarda solo lo que se versiona a mano | Los comentarios explican cada clave; las pruebas no ensucian el repositorio |
+| 34 | El hito 4 cubre población, motivo, gravedad, triaje con error, pruebas, duraciones, relojes y una primera calibración; el destino provisional no cambia, y abandono, destino, boarding y bucles de saturación van al hito 5 | Sin destino, boarding ni abandono, el ingreso, la estancia y la cola en días punta saldrían mal por construcción; los bucles necesitan el estado del servicio en el paciente |
+| 35 | Solo adultos de 15 años o más, con cuatro bandas de edad (15–44, 45–64, 65–79, 80–99) y edad uniforme dentro de la banda | Los objetivos de triaje son de adultos; la pediatría pide su propio catálogo (v3) |
+| 36 | `config/perfiles.toml` aparte de `centro.toml`, una tabla por motivo, unidades clínicas, factores opcionales neutros, claves desconocidas prohibidas y franjas propias | Hospital y población son preguntas distintas; perfiles intercambiables en la v3; nada derivado a mano |
+| 37 | Los 17 motivos desde el principio, cada parámetro con su estado (calibrado, derivado u orientativo) y pesos base derivados del reparto del catálogo con `base_weights_for` | No hay fuente pública por motivo; el estado dice qué respaldo tiene cada número; los shocks no se renormalizan |
+| 38 | Gravedad latente normal y triaje ordinal G + ε con ruido y sesgo; umbrales derivados una vez para el reparto asignado y escritos en el TOML, sin recalcularse al cargar; la prioridad usa el nivel asignado, y duraciones y pruebas, la gravedad real | Modelo del diseño; reproduce el infra y sobretriaje publicados; hace medible el daño del infratriaje; un escenario con más gravedad da más niveles urgentes |
+| 39 | El nivel 1 asignado se clasifica en la puerta (triaje de duración 0, `circuito: "puerta"`, sin enfermera) y va directo al box; sin desalojo de médicos | El crítico no hace cola de triaje sin cambiar el orden de los eventos; el desalojo de médicos ahorraría un minuto a un paciente al día con una regla clínica sin datos (v1) |
+| 40 | Tres relojes con nombre propio; cumplimiento Manchester desde la clasificación (C); pretriaje con indicador propio; nivel 1 sin porcentaje; cumplimiento por nivel real solo con ground truth | Antes del triaje no hay nivel; separa la cola de triaje de la de médicos; con el reloj A el nivel 2 no podía cumplir |
+| 41 | Centro base realista, calibrado a horquillas observadas en `config/objetivos.toml`, con objetivos de ajuste y de comprobación; dos mandos indirectos con objetivos separados, la enfermería de triaje (pretriaje) y los médicos (tiempo hasta el médico), ajustados en ese orden; los boxes quedan fijos (30), y la sensibilidad de los mandos se mide antes de ajustar. Desde la tarea 4.6c, cada candidato se mide con la ventana anual (una réplica por mes) y la semilla de comprobación puede vetar la elección, no hacerla; después de un veto se confirma con 2028 | Un laboratorio que nunca incumple no sirve; plantilla y duraciones no son identificables sin la estancia, y plantilla y boxes tampoco con objetivos de tiempo hasta el médico; los médicos no mueven el pretriaje (1,4 minutos con la enfermería de antes); los objetivos del SAS son medias anuales, y una plantilla elegida con una semilla que falla con otra está en el borde por azar |
+| 42 | Pruebas de cuatro tipos en una ronda, con un solo `test_ordered` (lista de pruebas) y un solo `test_resulted` (resultados) | Mismo comportamiento del paciente sin cambiar el contrato del log; un evento por tipo queda para versiones posteriores |
+| 43 | Sorteos sincronizados: Gumbel-max para las categorías y z estándar transformadas para las variables continuas, con consumo fijo y un flujo por fuente (`child_streams(seed, 8)`) | Números aleatorios comunes también para escenarios clínicos: con la gripe cambia el 3,37 % de los pacientes, el mínimo posible, y no el 15,55 % |
+| 44 | Modelo clínico opcional durante el hito (`profiles=None` usa el provisional) y por defecto en el cierre, cuando la app ya lo soporta; el `ProvisionalSampler` se queda para la validación del motor | `main` estable y `tests-app` obligatorio en todo el hito; la app no se rompe a mitad de camino |
+| 45 | Con el modelo clínico, los pacientes de los niveles asignados de `espera_resultados_fuera` (`centro.toml`, `[4, 5]`) dejan el box al pedir las pruebas, esperan los resultados en una sala sin límite de capacidad y vuelven a pedir box con su misma clave de prioridad para la reevaluación; un evento nuevo en el catálogo versión 3. El provisional no cambia | El 64 % del tiempo de box era espera de resultados y saturaba los 30 boxes; en las urgencias reales los leves esperan fuera; la plantilla de médicos no puede calibrar una cola de boxes |
+| 46 | La parada / crítico pasa al 0,3 % del catálogo con una gravedad alta y poco dispersa, para que casi todas sean nivel 1 real y asignado; pesos base, ruido y sesgo, umbrales y marginales de pruebas se rederivan y se escriben | Con el 0,54 % y la gravedad en el umbral, el 44 % de las paradas recibía nivel 2 y esperaba en la cola del triaje: el nivel 1 asignado del 0,4 % no dejaba sitio para todas |
+| 47 | Tests por niveles según el punto del ciclo (candidata; ADR en la 4.9): ruff al editar y en pre-commit; los tests del área antes de cada commit; en el hook Stop, la rápida con sello solo de las suites afectadas y nada en modo plan; antes de cada push, scripts/tests-completos.sh; el CI completo en cada push. pytest-xdist solo en el núcleo y en local; la app y el CI en serie. Matiza la 17 | Con squash and merge solo llega a main el árbol final, que pasa N3 y el CI; la espera en tests rondaba las 3 h por tarea y queda por debajo de 50 min. xdist solo donde tarda como mucho el 60 % de la serie con los mismos resultados (tarea P.1, PR #52) |
 
 ### Preguntas resueltas
 

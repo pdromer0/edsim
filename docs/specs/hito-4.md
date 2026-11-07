@@ -1,5 +1,7 @@
 # Hito 4 — Perfiles clínicos
 
+Nov 5, 2026 · @Pedro
+
 ## Objetivo y alcance
 
 Al terminar el hito 4, cada paciente de EDsim llega con edad, sexo, medio de llegada y motivo de consulta, tiene una gravedad real que el hospital no ve y recibe un nivel de triaje con error. Sus pruebas y duraciones dependen de esa gravedad y de su motivo. Todo sale de un muestreador clínico que se enchufa en el punto de muestreo inyectable del hito 3, sin cambiar la lógica de colas, recursos ni turnos. El centro base queda calibrado, por primera vez, contra datos españoles observados: pretriaje y tiempo hasta el médico.
@@ -14,7 +16,7 @@ Dentro del alcance
 - Tres relojes hasta el médico con nombre propio; cumplimiento Manchester desde la clasificación; indicador de pretriaje.
 - Primera calibración: parámetros directos contra datos y plantilla (enfermería de triaje y médicos) contra horquillas observadas, con objetivos de ajuste y de comprobación en `config/objetivos.toml`.
 - `config/perfiles.toml`, validación estadística del muestreador, CLI, tests y el notebook `04_perfiles_clinicos.ipynb`.
-- El incremento de la app para el hito 4 (tareas 4.8a y 4.8b), documentado en la pestaña «App web — incrementos».
+- El incremento de la app para el hito 4 (tareas 4.8a, 4.8b y 4.8c), documentado en la pestaña «App web — incrementos».
 
 Fuera del alcance
 
@@ -613,7 +615,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | --- | --- |
 | Perfiles | Carga del TOML de ejemplo y del real; factores opcionales neutros; errores con claves desconocidas, longitudes, porcentajes y medianas inválidos |
 | Contexto | Franja en los bordes (7:59 y 8:00), tipo de día en el paso de domingo a lunes, estación por mes |
-| Mezcla | Valor a mano (22,8 % de disnea en mayores en invierno; 22,7 % hasta la tarea 4.6a); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea». Tarea 4.7: [2, 1, 1] → [3, 1, 1] a mano (mínimo 0,10, Gumbel-max 0,10 y CDF inversa 0,15 en el orden [A, B, C]); Gumbel = mínimo con un solo peso que crece y ≥ mínimo con cualquier cambio (pesos aleatorios); la simulación con números comunes dentro de su binomial; la gripe con `config/` (3,37 % y 15,55 %, a 1e-6) y simulada en el año; otra población es un error |
+| Mezcla | Valor a mano (22,8 % de disnea en mayores en invierno; 22,7 % hasta la tarea 4.6a); Gumbel-max con sorteos fijados a mano; reparto global de `base_weights_for` dentro de ±0,5 puntos; «con más disnea solo cambian los que pasan a disnea». Tarea 4.7: \[2, 1, 1\] → \[3, 1, 1\] a mano (mínimo 0,10, Gumbel-max 0,10 y CDF inversa 0,15 en el orden \[A, B, C\]); Gumbel = mínimo con un solo peso que crece y ≥ mínimo con cualquier cambio (pesos aleatorios); la simulación con números comunes dentro de su binomial; la gripe con `config/` (3,37 % y 15,55 %, a 1e-6) y simulada en el año; otra población es un error |
 | Triaje | Umbrales a partir del reparto; reparto asignado y real; infra y sobretriaje; matriz real × asignado casilla a casilla; umbrales escritos = derivados y el shock con los escritos; la cascada entera (pesos, ruido y sesgo, umbrales) igual a lo escrito; la guarda de la parada (≥ 99 % de nivel real 1 y ≥ 97 % de asignado 1, con Φ a mano) y la media del criterio (4,21; con 4,20 no cumple); orden clínico de gravedad por motivo; nivel 1 en la puerta con un escenario a mano |
 | Pruebas y duraciones | logit(0,40) = −0,4055 y 40,00 / 59,74 / 68,88 / 83,13 %; bordes u = P; máxima de las pedidas (75; 82,5 de tarde; `None` sin pruebas); media lognormal 24,43 → 29,32 con el factor 1,2; lo exacto contra `quad`; marginales por motivo y regla de los k sobre `config/perfiles.toml`; `check_workup` y `check_durations` |
 | Muestreador | Consumo fijo por flujo; el paciente k es el mismo con otra plantilla y conserva sus z con otro parámetro clínico; llegadas idénticas a `iter_arrivals` |
@@ -763,7 +765,7 @@ Contenido
 
 ## Decisiones del hito
 
-Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptual del 5 de noviembre de 2026, y la 45 y la 46, en la del 6 de noviembre, tras las comprobaciones clínicas de la tarea 4.5a. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0046 y las añade al registro del diseño. La decisión APP-0003, que solo afecta a la app, está en «App web — incrementos».
+Trece decisiones candidatas: de la 34 a la 44, acordadas en la sesión conceptual del 5 de noviembre de 2026, y la 45 y la 46, en la del 6 de noviembre, tras las comprobaciones clínicas de la tarea 4.5a. Si se confirman durante el hito, la tarea de cierre las convierte en los ADR 0034 a 0046 (con la 0047, de la tarea de proceso P.1) y las añade al registro del diseño. Las decisiones APP-0004 y APP-0005, que solo afectan a la app, están en «App web — incrementos».
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -801,7 +803,8 @@ Las tareas van en orden y con una sola rama abierta a la vez. Cada una empieza c
 | 4.6c | Recalibración con la ventana anual: una réplica por mes, de modo que la media sea la del año, como los objetivos del SAS (41); el cumplidor decidido con enteros; registro, especificación y cifras del notebook 04 con la plantilla nueva. Va después de la 4.7, que destapó que la ventana de la 4.6b era la primera quincena de enero | Claude Code | `feat/h4-recalibracion-anual` | Objetivos de ajuste dentro de horquilla con la media del año y el registro con las dos calibraciones |
 | 4.8a | Núcleo de la app con perfiles (`runs/`); `run.json` versión 2 se adelanta a la 4.5b | Claude Code | `feat/h4-app-nucleo` | Ver «App web — incrementos» |
 | 4.8b | Páginas de la app con perfiles | Codex | `feat/app-h4-paginas` | Ver «App web — incrementos»; etiqueta `app-v0.2.0` |
-| 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); ADR 0034 a 0046; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
+| 4.8c | Preparación del cierre en la app: Simular solo crea ejecuciones clínicas y no lee las secciones provisionales del centro; ayudas de Simular y Ejecuciones. Añadida al cerrar la 4.8b, que dejó la opción Provisional en Simular | Codex | `feat/app-h4-cierre` | Ver «App web — incrementos»; etiqueta `app-v0.2.1` |
+| 4.9 | Cierre: modelo clínico por defecto y separación de `centro.toml` (36, 44); lector compatible de los centros con secciones provisionales; ADR 0034 a 0047; diario; anexo; exportación de pestañas; ajustes de la pestaña de diseño; etiqueta `v0.4-hito4` | Claude Code | `docs/h4-cierre` | Hito cerrado |
 
 Preparación en la tarea 4.1: exportar esta pestaña a `docs/specs/hito-4.md`, apuntar el hito en curso al hito 4 en `CLAUDE.md` y `AGENTS.md`, añadir el prefijo `refactor` a la lista de commits y quitar el permiso de ejecución a los `.md` de `docs/` (`git update-index --chmod=-x`).
 
@@ -838,7 +841,7 @@ El hito 4 está cerrado cuando se cumplen todos:
 - La app trabaja con perfiles (ver «App web — incrementos») y existe la etiqueta `app-v0.2.0`.
 - `notebooks/04_perfiles_clinicos.ipynb` se ejecuta de principio a fin en el CI y se versiona sin resultados.
 - Pedro sabe explicar cómo se mezcla un motivo con su contexto, por qué el nivel asignado no es el real y qué consecuencias tiene, por qué el cumplimiento se mide desde la clasificación, y por qué se calibra a lo observado con dos mandos de objetivos separados.
-- `docs/` contiene esta especificación, los ADR 0034 a 0044, la entrada del diario y el anexo de referencia del hito.
+- `docs/` contiene esta especificación, los ADR 0034 a 0047 (la 0047, de la tarea de proceso P.1), la entrada del diario y el anexo de referencia del hito.
 - La etiqueta `v0.4-hito4` existe en GitHub.
 
 ## Para versiones posteriores
