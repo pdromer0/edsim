@@ -20,6 +20,7 @@ El núcleo se ejecuta en paralelo con pytest-xdist en los scripts locales; en el
   - `worksteal` reparte los tests y roba trabajo al worker que va más cargado. Gana en la completa.
 - Este portátil (i7-1255U: 2 núcleos de rendimiento y 8 de eficiencia, 15 W) rinde unas 2,6× con 6 procesos y 3,3× con 12. Con 12 workers se agota la memoria y aparece el swap. Cada test tarda en paralelo unas 2,6 veces lo que tarda solo.
 - En el runner del CI (4 workers), el núcleo completo tardó 463 s en serie, 470 s con `worksteal` y 382 s con `loadfile`. Ninguno llega al 60 % de la serie, así que el CI sigue en serie: con pocos workers, recalcular los fixtures caros en cada uno se come la ganancia.
+- Las máquinas del runner no son iguales: la misma completa en serie tardó entre 463 y 933 s, y el notebook del mismo job varió en la misma proporción. Comparar dos ejecuciones distintas del CI tiene un margen de hasta un factor 2; una comparación limpia mide las dos variantes en el mismo job.
 
 **Medidas (tiempo de pared, main en 462d0d1):**
 
