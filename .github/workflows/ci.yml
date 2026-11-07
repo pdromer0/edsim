@@ -23,8 +23,10 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      # logical: con psutil, auto cuenta núcleos físicos, que en el runner pueden ser la mitad.
-      - run: uv run pytest -n logical --dist loadfile
+      # En serie: en el runner (4 workers con -n logical), xdist no llega al 60 % de la serie
+      # (463 s). worksteal tardó 470 s (101 %) y loadfile 382 s (82 %), porque cada worker
+      # recalcula los fixtures de sesión y de módulo. Los scripts locales sí usan xdist.
+      - run: uv run pytest
 
   notebooks:
     runs-on: ubuntu-latest
