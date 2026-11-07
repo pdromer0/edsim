@@ -46,8 +46,10 @@ from edsim.runs.episodes import (
     EpisodeSegment,
     EpisodeSegments,
     EpisodeState,
+    ObservedProfile,
     TestBand,
     episode_segments,
+    observed_profiles,
 )
 from edsim.runs.events import EpisodeEventIndex, build_episode_event_index, read_episode_events
 from edsim.runs.filters import (
@@ -179,6 +181,8 @@ __all__ = [
     "EpisodeState",
     "TestBand",
     "episode_segments",
+    "ObservedProfile",
+    "observed_profiles",
     "EpisodeEventIndex",
     "Event",
     "LevelCompliance",

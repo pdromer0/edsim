@@ -1,6 +1,6 @@
 """Read complete catalog results from their saved inputs and event log."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from hashlib import sha256
@@ -25,6 +25,7 @@ from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.invariants import Violation, check_invariants
 from edsim.profiles.config import ClinicalProfiles, load_profiles
 from edsim.runs._truth_csv import read_clinical_episodes, read_days
+from edsim.runs.episodes import ObservedProfile, observed_profiles
 from edsim.runs.metrics import WindowCompliance, WindowKPIs, window_compliance, window_kpis
 from edsim.runs.store import RunInfo, RunStore
 
@@ -46,6 +47,8 @@ class RunResults:
     an empty tuple means a positive saved count was rechecked with no violations.
     model is that of run.json; profiles are the clinical profiles loaded from
     the run's own copy (``perfiles.toml``), or None with the provisional model.
+    observed holds the observable profile of each episode, read from the log
+    and never from the ground truth (None with the provisional model).
     """
 
     info: RunInfo
@@ -58,6 +61,7 @@ class RunResults:
     violations: tuple[Violation, ...] | None
     model: Literal["provisional", "clinico"]
     profiles: ClinicalProfiles | None
+    observed: Mapping[str, ObservedProfile] | None
 
 
 def read_run_header(store: RunStore, run_id: str) -> tuple[RunInfo, str]:
@@ -147,4 +151,5 @@ def read_run_results(store: RunStore, run_id: str) -> RunResults:
         violations=violations,
         model=info.model,
         profiles=profiles,
+        observed=None if profiles is None else observed_profiles(events, profiles.population),
     )

@@ -1,11 +1,14 @@
-"""Physical episode states, independent laboratory work and displacement instants."""
+"""Physical episode states, independent laboratory work, displacements and observed profiles."""
 
 import math
-from collections.abc import Sequence
+from bisect import bisect_right
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from itertools import groupby
+from types import MappingProxyType
 
 from edsim.engine.events import Event
+from edsim.profiles.config import Population
 from edsim.runs._location import EpisodeState, LocationState
 
 
@@ -108,3 +111,69 @@ def episode_segments(events: Sequence[Event], horizon: float) -> EpisodeSegments
         )
     )
     return EpisodeSegments(episode_id, tuple(segments), tests, tuple(displacements))
+
+
+# --- The observable profile of each episode (task 4.8a) ---------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedProfile:
+    """What the log of a clinical run says of a patient, never its ground truth.
+
+    Each value is None until its event happens: ``arrival_mode`` (``medio``)
+    comes with ``patient_arrived``, ``age`` and ``sex`` with
+    ``patient_registered``, ``reason`` (``motivo``) with ``triage_completed``
+    and ``tests`` (``pruebas``, in the order of ``TEST_TYPES``) with
+    ``test_ordered``; ``tests`` is empty without a round. ``age_band`` is the
+    index of the band of the age, with the band limits of the run's profiles,
+    which are public configuration, not truth.
+    """
+
+    episode_id: str
+    age: int | None = None
+    age_band: int | None = None
+    sex: str | None = None
+    arrival_mode: str | None = None
+    reason: str | None = None
+    tests: tuple[str, ...] = ()
+
+
+def _band(age: int, population: Population) -> int:
+    band = bisect_right(population.band_starts, age) - 1
+    if band < 0:
+        raise ValueError(f"age {age} is below the first band ({population.band_starts[0]})")
+    return band
+
+
+def observed_profiles(
+    events: Iterable[Event], population: Population
+) -> Mapping[str, ObservedProfile]:
+    """The observable profile of every episode of a clinical log, by episode, read-only.
+
+    Read from ``patient_arrived``, ``patient_registered``, ``triage_completed``
+    and ``test_ordered``, in log order; the other events are ignored.
+
+    Raises:
+        ValueError: If an age is below the first band of ``population``.
+    """
+    profiles: dict[str, ObservedProfile] = {}
+    for event in events:
+        episode = event.episode_id
+        match event.event_type:
+            case "patient_arrived":
+                profiles[episode] = ObservedProfile(episode, arrival_mode=event.payload["medio"])
+            case "patient_registered":
+                age = event.payload["edad"]
+                profiles[episode] = replace(
+                    profiles[episode],
+                    age=age,
+                    age_band=_band(age, population),
+                    sex=event.payload["sexo"],
+                )
+            case "triage_completed":
+                profiles[episode] = replace(profiles[episode], reason=event.payload["motivo"])
+            case "test_ordered":
+                profiles[episode] = replace(
+                    profiles[episode], tests=tuple(event.payload["pruebas"])
+                )
+    return MappingProxyType(profiles)
