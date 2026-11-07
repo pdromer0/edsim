@@ -149,3 +149,20 @@ def test_wait_chart_uses_the_same_level_palette():
         "range": list(LEVEL_COLORS.values()),
     }
     assert spec["encoding"]["shape"]["field"] == "Serie"
+
+
+def test_results_room_has_its_own_patients_without_duplicating_the_box_queue():
+    outside = replace(patient(1, 4, "waiting_tests"), results_room=True)
+    returning = replace(patient(2, 5, "waiting_box"), results_room=True)
+    svg = draw(state((outside, returning)))
+    people = elements(svg, "patient")
+    assert [p.attrib["data-episode"] for p in people].count(outside.episode_id) == 1
+    assert [p.attrib["data-episode"] for p in people].count(returning.episode_id) == 1
+    queued = elements(elements(svg, "box-queue")[0], "patient")
+    assert [p.attrib["data-episode"] for p in queued] == [returning.episode_id]
+    text = " ".join(svg.itertext())
+    assert "Sala de resultados · espera de pruebas" in text
+    assert "Sala de resultados · espera de box" in text
+    for glyph in people:
+        expected = 4 if glyph.attrib["data-episode"] == outside.episode_id else 5
+        assert glyph.find("s:rect", NS).attrib["fill"] == LEVEL_COLORS[expected]

@@ -619,7 +619,7 @@ def clinical_truth_frames(value) -> tuple[pd.DataFrame, pd.DataFrame]:
     quality = {"correcto": "Correcto", "infratriaje": "Infratriaje", "sobretriaje": "Sobretriaje"}
     details = pd.DataFrame(
         [
-            {"Dato clínico": label, "Verdad": str(item)}
+            {"Dato clínico": label, "Verdad": str(item) if item is not None else "—"}
             for label, item in (
                 ("Gravedad latente G", value.severity),
                 ("Nivel asignado", value.assigned_level),

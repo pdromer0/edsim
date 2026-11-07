@@ -108,6 +108,7 @@ def test_clinical_truth_is_explicit_and_matches_core(clinical_catalog, monkeypat
     assert int(details["Nivel real"]) == expected.true_level
     assert int(details["Nivel asignado"]) == expected.assigned_level
     assert int(details["Salto"]) == expected.jump
+    assert details["Calidad del triaje"].lower() == expected.quality
     tests = next(t.value for t in app.dataframe if "Pedida" in t.value)
     assert tests["Pedida"].tolist() == ["Sí" if t.ordered else "No" for t in expected.tests]
     assert tests["Resultado"].tolist() == [t.result or "—" for t in expected.tests]
@@ -137,12 +138,16 @@ def test_room_timeline_and_nested_clinical_payload(clinical_catalog):
     assert len(result_payload) == 1
     expected = next(e for e in events if e.event_type == "test_resulted")
     assert json.loads(result_payload.iloc[0])["resultados"] == dict(expected.payload["resultados"])
+    from streamlit.dataframe_util import convert_arrow_bytes_to_pandas_df
+
     chart = app.get("vega_lite_chart")[0]
-    spec = json.loads(chart.proto.spec)
-    # Altair transports the intervals as datasets in the chart or Arrow data.
-    text = str(spec) + str(chart.proto)
-    assert "Sala de resultados · espera de pruebas" in text
-    assert "Sala de resultados · espera de box" in text
+    frames = [
+        convert_arrow_bytes_to_pandas_df(dataset.data.data) for dataset in chart.proto.datasets
+    ]
+    intervals = next(frame for frame in frames if "Estado" in frame)
+    observed_states = set(intervals["Estado"])
+    assert "Sala de resultados · espera de pruebas" in observed_states
+    assert "Sala de resultados · espera de box" in observed_states
 
 
 @pytest.mark.parametrize("run_id", ["provisional", "legacy"])
