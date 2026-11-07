@@ -47,17 +47,17 @@ def test_selected_header_kpis_waits_and_cli_numbers(catalog):
         ("Llegadas por día", expected.kpis.arrivals_per_day, "pacientes/día"),
         ("Estancia media", expected.kpis.stay_mean, "min"),
         ("Estancia p90", expected.kpis.stay_p90, "min"),
-        ("Puerta-médico media", expected.kpis.door_to_doctor_mean, "min"),
-        ("Puerta-médico p90", expected.kpis.door_to_doctor_p90, "min"),
+        ("Puerta-médico (A) media", expected.kpis.door_to_doctor_mean, "min"),
+        ("Puerta-médico (A) p90", expected.kpis.door_to_doctor_p90, "min"),
     ):
         assert metrics[label] == f"{value:.1f} {unit}".replace(".", ",")
         assert f"{value:.1f}" in summary
     assert expected.kpis.arrivals_per_day == expected.info.arrivals_per_day
     waits = app.dataframe[0].value
-    assert waits["Nivel"].tolist() == [1, 2, 3, 4, 5]
-    assert waits["n"].sum() == expected.kpis.n
+    assert waits["Nivel"].tolist() == [2, 3, 4, 5]
+    assert waits["n"].sum() == sum(level.n for level in expected.analysis.metrics.by_level[1:])
     assert waits["Estancia media (min)"].tolist() == [
-        level.mean["stay"] for level in expected.analysis.metrics.by_level
+        level.mean["stay"] for level in expected.analysis.metrics.by_level[1:]
     ]
     assert "Invariantes: 0 violaciones" in [item.value for item in app.success]
     assert app.get("vega_lite_chart")
@@ -71,15 +71,13 @@ def test_no_selection_asks_for_catalog(catalog_root):
     assert not app.metric
 
 
-def test_results_help_explains_immediate_level_model_limit(catalog):
+def test_results_help_explains_three_clocks_and_immediate_level(catalog):
     app = open_results()
     assert not app.exception
     help_box = next(box for box in app.expander if box.label == "¿Qué estoy viendo?")
     text = " ".join(item.value for item in help_box.markdown)
-    assert "Puerta-médico incluye la espera de triaje y el propio triaje" in text
-    assert "nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual" in text
-    assert "días con pacientes salen al 100 % fuera de objetivo" in text
-    assert "hito 3" in text and "sin prioridad en el triaje" in text and "hito 4" in text
+    assert "clasificación" in text and "pretriaje" in text
+    assert "mediana y p90" in text and "sin porcentaje" in text
 
 
 def test_week_labels_show_half_open_intervals(weekly_catalog):
@@ -114,8 +112,6 @@ def test_empty_completed_window_keeps_header_and_explains_modified_log(catalog):
 
 
 def test_empty_level_is_normal_and_keeps_other_results(catalog):
-    import pandas as pd
-
     from edsim.runs import read_center_values, write_variant
 
     source = "tests/data/centro_ejemplo.toml"
@@ -135,9 +131,13 @@ def test_empty_level_is_normal_and_keeps_other_results(catalog):
     )
     app = open_results("empty-level")
     assert not app.exception and not app.error
-    assert app.dataframe[0].value.loc[0, "n"] == 0
-    assert pd.isna(app.dataframe[0].value.loc[0, "Puerta-médico media (min)"])
-    assert pd.isna(app.dataframe[0].value.loc[0, "Superan el máximo"])
+    one = next(
+        item.value
+        for item in app.dataframe
+        if list(item.value) == ["Reloj", "n", "Mediana (min)", "p90 (min)"]
+    )
+    assert (one["n"] == 0).all()
+    assert one["Mediana (min)"].isna().all()
     assert app.dataframe[0].value["n"].sum() > 0
     assert app.metric and len(app.dataframe[2].value) == 3
 
@@ -196,7 +196,9 @@ def test_resource_cache_reloads_recreated_run(catalog, monkeypatch):
     assert calculate.call_count == 2
     assert not first.equals(app.dataframe[0].value)
     expected = read_run_results(RunStore(catalog), "older")
-    assert app.dataframe[0].value["n"].sum() == expected.kpis.n
+    assert app.dataframe[0].value["n"].sum() == sum(
+        e.n for e in expected.analysis.metrics.by_level[1:]
+    )
 
 
 def test_resource_cache_includes_catalog_root_and_limits_entries(catalog, tmp_path, monkeypatch):
@@ -347,7 +349,19 @@ def test_plot_choices_survive_navigation_clamp_and_never_mutate_cached_result(we
     assert app.selectbox(key="results_week_widget").value == 1
     assert app.selectbox(key="results_curve_widget").value == "boxes_busy"
     assert results.cached_run_results(str(store.root), "weekly", fingerprint) is shared
-    assert_same_result(shared, read_run_results(store, "weekly"))
+    expected = read_run_results(store, "weekly")
+    from edsim.runs import window_compliance
+
+    expected = dataclasses.replace(
+        expected,
+        compliance=window_compliance(
+            expected.analysis.table,
+            expected.info.warmup_days,
+            expected.info.days,
+            measure="classified_to_doctor",
+        ),
+    )
+    assert_same_result(shared, expected)
     app.switch_page("views/runs.py").run()
     app.selectbox(key="run_choice").select("older").run()
     app.switch_page("views/results.py").run()

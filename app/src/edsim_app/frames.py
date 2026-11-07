@@ -23,6 +23,9 @@ from edsim.runs import (
     curve_blocks,
     curve_steps,
     episode_observed_time,
+    level_one_clocks,
+    window_clocks,
+    window_pretriage,
 )
 
 SHIFTS = ("mañana", "tarde", "noche")
@@ -165,8 +168,8 @@ def kpis_frame(kpis: WindowKPIs) -> pd.DataFrame:
             ("Censo medio", kpis.census_mean, "pacientes", 2, False),
             ("Estancia media", kpis.stay_mean, "min", 1, False),
             ("Estancia p90", kpis.stay_p90, "min", 1, False),
-            ("Puerta-médico media", kpis.door_to_doctor_mean, "min", 1, False),
-            ("Puerta-médico p90", kpis.door_to_doctor_p90, "min", 1, False),
+            ("Puerta-médico (A) media", kpis.door_to_doctor_mean, "min", 1, False),
+            ("Puerta-médico (A) p90", kpis.door_to_doctor_p90, "min", 1, False),
             ("Episodios desalojados", kpis.displaced_episodes, "episodios", 0, False),
             ("Desalojos totales", kpis.total_displacements, "desalojos", 0, False),
             ("Ingreso", kpis.admission_share, "%", 1, True),
@@ -177,6 +180,10 @@ def kpis_frame(kpis: WindowKPIs) -> pd.DataFrame:
 
 def waits_frame(result: RunResults) -> pd.DataFrame:
     """Present level waits and integer Manchester exceedances, retaining numbers."""
+    clocks = {
+        row.level: row
+        for row in window_clocks(result.analysis.table, result.info.warmup_days, result.info.days)
+    }
     rows = []
     for metrics, compliance in zip(
         result.analysis.metrics.by_level, result.compliance.by_level, strict=True
@@ -185,6 +192,9 @@ def waits_frame(result: RunResults) -> pd.DataFrame:
         for measure, label in SUMMARY_MEASURES:
             row[f"{label.capitalize()} media (min)"] = metrics.mean[measure]
             row[f"{label.capitalize()} p90 (min)"] = metrics.p90[measure]
+        c = clocks[metrics.level].clocks[2]
+        row["Desde la clasificación (C) media (min)"] = c.mean
+        row["Desde la clasificación (C) p90 (min)"] = c.p90
         row.update(
             {
                 "Máximo Manchester (min)": compliance.max_wait,
@@ -490,4 +500,93 @@ def style_little(frame: pd.DataFrame) -> Styler:
             "Error relativo": "{:.2%}",
         },
         decimal=",",
+    )
+
+
+CLOCK_LABELS = {
+    "door_to_doctor": "Puerta-médico (A)",
+    "triage_start_to_doctor": "Desde el inicio del triaje (B)",
+    "classified_to_doctor": "Desde la clasificación (C)",
+}
+
+
+def clocks_frame(result: RunResults) -> pd.DataFrame:
+    """Present the core's three clocks for assigned levels two to five."""
+    return pd.DataFrame(
+        [
+            {
+                "Nivel asignado": level.level,
+                "n": level.n,
+                "Reloj": CLOCK_LABELS[clock.measure],
+                "Media (min)": clock.mean,
+                "Mediana (min)": clock.median,
+                "p90 (min)": clock.p90,
+            }
+            for level in window_clocks(
+                result.analysis.table, result.info.warmup_days, result.info.days
+            )
+            if level.level != 1
+            for clock in level.clocks
+        ]
+    )
+
+
+def level_one_clocks_frame(result: RunResults) -> pd.DataFrame:
+    """Keep immediate attention separate from percentages of compliance."""
+    level = level_one_clocks(result.analysis.table, result.info.warmup_days, result.info.days)
+    return pd.DataFrame(
+        [
+            {
+                "Reloj": label,
+                "n": level.n,
+                "Mediana (min)": level.median[name],
+                "p90 (min)": level.p90[name],
+            }
+            for name, label in CLOCK_LABELS.items()
+        ]
+    )
+
+
+def pretriage_frame(result: RunResults) -> pd.DataFrame:
+    """Present pooled and daily pretriage supplied by the core, excluding level one."""
+    value = window_pretriage(result.analysis.table, result.info.warmup_days, result.info.days)
+    return pd.DataFrame(
+        [
+            {
+                "Grupo": "Niveles 2–5" if group.group is None else f"Nivel {group.group}",
+                "n": group.n,
+                "10 min o menos": group.within_share,
+                "Más de 5 min": group.over_share,
+                "Días fuera": group.days_out,
+                "Días con pacientes": group.days_with_patients,
+            }
+            for group in value.by_group
+        ]
+    )
+
+
+def observed_distribution_frames(result: RunResults) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Group observable data for arrivals in the window, including unfinished episodes."""
+    records = [
+        e
+        for e in result.analysis.table
+        if result.analysis.metrics.start <= e.arrival < result.analysis.metrics.end
+    ]
+    labels = []
+    for e in records:
+        reason = result.observed[e.episode_id].reason
+        labels.append(result.profiles.reason(reason).name if reason else "Sin observar")
+
+    def distribution(values, column):
+        counts = pd.Series(values, dtype=object).value_counts(dropna=False, sort=False)
+        return pd.DataFrame(
+            [
+                {column: label, "Pacientes": int(n), "Proporción": n / len(records)}
+                for label, n in counts.items()
+            ],
+            columns=[column, "Pacientes", "Proporción"],
+        )
+
+    return distribution(labels, "Motivo"), distribution(
+        [str(e.level) if e.level is not None else "Sin observar" for e in records], "Nivel asignado"
     )
