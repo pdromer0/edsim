@@ -17,8 +17,11 @@ from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
 from edsim.runs.compare import (
+    CLINICAL_DRAW_EFFECTS,
     DRAW_EFFECTS,
     ChangeKind,
+    ClinicalDifference,
+    ClinicalField,
     DifferenceSummary,
     DrawDifference,
     DrawField,
@@ -30,6 +33,7 @@ from edsim.runs.compare import (
     LevelRunSummary,
     MetadataDifference,
     Number,
+    PairingCategory,
     PairingCheckError,
     PairingInfo,
     PairingKind,
@@ -39,6 +43,7 @@ from edsim.runs.compare import (
     compare_run_summary,
     compare_runs,
     pairing_blockers,
+    pairing_category,
 )
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
 from edsim.runs.episodes import (
@@ -157,6 +162,11 @@ __all__ = [
     "PairingInfo",
     "PairingKind",
     "pairing_blockers",
+    "CLINICAL_DRAW_EFFECTS",
+    "ClinicalDifference",
+    "ClinicalField",
+    "PairingCategory",
+    "pairing_category",
     "ArrivalProfile",
     "CenterConfig",
     "CenterDifference",
