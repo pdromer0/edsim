@@ -3,19 +3,7 @@
 import altair as alt
 import pandas as pd
 
-from edsim.runs import DurationSummary
 from edsim_app.palette import LEVEL_COLORS
-
-
-def duration_chart(duration: DurationSummary) -> alt.Chart:
-    """Render the supplied lognormal density without calculating it again."""
-    frame = pd.DataFrame({"Minutos": duration.curve_minutes, "Densidad": duration.curve_density})
-    return (
-        alt.Chart(frame)
-        .mark_line()
-        .encode(x=alt.X("Minutos:Q"), y=alt.Y("Densidad:Q"))
-        .properties(height=110)
-    )
 
 
 def offered_chart(frame: pd.DataFrame) -> alt.Chart:
