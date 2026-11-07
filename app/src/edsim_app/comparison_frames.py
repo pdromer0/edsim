@@ -12,6 +12,9 @@ from edsim.runs import (
 from edsim_app.frames import FIELDS, format_change_value, format_created_at, format_number
 
 METADATA_LABELS = {
+    "model": "Modelo",
+    "clinical_profiles_path": "Ruta de perfiles clínicos",
+    "clinical_profiles_fingerprint": "Huella de perfiles clínicos",
     "format_version": "Versión del formato",
     "run_id": "Ejecución",
     "created_at": "Fecha de creación (UTC+1)",
@@ -93,13 +96,17 @@ def comparison_levels_frame(summary: RunSummaryComparison) -> pd.DataFrame:
                         format_number(getattr(wait, statistic))
                     )
             row[f"Máximo Manchester {side} (min)"] = format_number(value.max_wait)
-            row[f"Superan el máximo {side}"] = format_number(value.exceeded_share, percentage=True)
+            row[f"Superan el máximo {side}"] = (
+                "—" if level.level == 1 else format_number(value.exceeded_share, percentage=True)
+            )
         rows.append(row)
     return pd.DataFrame(rows)
 
 
 def comparison_configuration_frames(
     summary: RunSummaryComparison,
+    *,
+    clinical: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Preserve metadata values and normalized TOML differences."""
     metadata = pd.DataFrame(
@@ -114,6 +121,9 @@ def comparison_configuration_frames(
         columns=["Campo", "A", "B"],
     )
     field_labels = {key: label for key, label, _, _ in FIELDS}
+    field_labels["recursos.espera_resultados_fuera"] = (
+        "Niveles que esperan resultados fuera del box"
+    )
     center = pd.DataFrame(
         [
             {
@@ -123,6 +133,7 @@ def comparison_configuration_frames(
                 "B": format_change_value(d.after),
             }
             for d in summary.center_differences
+            if not clinical or d.key.startswith(("turnos.", "recursos.", "destino."))
         ],
         columns=["Parámetro", "Clave del centro", "A", "B"],
     )
@@ -168,5 +179,30 @@ def affected_episodes_frame(comparison: RunComparison) -> pd.DataFrame:
                 "B − A (min)": signed_number(e.stay_difference),
             }
             for e in comparison.most_affected
+        ]
+    )
+
+
+CLINICAL_LABELS = {
+    "reason": "Motivo",
+    "level": "Nivel asignado",
+    "true_level": "Nivel real",
+    "age": "Edad",
+    "sex": "Sexo",
+    "arrival_mode": "Medio",
+    "tests": "Pruebas",
+}
+
+
+def clinical_differences_frame(pairing: PairingInfo) -> pd.DataFrame:
+    """Present verified changes in clinical truth, including fields with zero changes."""
+    return pd.DataFrame(
+        [
+            {
+                "Campo clínico": CLINICAL_LABELS[d.field],
+                "Pacientes distintos": d.changed,
+                "Total": d.total,
+            }
+            for d in pairing.clinical_differences
         ]
     )

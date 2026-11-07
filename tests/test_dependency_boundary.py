@@ -68,6 +68,7 @@ def test_core_has_no_ui_imports_including_inside_functions():
 
 
 TASK_4_8A_API = (
+    "load_profiles",
     "ClinicalProfiles",
     "ObservedProfile",
     "observed_profiles",

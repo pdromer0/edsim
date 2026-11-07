@@ -14,6 +14,7 @@ from edsim.runs import (
     load_center,
     simulate_run,
     summarize_center,
+    summarize_profiles,
     validate_center_values,
     validate_run_id,
     write_variant,
@@ -44,7 +45,7 @@ from edsim_app.frames import (
     utilization_frame,
 )
 from edsim_app.help import render_simulate_help
-from edsim_app.preview import preview_work
+from edsim_app.preview import load_preview_inputs, preview_work
 from edsim_app.state import catalog_store, sync_run_query
 
 
@@ -53,9 +54,18 @@ def decimal(value: float, digits: int = 1) -> str:
     return f"{value:.{digits}f}".replace(".", ",")
 
 
+def editor_fields():
+    """Choose only the fields used by the selected model."""
+    if execution_settings()["model"] == "provisional":
+        return FIELDS
+    return tuple(
+        field for field in FIELDS if field[0].startswith(("turnos.", "recursos.", "destino."))
+    )
+
+
 def has_editable_values(values: dict[str, object]) -> bool:
     """Check widget representations; semantic validation stays in the core."""
-    for key, _, integer, labels in FIELDS:
+    for key, _, integer, labels in editor_fields():
         if key not in values:
             return False
         value = values[key]
@@ -191,9 +201,13 @@ def render_center() -> tuple[CenterDraft, bool]:
             "y vuelve a cargar su origen."
         )
         st.stop()
-    summary = summarize_center(draft.values) if not errors else None
+    summary = (
+        summarize_center(draft.values)
+        if not errors and execution_settings()["model"] == "provisional"
+        else None
+    )
     duration_summaries = {d.key: d for d in summary.durations} if summary else {}
-    for key, label, integer, labels in FIELDS:
+    for key, label, integer, labels in editor_fields():
         if key == "recursos.enfermeria_triaje":
             render_staff(draft, errors)
             continue
@@ -227,13 +241,18 @@ def render_center() -> tuple[CenterDraft, bool]:
         )
         st.metric("Pruebas globales", f"{decimal(summary.tests_percentage, 3)} %")
         st.metric("Ingreso global", f"{decimal(summary.admission_percentage, 3)} %")
+    if not errors:
         st.subheader("Cambios frente al centro base")
         try:
             base = load_center(defaults.CENTER_PATH)
         except (OSError, ValueError) as error:
             st.error(f"No se puede comparar con el centro base: {error}")
         else:
-            differences = center_diff(base, center_from_values(draft.values))
+            differences = tuple(
+                change
+                for change in center_diff(base, center_from_values(draft.values))
+                if change.key in {field[0] for field in editor_fields()}
+            )
             if differences:
                 field_labels = {key: label for key, label, _, _ in FIELDS}
                 for change in differences:
@@ -362,6 +381,7 @@ def render_execution(draft: CenterDraft, blocked: bool, profile_valid: bool) -> 
                     warmup_days=settings["warmup_days"],
                     run_id=run_id,
                     origin="app",
+                    profiles=settings["clinical_path"] if settings["model"] == "clinico" else None,
                 )
             except FileExistsError:
                 st.error(f"No se ha creado la ejecución: el identificador «{run_id}» ya existe.")
@@ -386,18 +406,90 @@ def render_execution(draft: CenterDraft, blocked: bool, profile_valid: bool) -> 
 
 
 st.title("Simular")
-draft, blocked = render_center()
+settings = execution_settings()
+st.session_state.model_widget = settings["model"]
+st.selectbox(
+    "Modelo",
+    ["clinico", "provisional"],
+    key="model_widget",
+    format_func=lambda value: "Clínico" if value == "clinico" else "Provisional",
+    on_change=update_setting,
+    args=("model", "model_widget"),
+)
+clinical_path = None
+if settings["model"] == "clinico":
+    st.session_state.clinical_path_widget = settings["clinical_path"]
+    st.text_input(
+        "Fichero de perfiles clínicos",
+        key="clinical_path_widget",
+        on_change=update_setting,
+        args=("clinical_path", "clinical_path_widget"),
+    )
+    clinical_path = settings["clinical_path"]
 
-st.header("2. La carga prevista")
+draft, blocked = render_center()
 profile_valid = False
-if not validate_center_values(draft.values):
-    try:
-        work = preview_work(draft.values, defaults.PROFILE_PATH)
-    except RunConfigurationError as error:
-        st.error(f"No se puede cargar el perfil de llegadas: {error}")
-        render_simulate_help()
-    else:
-        profile_valid = True
+try:
+    arrivals, _, profiles, fingerprint = load_preview_inputs(defaults.PROFILE_PATH, clinical_path)
+except RunConfigurationError as error:
+    st.error(str(error))
+else:
+    profile_valid = True
+    if profiles is not None:
+        st.subheader("Resumen de los perfiles clínicos")
+        st.caption(f"Ruta: {clinical_path} · Huella: {fingerprint}")
+        st.caption(
+            "Expectativa anual de los perfiles; no son observaciones de una ejecución. "
+            "Solo lectura."
+        )
+        summary = summarize_profiles(profiles, arrivals)
+        st.dataframe(
+            [
+                {"Motivo": profiles.reason(key).name, "Porcentaje esperado": value}
+                for key, value in summary.reason_percentages.items()
+            ],
+            hide_index=True,
+        )
+        st.dataframe(
+            [
+                {"Nivel": level, "Asignado (%)": assigned, "Real (%)": true}
+                for level, (assigned, true) in enumerate(
+                    zip(
+                        summary.assigned_level_percentages,
+                        summary.true_level_percentages,
+                        strict=True,
+                    ),
+                    1,
+                )
+            ],
+            hide_index=True,
+        )
+        for label, value, unit in (
+            ("Infratriaje esperado", summary.undertriage_percentage, "%"),
+            ("Sobretriaje esperado", summary.overtriage_percentage, "%"),
+            ("Alguna prueba esperada", summary.any_test_percentage, "%"),
+            ("Valoración esperada", summary.assessment_minutes, "min/paciente"),
+            ("Reevaluación esperada", summary.reassessment_minutes, "min/paciente"),
+            ("Médico total esperado", summary.physician_minutes, "min/paciente"),
+        ):
+            st.metric(label, f"{decimal(value, 2)} {unit}")
+        st.dataframe(
+            [
+                {"Prueba": key, "Porcentaje esperado": value}
+                for key, value in summary.test_percentages.items()
+            ],
+            hide_index=True,
+        )
+
+# Fill both containers before demand sampling so all editor controls are visible.
+preview_container = st.container()
+execution_container = st.container()
+with execution_container:
+    render_execution(draft, blocked, profile_valid)
+with preview_container:
+    st.header("2. La carga prevista")
+    if profile_valid and not validate_center_values(draft.values):
+        work = preview_work(draft.values, defaults.PROFILE_PATH, clinical_path)
         st.caption(
             f"Perfil: {defaults.PROFILE_PATH}. Ventana prevista: 7 días; medias de 15 minutos."
         )
@@ -407,8 +499,6 @@ if not validate_center_values(draft.values):
         st.altair_chart(offered_chart(offered_frame(work, pool)), width="stretch")
         st.dataframe(style_utilization(utilization_frame(work)), hide_index=True, width="stretch")
         render_simulate_help(work.prior_days)
-else:
-    st.info("Corrige los errores del centro para calcular la carga prevista.")
-    render_simulate_help()
-
-render_execution(draft, blocked, profile_valid)
+    else:
+        st.info("Corrige la configuración para calcular la carga prevista.")
+        render_simulate_help()

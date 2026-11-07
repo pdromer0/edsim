@@ -1,6 +1,7 @@
 """Share read-only analyses by catalog, run identifier and exact metadata hash."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 import streamlit as st
 
@@ -14,6 +15,7 @@ from edsim.runs import (
     read_episode_events,
     read_run_episode_truth,
     read_run_results,
+    window_compliance,
 )
 
 
@@ -24,7 +26,16 @@ def cached_run_results(catalog_root: str, run_id: str, fingerprint: str) -> RunR
     Consumers must treat all nested arrays and mappings as read-only, since
     this cache returns the same object to every caller.
     """
-    return read_run_results(RunStore(catalog_root), run_id)
+    result = read_run_results(RunStore(catalog_root), run_id)
+    return replace(
+        result,
+        compliance=window_compliance(
+            result.analysis.table,
+            result.info.warmup_days,
+            result.info.days,
+            measure="classified_to_doctor",
+        ),
+    )
 
 
 @st.cache_resource(max_entries=4, show_spinner="Indexando los eventos de la ejecución…")

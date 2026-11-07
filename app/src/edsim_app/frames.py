@@ -2,7 +2,7 @@
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import fields
 from datetime import datetime
 
@@ -23,6 +23,9 @@ from edsim.runs import (
     curve_blocks,
     curve_steps,
     episode_observed_time,
+    level_one_clocks,
+    window_clocks,
+    window_pretriage,
 )
 
 SHIFTS = ("mañana", "tarde", "noche")
@@ -62,6 +65,8 @@ COLUMNS = (
     "Calentamiento (días)",
     "Semilla",
     "Huella del centro",
+    "Modelo",
+    "Huella de perfiles clínicos",
     "Llegadas por día",
     "Invariantes",
     "Origen",
@@ -80,6 +85,8 @@ def runs_frame(runs: Sequence[RunInfo]) -> pd.DataFrame:
                 info.warmup_days,
                 info.seed,
                 info.center_fingerprint[:8],
+                "Clínico" if info.is_clinical else "Provisional",
+                info.clinical_profiles_fingerprint[:8] if info.is_clinical else "—",
                 info.arrivals_per_day,
                 "correctas"
                 if info.invariant_violations == 0
@@ -161,8 +168,8 @@ def kpis_frame(kpis: WindowKPIs) -> pd.DataFrame:
             ("Censo medio", kpis.census_mean, "pacientes", 2, False),
             ("Estancia media", kpis.stay_mean, "min", 1, False),
             ("Estancia p90", kpis.stay_p90, "min", 1, False),
-            ("Puerta-médico media", kpis.door_to_doctor_mean, "min", 1, False),
-            ("Puerta-médico p90", kpis.door_to_doctor_p90, "min", 1, False),
+            ("Puerta-médico (A) media", kpis.door_to_doctor_mean, "min", 1, False),
+            ("Puerta-médico (A) p90", kpis.door_to_doctor_p90, "min", 1, False),
             ("Episodios desalojados", kpis.displaced_episodes, "episodios", 0, False),
             ("Desalojos totales", kpis.total_displacements, "desalojos", 0, False),
             ("Ingreso", kpis.admission_share, "%", 1, True),
@@ -173,6 +180,10 @@ def kpis_frame(kpis: WindowKPIs) -> pd.DataFrame:
 
 def waits_frame(result: RunResults) -> pd.DataFrame:
     """Present level waits and integer Manchester exceedances, retaining numbers."""
+    clocks = {
+        row.level: row
+        for row in window_clocks(result.analysis.table, result.info.warmup_days, result.info.days)
+    }
     rows = []
     for metrics, compliance in zip(
         result.analysis.metrics.by_level, result.compliance.by_level, strict=True
@@ -181,6 +192,9 @@ def waits_frame(result: RunResults) -> pd.DataFrame:
         for measure, label in SUMMARY_MEASURES:
             row[f"{label.capitalize()} media (min)"] = metrics.mean[measure]
             row[f"{label.capitalize()} p90 (min)"] = metrics.p90[measure]
+        c = clocks[metrics.level].clocks[2]
+        row["Desde la clasificación (C) media (min)"] = c.mean
+        row["Desde la clasificación (C) p90 (min)"] = c.p90
         row.update(
             {
                 "Máximo Manchester (min)": compliance.max_wait,
@@ -231,6 +245,8 @@ EPISODE_COLUMNS = {
     "displacements": "Desalojos",
     "triage_wait": "Espera de triaje (min)",
     "box_wait": "Espera de box (min)",
+    "initial_box_wait": "Espera inicial de box (min)",
+    "results_box_wait": "Espera de box al volver (min)",
     "doctor_wait": "Espera de médico (min)",
     "initial_doctor_wait": "Espera inicial de médico (min)",
     "door_to_doctor": "Puerta-médico (min)",
@@ -254,6 +270,13 @@ def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.Dat
     )
     frame["Llegada (UTC+1)"] = wall_times(result, [record.arrival for record in table])
     frame["Nivel"] = frame["Nivel"].astype("Int64")
+    if result.observed is not None:
+        profile_frame = pd.DataFrame(
+            [observed_profile_row(result.observed[e.episode_id], result.profiles) for e in table],
+            columns=["Edad", "Sexo", "Medio", "Motivo", "Pruebas"],
+        )
+        profile_frame["Edad"] = profile_frame["Edad"].astype("Int64")
+        frame = pd.concat([frame, profile_frame], axis=1)
     return frame
 
 
@@ -275,6 +298,24 @@ EPISODE_STATE_LABELS = {
 }
 
 
+def episode_state_label(state: str, *, results_room: bool = False) -> str:
+    """Present the physical location while preserving the core's state names."""
+    if results_room:
+        return "Sala de resultados · " + (
+            "espera de box" if state == "waiting_box" else "espera de pruebas"
+        )
+    return EPISODE_STATE_LABELS[state]
+
+
+def plain_payload(value: object) -> object:
+    """Convert immutable nested log containers to JSON-compatible containers."""
+    if isinstance(value, Mapping):
+        return {key: plain_payload(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain_payload(item) for item in value]
+    return value
+
+
 def episode_timeline_frames(
     episode: EpisodeSegments, result: RunResults
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -284,7 +325,7 @@ def episode_timeline_frames(
         {
             "Inicio": segment.start,
             "Fin": segment.end,
-            "Estado": EPISODE_STATE_LABELS[segment.state],
+            "Estado": episode_state_label(segment.state, results_room=segment.results_room),
             "Box": segment.box,
             "Duración (min)": segment.end - segment.start,
             "Carril": "Recorrido",
@@ -333,7 +374,7 @@ def episode_events_frame(events: Sequence[Event]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                name: json.dumps(dict(event.payload), ensure_ascii=False)
+                name: json.dumps(plain_payload(event.payload), ensure_ascii=False)
                 if name == "payload"
                 else getattr(event, name)
                 for name in names
@@ -469,3 +510,137 @@ def style_little(frame: pd.DataFrame) -> Styler:
         },
         decimal=",",
     )
+
+
+CLOCK_LABELS = {
+    "door_to_doctor": "Puerta-médico (A)",
+    "triage_start_to_doctor": "Desde el inicio del triaje (B)",
+    "classified_to_doctor": "Desde la clasificación (C)",
+}
+
+
+def clocks_frame(result: RunResults) -> pd.DataFrame:
+    """Present the core's three clocks for assigned levels two to five."""
+    return pd.DataFrame(
+        [
+            {
+                "Nivel asignado": level.level,
+                "n": level.n,
+                "Reloj": CLOCK_LABELS[clock.measure],
+                "Media (min)": clock.mean,
+                "Mediana (min)": clock.median,
+                "p90 (min)": clock.p90,
+            }
+            for level in window_clocks(
+                result.analysis.table, result.info.warmup_days, result.info.days
+            )
+            if level.level != 1
+            for clock in level.clocks
+        ]
+    )
+
+
+def level_one_clocks_frame(result: RunResults) -> pd.DataFrame:
+    """Keep immediate attention separate from percentages of compliance."""
+    level = level_one_clocks(result.analysis.table, result.info.warmup_days, result.info.days)
+    return pd.DataFrame(
+        [
+            {
+                "Reloj": label,
+                "n": level.n,
+                "Mediana (min)": level.median[name],
+                "p90 (min)": level.p90[name],
+            }
+            for name, label in CLOCK_LABELS.items()
+        ]
+    )
+
+
+def pretriage_frame(result: RunResults) -> pd.DataFrame:
+    """Present pooled and daily pretriage supplied by the core, excluding level one."""
+    value = window_pretriage(result.analysis.table, result.info.warmup_days, result.info.days)
+    return pd.DataFrame(
+        [
+            {
+                "Grupo": "Niveles 2–5" if group.group is None else f"Nivel {group.group}",
+                "n": group.n,
+                "10 min o menos": group.within_share,
+                "Más de 5 min": group.over_share,
+                "Días fuera": group.days_out,
+                "Días con pacientes": group.days_with_patients,
+            }
+            for group in value.by_group
+        ]
+    )
+
+
+def observed_distribution_frames(result: RunResults) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Group observable data for arrivals in the window, including unfinished episodes."""
+    records = [
+        e
+        for e in result.analysis.table
+        if result.analysis.metrics.start <= e.arrival < result.analysis.metrics.end
+    ]
+    labels = []
+    for e in records:
+        reason = result.observed[e.episode_id].reason
+        labels.append(result.profiles.reason(reason).name if reason else "Sin observar")
+
+    def distribution(values, column):
+        counts = pd.Series(values, dtype=object).value_counts(dropna=False, sort=False)
+        return pd.DataFrame(
+            [
+                {column: label, "Pacientes": int(n), "Proporción": n / len(records)}
+                for label, n in counts.items()
+            ],
+            columns=[column, "Pacientes", "Proporción"],
+        )
+
+    return distribution(labels, "Motivo"), distribution(
+        [str(e.level) if e.level is not None else "Sin observar" for e in records], "Nivel asignado"
+    )
+
+
+def observed_profile_row(observed, profiles) -> dict:
+    """Translate an observable profile without consulting hidden truth."""
+    return {
+        "Edad": observed.age,
+        "Sexo": observed.sex.capitalize() if observed.sex else None,
+        "Medio": {"ambulancia": "Ambulancia", "propios_medios": "Medios propios"}.get(
+            observed.arrival_mode
+        ),
+        "Motivo": profiles.reason(observed.reason).name if observed.reason else None,
+        "Pruebas": ", ".join(observed.tests) or "—",
+    }
+
+
+def clinical_truth_frames(value) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Present explicitly requested hidden truth and the individual test responses."""
+    quality = {"correcto": "Correcto", "infratriaje": "Infratriaje", "sobretriaje": "Sobretriaje"}
+    details = pd.DataFrame(
+        [
+            {"Dato clínico": label, "Verdad": str(item) if item is not None else "—"}
+            for label, item in (
+                ("Gravedad latente G", value.severity),
+                ("Nivel asignado", value.assigned_level),
+                ("Nivel real", value.true_level),
+                ("Calidad del triaje", quality.get(value.quality, value.quality)),
+                ("Salto", value.jump),
+                ("Respuesta esperada de la ronda (min)", value.round_expected),
+                ("Respuesta observada de la ronda (min)", value.round_observed),
+            )
+        ]
+    )
+    tests = pd.DataFrame(
+        [
+            {
+                "Prueba": test.test,
+                "Pedida": "Sí" if test.ordered else "No",
+                "Resultado": test.result or "—",
+                "Respuesta base (min)": test.base_turnaround,
+                "Respuesta en la franja del pedido (min)": test.turnaround,
+            }
+            for test in value.tests
+        ]
+    )
+    return details, tests

@@ -118,6 +118,7 @@ else:
                     warmup_days=defaults.BASE_WARMUP_DAYS,
                     run_id="r2026",
                     origin="app",
+                    profiles="config/perfiles.toml",
                 )
             except FileExistsError:
                 st.error(

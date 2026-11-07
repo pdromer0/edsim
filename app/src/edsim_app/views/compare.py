@@ -12,6 +12,7 @@ from edsim.runs import (
     RunSummaryComparison,
     compare_run_summary,
     pairing_blockers,
+    pairing_category,
     read_run_header,
 )
 from edsim_app.charts import difference_histogram_chart
@@ -20,6 +21,7 @@ from edsim_app.comparison_frames import (
     DRAW_LABELS,
     METADATA_LABELS,
     affected_episodes_frame,
+    clinical_differences_frame,
     comparison_configuration_frames,
     comparison_kpis_frame,
     comparison_levels_frame,
@@ -64,6 +66,10 @@ def render_side(store: RunStore, side: str, choices: list[str]) -> tuple[RunResu
             f"Variante: {info.variant} · Semilla: {info.seed} · "
             f"Días: {info.days} · Calentamiento: {info.warmup_days}"
         )
+        st.caption(f"Modelo: {'Clínico' if info.is_clinical else 'Provisional'}")
+        if info.is_clinical:
+            st.caption(f"Perfiles: {info.clinical_profiles_path}")
+            st.caption(f"Huella de perfiles clínicos: {info.clinical_profiles_fingerprint}")
         result = cached_run_results(str(store.root), marked, fingerprint)
     except (RunReadError, RunAnalysisError) as error:
         st.error(f"Lado {side.upper()}: {error}")
@@ -71,7 +77,9 @@ def render_side(store: RunStore, side: str, choices: list[str]) -> tuple[RunResu
     return result, fingerprint
 
 
-def render_summary(summary: RunSummaryComparison, a_id: str, b_id: str) -> None:
+def render_summary(
+    summary: RunSummaryComparison, a_id: str, b_id: str, *, clinical: bool = False
+) -> None:
     """Render populations beside KPIs, then supplied configuration and level differences."""
     st.subheader("KPIs de la ventana")
     st.caption(
@@ -93,9 +101,9 @@ def render_summary(summary: RunSummaryComparison, a_id: str, b_id: str) -> None:
             "está sesgada hacia abajo. No interpretes una media menor como mejora sin más."
         )
     st.dataframe(comparison_kpis_frame(summary), hide_index=True, width="stretch")
-    st.subheader("Esperas por nivel y Manchester")
+    st.subheader("Esperas por nivel y Manchester desde la clasificación (C)")
     st.dataframe(comparison_levels_frame(summary), hide_index=True, width="stretch")
-    metadata, center = comparison_configuration_frames(summary)
+    metadata, center = comparison_configuration_frames(summary, clinical=clinical)
     with st.expander("Diferencias de configuración y metadatos", expanded=True):
         if metadata.empty:
             st.caption("Metadatos idénticos.")
@@ -180,15 +188,24 @@ if loaded_a is None or loaded_b is None:
     st.stop()
 a, fingerprint_a = loaded_a
 b, fingerprint_b = loaded_b
+category = pairing_category(a, b)
 blockers = pairing_blockers(a, b)
-if blockers:
+st.caption(
+    "Tipo de emparejamiento: "
+    + {
+        "template": "Plantilla · mismos pacientes",
+        "clinical": "Clínico · mismos sorteos estándar con otros perfiles",
+        "unpaired": "Sin emparejar · solo el resumen",
+    }[category]
+)
+if category == "unpaired":
     st.info(
         "No emparejada. Difieren: "
         + "; ".join(f"{METADATA_LABELS[d.field]}: {d.a} → {d.b}" for d in blockers)
         + ". Solo se comparan agregados: los identificadores no representan al mismo paciente."
     )
 comparison = None
-if blockers:
+if category == "unpaired":
     summary = compare_run_summary(a, b)
 else:
     try:
@@ -209,7 +226,13 @@ else:
         summary = compare_run_summary(a, b)
     else:
         summary = comparison.summary
-        if comparison.pairing.kind == "same_draws":
+        if category == "clinical":
+            st.success(
+                "Emparejada clínicamente: mismos sorteos estándar con otros perfiles, "
+                "comprobados con la verdad."
+            )
+            st.warning("La diferencia puede mezclar los efectos de los perfiles y de la plantilla.")
+        elif comparison.pairing.kind == "same_draws":
             st.success("Emparejada con los mismos sorteos, comprobados con la verdad.")
         else:
             st.success("Emparejada con sorteos distintos, comprobados con la verdad.")
@@ -224,9 +247,15 @@ else:
                 + ("; ".join(changed) if changed else "ninguno en esta muestra (0 pacientes)")
                 + ". La categoría se conserva por los parámetros modificados."
             )
-render_summary(summary, a.info.run_id, b.info.run_id)
+render_summary(
+    summary, a.info.run_id, b.info.run_id, clinical=a.info.is_clinical and b.info.is_clinical
+)
 if comparison is not None:
-    st.subheader("Comprobación de los sorteos")
+    st.subheader("Comprobación de los sorteos (verdad)")
+    if comparison.pairing.clinical_differences:
+        st.dataframe(
+            clinical_differences_frame(comparison.pairing), hide_index=True, width="stretch"
+        )
     st.dataframe(draw_differences_frame(comparison.pairing), hide_index=True, width="stretch")
     render_patients(
         comparison,

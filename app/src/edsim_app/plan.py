@@ -5,6 +5,7 @@ from html import escape
 from math import ceil
 
 from edsim.runs import TIMEZONE, ReplayCounts, ReplayPatient, ReplayState
+from edsim_app.frames import episode_state_label
 from edsim_app.palette import LEVEL_COLORS, UNKNOWN_LEVEL_COLOR
 
 STATE_LABELS = {
@@ -34,7 +35,12 @@ def render_plan(
         (p for p in state.patients if p.state == "waiting_box"),
         key=lambda p: (p.level, p.arrival, p.episode_id),
     )
+    results_room = sorted(
+        (p for p in state.patients if p.results_room and p.state == "waiting_tests"),
+        key=lambda p: (p.arrival, p.episode_id),
+    )
     height = max(
+        200 + 38 * min(30, len(results_room)),
         450,
         130 + 38 * min(30, max(len(waiting_triage), len(waiting_box))),
         130 + 76 * ceil(counts.boxes / 4),
@@ -78,10 +84,13 @@ def render_plan(
         if displaced:
             svg.append(title_for(displaced))
         else:
-            svg.append(f"<title>{escape(p.episode_id)} · {escape(STATE_LABELS[p.state])}</title>")
+            svg.append(
+                f"<title>{escape(p.episode_id)} · "
+                f"{escape(episode_state_label(p.state, results_room=p.results_room))}</title>"
+            )
         text(x + 5, y + 15, label or p.episode_id)
         if height >= 45:
-            text(x + 5, y + 32, STATE_LABELS[p.state])
+            text(x + 5, y + 32, episode_state_label(p.state, results_room=p.results_room))
         if p.episode_id == highlighted_episode:
             svg.append(
                 f'<rect data-mark="highlight" x="{x - 3}" y="{y - 3}" '
@@ -176,6 +185,12 @@ def render_plan(
             66 + i * 32,
             f"{destination.capitalize()}: {state.departures_by_destination[destination]}",
         )
+    if results_room:
+        text(1130, 150, "Sala de resultados · espera de pruebas", "heading")
+        for index, p in enumerate(results_room[:30]):
+            patient(p, 1130, 170 + 38 * index, width=280)
+        if len(results_room) > 30:
+            text(1130, 185 + 38 * 30, f"+{len(results_room) - 30} más")
     text(
         14,
         height - 37,

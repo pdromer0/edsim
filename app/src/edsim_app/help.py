@@ -7,6 +7,8 @@ def render_episodes_help() -> None:
     """Explain exclusive cohorts, right censoring and independent laboratory work."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
+            "El nivel mostrado es el asignado; el real y G solo aparecen al ver la verdad. "
+            "Edad, sexo, medio, motivo y pruebas proceden del log. "
             "La tabla incluye todos los episodios: sin terminar si no hay salida; "
             "calentamiento si llegaron antes de su fin y salieron; ventana si llegaron "
             "desde ese límite y salieron. Los filtros se combinan y se conservan entre ejecuciones."
@@ -18,6 +20,8 @@ def render_episodes_help() -> None:
         )
         st.write(
             "Los tramos muestran dónde está el paciente y suman su estancia observada. "
+            "La sala de resultados está fuera del box; se distinguen la espera inicial "
+            "de box y la espera al volver. "
             "Las pruebas siguen aunque pierda el box: su banda es independiente y los "
             "rombos marcan desalojos. Todas las horas son UTC+1 fijo, sin horario de verano."
         )
@@ -33,20 +37,18 @@ def render_results_help() -> None:
     """Explain the two populations and the limitations of replaying invariants."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
-            "Las llegadas y el censo usan toda la ventana sin calentamiento, incluidos "
-            "los pacientes que siguen dentro al final. Las esperas, estancias, desalojos "
-            "e ingresos usan solo episodios que llegan en la ventana y salen. «—» indica "
-            "una estadística sin pacientes. El nivel 1 exige atención inmediata (0 minutos). "
-            "Manchester mide puerta-médico: exactamente "
-            "en el máximo cumple; los días fuera de objetivo tienen menos del 90 % de "
-            "pacientes dentro del máximo y se cuentan solo días con pacientes del nivel."
+            "Las llegadas y el censo incluyen a quienes siguen dentro. Las esperas usan "
+            "episodios llegados en la ventana y completados. Los niveles son los asignados. "
+            "Los tres relojes miden hasta el primer médico: A desde la puerta, B desde el "
+            "inicio del triaje y C desde la clasificación. Manchester se mide con C; "
+            "justo en el máximo cumple. Un día está fuera si cumple menos del 90 %."
         )
         st.write(
-            "Puerta-médico incluye la espera de triaje y el propio triaje. Por eso el "
-            "nivel 1 («inmediato», 0 minutos) nunca cumple en el modelo actual: sus "
-            "pacientes superan el máximo y sus días con pacientes salen al 100 % fuera "
-            "de objetivo. Es el hallazgo del hito 3 sobre el nivel 1 sin prioridad en "
-            "el triaje, pendiente de resolver en el hito 4."
+            "El pretriaje tiene su indicador: 10 minutos o menos (objetivo diario 85 %) "
+            "y más de 5 minutos; excluye el nivel 1. El nivel 1 se informa con mediana y p90, "
+            "sin porcentaje. «—» significa que no hay pacientes para esa estadística. "
+            "El reparto observado incluye las llegadas de la ventana, también sin terminar; "
+            "nunca usa niveles reales del ground truth."
         )
         st.write(
             "Dos subcomprobaciones de conservación solo existen durante la simulación: "
@@ -100,7 +102,10 @@ def render_compare_help() -> None:
             "«—» indica base cero o dato desconocido. Ingreso cambia en puntos porcentuales."
         )
         st.write(
-            "Compartir semilla, perfil, días y calentamiento permite emparejar pacientes. "
+            "Compartir semilla, perfil de llegadas, días, calentamiento y modelo permite "
+            "emparejar pacientes. Plantilla conserva los mismos pacientes; el emparejamiento "
+            "clínico usa los mismos sorteos estándar con otros perfiles y puede cambiar "
+            "los valores clínicos. Modelos distintos quedan sin emparejar. "
             "La verdad comprueba sus llegadas y sorteos: cambiar plantilla conserva los "
             "números aleatorios comunes; cambiar clínica puede cambiar algunos sorteos, "
             "aunque en una muestra pequeña no cambie ninguno."

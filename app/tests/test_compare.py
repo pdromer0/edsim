@@ -15,6 +15,24 @@ from edsim_app.comparison_frames import comparison_kpis_frame, comparison_levels
 MAIN = Path(edsim_app.__file__).with_name("main.py")
 
 
+def app_run_results(store, run_id):
+    """Use the explicitly selected application clock when checking core summaries."""
+    from dataclasses import replace
+
+    from edsim.runs import window_compliance
+
+    result = read_run_results(store, run_id)
+    return replace(
+        result,
+        compliance=window_compliance(
+            result.analysis.table,
+            result.info.warmup_days,
+            result.info.days,
+            measure="classified_to_doctor",
+        ),
+    )
+
+
 def open_compare(a="older", b="newer"):
     app = AppTest.from_file(MAIN, default_timeout=20)
     app.session_state["compare_a"] = a
@@ -41,9 +59,7 @@ def test_unpaired_summary_matches_core_and_does_not_read_truth(catalog, monkeypa
     assert "Semilla" in " ".join(item.value for item in app.info)
     assert not read_truth.called
     store = RunStore(catalog)
-    expected = compare_run_summary(
-        read_run_results(store, "older"), read_run_results(store, "newer")
-    )
+    expected = compare_run_summary(app_run_results(store, "older"), app_run_results(store, "newer"))
     kpis, levels = summary_frames(app)
     assert kpis.equals(comparison_kpis_frame(expected)) and len(kpis) == 9
     assert levels.equals(comparison_levels_frame(expected)) and len(levels) == 5
@@ -144,7 +160,7 @@ def test_presentation_has_signed_pp_relative_percent_and_undefined_values(catalo
 
     from edsim.runs import KPIComparison, compare_run_summary
 
-    a = read_run_results(RunStore(catalog), "older")
+    a = app_run_results(RunStore(catalog), "older")
     summary = compare_run_summary(a, a)
     summary = replace(
         summary,
@@ -232,8 +248,8 @@ def test_staffing_comparison_has_checked_draws_histograms_and_both_exclusions(pa
 
     store = RunStore(paired_catalog)
     expected = compare_runs(
-        read_run_results(store, "older"),
-        read_run_results(store, "night"),
+        app_run_results(store, "older"),
+        app_run_results(store, "night"),
         read_run_episode_truth(store, "older"),
         read_run_episode_truth(store, "night"),
     )
@@ -403,7 +419,7 @@ def test_pair_cache_includes_both_ordered_identities_and_limits_four(catalog, mo
     from edsim_app import comparison
 
     store = RunStore(catalog)
-    a, truth = read_run_results(store, "older"), read_run_episode_truth(store, "older")
+    a, truth = app_run_results(store, "older"), read_run_episode_truth(store, "older")
     expected = compare_runs(a, a, truth, truth)
     monkeypatch.setattr(comparison, "cached_run_results", Mock(return_value=a))
     monkeypatch.setattr(comparison, "cached_episode_truth", Mock(return_value=truth))

@@ -131,7 +131,7 @@ def test_waits_chart_keeps_supplied_door_waits_and_manchester(catalog):
         240,
     ]
     assert [row["Minutos"] for row in rows if row["Serie"] == "p90"] == [
-        level.p90["door_to_doctor"] for level in result.analysis.metrics.by_level
+        level.p90["classified_to_doctor"] for level in result.analysis.metrics.by_level
     ]
 
 

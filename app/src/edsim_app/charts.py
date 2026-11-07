@@ -42,19 +42,24 @@ def offered_chart(frame: pd.DataFrame) -> alt.Chart:
 
 def waits_chart(frame: pd.DataFrame) -> alt.Chart:
     """Compare door-to-doctor means and p90 with each level's Manchester maximum."""
+    clock = (
+        "Desde la clasificación (C)"
+        if "Desde la clasificación (C) media (min)" in frame
+        else "Puerta-médico"
+    )
     tidy = (
         frame[
             [
                 "Nivel",
-                "Puerta-médico media (min)",
-                "Puerta-médico p90 (min)",
+                f"{clock} media (min)",
+                f"{clock} p90 (min)",
                 "Máximo Manchester (min)",
             ]
         ]
         .rename(
             columns={
-                "Puerta-médico media (min)": "Media",
-                "Puerta-médico p90 (min)": "p90",
+                f"{clock} media (min)": "Media",
+                f"{clock} p90 (min)": "p90",
                 "Máximo Manchester (min)": "Máximo Manchester",
             }
         )
@@ -175,6 +180,8 @@ def episode_chart(
                         "En box esperando pruebas",
                         "Reevaluación",
                         "Pruebas en curso",
+                        "Sala de resultados · espera de pruebas",
+                        "Sala de resultados · espera de box",
                     ],
                     range=[
                         "#b6cde4",
@@ -185,6 +192,8 @@ def episode_chart(
                         "#c7b8db",
                         "#7966a3",
                         "#898781",
+                        "#9dd3d1",
+                        "#68aaa6",
                     ],
                 ),
             ),

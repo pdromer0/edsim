@@ -18,6 +18,8 @@ def test_run_table_columns_values_and_fixed_timezone(run_info):
             "Calentamiento (días)": 2,
             "Semilla": 2026,
             "Huella del centro": "12345678",
+            "Modelo": "Provisional",
+            "Huella de perfiles clínicos": "—",
             "Llegadas por día": 307.5,
             "Invariantes": "correctas",
             "Origen": "CLI",
@@ -44,6 +46,8 @@ def test_empty_table_keeps_all_headers():
         "Calentamiento (días)",
         "Semilla",
         "Huella del centro",
+        "Modelo",
+        "Huella de perfiles clínicos",
         "Llegadas por día",
         "Invariantes",
         "Origen",
@@ -304,3 +308,35 @@ def test_results_occupancy_keeps_ratios_above_one_and_little_product(catalog):
     assert hourly["Censo medio"].tolist() == result.hourly_census.tolist()
     hourly.loc[0, "Censo medio"] = -1
     assert result.hourly_census[0] >= 0
+
+
+def test_payload_serializes_nested_immutable_results_without_changing_them():
+    import json
+    from types import MappingProxyType
+
+    from edsim_app.frames import plain_payload
+
+    payload = MappingProxyType(
+        {
+            "resultados": MappingProxyType({"analitica": "alterado"}),
+            "pruebas": ("analitica", "ecg"),
+        }
+    )
+    assert json.loads(json.dumps(plain_payload(payload))) == {
+        "resultados": {"analitica": "alterado"},
+        "pruebas": ["analitica", "ecg"],
+    }
+    assert isinstance(payload["resultados"], MappingProxyType)
+
+
+def test_results_room_labels_preserve_both_physical_states():
+    from edsim_app.frames import episode_state_label
+
+    assert episode_state_label("waiting_tests", results_room=True) == (
+        "Sala de resultados · espera de pruebas"
+    )
+    assert episode_state_label("waiting_box", results_room=True) == (
+        "Sala de resultados · espera de box"
+    )
+    assert episode_state_label("waiting_tests") == "En box esperando pruebas"
+    assert episode_state_label("waiting_box") == "Espera de box"
