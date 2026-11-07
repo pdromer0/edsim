@@ -16,7 +16,16 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
 - Explica en español el concepto antes de implementar; Pedro pregunta hasta entenderlo.
 - Usa modo plan para cualquier cambio no trivial y espera la aprobación del plan.
 - Con el plan aprobado, implementa la tarea completa sin esperar revisión entre pasos: un commit
-  por paso lógico, con ruff y `pytest -m "not slow"` en verde antes de cada commit.
+  por paso lógico. Los tests van por niveles:
+  - antes de cada commit, ruff y los ficheros de test del área tocada
+    (`uv run pytest tests/test_x.py …`). No se ejecutan la rápida completa ni la completa en
+    cada commit;
+  - al final de cada turno, el hook Stop ejecuta la rápida con sello (`scripts/tests-rapidos.sh`),
+    solo de las suites que afectan los cambios desde su último verde;
+  - antes de cada push, `scripts/tests-completos.sh` una vez.
+
+  Una versión incorrecta se comprueba con los ficheros donde se predice el fallo y con los que
+  deben seguir pasando.
 - Para y pregunta solo si algo contradice el plan o la especificación, una biblioteca no se
   comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño
   nueva. Nunca cambies una semilla para que un test pase.
@@ -36,6 +45,8 @@ uv run --package edsim-app pytest app/tests -m "not slow"  # tests rápidos de l
 uv run ruff check .      # lint
 uv run ruff format .     # formato
 uv run edsim             # CLI
+scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
+scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
@@ -46,8 +57,11 @@ exclusivas. Usa `uv sync --all-packages` para el trabajo habitual. El arranque c
 `--package edsim-app` instala lo que falte. El CI del núcleo usa `uv sync --locked`
 para comprobarlo sin Streamlit ni pandas; el de la app añade `--all-packages`.
 
-El hook Stop de Codex formatea y ejecuta los tests rápidos del núcleo y de la app.
-El de Claude Code sigue ejecutando solo los del núcleo.
+Los hooks Stop de Claude Code y de Codex llaman a `scripts/tests-rapidos.sh`, que ejecuta la
+rápida del núcleo, de la app o de las dos según las rutas cambiadas desde el último verde de cada
+una; el sello vive en `.cache/edsim/`, fuera de `.git`. El de Codex formatea antes con
+`ruff format .`; el de Claude Code no ejecuta nada en modo plan. pytest-xdist no va en `addopts`:
+`uv run pytest tests/test_x.py` sigue en serie, y solo los scripts y el CI piden `-n`.
 
 Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
