@@ -12,7 +12,7 @@ Tareas de proceso (serie P): cómo trabajamos, no qué hace el simulador. No per
 El núcleo se ejecuta en paralelo con pytest-xdist en los scripts y en el CI. El notebook tiene su propio job.
 
 **Qué aprendí:**
-- El sello es el manifiesto de huellas de los ficheros en el último verde, no un commit. Lo que cuenta es el contenido del árbol: un commit no obliga a repetir los tests, y volver a un árbol que ya pasó no ejecuta nada.
+- El sello es el manifiesto de huellas de los ficheros en el último verde, no un commit. Lo que cuenta es el contenido del árbol: un commit no obliga a repetir los tests, y volver al árbol del último verde de una suite no la ejecuta.
 - Un fichero seguido y borrado se detecta sin código especial. `git ls-files` lo sigue listando, `sha1sum` no lo encuentra y queda fuera del manifiesto: cuenta como cambio.
 - `git hash-object -w` escribe objetos en `.git` y además refresca la fecha de los que ya existen. Por eso el sello usa `sha1sum`: el `.git` de Codex es de solo lectura, y `git status --porcelain` no lo habría delatado.
 - Cada worker de xdist es un proceso propio: recalcula los fixtures de sesión y de módulo.
