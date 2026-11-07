@@ -15,7 +15,9 @@ from edsim.runs import (
     validate_center_values,
 )
 
-BASE = Path(__file__).parents[1] / "config" / "centro.toml"
+# Un centro con las doce claves (el bloque provisional y la sala de resultados): desde la
+# tarea 4.9, config/centro.toml no tiene el bloque provisional.
+BASE = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
 
 
 @pytest.fixture

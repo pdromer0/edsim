@@ -120,11 +120,11 @@ def test_carga_del_toml_de_ejemplo(center):
 
 def test_config_de_produccion_es_valida():
     # Los valores a mano usan el centro de ejemplo, que no se recalibra; este test solo
-    # comprueba que el centro base, que sí cambiará en el hito 4, carga y es válido.
+    # comprueba que el centro base carga y es válido. Sus valores, a mano, más abajo.
     c = load_center(CONFIG)
 
     assert isinstance(c, CenterConfig)
-    assert sum(c.level_shares) == pytest.approx(1, rel=1e-12)
+    assert sum(c.admission_probability) > 0
 
 
 def test_toml_escrito_por_el_test_igual_que_el_de_ejemplo(tmp_path, center):
@@ -437,22 +437,6 @@ def test_construccion_directa_valida_la_clave(center):
     with pytest.raises(ValueError, match=r"espera_resultados_fuera\[0\] cannot be 1"):
         dataclasses.replace(center, results_wait_outside=(1,))
     assert dataclasses.replace(center, results_wait_outside=[4, 5]).results_wait_outside == (4, 5)
-
-
-def test_el_centro_de_ejemplo_es_el_del_hito_3():
-    # Los tests del modelo provisional que usaban config/centro.toml usan desde la tarea
-    # 4.6b tests/data/centro_ejemplo.toml: el centro base con la plantilla del hito 3
-    # (antes de la calibración) y sin la sala de resultados, que el provisional ignora.
-    # Solo difieren en la plantilla y la sala. Este test se quita en la tarea 4.9, cuando
-    # centro.toml pierda sus secciones provisionales.
-    example = load_center(EXAMPLE)
-    hito_3 = dataclasses.replace(
-        load_center(CONFIG),
-        triage_nurses=(3, 3, 2),
-        doctors=(12, 12, 7),
-        results_wait_outside=(),
-    )
-    assert example == hito_3
 
 
 # --- Bloque provisional opcional (tarea 4.9) -------------------------------------------

@@ -25,9 +25,12 @@ from edsim.runs import (
     write_variant,
 )
 
-BASE = Path(__file__).parents[1] / "config" / "centro.toml"
-# La plantilla de médicos de config/centro.toml, leída del fichero: la calibración
-# (tarea 4.6b) la cambia, y estos tests prueban el formato, no unos valores.
+# Un centro con las doce claves (el bloque provisional y la sala de resultados), con
+# comentarios: desde la tarea 4.9, config/centro.toml no tiene el bloque provisional,
+# y estos tests prueban el formato de cualquier clave. Las variantes de un centro sin el
+# bloque se prueban aparte, con config/centro.toml. La plantilla de médicos se lee del
+# fichero: estos tests prueban el formato, no unos valores.
+BASE = Path(__file__).parent / "data" / "centro_sala_ejemplo.toml"
 MORNING, AFTERNOON, NIGHT = read_center_values(BASE)["recursos.medicos"]
 DOCTORS_LINE = f"medicos = [{MORNING}, {AFTERNOON}, {NIGHT}]".encode()
 MULTILINE_DOCTORS = (

@@ -96,8 +96,11 @@ def test_con_perfiles_neutros_la_carga_por_turno_es_la_de_knob_loads(
         assert got == pytest.approx(want, rel=KNOB_TOLERANCE)
 
 
-def test_sin_perfiles_la_carga_es_la_de_antes_bit_a_bit(center):
-    # Referencia: el cálculo de antes de la tarea 4.8a, escrito aquí con sus funciones.
+def test_sin_perfiles_la_carga_es_la_de_antes_bit_a_bit():
+    # Referencia: el cálculo de antes de la tarea 4.8a, escrito aquí con sus funciones. Sin
+    # perfiles es el modelo provisional, con su centro (el de config/ no tiene el bloque
+    # provisional desde la tarea 4.9).
+    center = load_center(Path(__file__).parent / "data" / "centro_ejemplo.toml")
     profile = load_profile(CONFIG / "llegadas.toml")
     work = offered_work(center, profile, days=2, sample_size=2_000)
     explicit = offered_work(center, profile, days=2, sample_size=2_000, profiles=None)

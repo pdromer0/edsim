@@ -178,7 +178,9 @@ def clinical_run_templates(tmp_path_factory):
         ("staff", staff, "config/perfiles.toml"),
         ("flu", source, flu),
         ("absurd", absurd, "config/perfiles.toml"),
-        ("provisional", source, None),
+        # The provisional model needs the provisional block, which config/centro.toml lacks
+        # since task 4.9: its center is tests/data/centro_ejemplo.toml.
+        ("provisional", Path("tests/data/centro_ejemplo.toml"), None),
     ):
         simulate_run(
             center,
