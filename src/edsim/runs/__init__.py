@@ -16,9 +16,13 @@ from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
+from edsim.profiles.config import ClinicalProfiles
 from edsim.runs.compare import (
+    CLINICAL_DRAW_EFFECTS,
     DRAW_EFFECTS,
     ChangeKind,
+    ClinicalDifference,
+    ClinicalField,
     DifferenceSummary,
     DrawDifference,
     DrawField,
@@ -30,6 +34,7 @@ from edsim.runs.compare import (
     LevelRunSummary,
     MetadataDifference,
     Number,
+    PairingCategory,
     PairingCheckError,
     PairingInfo,
     PairingKind,
@@ -39,6 +44,7 @@ from edsim.runs.compare import (
     compare_run_summary,
     compare_runs,
     pairing_blockers,
+    pairing_category,
 )
 from edsim.runs.curves import CurveBlocks, CurveSteps, curve_blocks, curve_steps
 from edsim.runs.episodes import (
@@ -46,8 +52,10 @@ from edsim.runs.episodes import (
     EpisodeSegment,
     EpisodeSegments,
     EpisodeState,
+    ObservedProfile,
     TestBand,
     episode_segments,
+    observed_profiles,
 )
 from edsim.runs.events import EpisodeEventIndex, build_episode_event_index, read_episode_events
 from edsim.runs.filters import (
@@ -59,13 +67,29 @@ from edsim.runs.filters import (
 )
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
+    APP_COMPLIANCE_MEASURE,
+    ClockStatistics,
+    LevelClocks,
+    LevelClockSummary,
     LevelCompliance,
+    Pretriage,
+    PretriageGroup,
     WindowCompliance,
     WindowKPIs,
+    WindowPretriage,
+    level_one_clocks,
+    window_clocks,
     window_compliance,
     window_kpis,
+    window_pretriage,
 )
-from edsim.runs.offered import OfferedWork, offered_work
+from edsim.runs.offered import (
+    OfferedLoad,
+    OfferedWork,
+    offered_load,
+    offered_work,
+    offered_work_from_load,
+)
 from edsim.runs.replay import (
     ReplayCounts,
     ReplayDeparture,
@@ -86,13 +110,23 @@ from edsim.runs.results import (
 )
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
-from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
+from edsim.runs.summary import (
+    CenterSummary,
+    DurationSummary,
+    ProfilesSummary,
+    summarize_center,
+    summarize_profiles,
+)
 from edsim.runs.truth import (
     TRUTH_ABS_TOL_MINUTES,
+    ClinicalTruthView,
+    DiagnosticTestTruth,
     TruthComparison,
     TruthStatus,
     compare_episode_truth,
+    episode_clinical_truth,
     read_run_episode_truth,
+    true_level_window_compliance,
 )
 from edsim.runs.variants import (
     MAX_VARIANT_NAME_LENGTH,
@@ -135,11 +169,17 @@ __all__ = [
     "PairingInfo",
     "PairingKind",
     "pairing_blockers",
+    "CLINICAL_DRAW_EFFECTS",
+    "ClinicalDifference",
+    "ClinicalField",
+    "PairingCategory",
+    "pairing_category",
     "ArrivalProfile",
     "CenterConfig",
     "CenterDifference",
     "CenterSummary",
     "Compliance",
+    "ClinicalProfiles",
     "CurveBlocks",
     "CurveSteps",
     "DurationSummary",
@@ -155,15 +195,31 @@ __all__ = [
     "TruthStatus",
     "compare_episode_truth",
     "read_run_episode_truth",
+    "ClinicalTruthView",
+    "DiagnosticTestTruth",
+    "episode_clinical_truth",
+    "true_level_window_compliance",
     "Displacement",
     "EpisodeSegment",
     "EpisodeSegments",
     "EpisodeState",
     "TestBand",
     "episode_segments",
+    "ObservedProfile",
+    "observed_profiles",
     "EpisodeEventIndex",
     "Event",
     "LevelCompliance",
+    "APP_COMPLIANCE_MEASURE",
+    "ClockStatistics",
+    "LevelClocks",
+    "LevelClockSummary",
+    "Pretriage",
+    "PretriageGroup",
+    "WindowPretriage",
+    "level_one_clocks",
+    "window_clocks",
+    "window_pretriage",
     "MAX_VARIANT_NAME_LENGTH",
     "MAX_VIOLATIONS_SHOWN",
     "SUMMARY_MEASURES",
@@ -191,6 +247,9 @@ __all__ = [
     "load_center",
     "load_profile",
     "offered_work",
+    "OfferedLoad",
+    "offered_load",
+    "offered_work_from_load",
     "read_center_values",
     "read_run_header",
     "build_episode_event_index",
@@ -198,6 +257,8 @@ __all__ = [
     "read_run_results",
     "simulate_run",
     "summarize_center",
+    "ProfilesSummary",
+    "summarize_profiles",
     "validate_center_values",
     "validate_run_id",
     "write_variant",

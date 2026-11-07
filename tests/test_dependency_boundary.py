@@ -65,3 +65,41 @@ def test_core_has_no_ui_imports_including_inside_functions():
     assert "engine/engine.py" in visited, sorted(visited)
     assert "runs/service.py" in visited, sorted(visited)
     assert not violations, "UI imports in the core:\n" + "\n".join(violations)
+
+
+TASK_4_8A_API = (
+    "ClinicalProfiles",
+    "ObservedProfile",
+    "observed_profiles",
+    "ClockStatistics",
+    "LevelClockSummary",
+    "LevelClocks",
+    "window_clocks",
+    "level_one_clocks",
+    "Pretriage",
+    "PretriageGroup",
+    "WindowPretriage",
+    "window_pretriage",
+    "APP_COMPLIANCE_MEASURE",
+    "DiagnosticTestTruth",
+    "ClinicalTruthView",
+    "episode_clinical_truth",
+    "true_level_window_compliance",
+    "ProfilesSummary",
+    "summarize_profiles",
+    "PairingCategory",
+    "pairing_category",
+    "ClinicalField",
+    "ClinicalDifference",
+    "CLINICAL_DRAW_EFFECTS",
+)
+"""Lo que la tarea 4.8b (las páginas de la app) usa del núcleo clínico de runs/."""
+
+
+def test_la_api_de_la_tarea_4_8a_es_publica():
+    import edsim.runs as runs
+
+    missing = [name for name in TASK_4_8A_API if name not in runs.__all__]
+    assert not missing, missing
+    assert all(hasattr(runs, name) for name in runs.__all__)
+    assert len(set(runs.__all__)) == len(runs.__all__)

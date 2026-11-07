@@ -164,3 +164,65 @@ def engine_validation_real():
     que la recibe con ``monkeypatch`` en lugar de repetirla.
     """
     return validate_engine(load_center(EXAMPLE_CENTER), load_profile(REAL_PROFILE), seed=REAL_SEED)
+
+
+# --- Ejecuciones clínicas guardadas (tarea 4.8a) -------------------------------------------
+
+EXAMPLE_PROFILES = DATA / "perfiles_ejemplo.toml"
+EXAMPLE_ROOM_CENTER = DATA / "centro_sala_ejemplo.toml"
+CLINICAL_DAYS = 3
+CLINICAL_WARMUP = 1
+CLINICAL_SEED = 2026
+CLINICAL_RUNS = {
+    "clinica": (EXAMPLE_CENTER, EXAMPLE_PROFILES),
+    "provisional": (EXAMPLE_CENTER, None),
+    "clinica-sala": (EXAMPLE_ROOM_CENTER, EXAMPLE_PROFILES),
+}
+"""Ejecuciones de 3 días con los datos de ejemplo y la semilla 2026: centro y perfiles."""
+
+
+@pytest.fixture(scope="session")
+def clinical_store(tmp_path_factory):
+    """Las ejecuciones de ``CLINICAL_RUNS``, escritas con ``simulate_run``.
+
+    Son de solo lectura: un test que las modifica trabaja sobre ``copy_run``.
+    """
+    from edsim.runs import RunStore, simulate_run
+
+    root = tmp_path_factory.mktemp("ejecuciones-clinicas")
+    for run_id, (center, profiles) in CLINICAL_RUNS.items():
+        simulate_run(
+            center,
+            EXAMPLE_PROFILE,
+            CLINICAL_DAYS,
+            CLINICAL_SEED,
+            output_dir=root / run_id,
+            run_id=run_id,
+            warmup_days=CLINICAL_WARMUP,
+            origin="cli",
+            profiles=profiles,
+        )
+    return RunStore(root)
+
+
+@pytest.fixture(scope="session")
+def clinical_simulation():
+    """La simulación en memoria de la ejecución ``clinica``: eventos y ground truth.
+
+    Los mismos argumentos que ``simulate_run``, así que sus eventos son los del log
+    guardado y su ground truth es la de la simulación, no la leída de disco.
+    """
+    from edsim.profiles.config import load_profiles
+
+    sink = MemorySink()
+    result = simulate_ed(
+        load_center(EXAMPLE_CENTER),
+        load_profile(EXAMPLE_PROFILE),
+        CLINICAL_DAYS,
+        CLINICAL_SEED,
+        sink=sink,
+        warmup_days=CLINICAL_WARMUP,
+        run_id="clinica",
+        profiles=load_profiles(EXAMPLE_PROFILES),
+    )
+    return sink.events, result.ground_truth

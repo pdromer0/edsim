@@ -14,7 +14,9 @@ from edsim.runs.results import RunResults
 from edsim.runs.truth import TRUTH_ABS_TOL_MINUTES
 from edsim.runs.variants import CenterDifference, center_diff
 
-type PairingKind = Literal["same_draws", "different_draws"]
+type PairingKind = Literal["same_draws", "different_draws", "clinical_profiles"]
+type PairingCategory = Literal["template", "clinical", "unpaired"]
+type ClinicalField = Literal["reason", "level", "true_level", "age", "sex", "arrival_mode", "tests"]
 type DrawField = Literal[
     "level",
     "triage_time",
@@ -43,6 +45,17 @@ DRAW_EFFECTS: Mapping[str, frozenset[DrawField]] = MappingProxyType(
     }
 )
 """TOML key to draws it can affect; an immutable, exhaustive clinical contract."""
+
+CLINICAL_DRAW_EFFECTS: Mapping[str, frozenset[DrawField]] = MappingProxyType(
+    {key: frozenset() for key in DRAW_EFFECTS}
+    | {"destino.probabilidad_ingreso": frozenset({"admitted"})}
+)
+"""The same contract with the clinical model (task 4.8a).
+
+The clinical sampler takes the level, the durations and the tests from the
+profiles, so of the center only the admission probability changes a draw (the
+provisional destination, with the assigned level).
+"""
 
 _DRAW_FIELDS: tuple[DrawField, ...] = (
     "level",
@@ -87,11 +100,26 @@ class DrawDifference:
 
 
 @dataclass(frozen=True, slots=True)
+class ClinicalDifference:
+    """Patients whose clinical truth changes in one field, among all arrivals."""
+
+    field: ClinicalField
+    changed: int
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
 class PairingInfo:
-    """Configuration category checked against arrivals and all seven draws."""
+    """Configuration category checked against arrivals and all seven draws.
+
+    ``clinical_differences`` counts, for two clinical runs, the patients whose
+    reason, assigned or true level, age, sex, arrival mode or tests change:
+    all zero with the same profiles; empty with the provisional model.
+    """
 
     kind: PairingKind
     draw_differences: tuple[DrawDifference, ...]
+    clinical_differences: tuple[ClinicalDifference, ...] = ()
 
 
 class PairingCheckError(ValueError):
@@ -118,15 +146,76 @@ def _metadata_differences(a: RunResults, b: RunResults) -> tuple[MetadataDiffere
 def pairing_blockers(a: RunResults, b: RunResults) -> tuple[MetadataDifference, ...]:
     """Return changed seed, profile fingerprint, days, warm-up, model or clinical profiles.
 
-    In that order. Two runs of different models, or with clinical profiles of
-    different fingerprints, are never the same patients: the clinical model
-    draws other streams. An empty tuple is configuration compatibility, not
-    verified pairing; pairing two clinical runs is checked in task 4.8a.
+    In that order. Two runs of different models are never the same patients:
+    the clinical model draws other streams. Two clinical runs with profiles of
+    different fingerprints are (task 4.8a): the same standard draws with other
+    values, the clinical pairing of ``compare_runs``. The profiles block only a
+    provisional run against a clinical one, together with the model. An empty
+    tuple is configuration compatibility, not verified pairing.
     """
+    both_clinical = a.info.is_clinical and b.info.is_clinical
     return tuple(
         MetadataDifference(name, getattr(a.info, name), getattr(b.info, name))
         for name in _PAIRING_FIELDS
         if getattr(a.info, name) != getattr(b.info, name)
+        and not (both_clinical and name == "clinical_profiles_fingerprint")
+    )
+
+
+def pairing_category(a: RunResults, b: RunResults) -> PairingCategory:
+    """The pairing that the metadata allow, before reading any ground truth.
+
+    ``unpaired`` with some blocker (only the summary compares), ``clinical``
+    for two clinical runs with profiles of different fingerprints, and
+    ``template`` otherwise: the same patients, with another center or none.
+    """
+    if pairing_blockers(a, b):
+        return "unpaired"
+    if a.info.is_clinical and a.info.clinical_profiles_fingerprint != (
+        b.info.clinical_profiles_fingerprint
+    ):
+        return "clinical"
+    return "template"
+
+
+def _clinical_values(truth: EpisodeTruth) -> tuple:
+    """The fields of ``ClinicalField``, in its order, of a clinical truth."""
+    clinical = truth.clinical
+    assert clinical is not None
+    return (
+        clinical.reason,
+        clinical.triage.level,
+        clinical.triage.true_level,
+        clinical.person.age,
+        clinical.person.female,
+        clinical.person.ambulance,
+        clinical.workup.ordered,
+    )
+
+
+_CLINICAL_FIELDS: tuple[ClinicalField, ...] = (
+    "reason",
+    "level",
+    "true_level",
+    "age",
+    "sex",
+    "arrival_mode",
+    "tests",
+)
+
+
+def _clinical_differences(
+    truth_a: Mapping[str, EpisodeTruth], truth_b: Mapping[str, EpisodeTruth]
+) -> tuple[ClinicalDifference, ...]:
+    changed = [0] * len(_CLINICAL_FIELDS)
+    for key, t in truth_a.items():
+        for i, (x, y) in enumerate(
+            zip(_clinical_values(t), _clinical_values(truth_b[key]), strict=True)
+        ):
+            changed[i] += x != y
+    return tuple(
+        ClinicalDifference(field, n, len(truth_a))
+        for field, n in zip(_CLINICAL_FIELDS, changed, strict=True)
     )
 
 
@@ -175,7 +264,6 @@ def _checked_pairing(
         raise PairingCheckError(
             run_ids, "arrival_time", arrivals, "los minutos de llegada difieren"
         )
-    allowed = frozenset().union(*(DRAW_EFFECTS[d.key] for d in center_diff(a.center, b.center)))
     changes = tuple(
         DrawDifference(
             field,
@@ -184,6 +272,49 @@ def _checked_pairing(
         )
         for field in _DRAW_FIELDS
     )
+    if not a.info.is_clinical:
+        return _template_pairing(run_ids, a, b, changes, DRAW_EFFECTS)
+    for result, truth in ((a, truth_a), (b, truth_b)):
+        missing = sum(t.clinical is None for t in truth.values())
+        if missing:
+            raise PairingCheckError(
+                run_ids, "clinical", missing, f"la verdad de {result.info.run_id} no es clínica"
+            )
+    differences = _clinical_differences(truth_a, truth_b)
+    if a.info.clinical_profiles_fingerprint == b.info.clinical_profiles_fingerprint:
+        pairing = _template_pairing(run_ids, a, b, changes, CLINICAL_DRAW_EFFECTS)
+        changed = sum(t.clinical != truth_b[key].clinical for key, t in truth_a.items())
+        if changed:
+            raise PairingCheckError(
+                run_ids,
+                "clinical",
+                changed,
+                "con los mismos perfiles, la verdad clínica no puede cambiar",
+            )
+        return PairingInfo(pairing.kind, pairing.draw_differences, differences)
+    # Other profiles: the same standard draws with other values. The truth keeps the z
+    # of the severity and the 12 draws of the tests; the others follow from the seed.
+    for field, value in (
+        ("severity_z", lambda t: t.clinical.triage.z),
+        ("workup_draws", lambda t: t.clinical.workup.draws),
+    ):
+        count = sum(value(t) != value(truth_b[key]) for key, t in truth_a.items())
+        if count:
+            raise PairingCheckError(
+                run_ids, field, count, "los sorteos estándar guardados difieren"
+            )
+    return PairingInfo("clinical_profiles", changes, differences)
+
+
+def _template_pairing(
+    run_ids: tuple[str, str],
+    a: RunResults,
+    b: RunResults,
+    changes: tuple[DrawDifference, ...],
+    effects: Mapping[str, frozenset[DrawField]],
+) -> PairingInfo:
+    """The same patients with another center: only its draws may change."""
+    allowed = frozenset().union(*(effects[d.key] for d in center_diff(a.center, b.center)))
     for change in changes:
         if change.changed and change.field not in allowed:
             raise PairingCheckError(

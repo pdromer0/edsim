@@ -177,6 +177,42 @@ def test_nunca_dos_pacientes_en_el_mismo_box(room):
     ]
 
 
+def test_los_tramos_de_a_marcan_la_sala_entre_sus_dos_boxes(room):
+    # Tarea 4.8a: la sala se distingue con results_room, no con un estado nuevo. Es
+    # verdadero de box_released (30) al siguiente box_assigned (70): la espera de los
+    # resultados y la de box a la vuelta, no la primera espera de box de B.
+    from edsim.runs.episodes import episode_segments
+
+    a = episode_segments([e for e in room if e.episode_id == "EP-000000"], HORIZON)
+    assert [(s.state, s.start, s.end, s.box, s.results_room) for s in a.segments] == [
+        ("triage", 5.0, 10.0, None, False),
+        ("assessment", 10.0, 30.0, 1, False),
+        ("waiting_tests", 30.0, 42.0, None, True),
+        ("waiting_box", 42.0, 70.0, None, True),
+        ("reassessment", 70.0, 80.0, 1, False),
+    ]
+    b = episode_segments([e for e in room if e.episode_id == "EP-000001"], HORIZON)
+    assert ("waiting_box", 11.0, 30.0, None, False) in [
+        (s.state, s.start, s.end, s.box, s.results_room) for s in b.segments
+    ]
+
+
+def test_el_replay_marca_al_paciente_de_la_sala(room):
+    from edsim.runs.replay import _empty, _fold
+
+    def view(t):
+        return {p.episode_id: p for p in _fold(_empty(), room, t).patients}
+
+    at_35, at_50, at_75 = view(35.0), view(50.0), view(75.0)
+    a = "EP-000000"
+    assert (at_35[a].state, at_35[a].box, at_35[a].results_room) == ("waiting_tests", None, True)
+    assert (at_50[a].state, at_50[a].box, at_50[a].results_room) == ("waiting_box", None, True)
+    assert (at_75[a].state, at_75[a].box, at_75[a].results_room) == ("reassessment", 1, False)
+    # B en su box y C en su primera espera de box: fuera de la sala.
+    assert (at_35["EP-000001"].state, at_35["EP-000001"].results_room) == ("assessment", False)
+    assert (at_35["EP-000002"].state, at_35["EP-000002"].results_room) == ("waiting_box", False)
+
+
 # --- El motor -------------------------------------------------------------------------
 
 

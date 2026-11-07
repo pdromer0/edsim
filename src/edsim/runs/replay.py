@@ -16,7 +16,12 @@ from edsim.runs.store import RunStore
 
 @dataclass(frozen=True, slots=True)
 class ReplayPatient:
-    """An observed patient; arrival and all instants use simulation minutes."""
+    """An observed patient; arrival and all instants use simulation minutes.
+
+    ``results_room`` is True while the patient is out of its box between two
+    box stays (task 4.8a): in the results room, waiting for its results or for
+    a box again.
+    """
 
     episode_id: str
     patient_id: str
@@ -25,6 +30,7 @@ class ReplayPatient:
     state: EpisodeState
     box: int | None
     tests_pending: bool = False
+    results_room: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +100,7 @@ class _Patient:
             self.location.location(),
             self.location.box,
             self.location.tests_pending,
+            self.location.results_room,
         )
 
 

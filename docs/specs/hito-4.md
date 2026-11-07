@@ -315,11 +315,20 @@ Desde la tarea 4.5b, una ejecución del modelo clínico se guarda en `resultados
 
 **`simulate_run(..., profiles=None)`**. Con perfiles, copia `perfiles.toml` a la carpeta, como `centro.toml` y `llegadas.toml`, carga desde la copia y calcula su huella sobre ella. Después simula con `simulate_ed(..., profiles=...)`, escribe el CSV clínico y pasa los perfiles a `check_invariants`, que comprueba la respuesta de cada ronda con la franja de su pedido. Volver a simular desde las copias de la carpeta da el mismo log, también con perfiles.
 
-**Emparejamiento mínimo** (`runs/compare.py`). `pairing_blockers` añade, detrás de los bloqueos de antes, `model` y `clinical_profiles_fingerprint`: dos ejecuciones de modelos distintos, o clínicas con perfiles de huella distinta, no son los mismos pacientes. El formato de `run.json` no bloquea: una versión 1 y una 2 provisionales se emparejan.
+**Emparejamiento mínimo** (`runs/compare.py`). `pairing_blockers` añade, detrás de los bloqueos de antes, `model` y `clinical_profiles_fingerprint`: dos ejecuciones de modelos distintos, o clínicas con perfiles de huella distinta, no son los mismos pacientes. El formato de `run.json` no bloquea: una versión 1 y una 2 provisionales se emparejan. Desde la tarea 4.8a, la huella de los perfiles ya no bloquea entre dos clínicas (ver «Hecho en la tarea 4.8a»).
 
-**Pendiente para la tarea 4.8a.** `runs/truth.py` lee hoy solo el CSV provisional: para el clínico usará `episode_from_row`, con su comprobación contra `run.json`. Queda también el emparejamiento clínico con el ground truth (sorteos estándar por paciente). `read_run_results` recalcula las invariantes sin los perfiles cuando `run.json` guarda alguna violación, así que en una ejecución clínica con violaciones el recuento puede no coincidir. Si la 4.8a guarda una ejecución antigua como dato de prueba, debe ser posterior a la tarea 4.1 o tener en cuenta que `door` marca sus niveles 1 (ver «Logs anteriores a la tarea 4.1»).
+**Hecho en la tarea 4.8a** (`runs/`, solo núcleo; las páginas son de la 4.8b). Todo lo que la app ya usaba cambia de forma aditiva: campos nuevos al final, parámetros nuevos con el valor de antes por defecto y funciones nuevas en `edsim.runs.__all__`.
 
-**Pendiente de la sala de resultados (tareas 4.8a y 4.8b).** Episodios y Replay con los dos tramos de box. Desde la 4.6a, `runs/_location` deja sin box al paciente de la sala y lo muestra en el estado existente `waiting_tests` mientras espera los resultados, y en `waiting_box` cuando ya los tiene: nunca hay dos pacientes en un box, y la app no necesita nada nuevo. Pero su etiqueta, «En box esperando pruebas», es inexacta para la sala: un estado propio de la sala y su etiqueta, si se quiere distinguir, son de la 4.8a (núcleo) y la 4.8b (páginas). Las dos esperas nuevas de `EpisodeRecord` (`initial_box_wait` y `results_box_wait`) tampoco están en las tablas de la app.
+- **Resultados.** `RunResults` gana `model`, `profiles` (los perfiles leídos de la copia `perfiles.toml` de la carpeta, nunca de `config/`) y `observed` (el perfil observable, abajo). Cuando `run.json` guarda violaciones, una clínica se recuenta como en la simulación: con los perfiles y con el ground truth leído de disco, episodios **y días** (`_expected_turnaround` lee la fecha del día 0 para la franja del pedido; `runs/_truth_csv.py` lee `ground_truth_dias.csv` comprobando sus parámetros contra `run.json`). La provisional, como antes. `inside` (los procesos vivos de SimPy) no se guarda, así que esa parte de `conservation` no se repite.
+- **Relojes.** `window_clocks` (media, mediana y p90 de A, B y C por nivel, sobre `clock_quantiles`), `level_one_clocks` (el nivel 1 solo con mediana y p90) y `window_pretriage` (≤ 10 y > 5 min, sin el nivel 1). `window_compliance(..., measure=APP_COMPLIANCE_MEASURE)`: sin medida, el reloj A de siempre.
+- **Verdad.** `read_run_episode_truth` lee el CSV clínico con `episode_from_row` y comprueba contra `run.json` los parámetros, la ruta y la huella de los perfiles (errores `fichero:línea`). `compare_episode_truth(..., profiles=, start_date=)` compara la ronda con la franja de su `test_ordered`; `episode_clinical_truth` («ver la verdad»: G, niveles asignado y real, calidad, salto y, por tipo de prueba, si se pidió, su resultado, su respuesta base y la de la franja del pedido, con la ronda esperada y la del log); `true_level_window_compliance`, el cumplimiento por nivel real de la ejecución.
+- **Perfil observable.** `observed_profiles` lee edad, sexo, medio, motivo y pruebas de `patient_arrived`, `patient_registered`, `triage_completed` y `test_ordered`, nunca del ground truth (una clínica sin el CSV de verdad sigue mostrándolo). `EpisodeFilters` gana `age_band`, `sex`, `arrival_mode`, `reason` y `test`, combinables con los de antes (`filter_episodes(..., observed=)`).
+- **Resumen de los perfiles.** `summarize_profiles(perfiles, llegadas)`: motivos, niveles asignados y reales, infra y sobretriaje, pruebas y carga del médico, exactos con las funciones de `profiles/`. `summarize_center` no cambia.
+- **Carga prevista.** `offered_work(..., profiles=)`: cada paciente de la muestra llega en un instante sorteado de λ(t) y sale del `ClinicalSampler` con su contexto; la ocupación de cada contexto se convoluciona con λ restringida a él, y la sala no cuenta como box. Con perfiles neutros y llegadas planas, la carga por turno coincide con `knob_loads` dentro del 0,72 %. Con `config/`, en el año, los médicos quedan un −7,7 / +0,7 / +15,1 % frente a `knob_loads` (mañana, tarde, noche): casi todo es el desfase entre la llegada y el trabajo del médico, que `knob_loads` reparte con la tasa de llegadas de cada turno (−7,7 / +1,5 / +12,9 % con perfiles neutros; el provisional tiene el mismo, −6,5 / +1,0 / +10,5 %), y el contexto de la noche añade un 1,3 %. Sin perfiles, el cálculo de antes, bit a bit. En la revisión del PR #51 se partió en dos: `offered_load` (la muestra y la convolución; depende de las llegadas, los perfiles y, del centro, solo de `results_wait_outside` con perfiles o de las duraciones, el reparto y las pruebas sin ellos) y `offered_work_from_load` (la plantilla: capacidad y utilización por turno, unos 2 ms), para que la app no repita la muestra en cada edición de la plantilla.
+- **Emparejamiento.** Tres tipos (`pairing_category`): plantilla (mismos perfiles: la verdad clínica entera igual; del centro, con el modelo clínico solo el destino cambia sorteos, `CLINICAL_DRAW_EFFECTS`), clínico (perfiles de huella distinta: las llegadas y los sorteos estándar guardados, la z de la gravedad y los 12 de las pruebas, iguales bit a bit; `kind = "clinical_profiles"`) y sin emparejar (modelos distintos: solo el resumen). `PairingInfo.clinical_differences` cuenta por campo los pacientes que cambian (motivo, niveles asignado y real, edad, sexo, medio y pruebas). Con la gripe (disnea × 1,5) en 3 días de enero cambian de motivo 43 de 1101 pacientes, todos hacia disnea (48,4 esperados con sus contextos; 3,37 % en el año).
+- Si la 4.8a guarda una ejecución antigua como dato de prueba, es posterior a la tarea 4.1: los tests escriben un `run.json` de la versión 1 sobre una provisional recién simulada.
+
+**Sala de resultados (hecho en la tarea 4.8a; las páginas, en la 4.8b).** El paciente de la sala se distingue con `results_room`, no con un estado nuevo: `EpisodeSegment` y `ReplayPatient` lo ganan al final, y es verdadero de `box_released` al siguiente `box_assigned`. El estado sigue siendo `waiting_tests` mientras espera los resultados y `waiting_box` cuando ya los tiene; los tramos del episodio muestran los dos pasos por box y, entre ellos, la espera en la sala. `initial_box_wait` y `results_box_wait` ya estaban en `EpisodeRecord` (4.6a); mostrarlas en las tablas y la etiqueta de la sala son de la 4.8b.
 
 **Pendiente para la tarea 4.8b** (Codex, `app/src`). La app serializa el payload con `json.dumps(dict(event.payload))`, que no admite el mapping anidado de `resultados`: tendrá que usar `to_json` o un payload plano. Comparar muestra los campos nuevos de `run.json` con su nombre en inglés, porque sus etiquetas viven en `comparison_frames.py`.
 
@@ -338,7 +347,7 @@ Entre la llegada y el primer médico hay tres tramos (pretriaje, triaje y espera
 **Reglas:**
 
 - `manchester_compliance` recibe la medida como parámetro y usa C por defecto. Un día está fuera para un nivel si menos del 90 % de sus pacientes llega dentro del máximo (justo en el máximo cumple), como en la tarea 3.8.
-- `runs/metrics.py` pasa la medida de forma explícita: la app sigue mostrando el reloj A hasta la tarea 4.8a, que la cambia a C junto con las etiquetas de la 4.8b.
+- `runs/metrics.py` pasa la medida de forma explícita: `window_compliance` tiene el parámetro `measure` desde la tarea 4.8a, con el reloj A por defecto (`APP_COMPLIANCE_MEASURE`), así que la app sigue mostrando A; la tarea 4.8b pasará C junto con sus etiquetas.
 - **Pretriaje con indicador propio**, por día: porcentaje con pretriaje de 10 minutos o menos (estándar del 85 %) y porcentaje por encima de 5 minutos (el TECLA del SAS). Los niveles 1 no cuentan.
 - **Nivel 1 solo con su tiempo** (mediana y p90), sin porcentaje: su máximo es 0 y el porcentaje sería siempre 0 %.
 - **Cumplimiento por nivel real**, solo con ground truth: la misma regla con el nivel real. La diferencia con el KPI es el coste del infratriaje medido en tiempo. Nunca entra en el log ni en los KPIs observables.
@@ -570,6 +579,16 @@ src/edsim/engine/        cambios acotados
   validation.py          M/G/1 con λ·(1 − p₁)
 src/edsim/lognormal.py   lognormal por mediana y p90 (tarea 4.4; engine/clinical.py la reexporta)
 src/edsim/cli.py         --perfiles, perfiles validar, calibracion evaluar y sensibilidad (--ventana)
+src/edsim/runs/          núcleo de la app con perfiles (tarea 4.8a)
+  results.py             RunResults con model, profiles y observed; recuento clínico con verdad y perfiles
+  _truth_csv.py          lectores del CSV clínico y de ground_truth_dias.csv contra run.json
+  metrics.py             window_clocks, level_one_clocks, window_pretriage; window_compliance(measure)
+  truth.py               verdad clínica, episode_clinical_truth, true_level_window_compliance
+  episodes.py, filters.py  perfil observable del log y sus filtros; results_room en los tramos
+  _location.py, replay.py  results_room en el estado del Replay
+  summary.py             summarize_profiles
+  offered.py             offered_load y offered_work_from_load; offered_work(..., profiles=): muestra clínica por contexto
+  compare.py             pairing_category, emparejamiento de plantilla y clínico, CLINICAL_DRAW_EFFECTS
 notebooks/04_perfiles_clinicos.ipynb
 tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.py,
       test_severity.py, test_workup.py, test_durations.py, test_sampler.py,
@@ -578,7 +597,10 @@ tests/test_profiles_config.py, test_context.py, test_mixing.py, test_population.
       test_cli_calibracion.py, test_door_triage.py,
       test_clinical_sampler.py, test_clinical_engine.py, clinical_factory.py,
       test_true_level_compliance.py, test_coupling.py, test_sas.py,
-      test_target_mix_variant.py (tarea 4.7)
+      test_target_mix_variant.py (tarea 4.7),
+      test_run_results_clinical.py, test_window_clocks.py, test_clinical_truth_runs.py,
+      test_observed_profile.py, test_profiles_summary.py, test_offered_work_clinical.py,
+      runs_factory.py (tarea 4.8a)
 ```
 
 `ProvisionalSampler` sigue en `engine/clinical.py` para la validación del motor. Sin dependencias nuevas: `tomllib`, NumPy y SciPy cubren la Gumbel, la logística y la búsqueda de umbrales. Los nombres de módulos los confirma el plan de cada tarea.
@@ -603,6 +625,7 @@ La filosofía es la del hito 3, por capas: valores a mano, versiones incorrectas
 | Sala de resultados (tarea 4.6a) | Escenario a mano (un box, tres niveles 4): el motor lo escribe evento a evento, A ocupa el box 20 + 10 minutos, vuelve por delante de C con su clave, y esperas, curvas, Little y utilización exactas; quién deja el box (nivel 3, infratriado, sobretriado, nivel 4 sin pruebas); el provisional con `[4, 5]`, igual y con su huella; números comunes con y sin sala y con otra plantilla; una copia de `centro.toml` sin la clave da el log de antes; la clave y sus errores; catálogo 3 literal y lectura de las versiones 1, 2 y 3; violaciones a mano de las invariantes nuevas; Replay y Episodios sin dos pacientes en un box; 14 días con `config/`: cero violaciones, utilización exacta y la cola de box contada por dos caminos |
 | Variante y SAS (tarea 4.7) | El SAS en adultos a mano (1,15 / 7,32 / 34,44 / 38,86 / 18,22 % y 2.574.941 adultos) y con niños; la variante con umbrales = `thresholds_for`, reparto asignado exacto = objetivo (a 1e-10), ruido y sesgo sin cambios, los ficheros de `config/` iguales byte a byte y en su hora; la densidad de G a mano, su integral y su media; `lognormal_pdf` frente a SciPy; `evaluate_staffings` con un espía de la plantilla de cada candidato |
 | Ejecuciones (tarea 4.5b) | Ida y vuelta del CSV clínico con `==` y tipos exactos; cabecera literal y fila a mano; `run.json` v1 de `tests/data` y v2 con los dos modelos; `simulate_run` pasa los perfiles a `check_invariants` (espía y comportamiento); `pairing_blockers` con los dos modelos |
+| App, núcleo (tarea 4.8a) | Resultados con el modelo y los perfiles de la copia; un `run.json` v1 posterior a la 4.1; recuento clínico frente a `check_invariants` con la verdad en memoria de la simulación (una ronda retrasada 1 min, con una violación que solo ve la comprobación con perfiles); la `GroundTruth` leída de disco = la de la simulación, días incluidos, y errores del CSV de días con `fichero:línea`. Relojes, pretriaje, nivel 1 y cumplimiento con C en un log a mano. Ida y vuelta de la verdad clínica; huella, ruta o parámetro distintos con `fichero:línea`; ninguna discrepancia en dos clínicas limpias (con y sin sala); «ver la verdad» a mano de un infratriado y un sobretriado; cumplimiento por nivel real = `true_level_compliance`. Perfil observable a mano, filtros combinados y la tabla sin el CSV de verdad. La sala en los tramos y en el Replay a mano. Resumen de los perfiles con `config/` (a 1e-4 puntos) y un perfil a mano con Φ y `quad`. Carga prevista: perfiles neutros y llegadas planas frente a `knob_loads` al 2 % (slow), sin perfiles bit a bit, la sala no es box, el contexto de cada llegada y sus errores. Emparejamiento: contra sí misma, plantilla, gripe dentro de su binomial al 99,9 %, z alterada y modelos distintos. La API nueva en `__all__` |
 
 **Potencia.** El muestreador se prueba sin el motor, con 25 000 pacientes por contexto en la mezcla (20 000 hasta la tarea 4.6a) en décimas de segundo. Con el χ² por motivo, nivel 0,01 y Bonferroni entre 17, se detecta un 5 % que pasa a 6 % con una potencia del 99,98 % (99,7 % con 20 000), pero un 5 % que pasa a 5,5 % solo con un 57 % (43 %). En la tabla de `perfiles validar`, con Bonferroni entre las 2.136 categorías de los 24 contextos, un motivo del 5 % se ve si pasa a 5,76 % (5,85 % con 20 000). Cada prueba escribe qué tamaño de error ve. Los motivos raros (crítico, 0,3 % desde la tarea 4.6a) necesitan comprobar que hay pacientes suficientes, para que el test no pase de forma vacía.
 
@@ -681,6 +704,14 @@ Un año (109 542 pacientes, unos 14 s cada una) por defecto; 20 000 (2,5 s) en l
 | 12 réplicas anuales todas desde `fecha_inicio` (V4, tarea 4.6c) | Fallan las réplicas directas de julio y diciembre y «12 fechas distintas» en el CSV; pasan «enero = réplica 0» y las fechas a mano. Cumplida, con fallos de más: las funciones de la ventana, el espía de la CLI y el «enero = réplica 0» rápido, por su guarda de que febrero no es enero; pasaron el slow y los lunes a mano |
 | El cumplidor con la media de los porcentajes por réplica (V5, tarea 4.6c) | Falla solo el reparto cuya media pasa de 0,10; pasa el borde con 13 fuera. Exacta |
 | Elegir sin mirar la comprobación (V6, tarea 4.6c) | Fallan los tests del veto y pasan los de la elección de siempre. Exacta: fallan los cinco del veto (también «sin veto, la comprobación no cambia nada», porque no se pide) y pasan los cuatro de la elección |
+| CSV clínico sin comprobar la huella de los perfiles (V1, tarea 4.8a) | Falla la huella distinta; pasan la ida y vuelta y los errores de ruta y parámetros. Exacta |
+| Emparejamiento clínico solo con las llegadas (V2, tarea 4.8a) | Falla la z alterada; pasan «contra sí misma» y la gripe. Exacta |
+| Carga con perfiles usando `draws_sample` del provisional (V3, tarea 4.8a) | Con perfiles neutros (32,45 min por paciente frente a 30,81), fallan los médicos un 5,0 % por debajo; pasan la enfermería (+0,2 %) y la carga sin perfiles, y fallan los cuatro tests del camino clínico (la sala, el contexto, la muestra pequeña y el tope de la prehistoria). Exacta: mañana 6,44 frente a 6,76 (−4,8 %) |
+| Resumen de los perfiles con el reparto real en lugar del asignado (V4, tarea 4.8a) | Fallan el asignado con `config/` (nivel 5: 0,65 frente a 1,40 %) y el perfil a mano; pasan motivos y pruebas. Exacta |
+| `window_compliance` que ignora `measure` (V5, tarea 4.8a) | Falla el reloj C a mano; pasa «sin `measure`, lo de hoy». Cumplida, con un fallo de más: sin usar la medida tampoco se valida, y falla «una medida desconocida es un error» |
+| Perfil observable leído del ground truth (V6, tarea 4.8a) | Falla la tabla sin el CSV; pasan los filtros y el log a mano. Exacta |
+| `results_room` puesto al asignar box en lugar de al soltarlo (V7, tarea 4.8a) | Fallan el tramo y el Replay de la sala a mano; pasan los estados de siempre. Exacta en la segunda pasada: la primera cambió también `in_results_room`, que decide el estado, y fallaron 13 tests de estados; se rehízo cambiando solo el booleano nuevo |
+| Días vacíos en la `GroundTruth` del recuento (V8, tarea 4.8a) | Falla el recuento con `IndexError`; pasan el de la provisional y la ida y vuelta de la verdad. Exacta |
 
 Como siempre: semilla fija en los tests, nunca se cambia una semilla para que un test pase, y si una predicción falla se añade el test que faltaba. El hook de Claude Code ejecuta `pytest -m "not slow"` y el CI, todos, con el job `tests-app` incluido.
 
@@ -1639,3 +1670,71 @@ La sección 12 dio un reloj A de 73,5 min en 28 días y la ejecución de 91 día
 - Tarea 4.6c: recalibrar con una réplica por mes, de modo que la media sea la del año, y rehacer con la plantilla nueva las cifras del notebook 04, el registro y la especificación.
 - Menor: el cumplidor decidido con enteros (`compliant_staffing`).
 - Tarea 4.8a, después de la 4.6c.
+
+### Tarea 4.6c: recalibración con la ventana anual
+
+**Qué se hizo**
+
+PR #50 (rama `feat/h4-recalibracion-anual`): diez commits y dos de la revisión. El agente paró dos veces antes de escribir `config/`, como pedía el prompt, y Pedro decidió con las tablas delante.
+
+- `calibration/window.py`: la ventana anual (12 réplicas, la m desde el primer lunes del mes m+1, con el hijo m de la semilla) y la ventana `inicio` de la 4.6b; `with_start_date` cambia solo la fecha del perfil.
+- `evaluate.py`: `simulate_replicas`, `evaluate_staffings` y `sensitivity` con `start_dates`; `pooled_value` (media por paciente del año, informativa); el cumplidor con días enteros (`Fraction(1, 10)`, `complies`); `choose_staffing(…, check=…)` con el veto de la semilla de comprobación; `CONFIRMATION_SEED = 2028`.
+- CLI: `--ventana {anual,inicio}` en `calibracion evaluar` y `sensibilidad`, el perfil por mes y la media por paciente; en la revisión, `sensibilidad --comprobacion SEMILLA`, que aplica el veto.
+- `config/centro.toml`: médicos `[12, 11, 5]` → `[12, 11, 4]` (la enfermería sigue en `[3, 2, 1]`); `config/centro_cumplidor.toml`: `[15, 15, 6]` → `[14, 14, 6]`. `tests/data/centro_4_6b.toml` guarda el centro de antes para los tests de reproducción.
+- Registro (sección de la 4.6c con las sensibilidades, el veto, el perfil por mes, enero y el cumplidor), especificación y notebook 04 con la plantilla nueva.
+
+**Conceptos**
+
+- **La ventana representa lo que mide el objetivo.** Los objetivos del SAS son medias anuales: una réplica por mes hace que la media de las réplicas sea la del año. El IC entre réplicas incluye la variación entre meses y es conservador.
+- **Números comunes con fechas.** El hijo m de la semilla y su fecha son la réplica m para todos los candidatos; el hijo i es el mismo pidas 10 o 12, así que enero reproduce bit a bit la réplica 0 de la 4.6b.
+- **Una normalización que no es idempotente.** `dataclasses.replace` vuelve a pasar por `__post_init__`, que normaliza los factores otra vez y los mueve en el último bit; por eso la fecha se cambia sin reconstruir el perfil.
+- **Escalones de la regla.** Con una plantilla de números enteros, el paso de 5 a 4 médicos de noche lleva la ocupación nominal de 0,68 a 0,85 (0,93 en enero): el reloj A anual salta de 28 a 42 min y no hay nada en medio.
+- **Comprobar no es elegir, pero puede vetar.** Una plantilla que solo pasa con la semilla de ajuste está en el borde por azar. Si la comprobación interviene en la elección, deja de ser independiente y hace falta otra semilla.
+- **Las colas se arrastran entre turnos.** Con dos enfermeras de mañana, la cola de la mañana llega a la noche aunque la noche no cambie: la regla del día medio no lo ve.
+
+**Decisiones**
+
+- Opción (a): una réplica por mes, desde el primer lunes, con los mismos 14 días, calentamiento, día de vaciado y regla de elección.
+- Decisión 41 revisada: la semilla de comprobación (2027) puede vetar la elegida con la de ajuste (2026), y entonces se toma la siguiente candidata que pase con las dos; la confirmación independiente pasa a 2028.
+- Primera parada (la regla estricta, `[2, 2, 1]` + `[12, 11, 4]`, con enero en 123,9 min, censurados en enero y el pretriaje de noche peor): se siguió la regla, porque las alarmas eran del chat y el resultado era coherente. Segunda parada: `[2, 2, 1]` falló el pretriaje con 2027 (15,16 \[10,61; 19,71\]) y el veto dejó `[3, 2, 1]`.
+- Plantilla igual todo el año: enero cerca de la saturación queda escrito como rasgo conocido; el refuerzo de invierno, para versiones posteriores.
+- El cumplidor se decide con días enteros sumados en las réplicas.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Centro de la 4.6b con la ventana anual | Pretriaje 6,78 \[5,49; 8,06\]; reloj A de los niveles 2 a 5, 27,75 \[19,12; 36,38\]: fuera por abajo (la predicción del chat, 26–36) |
+| Enfermería, sensibilidad con 2026 | `[3, 3, 1]` 3,54 ✗; `[3, 2, 1]` 6,78 ✓; `[2, 2, 1]` 13,21 ✓ (la regla la elige); con 2027, `[2, 2, 1]` 15,16 ✗ (vetada) y `[3, 2, 1]` 7,86 ✓ |
+| Médicos, sensibilidad con `[3, 2, 1]` | Solo `[12, 11, 4]` pasa (42,10 \[28,02; 56,18\], u = 0,85); `[12, 11, 5]` 27,75 y `[11, 11, 4]` 50,23 con un IC de 44,87 de ancho |
+| `[3, 2, 1]` + `[12, 11, 4]` con 2026 / 2027 / 2028 | Pretriaje 6,78 / 7,86 / 7,76; reloj A 42,10 / 43,29 / 41,20; % sobre Manchester 16,13 / 16,79 / —; censurados 8 en enero (0,20 %) / 0 / 0 |
+| Reloj A por mes (2026) | Enero 105,2, febrero 58,7, agosto 24,6 (el más bajo); con 2027, enero 78,6 y noviembre 62,3 |
+| Pretriaje de noche, ventana anual | `[3, 2, 1]` 15,6 min (enero 23,8); `[2, 2, 1]` 18,4 (enero 38,7) |
+| Cumplidor | `[14, 14, 6]`: 1/144, 0/144, 2/144 y 6/142 días fuera en los niveles 2 a 5; reloj A 15,65. Con `--ventana inicio`, la regla con enteros sigue eligiendo `[15, 15, 6]` |
+| Notebook 04, ejecución principal (enero a abril) | Reloj A de los niveles 2 a 5, 82,0 min; nivel 5, 627; la semana del 19 al 25 de enero, 129 pacientes esperando médico a las 8:00 y 3897 min en el nivel 5 (sin abandono, que llega en el hito 5) |
+| Tiempos | Una evaluación anual, 36 s; sensibilidad de la enfermería, 3 min 13 s, y de los médicos, unos 16 min; notebook 04, 6 min 15 s y 603 MB (rápido, 13 s) |
+| Tests | 2.674 en 14 min 18 s (antes de la revisión); 241 de la app en 2 min 8 s, sin cambios |
+
+**Comprobación de las versiones incorrectas**
+
+Seis. V5 (el cumplidor con la media de proporciones) y V6 (elegir sin mirar la comprobación) fueron exactas. V2 a V4 se cumplieron con fallos de más explicados (sobre todo el espía). V1 (el día 1 del mes en lugar del primer lunes) no se cumplió a la primera: la fixture de julio y diciembre escribía los lunes a mano, así que no veía la función; se cambió para tomar las fechas de `window_start_dates` y la repetición se cumplió. La tabla completa está en «Tests y validación».
+
+**Revisión**
+
+Dos ajustes. La CLI no aplicaba el veto: `calibracion sensibilidad` imprimía «Elección: \[2, 2, 1\]», contra la plantilla escrita; se añadió `--comprobacion SEMILLA`, que evalúa solo las candidatas que hacen falta, y los comentarios de `centro.toml` usan ese comando. Y una frase en el registro, la especificación y el notebook: los 3897 min del nivel 5 en la peor semana de enero no son realistas porque el modelo aún no tiene abandono sin ser visto.
+
+**Lecciones aprendidas**
+
+- Las alarmas de un prompt son para detectar un resultado roto: cuando saltan, se mira el resultado antes de obedecerlas o descartarlas.
+- Una plantilla que pasa solo con una semilla está en el borde; la semilla de comprobación sirve para descubrirlo, y si decide, hace falta otra.
+- Un valor recalculado (la normalización del perfil) puede no ser idempotente: para comparar bit a bit, no reconstruir.
+- Una fixture con los valores esperados escritos a mano no prueba la función que los calcula: la V1 lo destapó.
+- Un valor escrito en `config/` tiene que salir de un solo comando; si la regla cambia (el veto), la CLI cambia con ella.
+- Una plantilla anual y un modelo sin abandono amplifican enero: el realismo de las colas largas depende de lo que el modelo todavía no tiene.
+
+**Pendiente**
+
+- Refuerzo de invierno (plantilla por mes en el motor y en la regla), para versiones posteriores.
+- Hito 5: con el abandono, volver a mirar la semana del 19 al 25 de enero de la semilla 2026.
+- Menor: la normalización del perfil de llegadas no es idempotente (`dataclasses.replace`).
+- `fecha_inicio` es el 5 de enero: las ejecuciones por defecto caen en el mes de más carga (ver la pestaña de la app).

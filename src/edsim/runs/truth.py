@@ -1,16 +1,29 @@
-"""Read exact episode draws and compare complete or censored observations."""
+"""Read exact episode draws and compare complete or censored observations.
+
+The ground truth is read here only to be shown as truth: what each episode drew,
+its clinical truth and the compliance by true level. What the hospital observes
+comes from the log.
+"""
 
 import csv
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 from typing import Literal
 
+from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.engine.analysis import EpisodeRecord, completed_in_window
+from edsim.engine.clinical_sampler import TurnaroundShifts
 from edsim.engine.events import DOOR, Event, episode_id
-from edsim.engine.ground_truth import EpisodeTruth
+from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.report import EPISODE_COLUMNS, PARAMETER_COLUMNS
+from edsim.engine.targets import COMPLIANCE_MEASURE, true_level_compliance, true_levels
+from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
+from edsim.runs._truth_csv import read_clinical_episodes
 from edsim.runs.episodes import EpisodeSegments
+from edsim.runs.metrics import WindowCompliance, _pooled_levels
 from edsim.runs.results import RunReadError, read_run_header
 from edsim.runs.store import RunInfo, RunStore
 
@@ -22,10 +35,14 @@ TruthStatus = Literal["match", "mismatch", "partial", "pending", "unused"]
 
 @dataclass(frozen=True, slots=True)
 class TruthComparison:
-    """One drawn value and its observed minutes, level or destination."""
+    """One drawn value and its observed minutes, level or destination.
+
+    ``drawn`` is None only for the turnaround of a clinical patient without
+    tests: it has no round, so nothing was drawn for it.
+    """
 
     field: str
-    drawn: int | float | str
+    drawn: int | float | str | None
     observed: int | float | str | None
     status: TruthStatus
 
@@ -84,8 +101,17 @@ def read_run_episode_truth(store: RunStore, run_id: str) -> Mapping[str, Episode
     Floats round-trip the writer's full representation. Boolean tokens and
     destinations are exact, not Python truthiness. Repeated run parameters
     must match metadata. The returned mapping and records are read-only.
+
+    A clinical run (``run.json`` with model ``clinico``) has the 57 columns of
+    ``CLINICAL_EPISODE_COLUMNS``; each row is read with ``episode_from_row``,
+    and its profiles path and fingerprint must also match ``run.json``.
     """
     info, _ = read_run_header(store, run_id)
+    if info.is_clinical:
+        try:
+            return read_clinical_episodes(store, run_id, info)
+        except ValueError as error:
+            raise RunReadError(str(error)) from error
     path = store.root / run_id / "ground_truth_episodios.csv"
     reader = None
     episodes = {}
@@ -110,8 +136,28 @@ def read_run_episode_truth(store: RunStore, run_id: str) -> Mapping[str, Episode
     return MappingProxyType(episodes)
 
 
+def _check_episode(events: Sequence[Event], truth: EpisodeTruth) -> dict[str, list[Event]]:
+    if not events or any(event.episode_id != truth.episode_id for event in events):
+        raise ValueError("events and truth must belong to the same episode")
+    by_type: dict[str, list[Event]] = {}
+    for event in events:
+        by_type.setdefault(event.event_type, []).append(event)
+    return by_type
+
+
+def _shifts(profiles: ClinicalProfiles | None, start_date: date | None) -> TurnaroundShifts:
+    if profiles is None or start_date is None:
+        raise ValueError("a clinical truth needs the profiles and the start_date of its run")
+    return TurnaroundShifts.from_profiles(profiles, start_date)
+
+
 def compare_episode_truth(
-    events: Sequence[Event], segments: EpisodeSegments, truth: EpisodeTruth
+    events: Sequence[Event],
+    segments: EpisodeSegments,
+    truth: EpisodeTruth,
+    *,
+    profiles: ClinicalProfiles | None = None,
+    start_date: date | None = None,
 ) -> tuple[TruthComparison, ...]:
     """Compare stages using sim_time and all interrupted attention segments.
 
@@ -120,6 +166,12 @@ def compare_episode_truth(
     exceeding its draw plus tolerance is a mismatch. Never-started stages
     are pending; reassessment and turnaround without tests are unused, and so
     is the triage time of a triage at the door (``circuito`` ``puerta``).
+
+    With a clinical truth, ``profiles`` and ``start_date`` (those of the run)
+    are required: the drawn turnaround of the round is the slowest ordered
+    test, each with the factor of the shift band of the ``test_ordered`` of
+    the log times its base. Before the order the band is unknown and the row
+    is pending with the slowest base (factor 1).
     """
     if (
         not events
@@ -127,9 +179,13 @@ def compare_episode_truth(
         or any(event.episode_id != truth.episode_id for event in events)
     ):
         raise ValueError("events, segments and truth must belong to the same episode")
-    by_type = {}
-    for event in events:
-        by_type.setdefault(event.event_type, []).append(event)
+    by_type = _check_episode(events, truth)
+    drawn_turnaround = truth.test_turnaround
+    if truth.clinical is not None:
+        shifts = _shifts(profiles, start_date)
+        orders = by_type.get("test_ordered", ())
+        factors = shifts.factors_at(orders[0].sim_time) if orders else None
+        drawn_turnaround = truth.clinical.workup.round_turnaround(factors)
 
     def duration(
         field: str,
@@ -208,7 +264,7 @@ def compare_episode_truth(
             "",
             band is not None,
             band is not None and band.completed,
-            truth.test_turnaround,
+            drawn_turnaround,
             not truth.needs_tests,
             None if band is None else band.end - band.start,
         ),
@@ -223,3 +279,119 @@ def compare_episode_truth(
             else "mismatch",
         ),
     )
+
+
+# --- The clinical truth of an episode, shown as truth (task 4.8a) -----------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticTestTruth:
+    """One type of test of an episode, from its clinical truth.
+
+    ``result`` is ``"normal"`` or ``"alterado"`` if the test was ordered, None
+    otherwise. ``base_turnaround`` is the drawn base (factor 1), always drawn;
+    ``turnaround`` is the factor of the shift band of the order times the base,
+    None if the test was not ordered or the order is not in the log yet.
+    """
+
+    test: str
+    ordered: bool
+    result: str | None
+    base_turnaround: float
+    turnaround: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClinicalTruthView:
+    """What the clinical model drew for an episode and what the log shows of its round.
+
+    ``round_expected`` is the slowest ``turnaround`` of the ordered tests and
+    ``round_observed`` the ``test_resulted`` minus the ``test_ordered`` of the
+    log; the log shows the round, not each test. Both are None without a round
+    or before it happens.
+    """
+
+    episode_id: str
+    severity: float
+    assigned_level: int
+    true_level: int
+    quality: str
+    jump: int
+    tests: tuple[DiagnosticTestTruth, ...]
+    round_expected: float | None
+    round_observed: float | None
+
+
+def episode_clinical_truth(
+    events: Sequence[Event],
+    truth: EpisodeTruth,
+    *,
+    profiles: ClinicalProfiles,
+    start_date: date,
+) -> ClinicalTruthView:
+    """The clinical truth of one episode next to the round observed in its log.
+
+    Raises:
+        ValueError: If the events are not of the episode, the truth is not
+            clinical, or the profiles or the start date are missing.
+    """
+    by_type = _check_episode(events, truth)
+    if truth.clinical is None:
+        raise ValueError(f"{truth.episode_id} has no clinical truth")
+    shifts = _shifts(profiles, start_date)
+    clinical = truth.clinical
+    orders = by_type.get("test_ordered", ())
+    results = by_type.get("test_resulted", ())
+    factors = shifts.factors_at(orders[0].sim_time) if orders else None
+    drawn_results = clinical.results
+    tests = tuple(
+        DiagnosticTestTruth(
+            test,
+            ordered,
+            drawn_results.get(test),
+            base,
+            factors[index] * base if ordered and factors is not None else None,
+        )
+        for index, (test, ordered, base) in enumerate(
+            zip(TEST_TYPES, clinical.workup.ordered, clinical.workup.turnarounds, strict=True)
+        )
+    )
+    expected = clinical.workup.round_turnaround(factors) if factors is not None else None
+    observed = results[0].sim_time - orders[0].sim_time if orders and results else None
+    triage = clinical.triage
+    return ClinicalTruthView(
+        truth.episode_id,
+        triage.severity,
+        triage.level,
+        triage.true_level,
+        triage.quality,
+        triage.jump,
+        tests,
+        expected,
+        observed,
+    )
+
+
+def true_level_window_compliance(
+    table: Sequence[EpisodeRecord],
+    truth: Mapping[str, EpisodeTruth],
+    first_day: int,
+    end_day: int,
+    *,
+    measure: str = COMPLIANCE_MEASURE,
+) -> WindowCompliance:
+    """Manchester compliance in ``[first_day, end_day)`` with the true level of each patient.
+
+    ``true_level_compliance`` (clock C by default) for the days, and the same
+    pooled counts as ``window_compliance`` with the true level to group the
+    patients and choose their maximum. It needs the clinical ground truth of
+    the run, such as ``read_run_episode_truth``: it is never an observable KPI.
+
+    Raises:
+        ValueError: As ``true_level_compliance``: without a clinical truth or
+            with a counted episode missing from it.
+    """
+    ground_truth = GroundTruth(tuple(truth.values()), ())
+    daily = true_level_compliance(table, ground_truth, first_day, end_day, measure=measure)
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    return WindowCompliance(daily, _pooled_levels(daily, done, true_levels(ground_truth)))
