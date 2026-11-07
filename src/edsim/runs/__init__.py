@@ -16,7 +16,7 @@ from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
-from edsim.profiles.config import ClinicalProfiles
+from edsim.profiles.config import ClinicalProfiles, load_profiles
 from edsim.runs.compare import (
     CLINICAL_DRAW_EFFECTS,
     DRAW_EFFECTS,
@@ -246,6 +246,7 @@ __all__ = [
     "list_variants",
     "load_center",
     "load_profile",
+    "load_profiles",
     "offered_work",
     "OfferedLoad",
     "offered_load",
