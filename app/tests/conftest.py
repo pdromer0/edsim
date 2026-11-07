@@ -84,22 +84,25 @@ def simulation_files(tmp_path, monkeypatch):
     """Isolate center edits and every data-cache entry from other page tests."""
     import streamlit as st
 
-    from edsim.runs import offered_work
+    from edsim.runs import offered_load
     from edsim_app import defaults, preview
 
     st.cache_data.clear()
     st.cache_resource.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
-    for name in ("centro.toml", "llegadas.toml"):
+    for name in ("centro.toml", "llegadas.toml", "perfiles.toml"):
         (config / name).write_bytes((Path("config") / name).read_bytes())
     monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")
     monkeypatch.setattr(defaults, "PROFILE_PATH", config / "llegadas.toml")
+    monkeypatch.setattr(defaults, "CLINICAL_PROFILES_PATH", config / "perfiles.toml")
     monkeypatch.setattr(defaults, "VARIANTS_DIR", tmp_path / "variants")
     monkeypatch.setattr(
         preview,
-        "offered_work",
-        lambda center, profile, days: offered_work(center, profile, days, sample_size=32),
+        "offered_load",
+        lambda center, profile, days, **kwargs: offered_load(
+            center, profile, days, **(kwargs | {"sample_size": 32})
+        ),
     )
     yield config
     st.cache_data.clear()
@@ -142,3 +145,68 @@ def pytest_collection_modifyitems(items):
             continue
         if "run_templates" in item.fixturenames or item.originalname in _SIMULATION_TESTS:
             item.add_marker(pytest.mark.slow)
+
+
+@pytest.fixture(scope="session")
+def clinical_run_templates(tmp_path_factory):
+    """Share three-day clinical cases and equivalent legacy runs between page tests."""
+    import json
+
+    import tomlkit
+
+    from edsim.runs import read_center_values, write_variant
+
+    root = tmp_path_factory.mktemp("clinical-run-templates")
+    source = Path("config/centro.toml")
+    values = read_center_values(source)
+    values["recursos.medicos"][2] += 1
+    staff = root / "staff.toml"
+    write_variant(source, values, staff)
+    values = read_center_values(source)
+    values["triaje.reparto_niveles"] = [96, 1, 1, 1, 1]
+    for field in ("triaje", "valoracion", "reevaluacion", "respuesta_pruebas"):
+        values[f"duraciones.{field}"] = [500, 1000]
+    values["pruebas.probabilidad"] = [0] * 5
+    absurd = root / "absurd.toml"
+    write_variant(source, values, absurd)
+    document = tomlkit.parse(Path("config/perfiles.toml").read_text())
+    document["motivos"]["disnea"]["peso_base"] *= 1.5
+    flu = root / "flu.toml"
+    flu.write_text(tomlkit.dumps(document))
+    for run_id, center, profiles in (
+        ("clinical", source, "config/perfiles.toml"),
+        ("staff", staff, "config/perfiles.toml"),
+        ("flu", source, flu),
+        ("absurd", absurd, "config/perfiles.toml"),
+        ("provisional", source, None),
+    ):
+        simulate_run(
+            center,
+            "config/llegadas.toml",
+            3,
+            2026,
+            output_dir=root / run_id,
+            run_id=run_id,
+            warmup_days=1,
+            origin="app",
+            profiles=profiles,
+        )
+    shutil.copytree(root / "provisional", root / "legacy")
+    path = root / "legacy" / "run.json"
+    metadata = json.loads(path.read_text())
+    metadata["format_version"] = 1
+    metadata.pop("model")
+    metadata["run_id"] = "legacy"
+    # Log identities must match the copied catalog entry, including truth parameters.
+    for filename in ("eventos.jsonl", "ground_truth_episodios.csv", "ground_truth_dias.csv"):
+        original = (root / "legacy" / filename).read_text()
+        (root / "legacy" / filename).write_text(original.replace("provisional", "legacy"))
+    path.write_text(json.dumps(metadata))
+    return root
+
+
+@pytest.fixture
+def clinical_catalog(catalog_root, clinical_run_templates):
+    for run_id in ("clinical", "staff", "flu", "absurd", "provisional", "legacy"):
+        shutil.copytree(clinical_run_templates / run_id, catalog_root / run_id)
+    return catalog_root

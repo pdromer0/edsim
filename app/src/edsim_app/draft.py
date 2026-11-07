@@ -90,6 +90,8 @@ def execution_settings() -> dict[str, object]:
     return st.session_state.setdefault(
         "simulation_settings",
         {
+            "model": "clinico",
+            "clinical_path": str(defaults.CLINICAL_PROFILES_PATH),
             "days": defaults.SIMULATION_DAYS,
             "warmup_days": min(defaults.SIMULATION_WARMUP_DAYS, defaults.SIMULATION_DAYS - 1),
             "seed": "2026",

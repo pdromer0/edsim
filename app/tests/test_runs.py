@@ -239,6 +239,7 @@ def test_base_simulation_creates_real_run_and_selects_it(catalog_root, monkeypat
     store = RunStore(catalog_root)
     info = store.open("r2026")
     assert (info.days, info.warmup_days, info.seed, info.origin) == (1, 0, 2026, "app")
+    assert info.is_clinical
     assert info.window_arrivals > 0
     assert info.invariant_violations == 0
     assert {path.name for path in (catalog_root / "r2026").iterdir()} == {
@@ -246,6 +247,7 @@ def test_base_simulation_creates_real_run_and_selects_it(catalog_root, monkeypat
         "ground_truth_episodios.csv",
         "ground_truth_dias.csv",
         "centro.toml",
+        "perfiles.toml",
         "llegadas.toml",
         "run.json",
     }

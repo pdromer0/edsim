@@ -33,8 +33,18 @@ def replace_raw_value(source, key, replacement, index=None):
     return changed
 
 
-def open_simulation():
-    app = AppTest.from_file(MAIN, default_timeout=15).run(timeout=15)
+def open_simulation(model="provisional"):
+    app = AppTest.from_file(MAIN, default_timeout=15)
+    app.session_state["simulation_settings"] = {
+        "model": model,
+        "clinical_path": str(defaults.CLINICAL_PROFILES_PATH),
+        "days": defaults.SIMULATION_DAYS,
+        "warmup_days": min(defaults.SIMULATION_WARMUP_DAYS, defaults.SIMULATION_DAYS - 1),
+        "seed": "2026",
+        "run_id": "",
+        "run_id_mode": "automatic",
+    }
+    app.run(timeout=15)
     app.switch_page("views/simulate.py").run(timeout=15)
     assert not app.exception
     assert app.title[0].value == "Simular"
@@ -218,24 +228,24 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     from unittest.mock import Mock
 
     import edsim_app.preview as preview
-    from edsim.runs import center_from_values, load_profile
+    from edsim.runs import center_from_values, load_profile, offered_work_from_load
     from edsim_app.frames import utilization_frame
 
     edited_doctors = center_template["recursos"]["medicos"][0] + 1
-    calculate = Mock(wraps=preview.offered_work)
-    monkeypatch.setattr(preview, "offered_work", calculate)
+    calculate = Mock(wraps=preview.offered_load)
+    monkeypatch.setattr(preview, "offered_load", calculate)
     app = open_simulation()
     assert calculate.call_count == 1
     args = calculate.call_args
-    assert args.kwargs == {"days": 7}
+    assert args.kwargs == {"profiles": None, "sample_size": 50_000, "sample_seed": 73_001}
     # Compute the expected table with the same small real core calculation.
-    work = calculate._mock_wraps(*args.args, **args.kwargs)
+    work = offered_work_from_load(args.args[0], calculate._mock_wraps(*args.args, **args.kwargs))
     assert app.dataframe[0].value.equals(utilization_frame(work))
     app.selectbox(key="preview_pool").select("boxes").run()
     assert not app.exception
     assert calculate.call_count == 1
     edit(app, "recursos.medicos", 0, edited_doctors)
-    assert calculate.call_count == 2
+    assert calculate.call_count == 1
     assert not app.dataframe[0].value.equals(utilization_frame(work))
     before = defaults.PROFILE_PATH.stat()
     defaults.PROFILE_PATH.write_bytes(
@@ -244,11 +254,12 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     os.utime(defaults.PROFILE_PATH, ns=(before.st_atime_ns, before.st_mtime_ns))
     app.run()
     assert not app.exception
-    assert calculate.call_count == 3
+    assert calculate.call_count == 2
     values = read_center_values(defaults.CENTER_PATH)
     values["recursos.medicos"][0] = edited_doctors
-    changed = calculate._mock_wraps(
-        center_from_values(values), load_profile(defaults.PROFILE_PATH), 7
+    center = center_from_values(values)
+    changed = offered_work_from_load(
+        center, calculate._mock_wraps(center, load_profile(defaults.PROFILE_PATH), 7)
     )
     assert app.dataframe[0].value.equals(utilization_frame(changed))
 
@@ -259,11 +270,11 @@ def test_preview_explains_multiple_prior_days(monkeypatch):
     from edsim.runs import load_center, load_profile
     from edsim_app import preview
 
-    small = preview.offered_work(
+    small = preview.offered_load(
         load_center(defaults.CENTER_PATH), load_profile(defaults.PROFILE_PATH), 7
     )
     monkeypatch.setattr(
-        preview, "offered_work", lambda *args, **kwargs: replace(small, prior_days=3)
+        preview, "offered_load", lambda *args, **kwargs: replace(small, prior_days=3)
     )
     app = open_simulation()
     assert any("3 días previos" in x.value for x in app.markdown)
@@ -458,6 +469,7 @@ def test_simulation_passes_relative_paths_output_and_no_variant(catalog_root, mo
         "warmup_days": 0,
         "run_id": "centro-r2026",
         "origin": "app",
+        "profiles": None,
     }
     assert (catalog_root / "centro-r2026" / "run.json").is_file()
 
@@ -511,7 +523,7 @@ def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_ty
     def fail(*args, **kwargs):
         raise error_type("injected offered failure")
 
-    monkeypatch.setattr(preview, "offered_work", fail)
+    monkeypatch.setattr(preview, "offered_load", fail)
     app = AppTest.from_file(MAIN, default_timeout=15).run(timeout=15)
     app.switch_page("views/simulate.py").run(timeout=15)
     assert len(app.exception) == 1
