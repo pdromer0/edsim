@@ -2,7 +2,7 @@
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import fields
 from datetime import datetime
 
@@ -62,6 +62,8 @@ COLUMNS = (
     "Calentamiento (días)",
     "Semilla",
     "Huella del centro",
+    "Modelo",
+    "Huella de perfiles clínicos",
     "Llegadas por día",
     "Invariantes",
     "Origen",
@@ -80,6 +82,8 @@ def runs_frame(runs: Sequence[RunInfo]) -> pd.DataFrame:
                 info.warmup_days,
                 info.seed,
                 info.center_fingerprint[:8],
+                "Clínico" if info.is_clinical else "Provisional",
+                info.clinical_profiles_fingerprint[:8] if info.is_clinical else "—",
                 info.arrivals_per_day,
                 "correctas"
                 if info.invariant_violations == 0
@@ -275,6 +279,24 @@ EPISODE_STATE_LABELS = {
 }
 
 
+def episode_state_label(state: str, *, results_room: bool = False) -> str:
+    """Present the physical location while preserving the core's state names."""
+    if results_room:
+        return "Sala de resultados · " + (
+            "espera de box" if state == "waiting_box" else "espera de pruebas"
+        )
+    return EPISODE_STATE_LABELS[state]
+
+
+def plain_payload(value: object) -> object:
+    """Convert immutable nested log containers to JSON-compatible containers."""
+    if isinstance(value, Mapping):
+        return {key: plain_payload(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain_payload(item) for item in value]
+    return value
+
+
 def episode_timeline_frames(
     episode: EpisodeSegments, result: RunResults
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -284,7 +306,7 @@ def episode_timeline_frames(
         {
             "Inicio": segment.start,
             "Fin": segment.end,
-            "Estado": EPISODE_STATE_LABELS[segment.state],
+            "Estado": episode_state_label(segment.state, results_room=segment.results_room),
             "Box": segment.box,
             "Duración (min)": segment.end - segment.start,
             "Carril": "Recorrido",
@@ -333,7 +355,7 @@ def episode_events_frame(events: Sequence[Event]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                name: json.dumps(dict(event.payload), ensure_ascii=False)
+                name: json.dumps(plain_payload(event.payload), ensure_ascii=False)
                 if name == "payload"
                 else getattr(event, name)
                 for name in names
