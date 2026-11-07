@@ -14,7 +14,7 @@ from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate, rate
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.checks import check_count
-from edsim.engine.center import CenterConfig
+from edsim.engine.center import CenterConfig, require_provisional
 from edsim.engine.clinical import PatientDraws, triage_duration
 from edsim.engine.clinical_sampler import N_SAMPLER_STREAMS, ClinicalSampler
 from edsim.engine.shifts import shift_at
@@ -108,7 +108,8 @@ def offered_load(
 
     With ``profiles``, the patients come from the clinical sampler, each with
     the context of its own arrival instant (``_clinical_load``); without them,
-    exactly the provisional sample above.
+    exactly the provisional sample above, which needs the provisional block of
+    the center (``ValueError`` otherwise, before sampling).
     """
     days = check_count("days", days, 1)
     sample_size = check_count("sample_size", sample_size, 1)
@@ -116,6 +117,7 @@ def offered_load(
     if profiles is not None:
         load, prior_days = _clinical_load(center, profile, days, sample_size, sample_seed, profiles)
         return OfferedLoad(profile.start_date, days, prior_days, load)
+    require_provisional(center)
     draws = draws_sample(center, sample_size, seed=sample_seed)
     maximum_age = max(
         end

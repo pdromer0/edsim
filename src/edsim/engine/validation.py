@@ -50,7 +50,7 @@ from edsim.engine.analysis import (
     hourly_means_by_day,
     step_curves,
 )
-from edsim.engine.center import CenterConfig
+from edsim.engine.center import CenterConfig, require_provisional
 from edsim.engine.clinical import (
     PatientDraws,
     ProvisionalSampler,
@@ -791,7 +791,9 @@ def validate_engine(
 
     Args:
         center: The center: the long run and the pairs use it as it is; the
-            reference queues take its clinical model.
+            reference queues take its clinical model. The validation uses the
+            provisional model, so the center needs the provisional block, as
+            ``tests/data/centro_ejemplo.toml``.
         profile: The arrival profile, such as ``config/llegadas.toml``.
         seed: Master seed.
         replicas: Replications of the M/G/1 and the Mₜ/G/∞.
@@ -804,9 +806,11 @@ def validate_engine(
         n_stays: Size of the sample of stays of m(t).
 
     Raises:
-        ValueError: If a count is not valid; checked before simulating, with
+        ValueError: If the center has no provisional block, or a count is not
+            valid; both checked before simulating, the counts with
             ``check_engine_validation_counts``.
     """
+    require_provisional(center)
     check_engine_validation_counts(
         replicas=replicas,
         mg1_days=mg1_days,

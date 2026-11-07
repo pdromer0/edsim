@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.engine.center import N_LEVELS, CenterConfig
+from edsim.engine.center import N_LEVELS, CenterConfig, require_provisional
 from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before 4.4
 from edsim.lognormal import lognormal_params
 
@@ -150,17 +150,21 @@ class ProvisionalSampler:
 
     Args:
         center: Configuration with the level shares, durations, and
-            probabilities of tests and admission.
+            probabilities of tests and admission: it needs the provisional
+            block (``[triaje]``, ``[duraciones]`` and ``[pruebas]``), as
+            ``tests/data/centro_ejemplo.toml``.
         streams: Exactly four ``numpy.random.SeedSequence``: level, durations,
             tests and destination. The engine passes children 1 to 4 of
             ``child_streams(seed, 5)`` (child 0 is for the arrivals). The
             objects are not modified, so the same ones give the same draws.
 
     Raises:
-        ValueError: If ``streams`` is not four ``SeedSequence``.
+        ValueError: If the center has no provisional block, or ``streams`` is
+            not four ``SeedSequence``.
     """
 
     def __init__(self, center: CenterConfig, streams: Sequence[np.random.SeedSequence]) -> None:
+        require_provisional(center)
         streams = list(streams)
         if len(streams) != N_STREAMS:
             raise ValueError(f"streams must have {N_STREAMS} SeedSequence, got {len(streams)}")

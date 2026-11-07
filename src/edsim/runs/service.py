@@ -14,7 +14,7 @@ from typing import Literal
 from edsim.arrivals.profile import load_profile
 from edsim.arrivals.report import config_fingerprint
 from edsim.engine.analysis import RunAnalysis, analyze_run
-from edsim.engine.center import load_center
+from edsim.engine.center import load_center, require_provisional
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
@@ -73,6 +73,22 @@ def _check_destination(path: Path) -> None:
             break
 
 
+def _check_provisional_center(center: str | Path) -> None:
+    """Fail before writing anything if the provisional model gets a center without its block.
+
+    A center that cannot be read or is not valid is left alone: its error comes
+    from the copy, as always, with the same message.
+    """
+    try:
+        config = load_center(center)
+    except (OSError, ValueError):
+        return
+    try:
+        require_provisional(config)
+    except ValueError as error:
+        raise RunConfigurationError(f"{center}: {error}") from error
+
+
 def simulate_run(
     center: str | Path,
     profile: str | Path,
@@ -96,8 +112,10 @@ def simulate_run(
     CSV is the clinical one, the invariants are checked with the profiles (the
     turnaround of each round against the shift band of its order) and
     ``run.json`` records the model, the original path and the fingerprint of
-    the copy. Without it, the provisional model, as before. ``profile`` is
-    always the arrival profile.
+    the copy. Without it, the provisional model, as before, which needs the
+    provisional block of the center (``[triaje]``, ``[duraciones]`` and
+    ``[pruebas]``): without it, ``RunConfigurationError`` before creating any
+    folder. ``profile`` is always the arrival profile.
 
     Original path strings are retained as provenance in metadata and CSVs.
     The timer covers simulate_ed and its streaming log writes only. All
@@ -125,6 +143,8 @@ def simulate_run(
         raise ValueError("variant must be a non-empty string")
     destination = Path(output_dir)
     _check_destination(destination)
+    if profiles is None:
+        _check_provisional_center(center)
     created_at = clock()
     if not isinstance(created_at, datetime) or created_at.utcoffset() is None:
         raise ValueError("clock must return a datetime with timezone")
