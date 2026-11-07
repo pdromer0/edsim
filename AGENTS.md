@@ -61,7 +61,8 @@ Los hooks Stop de Claude Code y de Codex llaman a `scripts/tests-rapidos.sh`, qu
 rápida del núcleo, de la app o de las dos según las rutas cambiadas desde el último verde de cada
 una; el sello vive en `.cache/edsim/`, fuera de `.git`. El de Codex formatea antes con
 `ruff format .`; el de Claude Code no ejecuta nada en modo plan. pytest-xdist no va en `addopts`:
-`uv run pytest tests/test_x.py` sigue en serie, y solo los scripts y el CI piden `-n`.
+`uv run pytest tests/test_x.py` sigue en serie, y solo los scripts piden `-n`. El CI va en serie:
+en el runner, xdist no llega al 60 % de la serie.
 
 Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 

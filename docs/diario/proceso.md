@@ -9,7 +9,7 @@ Tareas de proceso (serie P): cómo trabajamos, no qué hace el simulador. No per
 - en el Stop, `scripts/tests-rapidos.sh`: la rápida con sello, solo de las suites que afectan los cambios desde su último verde;
 - antes del push, `scripts/tests-completos.sh`.
 
-El núcleo se ejecuta en paralelo con pytest-xdist en los scripts y en el CI. El notebook tiene su propio job.
+El núcleo se ejecuta en paralelo con pytest-xdist en los scripts locales; en el CI sigue en serie. El notebook tiene su propio job.
 
 **Qué aprendí:**
 - El sello es el manifiesto de huellas de los ficheros en el último verde, no un commit. Lo que cuenta es el contenido del árbol: un commit no obliga a repetir los tests, y volver al árbol del último verde de una suite no la ejecuta.
@@ -19,6 +19,7 @@ El núcleo se ejecuta en paralelo con pytest-xdist en los scripts y en el CI. El
   - `loadfile` deja cada fichero en un worker. Gana en la rápida y pierde en la completa, porque ahí el fichero más largo (`test_calibrated_center.py`) marca el tiempo.
   - `worksteal` reparte los tests y roba trabajo al worker que va más cargado. Gana en la completa.
 - Este portátil (i7-1255U: 2 núcleos de rendimiento y 8 de eficiencia, 15 W) rinde unas 2,6× con 6 procesos y 3,3× con 12. Con 12 workers se agota la memoria y aparece el swap. Cada test tarda en paralelo unas 2,6 veces lo que tarda solo.
+- En el runner del CI (4 workers), el núcleo completo tardó 463 s en serie, 470 s con `worksteal` y 382 s con `loadfile`. Ninguno llega al 60 % de la serie, así que el CI sigue en serie: con pocos workers, recalcular los fixtures caros en cada uno se come la ganancia.
 
 **Medidas (tiempo de pared, main en 462d0d1):**
 
