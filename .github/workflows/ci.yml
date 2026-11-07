@@ -24,7 +24,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       # logical: con psutil, auto cuenta núcleos físicos, que en el runner pueden ser la mitad.
-      - run: uv run pytest -n logical --dist worksteal
+      - run: uv run pytest -n logical --dist loadfile
 
   notebooks:
     runs-on: ubuntu-latest
