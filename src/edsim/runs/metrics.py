@@ -1,6 +1,6 @@
 """Window KPIs, Manchester counts, the three clocks and the pretriage of completed episodes."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -100,10 +100,27 @@ def window_compliance(
     """
     daily = manchester_compliance(table, first_day, end_day, measure=measure)
     done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    return WindowCompliance(daily, _pooled_levels(daily, done))
+
+
+def _pooled_levels(
+    daily: Compliance,
+    done: Sequence[EpisodeRecord],
+    level_of: Mapping[str, int] | None = None,
+) -> tuple[LevelCompliance, ...]:
+    """Pool the completed patients of each level against its maximum.
+
+    The level is the episode's own, the assigned one; with ``level_of``, the
+    one it gives to each ``episode_id``, such as the true level.
+    """
     shares = daily.share_out
     levels = []
     for index, maximum in enumerate(daily.max_wait):
-        patients = [e for e in done if e.level == index + 1]
+        patients = [
+            e
+            for e in done
+            if (e.level if level_of is None else level_of[e.episode_id]) == index + 1
+        ]
         n = len(patients)
         exceeded = sum(getattr(e, daily.measure) > maximum for e in patients)
         levels.append(
@@ -116,7 +133,7 @@ def window_compliance(
                 float(shares[index]) if n else None,
             )
         )
-    return WindowCompliance(daily, tuple(levels))
+    return tuple(levels)
 
 
 # --- The three clocks, the level 1 and the pretriage (task 4.8a) -------------------------
