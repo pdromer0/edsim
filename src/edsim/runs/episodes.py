@@ -14,12 +14,17 @@ from edsim.runs._location import EpisodeState, LocationState
 
 @dataclass(frozen=True, slots=True)
 class EpisodeSegment:
-    """A positive half-open physical state interval in simulation minutes."""
+    """A positive half-open physical state interval in simulation minutes.
+
+    ``results_room`` marks the time out of the box between two box stays: the
+    wait for the results in the results room and the wait for a box after them.
+    """
 
     state: EpisodeState
     start: float
     end: float
     box: int | None
+    results_room: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,8 +85,13 @@ def episode_segments(events: Sequence[Event], horizon: float) -> EpisodeSegments
     def extend(end: float) -> None:
         if end <= previous:
             return
-        current = EpisodeSegment(state.location(), previous, end, state.box)
-        if segments and (segments[-1].state, segments[-1].box) == (current.state, current.box):
+        current = EpisodeSegment(state.location(), previous, end, state.box, state.results_room)
+        last = segments[-1] if segments else None
+        if last and (last.state, last.box, last.results_room) == (
+            current.state,
+            current.box,
+            current.results_room,
+        ):
             segments[-1] = replace(segments[-1], end=end)
         else:
             segments.append(current)

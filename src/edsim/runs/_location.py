@@ -58,13 +58,24 @@ class LocationState:
                 return replace(self, departed=True, box=None)
         return self
 
+    @property
+    def results_room(self) -> bool:
+        """Whether the patient is out of its box between its two box stays (task 4.8a).
+
+        True from its ``box_released`` to its next ``box_assigned``: waiting for
+        its results (``waiting_tests``) and then waiting for a box again
+        (``waiting_box``). The state does not change; this flag tells the
+        results room apart from the box and from the first wait for a box.
+        """
+        return self.in_results_room
+
     def location(self) -> EpisodeState:
         """Prefer physical box waiting to independent tests after displacement.
 
         A patient in the results room waits for its tests without a box
         (``waiting_tests`` with ``box`` None); once its results are in, it
-        waits for a box like anyone else. A distinct state for the room is
-        pending for tasks 4.8a and 4.8b.
+        waits for a box like anyone else. The room is told apart by
+        ``results_room``, not by a state of its own (task 4.8a).
         """
         if not self.triage_started:
             return "waiting_triage"
