@@ -16,6 +16,7 @@ from edsim.engine.invariants import Violation
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
+from edsim.profiles.config import ClinicalProfiles
 from edsim.runs.compare import (
     CLINICAL_DRAW_EFFECTS,
     DRAW_EFFECTS,
@@ -172,6 +173,7 @@ __all__ = [
     "CenterDifference",
     "CenterSummary",
     "Compliance",
+    "ClinicalProfiles",
     "CurveBlocks",
     "CurveSteps",
     "DurationSummary",
