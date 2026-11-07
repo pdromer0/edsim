@@ -117,7 +117,7 @@ def test_navigation_keeps_draft_settings_and_room_in_variants(center_template):
     )
 
 
-def test_clinical_editor_ignores_absurd_provisional_fields(monkeypatch):
+def test_clinical_editor_ignores_absurd_provisional_fields(monkeypatch, provisional_block_center):
     import pandas as pd
 
     from edsim.runs import write_variant
@@ -125,7 +125,7 @@ def test_clinical_editor_ignores_absurd_provisional_fields(monkeypatch):
     app = open_clinical()
     expected = [table.value.copy() for table in app.dataframe]
     metrics = {m.label: m.value for m in app.metric}
-    values = read_center_values(defaults.CENTER_PATH)
+    values = read_center_values(provisional_block_center)
     values["triaje.reparto_niveles"] = [96, 1, 1, 1, 1]
     values["duraciones.triaje"] = [500, 1000]
     values["duraciones.valoracion"] = [500, 1000]
@@ -133,7 +133,7 @@ def test_clinical_editor_ignores_absurd_provisional_fields(monkeypatch):
     values["duraciones.respuesta_pruebas"] = [500, 1000]
     values["pruebas.probabilidad"] = [0] * 5
     variant = defaults.VARIANTS_DIR / "absurd.toml"
-    write_variant(defaults.CENTER_PATH, values, variant)
+    write_variant(provisional_block_center, values, variant)
     # Opening a fresh page loads the changed file, rather than an existing draft.
     monkeypatch.setattr(defaults, "CENTER_PATH", variant)
     import edsim.runs as runs

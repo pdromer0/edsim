@@ -478,3 +478,44 @@ def test_diferencias_entre_un_centro_con_bloque_y_otro_sin_el():
         (None, d.before) for d in changes
     ]
     assert center_diff(without, without) == ()
+
+
+CONFIG_CENTER = Path(__file__).parents[1] / "config" / "centro.toml"
+EXAMPLE_CENTER = Path(__file__).parent / "data" / "centro_ejemplo.toml"
+PROVISIONAL_TABLES = ("triaje", "duraciones", "pruebas")
+
+
+def test_variante_de_un_centro_sin_bloque_no_lo_anade(tmp_path):
+    # config/centro.toml no tiene el bloque provisional (tarea 4.9): cambiar los médicos
+    # escribe un fichero sin [triaje], [duraciones] ni [pruebas] y con el resto de bytes
+    # intactos.
+    values = read_center_values(CONFIG_CENTER)
+    assert values["recursos.medicos"] == [12, 11, 4]
+    values["recursos.medicos"] = [13, 11, 4]
+
+    destination = write_variant(CONFIG_CENTER, values, tmp_path / "draft.toml")
+
+    written = destination.read_bytes()
+    assert written == CONFIG_CENTER.read_bytes().replace(
+        b"medicos = [12, 11, 4]", b"medicos = [13, 11, 4]"
+    )
+    # Las tablas leídas, no el texto: la cabecera de config/centro.toml las nombra.
+    tables = {key.split(".")[0] for key in read_center_values(destination)}
+    assert not tables & set(PROVISIONAL_TABLES)
+    assert not load_center(destination).has_provisional
+
+
+def test_variante_de_un_centro_sin_bloque_no_admite_las_claves_del_bloque(tmp_path):
+    # Unos valores válidos con el bloque entero (los de centro_ejemplo.toml) sobre una base
+    # sin él: una variante edita valores, nunca añade claves a su base.
+    values = read_center_values(CONFIG_CENTER)
+    example = read_center_values(EXAMPLE_CENTER)
+    values.update({k: v for k, v in example.items() if k.split(".")[0] in PROVISIONAL_TABLES})
+    assert validate_center_values(values) == {}
+
+    with pytest.raises(
+        ValueError,
+        match=r"^triaje\.reparto_niveles must be in both the base and the values, or in neither$",
+    ):
+        write_variant(CONFIG_CENTER, values, tmp_path / "draft.toml")
+    assert list(tmp_path.iterdir()) == []

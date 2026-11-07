@@ -229,10 +229,16 @@ def short():
     return load_profile(DATA / "llegadas_ejemplo.toml"), {"days": 2, "sample_size": 3_000}
 
 
+def model_center(center, clinical):
+    """El centro de config/ con el clínico; sin perfiles, el del provisional (tarea 4.9)."""
+    return center if clinical else load_center(DATA / "centro_ejemplo.toml")
+
+
 @pytest.mark.parametrize("clinical", [False, True])
 def test_offered_work_son_las_dos_partes_seguidas(center, short, clinical):
     profile, options = short
     profiles = example_profiles() if clinical else None
+    center = model_center(center, clinical)
 
     whole = offered_work(center, profile, profiles=profiles, **options)
     load = offered_load(center, profile, profiles=profiles, **options)
@@ -244,6 +250,7 @@ def test_offered_work_son_las_dos_partes_seguidas(center, short, clinical):
 def test_otra_plantilla_reutiliza_la_carga(center, short, clinical):
     profile, options = short
     profiles = example_profiles() if clinical else None
+    center = model_center(center, clinical)
     other = dataclasses.replace(
         center, triage_nurses=(4, 3, 1), doctors=(13, 12, 5), boxes=center.boxes + 6
     )

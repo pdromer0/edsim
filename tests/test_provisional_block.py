@@ -106,3 +106,91 @@ def test_summarize_center(center_path):
 def test_validate_engine_falla_antes_de_simular(center, profile):
     with pytest.raises(ValueError, match=TABLES):
         validate_engine(center, profile, replicas=2)
+
+
+# --- El modelo clínico ignora el bloque -------------------------------------------------
+
+
+@pytest.mark.slow
+def test_el_clinico_ignora_el_bloque_y_las_dos_se_emparejan_como_plantilla(tmp_path):
+    from edsim.runs import (
+        RunStore,
+        compare_run_summary,
+        compare_runs,
+        read_run_episode_truth,
+        read_run_results,
+    )
+    from edsim.runs.compare import pairing_category
+
+    config = Path(__file__).parents[1] / "config"
+    # La plantilla de config/centro.toml más el bloque de centro_ejemplo.toml.
+    example = (DATA / "centro_ejemplo.toml").read_text(encoding="utf-8")
+    block = example[example.index("[triaje]") : example.index("[destino]")]
+    with_block = tmp_path / "con_bloque.toml"
+    with_block.write_text((config / "centro.toml").read_text(encoding="utf-8") + "\n" + block)
+    assert load_center(with_block).has_provisional
+    assert not load_center(config / "centro.toml").has_provisional
+
+    # Un catálogo por centro, con el mismo run_id: el log lo lleva en cada evento.
+    stores = {}
+    for name, center in (("sin", config / "centro.toml"), ("con", with_block)):
+        stores[name] = RunStore(tmp_path / name)
+        simulate_run(
+            center,
+            config / "llegadas.toml",
+            3,
+            2026,
+            output_dir=stores[name].root / "r2026",
+            warmup_days=1,
+            origin="cli",
+            profiles=config / "perfiles.toml",
+        )
+
+    # El mismo log byte a byte: con el modelo clínico, el bloque no cambia nada.
+    logs = [(s.root / "r2026" / "eventos.jsonl").read_bytes() for s in stores.values()]
+    assert logs[0] == logs[1]
+
+    a, b = (read_run_results(s, "r2026") for s in stores.values())
+    assert pairing_category(a, b) == "template"
+    summary = compare_run_summary(a, b)
+    assert len(summary.center_differences) == 6
+    assert all(d.before is None and d.after is not None for d in summary.center_differences)
+    truth_a, truth_b = (read_run_episode_truth(s, "r2026") for s in stores.values())
+    comparison = compare_runs(a, b, truth_a, truth_b)
+    assert comparison.pairing.kind == "same_draws"
+    assert all(d.changed == 0 for d in comparison.pairing.draw_differences)
+
+
+# --- La CLI con config/centro.toml, que no tiene el bloque ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["motor", "simular", "--provisional", "--dias", "1", "--calentamiento", "0"],
+        ["motor", "validar", "--centro", "config/centro.toml"],
+    ],
+    ids=["simular", "validar"],
+)
+def test_la_cli_con_el_provisional_y_config_centro_es_un_error_de_uso(
+    argv, monkeypatch, tmp_path, capsys
+):
+    from edsim.cli import main
+
+    monkeypatch.chdir(Path(__file__).parents[1])
+    monkeypatch.setattr("edsim.runs.service.simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    monkeypatch.setattr("edsim.cli.validate_engine", lambda *a, **k: pytest.fail("validó"))
+    out_dir = tmp_path / "salida"
+
+    with pytest.raises(SystemExit) as exit_info:
+        main([*argv, "--salida", str(out_dir)])
+    captured = capsys.readouterr()
+
+    assert exit_info.value.code == 2
+    assert (
+        "--centro config/centro.toml: el modelo provisional necesita las tablas [triaje], "
+        "[duraciones] y [pruebas] del centro, y este no las tiene; su centro es "
+        "tests/data/centro_ejemplo.toml"
+    ) in captured.err
+    assert captured.out == ""
+    assert not out_dir.exists()

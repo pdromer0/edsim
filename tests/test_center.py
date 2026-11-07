@@ -557,3 +557,19 @@ def test_construccion_directa_con_parte_del_bloque_nombra_lo_que_falta(center):
         dataclasses.replace(center, triage_time=None, test_probability=None)
     sin = dataclasses.replace(center, **dict.fromkeys(CAMPOS_PROVISIONALES))
     assert not sin.has_provisional
+
+
+def test_el_centro_base_sin_el_bloque_y_con_sus_valores():
+    # config/centro.toml desde la tarea 4.9: valores a mano, sin el bloque provisional.
+    values = read_center_values(CONFIG)
+    assert not {k for k in values if k.split(".")[0] in PROVISIONAL_TABLES}
+    c = load_center(CONFIG)
+
+    assert c.shift_starts == (8, 15, 22)
+    assert c.triage_nurses == (3, 2, 1)
+    assert c.doctors == (12, 11, 4)
+    assert c.boxes == 30
+    assert c.results_wait_outside == (4, 5)
+    assert c.admission_probability == (0.80, 0.45, 0.15, 0.04, 0.01)
+    assert all(getattr(c, field) is None for field in CAMPOS_PROVISIONALES)
+    assert not c.has_provisional
