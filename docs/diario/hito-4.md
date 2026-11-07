@@ -262,6 +262,6 @@ Especificación: [docs/specs/hito-4.md](../specs/hito-4.md); las tareas 4.8a, 4.
 **Preguntas abiertas:**
 - El hito 6 está en preparación, sin especificación exportada todavía.
 
-**Enlaces:** PR (pendiente) · ADRs 0034 a 0047
+**Enlaces:** PR #55 · ADRs 0034 a 0047 · [ADR 0044](../decisiones/0044-modelo-clinico-por-defecto-en-el-cierre.md)
 
 ## Reflexiones de Pedro
