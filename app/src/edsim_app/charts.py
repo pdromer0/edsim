@@ -180,6 +180,8 @@ def episode_chart(
                         "En box esperando pruebas",
                         "Reevaluación",
                         "Pruebas en curso",
+                        "Sala de resultados · espera de pruebas",
+                        "Sala de resultados · espera de box",
                     ],
                     range=[
                         "#b6cde4",
@@ -190,6 +192,8 @@ def episode_chart(
                         "#c7b8db",
                         "#7966a3",
                         "#898781",
+                        "#9dd3d1",
+                        "#68aaa6",
                     ],
                 ),
             ),

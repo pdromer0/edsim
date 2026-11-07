@@ -245,6 +245,8 @@ EPISODE_COLUMNS = {
     "displacements": "Desalojos",
     "triage_wait": "Espera de triaje (min)",
     "box_wait": "Espera de box (min)",
+    "initial_box_wait": "Espera inicial de box (min)",
+    "results_box_wait": "Espera de box al volver (min)",
     "doctor_wait": "Espera de médico (min)",
     "initial_doctor_wait": "Espera inicial de médico (min)",
     "door_to_doctor": "Puerta-médico (min)",
@@ -268,6 +270,13 @@ def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.Dat
     )
     frame["Llegada (UTC+1)"] = wall_times(result, [record.arrival for record in table])
     frame["Nivel"] = frame["Nivel"].astype("Int64")
+    if result.observed is not None:
+        profile_frame = pd.DataFrame(
+            [observed_profile_row(result.observed[e.episode_id], result.profiles) for e in table],
+            columns=["Edad", "Sexo", "Medio", "Motivo", "Pruebas"],
+        )
+        profile_frame["Edad"] = profile_frame["Edad"].astype("Int64")
+        frame = pd.concat([frame, profile_frame], axis=1)
     return frame
 
 
@@ -590,3 +599,48 @@ def observed_distribution_frames(result: RunResults) -> tuple[pd.DataFrame, pd.D
     return distribution(labels, "Motivo"), distribution(
         [str(e.level) if e.level is not None else "Sin observar" for e in records], "Nivel asignado"
     )
+
+
+def observed_profile_row(observed, profiles) -> dict:
+    """Translate an observable profile without consulting hidden truth."""
+    return {
+        "Edad": observed.age,
+        "Sexo": observed.sex.capitalize() if observed.sex else None,
+        "Medio": {"ambulancia": "Ambulancia", "propios_medios": "Medios propios"}.get(
+            observed.arrival_mode
+        ),
+        "Motivo": profiles.reason(observed.reason).name if observed.reason else None,
+        "Pruebas": ", ".join(observed.tests) or "—",
+    }
+
+
+def clinical_truth_frames(value) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Present explicitly requested hidden truth and the individual test responses."""
+    quality = {"correcto": "Correcto", "infratriaje": "Infratriaje", "sobretriaje": "Sobretriaje"}
+    details = pd.DataFrame(
+        [
+            {"Dato clínico": label, "Verdad": str(item)}
+            for label, item in (
+                ("Gravedad latente G", value.severity),
+                ("Nivel asignado", value.assigned_level),
+                ("Nivel real", value.true_level),
+                ("Calidad del triaje", quality.get(value.quality, value.quality)),
+                ("Salto", value.jump),
+                ("Respuesta esperada de la ronda (min)", value.round_expected),
+                ("Respuesta observada de la ronda (min)", value.round_observed),
+            )
+        ]
+    )
+    tests = pd.DataFrame(
+        [
+            {
+                "Prueba": test.test,
+                "Pedida": "Sí" if test.ordered else "No",
+                "Resultado": test.result or "—",
+                "Respuesta base (min)": test.base_turnaround,
+                "Respuesta en la franja del pedido (min)": test.turnaround,
+            }
+            for test in value.tests
+        ]
+    )
+    return details, tests

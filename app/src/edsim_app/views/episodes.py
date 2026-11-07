@@ -10,6 +10,7 @@ from edsim.runs import (
     RunReadError,
     RunResults,
     compare_episode_truth,
+    episode_clinical_truth,
     episode_observed_time,
     episode_segments,
     filter_episodes,
@@ -24,11 +25,13 @@ from edsim_app.episodes import (
     remember_episode_filter,
 )
 from edsim_app.frames import (
+    clinical_truth_frames,
     episode_events_frame,
     episode_timeline_frames,
     episode_truth_frame,
     episodes_frame,
     format_number,
+    observed_profile_row,
     style_episodes,
     wall_times,
 )
@@ -42,9 +45,41 @@ from edsim_app.results import (
 from edsim_app.state import catalog_store
 
 
-def render_filters(days: int) -> EpisodeFilters:
+def render_filters(result: RunResults) -> EpisodeFilters:
     """Collect common filters independently of navigation-cleaned widget keys."""
+    days = result.info.days
     values = episode_filter_values(days - 1)
+    profile_choices = {}
+    if result.profiles is not None:
+        population = result.profiles.population
+        bands = population.band_starts
+        profile_choices = {
+            "age_band": (
+                "Banda de edad",
+                {
+                    i: f"{age}–{bands[i + 1] - 1} años"
+                    if i + 1 < len(bands)
+                    else f"{age} años o más"
+                    for i, age in enumerate(bands)
+                },
+            ),
+            "sex": ("Sexo", {"mujer": "Mujer", "hombre": "Hombre"}),
+            "arrival_mode": (
+                "Medio de llegada",
+                {"ambulancia": "Ambulancia", "propios_medios": "Medios propios"},
+            ),
+            "reason": ("Motivo", {r.key: r.name for r in result.profiles.reasons}),
+            "test": (
+                "Prueba pedida",
+                {t.key: t.key.capitalize() for t in result.profiles.diagnostic_tests},
+            ),
+        }
+    for field in ("age_band", "sex", "arrival_mode", "reason", "test"):
+        if values[field] is not None and (
+            field not in profile_choices or values[field] not in profile_choices[field][1]
+        ):
+            values[field] = None
+            st.info("Se ha quitado un filtro clínico que no está disponible en esta ejecución.")
     with st.expander("Filtros", expanded=True):
         for field, label, options, formatter in (
             (
@@ -93,6 +128,19 @@ def render_filters(days: int) -> EpisodeFilters:
                 on_change=remember_episode_filter,
                 args=(field, widget),
             )
+        for field, (label, choices) in profile_choices.items():
+            widget = f"episode_filter_{field}_widget"
+            st.session_state[widget] = values[field]
+            st.selectbox(
+                label,
+                [None, *choices],
+                key=widget,
+                format_func=lambda value, choices=choices: (
+                    "Todos" if value is None else choices[value]
+                ),
+                on_change=remember_episode_filter,
+                args=(field, widget),
+            )
         for field, label in (
             ("door_to_doctor_gt", "Puerta-médico mayor que (min)"),
             ("stay_gt", "Estancia mayor que (min)"),
@@ -129,6 +177,16 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
     columns[3].metric(
         "Estancia", "—" if record.stay is None else f"{format_number(record.stay)} min"
     )
+    for label, value in (
+        ("Espera inicial de box", record.initial_box_wait),
+        ("Espera de box al volver", record.results_box_wait),
+    ):
+        st.metric(label, f"{format_number(value)} min")
+    if result.observed is not None:
+        for label, value in observed_profile_row(
+            result.observed[record.episode_id], result.profiles
+        ).items():
+            st.write(f"**{label}:** {value if value is not None else '—'}")
     if record.departure is None:
         observed = episode_observed_time(record, result.analysis.curves.horizon)
         st.caption(
@@ -154,7 +212,23 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
         if record.episode_id not in truth:
             st.error(f"ground_truth_episodios.csv: no contiene el episodio {record.episode_id}.")
             return
-        rows = compare_episode_truth(events, timeline, truth[record.episode_id])
+        if result.profiles is not None:
+            clinical = episode_clinical_truth(
+                events,
+                truth[record.episode_id],
+                profiles=result.profiles,
+                start_date=result.start_date,
+            )
+            st.subheader("Verdad clínica del episodio")
+            for frame in clinical_truth_frames(clinical):
+                st.dataframe(frame, hide_index=True)
+        rows = compare_episode_truth(
+            events,
+            timeline,
+            truth[record.episode_id],
+            profiles=result.profiles,
+            start_date=result.start_date,
+        )
         st.subheader("Lo sorteado frente a lo observado")
         st.dataframe(episode_truth_frame(rows), hide_index=True, width="stretch")
         if any(row.status == "mismatch" for row in rows):
@@ -213,12 +287,13 @@ try:
 except RunReadError as error:
     st.error(str(error))
     st.stop()
-filters = render_filters(info.days)
+filters = render_filters(result)
 filtered = filter_episodes(
     result.analysis.table,
     filters,
     warmup_end=info.warmup_days * 1440,
     horizon=result.analysis.curves.horizon,
+    observed=result.observed,
 )
 st.caption(f"{len(filtered)} de {len(result.analysis.table)} episodios pasan los filtros.")
 frame = episodes_frame(filtered, result)

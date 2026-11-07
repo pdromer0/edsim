@@ -180,6 +180,8 @@ def test_card_has_basics_timeline_log_and_lazy_truth(catalog, monkeypatch):
         "Nivel",
         "Destino",
         "Estancia",
+        "Espera inicial de box",
+        "Espera de box al volver",
     }
     assert app.get("vega_lite_chart")
     events = app.dataframe[1].value

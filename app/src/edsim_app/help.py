@@ -7,6 +7,8 @@ def render_episodes_help() -> None:
     """Explain exclusive cohorts, right censoring and independent laboratory work."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
+            "El nivel mostrado es el asignado; el real y G solo aparecen al ver la verdad. "
+            "Edad, sexo, medio, motivo y pruebas proceden del log. "
             "La tabla incluye todos los episodios: sin terminar si no hay salida; "
             "calentamiento si llegaron antes de su fin y salieron; ventana si llegaron "
             "desde ese límite y salieron. Los filtros se combinan y se conservan entre ejecuciones."
@@ -18,6 +20,8 @@ def render_episodes_help() -> None:
         )
         st.write(
             "Los tramos muestran dónde está el paciente y suman su estancia observada. "
+            "La sala de resultados está fuera del box; se distinguen la espera inicial "
+            "de box y la espera al volver. "
             "Las pruebas siguen aunque pierda el box: su banda es independiente y los "
             "rombos marcan desalojos. Todas las horas son UTC+1 fijo, sin horario de verano."
         )
@@ -98,7 +102,10 @@ def render_compare_help() -> None:
             "«—» indica base cero o dato desconocido. Ingreso cambia en puntos porcentuales."
         )
         st.write(
-            "Compartir semilla, perfil, días y calentamiento permite emparejar pacientes. "
+            "Compartir semilla, perfil de llegadas, días, calentamiento y modelo permite "
+            "emparejar pacientes. Plantilla conserva los mismos pacientes; el emparejamiento "
+            "clínico usa los mismos sorteos estándar con otros perfiles y puede cambiar "
+            "los valores clínicos. Modelos distintos quedan sin emparejar. "
             "La verdad comprueba sus llegadas y sorteos: cambiar plantilla conserva los "
             "números aleatorios comunes; cambiar clínica puede cambiar algunos sorteos, "
             "aunque en una muestra pequeña no cambie ninguno."
