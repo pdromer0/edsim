@@ -98,7 +98,13 @@ from edsim.runs.results import (
 )
 from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
 from edsim.runs.store import RunInfo, RunStore
-from edsim.runs.summary import CenterSummary, DurationSummary, summarize_center
+from edsim.runs.summary import (
+    CenterSummary,
+    DurationSummary,
+    ProfilesSummary,
+    summarize_center,
+    summarize_profiles,
+)
 from edsim.runs.truth import (
     TRUTH_ABS_TOL_MINUTES,
     ClinicalTruthView,
@@ -230,6 +236,8 @@ __all__ = [
     "read_run_results",
     "simulate_run",
     "summarize_center",
+    "ProfilesSummary",
+    "summarize_profiles",
     "validate_center_values",
     "validate_run_id",
     "write_variant",
