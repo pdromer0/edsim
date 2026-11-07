@@ -1,9 +1,14 @@
 # EDsim Lab
 
 App local de EDsim para ajustar un centro de urgencias, simularlo por lotes y
-explorar sus ejecuciones guardadas. La fase 1 usa el motor del hito 3; su alcance
-y los incrementos previstos están en la
-[especificación](docs/specs/fase-1.md#objetivo-y-alcance-de-la-fase-1).
+explorar sus ejecuciones guardadas. Desde el incremento del hito 4 (`app-v0.2.0`),
+EDsim Lab simula con el modelo clínico. Cada paciente tiene edad, sexo, medio de
+llegada, motivo, gravedad real oculta y un nivel de triaje con error. Las ejecuciones
+provisionales del hito 3 se siguen abriendo; la app ya no las crea.
+
+El alcance inicial está en la
+[especificación de la fase 1](docs/specs/fase-1.md#objetivo-y-alcance-de-la-fase-1)
+y los cambios posteriores, en la [especificación de incrementos](docs/specs/incrementos.md).
 
 ## Preparar y arrancar
 
@@ -28,12 +33,12 @@ solo el núcleo y retira la app y sus dependencias exclusivas. El arranque con
 
 | Grupo | Página | Para qué sirve |
 | --- | --- | --- |
-| Ejecutar | Ejecuciones | Abrir el catálogo, elegir una ejecución, marcar A/B, descargarla y borrarla con confirmación. |
-| Ejecutar | Simular | Editar el centro, guardar una variante TOML, prever la carga y simular el fichero guardado. |
-| Analizar | Resultados | Consultar KPIs, esperas, ocupación, censo, Little e invariantes. |
-| Analizar | Episodios | Filtrar pacientes, seguir su recorrido y contrastarlo con «Ver la verdad». |
-| Analizar | Comparar | Contrastar A y B y comprobar el emparejamiento antes de mostrar diferencias paciente a paciente. |
-| Analizar | Replay | Reconstruir un instante del servicio y reproducir su evolución en el plano. |
+| Ejecutar | Ejecuciones | Ver el modelo y la huella de los perfiles, elegir una ejecución, marcar A/B, descargarla y borrarla con confirmación. |
+| Ejecutar | Simular | Elegir el fichero de perfiles y ver su resumen; editar turnos, plantilla, boxes y destino; guardar una variante, prever la carga y simular. |
+| Analizar | Resultados | Consultar KPIs, los tres relojes, Manchester desde la clasificación, pretriaje, nivel 1 con mediana y p90, reparto observado, ocupación, censo, Little e invariantes. |
+| Analizar | Episodios | Filtrar por perfil, seguir el recorrido y la sala de resultados; consultar gravedad, nivel real y calidad del triaje con «Ver la verdad». |
+| Analizar | Comparar | Contrastar A y B con el tipo de emparejamiento: plantilla, clínico o sin emparejar; ver diferencias paciente a paciente cuando estén emparejadas. |
+| Analizar | Replay | Reconstruir el servicio en el plano, con edad y motivo en la ficha y colores por nivel asignado. |
 
 La ejecución seleccionada se comparte entre páginas y aparece en `?run=…`.
 Cada página incluye «¿Qué estoy viendo?» con los conceptos de su vista.
@@ -51,6 +56,10 @@ EDSIM_EJECUCIONES=/ruta/al/catalogo uv run --package edsim-app edsim-app
 la página Ejecuciones muestra la ruta utilizada. Esta variable cambia el catálogo
 de la app. Para las configuraciones y variantes, arranca desde la raíz del
 repositorio: se usan `config/` y `resultados/variantes/`.
+
+`config/perfiles.toml` contiene los perfiles clínicos por defecto. Desde Simular
+puedes elegir otra ruta. Una ejecución clínica guarda una copia de sus perfiles
+y su huella para poder reproducirla.
 
 La CLI y la app comparten el
 [formato de ejecución](../docs/decisiones/0032-ejecuciones-en-carpetas-reproducibles.md).

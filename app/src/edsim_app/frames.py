@@ -45,8 +45,10 @@ FIELDS = (
 )
 
 
-def format_change_value(value: int | float | tuple[int | float, ...]) -> str:
-    """Present normalized differences with decimal commas and unambiguous separators."""
+def format_change_value(value: int | float | tuple[int | float, ...] | None) -> str:
+    """Present differences with decimal commas, separators and a dash for missing values."""
+    if value is None:
+        return "—"
     if isinstance(value, tuple):
         return "[" + "; ".join(format_change_value(item) for item in value) + "]"
     return (str(value) if isinstance(value, int) else f"{value:.15g}").replace(".", ",")

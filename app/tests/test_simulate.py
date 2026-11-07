@@ -33,10 +33,9 @@ def replace_raw_value(source, key, replacement, index=None):
     return changed
 
 
-def open_simulation(model="provisional"):
+def open_simulation():
     app = AppTest.from_file(MAIN, default_timeout=15)
     app.session_state["simulation_settings"] = {
-        "model": model,
         "clinical_path": str(defaults.CLINICAL_PROFILES_PATH),
         "days": defaults.SIMULATION_DAYS,
         "warmup_days": min(defaults.SIMULATION_WARMUP_DAYS, defaults.SIMULATION_DAYS - 1),
@@ -76,7 +75,6 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
         )
         assert type(widget.value) is (int if integer else float)
         assert widget.proto.format == ("%d" if integer else "%.15g")
-    visible = " ".join(item.value for item in app.markdown)
     for key in ("medicos", "enfermeria_triaje", "boxes"):
         value = center_template["recursos"][key]
         if isinstance(value, list):
@@ -84,21 +82,28 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
                 assert app.number_input(key=f"edit_recursos.{key}_{index}").value == count
         else:
             assert app.number_input(key=f"edit_recursos.{key}_None").value == value
-    assert "Suma del reparto: 100,0" in visible
-    assert {metric.label: metric.value for metric in app.metric} == {
-        "Pruebas globales": "55,410 %",
-        "Ingreso global": "12,843 %",
-    }
+    assert not any(widget.key == "model_widget" for widget in app.selectbox)
+    assert not any(
+        widget.key.startswith(("edit_triaje.", "edit_duraciones.", "edit_pruebas."))
+        for widget in app.number_input
+    )
+    assert (
+        app.number_input(key="edit_turnos.inicio_0").value == center_template["turnos"]["inicio"][0]
+    )
+    assert (
+        app.number_input(key="edit_destino.probabilidad_ingreso_0").value
+        == (center_template["destino"]["probabilidad_ingreso"][0])
+    )
 
 
 def test_multiple_errors_disable_saving_and_show_each_diagnostic():
     app = open_simulation()
     edit(app, "recursos.medicos", 0, 0)
-    edit(app, "duraciones.triaje", 1, 4.0)
+    edit(app, "destino.probabilidad_ingreso", 1, 1.1)
     app.text_input(key="variant_name_widget").set_value("invalid").run()
     assert not app.exception
     assert any("recursos.medicos[0] must be at least 1" in e.value for e in app.error)
-    assert any("p90 must be greater" in e.value for e in app.error)
+    assert any("destino.probabilidad_ingreso[1]" in e.value for e in app.error)
     assert app.button(key="save_variant").disabled
     assert app.button(key="simulate_run").disabled
     assert not (defaults.VARIANTS_DIR / "invalid.toml").exists()
@@ -228,7 +233,7 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     from unittest.mock import Mock
 
     import edsim_app.preview as preview
-    from edsim.runs import center_from_values, load_profile, offered_work_from_load
+    from edsim.runs import center_from_values, load_profile, load_profiles, offered_work_from_load
     from edsim_app.frames import utilization_frame
 
     edited_doctors = center_template["recursos"]["medicos"][0] + 1
@@ -237,16 +242,20 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     app = open_simulation()
     assert calculate.call_count == 1
     args = calculate.call_args
-    assert args.kwargs == {"profiles": None, "sample_size": 50_000, "sample_seed": 73_001}
+    assert args.kwargs == {
+        "profiles": load_profiles(defaults.CLINICAL_PROFILES_PATH),
+        "sample_size": 50_000,
+        "sample_seed": 73_001,
+    }
     # Compute the expected table with the same small real core calculation.
     work = offered_work_from_load(args.args[0], calculate._mock_wraps(*args.args, **args.kwargs))
-    assert app.dataframe[0].value.equals(utilization_frame(work))
+    assert app.dataframe[-1].value.equals(utilization_frame(work))
     app.selectbox(key="preview_pool").select("boxes").run()
     assert not app.exception
     assert calculate.call_count == 1
     edit(app, "recursos.medicos", 0, edited_doctors)
     assert calculate.call_count == 1
-    assert not app.dataframe[0].value.equals(utilization_frame(work))
+    assert not app.dataframe[-1].value.equals(utilization_frame(work))
     before = defaults.PROFILE_PATH.stat()
     defaults.PROFILE_PATH.write_bytes(
         defaults.PROFILE_PATH.read_bytes().replace(b"base_diaria = 300", b"base_diaria = 600")
@@ -259,19 +268,28 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     values["recursos.medicos"][0] = edited_doctors
     center = center_from_values(values)
     changed = offered_work_from_load(
-        center, calculate._mock_wraps(center, load_profile(defaults.PROFILE_PATH), 7)
+        center,
+        calculate._mock_wraps(
+            center,
+            load_profile(defaults.PROFILE_PATH),
+            7,
+            profiles=load_profiles(defaults.CLINICAL_PROFILES_PATH),
+        ),
     )
-    assert app.dataframe[0].value.equals(utilization_frame(changed))
+    assert app.dataframe[-1].value.equals(utilization_frame(changed))
 
 
 def test_preview_explains_multiple_prior_days(monkeypatch):
     from dataclasses import replace
 
-    from edsim.runs import load_center, load_profile
+    from edsim.runs import load_center, load_profile, load_profiles
     from edsim_app import preview
 
     small = preview.offered_load(
-        load_center(defaults.CENTER_PATH), load_profile(defaults.PROFILE_PATH), 7
+        load_center(defaults.CENTER_PATH),
+        load_profile(defaults.PROFILE_PATH),
+        7,
+        profiles=load_profiles(defaults.CLINICAL_PROFILES_PATH),
     )
     monkeypatch.setattr(
         preview, "offered_load", lambda *args, **kwargs: replace(small, prior_days=3)
@@ -387,12 +405,10 @@ def test_reducing_days_adjusts_warmup_and_settings_survive_navigation():
     assert app.number_input(key="warmup_widget").value == 0
 
 
-def test_unsaved_changes_block_simulation_even_when_normalized_center_is_unchanged():
+def test_unsaved_destination_changes_block_simulation():
     app = open_simulation()
-    values = read_center_values(defaults.CENTER_PATH)["triaje.reparto_niveles"]
-    for index, value in enumerate(values):
-        edit(app, "triaje.reparto_niveles", index, value / 100)
-    assert any("No hay diferencias frente al centro base" in x.value for x in app.info)
+    edit(app, "destino.probabilidad_ingreso", 0, 0.5)
+    assert any("destino.probabilidad_ingreso" in x.value for x in app.markdown)
     assert app.button(key="simulate_run").disabled
     assert any("Guarda una variante antes de simular" in x.value for x in app.info)
 
@@ -428,6 +444,7 @@ def test_real_one_day_simulation_uses_saved_variant_and_opens_results(
         "run.json",
         "centro.toml",
         "llegadas.toml",
+        "perfiles.toml",
         "eventos.jsonl",
         "ground_truth_episodios.csv",
         "ground_truth_dias.csv",
@@ -469,7 +486,7 @@ def test_simulation_passes_relative_paths_output_and_no_variant(catalog_root, mo
         "warmup_days": 0,
         "run_id": "centro-r2026",
         "origin": "app",
-        "profiles": None,
+        "profiles": str(defaults.CLINICAL_PROFILES_PATH),
     }
     assert (catalog_root / "centro-r2026" / "run.json").is_file()
 
@@ -540,8 +557,7 @@ def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_ty
         ("boxes", None, "30.0", "recursos.boxes must be an integer, got 30.0"),
         ("inicio", 0, "8.5", "turnos.inicio[0] must be an integer"),
         ("medicos", 0, "true", "recursos.medicos[0] must be an integer"),
-        ("triaje", 0, '"cinco"', "duraciones.triaje[0]"),
-        ("probabilidad", 0, "true", "pruebas.probabilidad[0]"),
+        ("probabilidad_ingreso", 0, "true", "destino.probabilidad_ingreso[0]"),
     ],
 )
 def test_unrepresentable_raw_values_stop_before_widgets(key, index, replacement, error):
@@ -556,22 +572,24 @@ def test_unrepresentable_raw_values_stop_before_widgets(key, index, replacement,
     assert defaults.CENTER_PATH.read_bytes() == changed
 
 
-def test_change_list_names_fields_and_formats_staff_and_normalized_shares(center_template):
+def test_change_list_names_fields_and_formats_staff_and_destination(center_template):
     doctors = center_template["recursos"]["medicos"]
     edited_doctors = doctors.copy()
     edited_doctors[1] += 3
     app = open_simulation()
     edit(app, "recursos.medicos", 1, edited_doctors[1])
-    edit(app, "triaje.reparto_niveles", 0, 0.4)
-    edit(app, "triaje.reparto_niveles", 2, 33.5)
+    admission = center_template["destino"]["probabilidad_ingreso"]
+    changed_admission = admission.copy()
+    changed_admission[0] = 0.5
+    edit(app, "destino.probabilidad_ingreso", 0, changed_admission[0])
     visible = [item.value for item in app.markdown]
     assert (
         f"**Médicos** · `recursos.medicos`: {expected_sequence(doctors)} → "
         f"{expected_sequence(edited_doctors)}"
     ) in visible
     assert (
-        "**Reparto de triaje (pesos)** · `triaje.reparto_niveles`: "
-        "[0,003; 0,121; 0,336; 0,526; 0,014] → [0,004; 0,121; 0,335; 0,526; 0,014]"
+        "**Probabilidad de ingreso** · `destino.probabilidad_ingreso`: "
+        f"{expected_sequence(admission)} → {expected_sequence(changed_admission)}"
     ) in visible
 
 
@@ -597,3 +615,20 @@ def test_failed_pending_source_load_cancels_confirmation_and_preserves_draft(
     assert not any("Descartarlos" in item.value for item in app.warning)
     assert app.selectbox(key="source_widget").value == str(defaults.CENTER_PATH)
     assert app.number_input(key="edit_recursos.boxes_None").value == edited_boxes
+
+
+def test_invalid_noneditable_field_is_visible_and_blocks_saving_and_simulation():
+    source = named_variant("invalid-duration")
+    source.write_bytes(replace_raw_value(source.read_bytes(), "triaje", "[10, 5]"))
+    app = open_simulation()
+    app.selectbox(key="source_widget").select(str(source)).run()
+    app.text_input(key="variant_name_widget").set_value("valid-name").run()
+    assert not app.exception
+    assert any(
+        "duraciones.triaje" in error.value and "p90 must be greater" in error.value
+        for error in app.error
+    )
+    assert any("fichero fuera de la app" in notice.value for notice in app.info)
+    assert app.button(key="save_variant").disabled
+    assert app.button(key="simulate_run").disabled
+    assert not (defaults.VARIANTS_DIR / "valid-name.toml").exists()

@@ -69,6 +69,7 @@ La selección de los AppTest que simulan se hace durante la colección en
 ## Comandos desde la raíz del repositorio
 
 Los comandos de git que escriben en `.git` se piden directamente fuera del sandbox.
+`scripts/tests-completos.sh` también se ejecuta fuera: dentro, los notebooks fallan porque el kernel de Jupyter necesita abrir sockets locales y el sandbox lo impide (`PermissionError: [Errno 1] Operation not permitted`).
 
 ```bash
 uv sync --all-packages

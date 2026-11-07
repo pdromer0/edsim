@@ -13,14 +13,13 @@ from edsim.runs import (
     list_variants,
     load_center,
     simulate_run,
-    summarize_center,
     summarize_profiles,
     validate_center_values,
     validate_run_id,
     write_variant,
 )
 from edsim_app import defaults
-from edsim_app.charts import duration_chart, offered_chart
+from edsim_app.charts import offered_chart
 from edsim_app.draft import (
     CenterDraft,
     accept_source,
@@ -55,9 +54,7 @@ def decimal(value: float, digits: int = 1) -> str:
 
 
 def editor_fields():
-    """Choose only the fields used by the selected model."""
-    if execution_settings()["model"] == "provisional":
-        return FIELDS
+    """Expose only the center fields used by clinical simulations."""
     return tuple(
         field for field in FIELDS if field[0].startswith(("turnos.", "recursos.", "destino."))
     )
@@ -201,12 +198,6 @@ def render_center() -> tuple[CenterDraft, bool]:
             "y vuelve a cargar su origen."
         )
         st.stop()
-    summary = (
-        summarize_center(draft.values)
-        if not errors and execution_settings()["model"] == "provisional"
-        else None
-    )
-    duration_summaries = {d.key: d for d in summary.durations} if summary else {}
     for key, label, integer, labels in editor_fields():
         if key == "recursos.enfermeria_triaje":
             render_staff(draft, errors)
@@ -227,20 +218,11 @@ def render_center() -> tuple[CenterDraft, bool]:
                 )
         if key in errors:
             st.error(errors[key])
-        if key in duration_summaries:
-            duration = duration_summaries[key]
-            st.caption(f"Media: {decimal(duration.mean_minutes)} min")
-            st.altair_chart(duration_chart(duration), width="stretch")
-    for key in errors.keys() - {field[0] for field in FIELDS}:
-        st.error(errors[key])
-    if summary:
-        st.write(f"Suma del reparto: {decimal(summary.raw_share_total)}")
-        st.write(
-            "Reparto normalizado: "
-            + "; ".join(f"{s:.3%}".replace(".", ",") for s in summary.normalized_level_shares)
-        )
-        st.metric("Pruebas globales", f"{decimal(summary.tests_percentage, 3)} %")
-        st.metric("Ingreso global", f"{decimal(summary.admission_percentage, 3)} %")
+    noneditable_errors = errors.keys() - {field[0] for field in editor_fields()}
+    for key in sorted(noneditable_errors):
+        st.error(f"{key}: {errors[key]}")
+    if noneditable_errors:
+        st.info("Corrige estos valores en el fichero fuera de la app y vuelve a cargar su origen.")
     if not errors:
         st.subheader("Cambios frente al centro base")
         try:
@@ -381,7 +363,7 @@ def render_execution(draft: CenterDraft, blocked: bool, profile_valid: bool) -> 
                     warmup_days=settings["warmup_days"],
                     run_id=run_id,
                     origin="app",
-                    profiles=settings["clinical_path"] if settings["model"] == "clinico" else None,
+                    profiles=settings["clinical_path"],
                 )
             except FileExistsError:
                 st.error(f"No se ha creado la ejecución: el identificador «{run_id}» ya existe.")
@@ -407,25 +389,14 @@ def render_execution(draft: CenterDraft, blocked: bool, profile_valid: bool) -> 
 
 st.title("Simular")
 settings = execution_settings()
-st.session_state.model_widget = settings["model"]
-st.selectbox(
-    "Modelo",
-    ["clinico", "provisional"],
-    key="model_widget",
-    format_func=lambda value: "Clínico" if value == "clinico" else "Provisional",
+st.session_state.clinical_path_widget = settings["clinical_path"]
+st.text_input(
+    "Fichero de perfiles clínicos",
+    key="clinical_path_widget",
     on_change=update_setting,
-    args=("model", "model_widget"),
+    args=("clinical_path", "clinical_path_widget"),
 )
-clinical_path = None
-if settings["model"] == "clinico":
-    st.session_state.clinical_path_widget = settings["clinical_path"]
-    st.text_input(
-        "Fichero de perfiles clínicos",
-        key="clinical_path_widget",
-        on_change=update_setting,
-        args=("clinical_path", "clinical_path_widget"),
-    )
-    clinical_path = settings["clinical_path"]
+clinical_path = settings["clinical_path"]
 
 draft, blocked = render_center()
 profile_valid = False
@@ -435,51 +406,49 @@ except RunConfigurationError as error:
     st.error(str(error))
 else:
     profile_valid = True
-    if profiles is not None:
-        st.subheader("Resumen de los perfiles clínicos")
-        st.caption(f"Ruta: {clinical_path} · Huella: {fingerprint}")
-        st.caption(
-            "Expectativa anual de los perfiles; no son observaciones de una ejecución. "
-            "Solo lectura."
-        )
-        summary = summarize_profiles(profiles, arrivals)
-        st.dataframe(
-            [
-                {"Motivo": profiles.reason(key).name, "Porcentaje esperado": value}
-                for key, value in summary.reason_percentages.items()
-            ],
-            hide_index=True,
-        )
-        st.dataframe(
-            [
-                {"Nivel": level, "Asignado (%)": assigned, "Real (%)": true}
-                for level, (assigned, true) in enumerate(
-                    zip(
-                        summary.assigned_level_percentages,
-                        summary.true_level_percentages,
-                        strict=True,
-                    ),
-                    1,
-                )
-            ],
-            hide_index=True,
-        )
-        for label, value, unit in (
-            ("Infratriaje esperado", summary.undertriage_percentage, "%"),
-            ("Sobretriaje esperado", summary.overtriage_percentage, "%"),
-            ("Alguna prueba esperada", summary.any_test_percentage, "%"),
-            ("Valoración esperada", summary.assessment_minutes, "min/paciente"),
-            ("Reevaluación esperada", summary.reassessment_minutes, "min/paciente"),
-            ("Médico total esperado", summary.physician_minutes, "min/paciente"),
-        ):
-            st.metric(label, f"{decimal(value, 2)} {unit}")
-        st.dataframe(
-            [
-                {"Prueba": key, "Porcentaje esperado": value}
-                for key, value in summary.test_percentages.items()
-            ],
-            hide_index=True,
-        )
+    st.subheader("Resumen de los perfiles clínicos")
+    st.caption(f"Ruta: {clinical_path} · Huella: {fingerprint}")
+    st.caption(
+        "Expectativa anual de los perfiles; no son observaciones de una ejecución. Solo lectura."
+    )
+    summary = summarize_profiles(profiles, arrivals)
+    st.dataframe(
+        [
+            {"Motivo": profiles.reason(key).name, "Porcentaje esperado": value}
+            for key, value in summary.reason_percentages.items()
+        ],
+        hide_index=True,
+    )
+    st.dataframe(
+        [
+            {"Nivel": level, "Asignado (%)": assigned, "Real (%)": true}
+            for level, (assigned, true) in enumerate(
+                zip(
+                    summary.assigned_level_percentages,
+                    summary.true_level_percentages,
+                    strict=True,
+                ),
+                1,
+            )
+        ],
+        hide_index=True,
+    )
+    for label, value, unit in (
+        ("Infratriaje esperado", summary.undertriage_percentage, "%"),
+        ("Sobretriaje esperado", summary.overtriage_percentage, "%"),
+        ("Alguna prueba esperada", summary.any_test_percentage, "%"),
+        ("Valoración esperada", summary.assessment_minutes, "min/paciente"),
+        ("Reevaluación esperada", summary.reassessment_minutes, "min/paciente"),
+        ("Médico total esperado", summary.physician_minutes, "min/paciente"),
+    ):
+        st.metric(label, f"{decimal(value, 2)} {unit}")
+    st.dataframe(
+        [
+            {"Prueba": key, "Porcentaje esperado": value}
+            for key, value in summary.test_percentages.items()
+        ],
+        hide_index=True,
+    )
 
 # Fill both containers before demand sampling so all editor controls are visible.
 preview_container = st.container()

@@ -1,5 +1,6 @@
 # App web — incrementos
 
+Nov 5, 2026 · @Pedro
 
 Cada hito añade a EDsim Lab lo nuevo del modelo, y esta pestaña especifica cada incremento: objetivo, cambios en el núcleo y en las páginas, tests, decisiones, tareas y anexo. La pestaña del hito solo lista las tareas de la app y enlaza aquí. La fase 1, cerrada con `app-v0.1.0`, sigue en App web — fase 1.
 
@@ -23,7 +24,7 @@ Dentro del alcance
 
 Fuera del alcance
 
-- Editar perfiles en la app (decisión APP-0003): fase 2.
+- Editar perfiles en la app (decisión APP-0004): fase 2.
 - Calibrar desde la app: la calibración vive en la CLI y en el notebook 04.
 - Destino, abandono y boarding: incremento del hito 5.
 
@@ -49,7 +50,7 @@ Todo lo que las páginas necesitan calcular vive en `src/edsim/runs/`, con tests
 | `truth.py` | `EpisodeTruth` con G, nivel real, calidad del triaje, salto y respuesta por prueba; cumplimiento por nivel real | Solo se lee del ground truth, nunca del log |
 | `compare.py` | Tipos de emparejamiento: plantilla (mismos pacientes), clínico (mismos sorteos estándar, valores distintos) o sin emparejar | Una ejecución frente a sí misma da cero; con la disnea ×1,5 solo cambian de motivo los pacientes que pasan a disnea |
 
-Antes del cierre del hito (tarea 4.9), la app deja de leer los campos clínicos de `CenterConfig` (reparto de niveles, duraciones, pruebas). Así, la separación de `centro.toml` en la 4.9 solo toca el núcleo.
+La 4.8b dejó en Simular la opción del modelo provisional, que edita las secciones `[triaje]`, `[duraciones]` y `[pruebas]` de `config/centro.toml`. La 4.8c la quita (ver «Preparación del cierre»), para que la separación de `centro.toml` en la 4.9 solo toque el núcleo.
 
 ### Cambios en las páginas (tarea 4.8b, Codex)
 
@@ -65,6 +66,27 @@ Antes del cierre del hito (tarea 4.9), la app deja de leer los campos clínicos 
 
 La app usa el modelo clínico desde la 4.8b, aunque el núcleo no lo haga por defecto hasta la 4.9.
 
+### Preparación del cierre (tarea 4.8c, Codex)
+
+La tarea 4.9 hace del modelo clínico el de por defecto en el núcleo y quita de `config/centro.toml` las secciones `[triaje]`, `[duraciones]` y `[pruebas]`, que solo usa el modelo provisional. La 4.8b dejó en Simular la opción Provisional, que edita esas secciones, y 27 tests de `app/tests/test_simulate.py` simulan con ellas: con la separación, `tests-app` se rompería. La 4.8c deja la app lista para que la 4.9 solo toque el núcleo, y pone al día las ayudas.
+
+| Cambio | Detalle |
+| --- | --- |
+| Simular solo crea ejecuciones clínicas | Sin selector de modelo. Ningún paso de Simular (editor, validación, resumen, carga prevista y ejecución) lee `triaje.*`, `duraciones.*` ni `pruebas.*`; las variantes conservan tal cual las claves que la app no edita |
+| Ejecuciones provisionales | Se siguen listando y abriendo en las otras cinco páginas, como hasta ahora; la app ya no las crea (el núcleo sí, para la validación del motor) |
+| Valores ausentes | Un campo del centro sin valor (`None`) se muestra «—» en Comparar y en la tabla de la verdad, nunca «None» |
+| Ayudas | «¿Qué estoy viendo?» de Simular y Ejecuciones con el modelo clínico; las otras cuatro se revisan para que nada deje de ser cierto tras la 4.9 |
+| Contrato con la 4.9 | Un test de la app con un centro sin las tres secciones, marcado `xfail(strict=True)` mientras el núcleo las exija; la 4.9 quita la marca |
+| Menores | «— min» en la ficha del episodio cuando falta el valor; nota en `app/AGENTS.md`: `scripts/tests-completos.sh` falla en los notebooks dentro del sandbox de Codex y se ejecuta fuera, como los comandos de git |
+| Manual de usuario | `app/README.md` sigue diciendo que la app usa el motor del hito 3: introducción con el modelo clínico, tabla de las seis páginas con lo que añadió la 4.8b, `config/perfiles.toml` en «Datos en disco» y enlace a esta especificación |
+
+Qué cuentan las ayudas nuevas:
+
+- **Simular:** las ejecuciones nuevas usan el modelo clínico. Cada paciente sale de los perfiles (edad, sexo, medio, motivo, gravedad, triaje con error, pruebas y duraciones), y del centro solo cuentan turnos, plantilla, boxes, los niveles que esperan los resultados fuera y el destino provisional. El resumen de los perfiles es su expectativa anual, no lo que dará una ejecución. La carga prevista sale de una muestra del muestreador clínico: tarda unos segundos la primera vez y se reutiliza al cambiar la plantilla; quien espera los resultados fuera no ocupa box mientras espera.
+- **Ejecuciones:** el modelo de cada ejecución; una clínica guarda también la copia de sus perfiles y su huella, para poder reproducirla; las provisionales (hito 3) se abren, pero la app ya no las crea.
+
+Etiqueta `app-v0.2.1` tras la fusión.
+
 ### Tests
 
 - Núcleo (`tests/`): tests primero y valores a mano, como siempre; las comprobaciones cruzadas de la tabla de la 4.8a; un test con una ejecución de la versión 1 del formato guardada en `tests/data`.
@@ -76,18 +98,22 @@ La app usa el modelo clínico desde la 4.8b, aunque el núcleo no lo haga por de
 
 | # | Serie | Decisión | Motivo |
 | --- | --- | --- | --- |
-| APP-0003 | App | Los perfiles se ven y se eligen en la app, pero no se editan | Editar 17 motivos con validación en vivo es una tarea grande; encaja con la fase 2 |
+| APP-0004 | App | Los perfiles se ven y se eligen en la app, pero no se editan | Editar 17 motivos con validación en vivo es una tarea grande; encaja con la fase 2 |
+| APP-0005 | App | Desde la 4.8c, Simular solo crea ejecuciones del modelo clínico; las provisionales se siguen abriendo en el resto de páginas | El provisional queda para la validación del motor (decisión 44) y sus parámetros salen de `centro.toml` en la 4.9; la app es el laboratorio del modelo clínico |
 | Nota a la 0032 | Núcleo | `run.json` pasa a la versión 2 (modelo, copia y huella de los perfiles) y se siguen leyendo las ejecuciones de la versión 1 | Una ejecución tiene que poder reproducirse con todo lo que la generó |
 | Nota a la 0031 | Núcleo | Los incrementos de la app se documentan en esta pestaña, no en la del hito | Documentación de la app independiente, con su propio anexo |
 
+La decisión de los perfiles de solo lectura se numeró APP-0003 hasta el cierre de la 4.8b, pero ese número ya era la ADR «Codex para la fase 1» (`app/docs/decisiones/`): pasa a APP-0004. La 4.8c escribe las ADR APP-0004 y APP-0005.
+
 ### Tareas
 
-Van después del notebook 04 (tarea 4.7) y antes del cierre del hito (4.9), con el flujo de git de la pestaña del hito. La revisión con `@codex review` no se pide en estas dos tareas.
+Van después del notebook 04 (tarea 4.7) y antes del cierre del hito (4.9), con el flujo de git de la pestaña del hito. La revisión con `@codex review` no se pide en estas tres tareas.
 
 | # | Tarea | Quién | Rama | Resultado |
 | --- | --- | --- | --- | --- |
 | 4.8a | Núcleo de la app con perfiles en `runs/`: resumen, carga prevista, relojes, episodios, verdad y emparejamiento | Claude Code | `feat/h4-app-nucleo` | `runs/` trabaja con los dos modelos y la app sigue verde sin cambios |
 | 4.8b | Páginas con perfiles: Ejecuciones, Simular, Resultados, Episodios, Comparar, Replay y ayudas | Codex | `feat/app-h4-paginas` | La app usa el modelo clínico; etiqueta `app-v0.2.0` tras la fusión |
+| 4.8c | Preparación del cierre: Simular solo clínico, valores ausentes como «—», ayudas de Simular y Ejecuciones, test con un centro sin secciones provisionales (xfail hasta la 4.9) y menores | Codex | `feat/app-h4-cierre` | La 4.9 puede quitar las secciones provisionales sin tocar la app; etiqueta `app-v0.2.1` tras la fusión |
 
 ### Criterios de aceptación
 
@@ -96,12 +122,12 @@ Van después del notebook 04 (tarea 4.7) y antes del cierre del hito (4.9), con 
 - Resultados muestra los mismos KPIs que el resumen de la CLI, con los tres relojes etiquetados y el cumplimiento desde la clasificación.
 - Cualquier episodio muestra su perfil y, con «ver la verdad», su gravedad, su nivel real y la calidad de su triaje.
 - Comparar detecta el emparejamiento clínico y, con una ejecución consigo misma, da cero en todo.
-- Las ejecuciones antiguas (versión 1) se siguen listando y abriendo. Después de la 4.9, que quita las secciones clínicas de `centro.toml`, abrirlas necesita un lector compatible: el plan de la 4.9 lo decide y lo prueba.
-- CI en verde con `tests` y `tests-app`, y la etiqueta `app-v0.2.0` existe.
+- Las ejecuciones antiguas (versión 1 y provisionales) se siguen listando y abriendo. Tras la 4.8c, la app ya no crea ejecuciones provisionales ni lee en Simular las secciones provisionales del centro; la 4.9 añade al núcleo el lector compatible y quita la marca `xfail` del test de la app con un centro sin esas secciones.
+- CI en verde con `tests` y `tests-app`, y las etiquetas `app-v0.2.0` y `app-v0.2.1` existen.
 
 ### Anexo del incremento del hito 4
 
-Este anexo se amplía al cerrar las tareas 4.8a y 4.8b con lo que se hizo, los conceptos, las decisiones, los resultados, las versiones incorrectas y las lecciones aprendidas.
+Este anexo se amplía al cerrar las tareas 4.8a, 4.8b y 4.8c con lo que se hizo, los conceptos, las decisiones, los resultados, las versiones incorrectas y las lecciones aprendidas.
 
 #### Tarea 4.8a: núcleo de la app con perfiles clínicos
 
@@ -165,3 +191,62 @@ La validación del plan encontró que el recuento clínico construía la verdad 
 - Tarea 4.8b (Codex): las páginas con perfiles, el reloj C con sus etiquetas, la etiqueta de la sala, las dos esperas de box en las tablas, el payload de `resultados` y las etiquetas de los campos nuevos en Comparar. La carga prevista se guarda en caché por llegadas, perfiles y `espera_resultados_fuera`, y la plantilla usa `offered_work_from_load`.
 - Calibración, para versiones posteriores: `knob_loads` reparte la carga con la tasa de llegadas de cada turno y no ve el desfase; la noche queda un 15 % por debajo de su carga real de médicos en el año. Usar la carga prevista por turno en la regla.
 - Tarea 4.9: el docstring de `manchester_compliance` (`engine/targets.py`) aún dice «until task 4.8a».
+
+#### Tarea 4.8b: páginas de la app con perfiles clínicos
+
+**Qué se hizo**
+
+PR #53 (rama `feat/app-h4-paginas`, Codex): ocho commits y uno de la revisión, en `app/`, con una sola excepción autorizada en el núcleo: `edsim.runs` reexporta `load_profiles`, y el test de frontera lo admite. La etiqueta `app-v0.2.0` apunta a la fusión (`056f18c`).
+
+- **Simular:** selector de modelo, con el clínico por defecto y el provisional como opción; ruta editable del fichero de perfiles, con su huella; resumen de solo lectura (motivos, niveles asignado y real, infra y sobretriaje, pruebas y minutos de médico esperados). Con el modelo clínico, el editor solo muestra turnos, recursos y destino.
+- **Carga prevista:** `cached_offered_load` guarda la parte lenta (unos 7 s) con una clave sin la plantilla: modelo, huellas de llegadas y perfiles, valores clínicos del centro, días y muestra. `preview_work` aplica después `offered_work_from_load`, así que editar la plantilla no repite la muestra.
+- **Resultados:** los tres relojes, con las etiquetas «Puerta-médico (A)», «Desde el inicio del triaje (B)» y «Desde la clasificación (C)»; Manchester con el reloj C, calculado sobre una copia de `RunResults` en la caché de la app (`window_compliance(..., measure="classified_to_doctor")`), porque el núcleo sigue con A por defecto hasta la 4.9; pretriaje; nivel 1 con mediana y p90; reparto observado de motivos y niveles.
+- **Episodios:** perfil observable en la tabla, los filtros y la ficha; «Ver la verdad»; la sala de resultados y las dos esperas de box.
+- **Comparar:** tipo de emparejamiento (plantilla, clínico o sin emparejar) con su etiqueta, y cambios campo a campo, también los de `run.json` versión 2.
+- **Replay:** ficha con edad y motivo cuando ya constan en el log, sala de resultados y colores por nivel asignado.
+- **Payloads:** `plain_payload` muestra los eventos clínicos, también `resultados`, que `json.dumps` no admitía tal cual.
+- **Ayudas «¿Qué estoy viendo?»:** textos nuevos en Resultados, Episodios, Comparar y Replay.
+
+**Conceptos**
+
+- **La clave de una caché es lo que cambia la respuesta.** La carga prevista depende de las llegadas y los perfiles, no de la plantilla: sin la plantilla en la clave, cambiar un médico cuesta milisegundos.
+- **Otra medida en la app sin tocar el núcleo.** La app pide el cumplimiento con el reloj C y guarda una copia de los resultados con él; el núcleo conserva su valor por defecto hasta que la 4.9 lo cambie para todos.
+- **Qué población entra en cada cifra.** El reparto observado cuenta las llegadas de la ventana, también las que no han terminado, y nunca usa niveles reales; las esperas, solo los completados.
+- **Nivel asignado en la interfaz, real solo como verdad.** Colores, KPI y filtros usan el nivel asignado; el real, la gravedad y la calidad del triaje solo aparecen con «Ver la verdad».
+
+**Decisiones**
+
+- `load_profiles` se reexporta en `edsim.runs` para que la app no importe nada fuera de `__all__` (excepción a la regla de zonas, autorizada en la tarea).
+- Los perfiles se eligen por ruta, como el centro, y se validan al cargar; no se editan (APP-0004).
+- El reparto observado se calcula sobre las llegadas de la ventana.
+- La opción Provisional se queda en Simular, con el editor completo del centro.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| Tests de la app | En serie, unos 4 min 23 s (unos 2 min 30 s tras la P.1) |
+| Ejecuciones antiguas | v1, provisional y clínica se abren en las seis páginas |
+| Etiqueta | `app-v0.2.0` sobre `056f18c` |
+
+**Comprobación de las versiones incorrectas**
+
+Las del plan, aplicadas y deshechas; el detalle está en la descripción del PR #53.
+
+**Revisión**
+
+Aprobado con un commit de la revisión: comprobaciones de los datos de la sala, de la caché y de la selección de perfiles.
+
+**Lecciones aprendidas**
+
+- Una promesa de la especificación se comprueba en el código al cerrar la tarea: esta pestaña decía que, tras la 4.8b, la separación de `centro.toml` solo tocaría el núcleo, pero la opción Provisional de Simular sigue editando las secciones `[triaje]`, `[duraciones]` y `[pruebas]` de `config/centro.toml`, y 27 tests de `app/tests/test_simulate.py` simulan con ellas.
+- Lo lento se separa de lo que cambia y se guarda con una clave que no incluye lo que cambia.
+
+**Pendiente**
+
+- **Antes de la 4.9 (decidido al cerrar la 4.8b):** la tarea 4.8c (Codex) quita la opción Provisional de Simular, para que la separación de `centro.toml` no rompa `tests-app` (ver «Preparación del cierre»).
+- Ayudas de Simular y Ejecuciones: no explican el selector de modelo, el resumen de perfiles (expectativa anual, no observación), qué campos del centro usa cada modelo ni que una ejecución clínica guarda la copia de sus perfiles.
+- «— min» en la ficha del episodio cuando falta el valor.
+- La app no muestra `true_level_window_compliance` (cumplimiento por nivel real).
+- Comparar no muestra las diferencias de los perfiles clave a clave.
+- Los notebooks fallan dentro del sandbox de Codex en `scripts/tests-completos.sh`: anotarlo en `AGENTS.md`.

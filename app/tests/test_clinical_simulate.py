@@ -1,5 +1,6 @@
 """Exercise clinical inputs, demand caching and actual one-day simulation."""
 
+import json
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -31,7 +32,7 @@ def open_clinical():
 
 def test_default_clinical_summary_and_saved_one_day_run(catalog_root):
     app = open_clinical()
-    assert app.selectbox(key="model_widget").value == "clinico"
+    assert not any(widget.key == "model_widget" for widget in app.selectbox)
     assert app.text_input(key="clinical_path_widget").value == str(defaults.CLINICAL_PROFILES_PATH)
     assert not any(
         w.key.startswith(("edit_triaje.", "edit_duraciones.", "edit_pruebas."))
@@ -50,6 +51,8 @@ def test_default_clinical_summary_and_saved_one_day_run(catalog_root):
     app.number_input(key="days_widget").set_value(1).run()
     app.button(key="simulate_run").click().run()
     assert not app.exception and not app.error
+    metadata = json.loads((catalog_root / "centro-r2026" / "run.json").read_text())
+    assert metadata["model"] == "clinico"
     info = RunStore(catalog_root).open("centro-r2026")
     assert info.is_clinical and info.days == 1 and info.warmup_days == 0
     assert info.clinical_profiles_fingerprint == config_fingerprint(defaults.CLINICAL_PROFILES_PATH)
@@ -96,14 +99,14 @@ def test_invalid_clinical_file_is_a_message_and_blocks_simulation(content):
     assert any("No se pueden cargar los perfiles clínicos" in item.value for item in app.error)
 
 
-def test_switching_models_keeps_draft_settings_and_room_in_variants():
+def test_navigation_keeps_draft_settings_and_room_in_variants(center_template):
     app = open_clinical()
-    app.number_input(key="edit_recursos.medicos_0").set_value(13).run()
+    doctors = center_template["recursos"]["medicos"][0] + 1
+    app.number_input(key="edit_recursos.medicos_0").set_value(doctors).run()
     app.text_input(key="seed_widget").set_value("7").run()
-    app.selectbox(key="model_widget").select("provisional").run()
-    assert app.number_input(key="edit_duraciones.triaje_0")
-    app.selectbox(key="model_widget").select("clinico").run()
-    assert app.number_input(key="edit_recursos.medicos_0").value == 13
+    app.switch_page("views/runs.py").run()
+    app.switch_page("views/simulate.py").run()
+    assert app.number_input(key="edit_recursos.medicos_0").value == doctors
     assert app.text_input(key="seed_widget").value == "7"
     app.text_input(key="variant_name_widget").set_value("staff").run()
     app.button(key="save_variant").click().run()
@@ -142,13 +145,26 @@ def test_clinical_editor_ignores_absurd_provisional_fields(monkeypatch):
             side_effect=AssertionError("clinical model must not summarize the provisional center")
         ),
     )
+    calculate = Mock(wraps=preview.offered_load)
+    monkeypatch.setattr(preview, "offered_load", calculate)
     actual = open_clinical()
+    # The changed provisional fields reuse the existing clinical demand sample.
+    assert calculate.call_count == 0
     for table, reference in zip(actual.dataframe, expected, strict=True):
         pd.testing.assert_frame_equal(table.value, reference)
     assert {m.label: m.value for m in actual.metric} == metrics
+    actual.number_input(key="edit_recursos.boxes_None").set_value(
+        values["recursos.boxes"] + 1
+    ).run()
+    actual.text_input(key="variant_name_widget").set_value("preserved").run()
+    actual.button(key="save_variant").click().run()
+    assert not actual.exception and not actual.error
+    saved = read_center_values(defaults.VARIANTS_DIR / "preserved.toml")
+    assert saved == values | {"recursos.boxes": values["recursos.boxes"] + 1}
+    assert calculate.call_count == 0
 
 
-def test_local_profile_path_survives_navigation_and_updates_summary():
+def test_local_profile_path_survives_navigation_updates_summary_and_is_simulated(catalog_root):
     import tomlkit
 
     path = defaults.CLINICAL_PROFILES_PATH.parent / "alternative.toml"
@@ -167,6 +183,15 @@ def test_local_profile_path_survives_navigation_and_updates_summary():
     app.switch_page("views/simulate.py").run()
     assert app.text_input(key="clinical_path_widget").value == str(path)
     assert any(config_fingerprint(path) in t.value for t in app.caption)
+    app.number_input(key="days_widget").set_value(1).run()
+    app.button(key="simulate_run").click().run(timeout=30)
+    assert not app.exception and not app.error
+    metadata = json.loads((catalog_root / "centro-r2026" / "run.json").read_text())
+    assert metadata["model"] == "clinico"
+    info = RunStore(catalog_root).open("centro-r2026")
+    assert info.is_clinical
+    assert info.clinical_profiles_fingerprint == config_fingerprint(path)
+    assert (catalog_root / info.run_id / "perfiles.toml").read_bytes() == path.read_bytes()
 
 
 def test_spinner_is_shown_only_when_a_new_clinical_sample_is_needed(monkeypatch):
