@@ -1,21 +1,32 @@
 """Minute-by-minute offered work with finite-sample prehistory."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.signal import fftconvolve
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.arrivals.rate import MINUTES_PER_DAY, cumulative_rate, rate
+from edsim.arrivals.thinning import ArrivalRecord
 from edsim.checks import check_count
 from edsim.engine.center import CenterConfig
+from edsim.engine.clinical import PatientDraws, triage_duration
+from edsim.engine.clinical_sampler import N_SAMPLER_STREAMS, ClinicalSampler
 from edsim.engine.shifts import shift_at
 from edsim.engine.validation import _held_intervals, draws_sample, offered_load_by_pool
+from edsim.profiles.config import N_DAY_TYPES, N_SEASONS, ClinicalProfiles
+from edsim.profiles.context import context_indices
+from edsim.seeds import child_streams
 
 _POOLS = ("medicos", "boxes", "enfermeria_triaje")
+
+OFFERED_PRIOR_CAP_DAYS = 7
+"""Days before ``start_date`` over which the clinical sample is drawn and convolved."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +58,7 @@ def offered_work(
     *,
     sample_size: int = 50_000,
     sample_seed: int = 73_001,
+    profiles: ClinicalProfiles | None = None,
 ) -> OfferedWork:
     """Predict offered work without waits or daily random effects, from start_date.
 
@@ -66,10 +78,17 @@ def offered_work(
 
     Shift utilization integrates load with one-minute trapezoids and divides
     by the shift's constant scheduled capacity, including night across midnight.
+
+    With ``profiles``, the patients come from the clinical sampler, each with
+    the context of its own arrival instant (``_clinical_load``); without them,
+    exactly the provisional sample above.
     """
     days = check_count("days", days, 1)
     sample_size = check_count("sample_size", sample_size, 1)
     sample_seed = check_count("sample_seed", sample_seed, 0)
+    if profiles is not None:
+        load, prior_days = _clinical_load(center, profile, days, sample_size, sample_seed, profiles)
+        return _offered(center, profile, days, prior_days, load)
     draws = draws_sample(center, sample_size, seed=sample_seed)
     maximum_age = max(
         end
@@ -82,6 +101,19 @@ def offered_work(
     offset = prior_days * MINUTES_PER_DAY
     horizon = days * MINUTES_PER_DAY
     curves = offered_load_by_pool(previous_profile, draws, horizon=offset + horizon)
+    load = {pool: curves[pool][offset : offset + horizon + 1].copy() for pool in _POOLS}
+    return _offered(center, profile, days, prior_days, load)
+
+
+def _offered(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    days: int,
+    prior_days: int,
+    load: dict[str, NDArray[np.float64]],
+) -> OfferedWork:
+    """Capacities and shift utilizations of a load given at minutes 0..``days * 1440``."""
+    horizon = days * MINUTES_PER_DAY
     minutes = np.arange(horizon + 1, dtype=np.int64)
     shifts = np.fromiter(
         (shift_at(center.shift_starts, int(t)) for t in minutes),
@@ -93,7 +125,6 @@ def offered_work(
         "boxes": (center.boxes,) * 3,
         "enfermeria_triaje": center.triage_nurses,
     }
-    load = {pool: curves[pool][offset : offset + horizon + 1].copy() for pool in _POOLS}
     capacity = {pool: np.asarray(staff[pool], dtype=np.int64)[shifts] for pool in _POOLS}
     utilization = {}
     for pool in _POOLS:
@@ -103,3 +134,140 @@ def offered_work(
             for shift in range(3)
         )
     return OfferedWork(profile.start_date, days, prior_days, minutes, load, capacity, utilization)
+
+
+# --- Clinical sample (task 4.8a) -----------------------------------------------------------
+
+
+def _clinical_intervals(
+    draws: PatientDraws, arrival: float, wait_outside: Sequence[int]
+) -> dict[str, list[tuple[float, float]]]:
+    """Ages at which a clinical patient who never waits holds each pool.
+
+    As ``engine.validation._held_intervals``, with the turnaround of the round
+    timed at its order (arrival + triage + assessment). A patient whose
+    assigned level is in ``wait_outside`` and has a round leaves its box at the
+    order and gets one back with its results: the results room is not a box.
+    """
+    triaged = triage_duration(draws.level, draws.triage_time)
+    assessed = triaged + draws.assessment_time
+    doctor = [(triaged, assessed)]
+    boxes = [(triaged, assessed)]
+    if draws.needs_tests:
+        assert draws.clinical is not None
+        results = assessed + draws.clinical.round_turnaround(arrival + assessed)
+        end = results + draws.reassessment_time
+        doctor.append((results, end))
+        if draws.level in wait_outside:
+            boxes.append((results, end))
+        else:
+            boxes = [(triaged, end)]
+    return {"enfermeria_triaje": [(0.0, triaged)], "medicos": doctor, "boxes": boxes}
+
+
+def _occupancy(held: list[tuple[float, float]], n: int) -> NDArray[np.float64]:
+    """Share of ``n`` patients holding at each age k + ½, as in ``offered_load_by_pool``."""
+    if not held:
+        return np.zeros(1)
+    a, b = np.array(held).T
+    # [a, b) contains the midpoint k + ½ exactly for ceil(a − ½) <= k < ceil(b − ½).
+    low = np.ceil(a - 0.5).astype(np.int64)
+    high = np.ceil(b - 0.5).astype(np.int64)
+    counts = np.zeros(int(high.max()) + 1, dtype=np.int64)
+    np.add.at(counts, low, 1)
+    np.add.at(counts, high, -1)
+    occupancy = np.cumsum(counts)[:-1] / n
+    return occupancy if occupancy.size else np.zeros(1)
+
+
+def _context_index(times: NDArray[np.float64], start: date, starts: Sequence[int]):
+    """Flat index of the context of each time, in the order of ``all_contexts``."""
+    shift, day, season = context_indices(times, start, starts)
+    return (shift * N_DAY_TYPES + day) * N_SEASONS + season
+
+
+def _clinical_load(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    days: int,
+    sample_size: int,
+    sample_seed: int,
+    profiles: ClinicalProfiles,
+) -> tuple[dict[str, NDArray[np.float64]], int]:
+    """Offered load of a clinical sample, each patient with the context of its arrival.
+
+    The arrival instants of the sample are drawn from λ(t) over
+    ``OFFERED_PRIOR_CAP_DAYS`` days before ``start_date`` and the window (the
+    inverse of the exact Λ on a one-minute grid, linear inside each minute),
+    and each patient is drawn by the ``ClinicalSampler`` at its instant: its
+    shift band, day type and season, and the shift band of its order. Patients
+    are grouped by the context of their arrival; the occupancy of each group is
+    convolved with λ(t)·1{context(t) = c} and the groups are added::
+
+        m(j) = Σ_c Σ_k λ_c(j − k − ½) · P(a patient of context c holds at age k + ½).
+
+    Approximation: the intervals of each patient are computed at its own
+    instant, with the real shift band of its order, but its occupancy is
+    applied to every instant of its context, so the band of the order may not
+    match exactly when the order falls in another band than the arrival. With
+    profiles without shift band factors of the turnaround it is exact in
+    expectation.
+
+    Returns the load at minutes 0..``days * 1440`` and the prehistory in days,
+    ``max(1, ceil(maximum_sample_occupation_age / 1440))``, as in the
+    provisional model; the convolution starts ``OFFERED_PRIOR_CAP_DAYS``
+    before, which contains it.
+
+    Raises:
+        ValueError: If the prehistory exceeds ``OFFERED_PRIOR_CAP_DAYS``, or a
+            context with arrivals in the prehistory or the window has no
+            patient in the sample (too small a sample).
+    """
+    cap = OFFERED_PRIOR_CAP_DAYS * MINUTES_PER_DAY
+    horizon = days * MINUTES_PER_DAY
+    span = cap + horizon
+    early = replace(profile, start_date=profile.start_date - timedelta(days=OFFERED_PRIOR_CAP_DAYS))
+    starts = profiles.shift_band_starts
+    arrival_seed, patient_seed = child_streams(sample_seed, 2)
+    grid = np.arange(span + 1, dtype=float)
+    cumulative = np.asarray(cumulative_rate(grid, early), dtype=float)
+    u = np.sort(np.random.default_rng(arrival_seed).random(sample_size)) * cumulative[-1]
+    times = np.interp(u, cumulative, grid)
+    sampler = ClinicalSampler(
+        profiles, early.start_date, center, child_streams(patient_seed, N_SAMPLER_STREAMS)
+    )
+    contexts = _context_index(times, early.start_date, starts)
+    held: dict[int, dict[str, list[tuple[float, float]]]] = {}
+    maximum_age = 0.0
+    for i, (t, c) in enumerate(zip(times, contexts, strict=True)):
+        intervals = _clinical_intervals(
+            sampler(ArrivalRecord(i, float(t))), float(t), center.results_wait_outside
+        )
+        group = held.setdefault(int(c), {pool: [] for pool in _POOLS})
+        for pool, spans in intervals.items():
+            group[pool].extend(spans)
+            maximum_age = max(maximum_age, *(end for _, end in spans))
+    prior_days = max(1, math.ceil(maximum_age / MINUTES_PER_DAY))
+    if prior_days > OFFERED_PRIOR_CAP_DAYS:
+        raise ValueError(
+            f"the sample needs {prior_days} days of prehistory, "
+            f"more than OFFERED_PRIOR_CAP_DAYS ({OFFERED_PRIOR_CAP_DAYS})"
+        )
+    midpoints = np.arange(span) + 0.5
+    lam = np.asarray(rate(midpoints, early), dtype=float)
+    minute_contexts = _context_index(midpoints, early.start_date, starts)
+    counts = np.bincount(contexts, minlength=N_SEASONS * N_DAY_TYPES * 3)
+    load = {pool: np.zeros(span) for pool in _POOLS}
+    for c in np.unique(minute_contexts[lam > 0]):
+        if counts[c] == 0:
+            raise ValueError(
+                f"sample_size {sample_size} is too small: no patient in context {int(c)}"
+            )
+        lam_c = np.where(minute_contexts == c, lam, 0.0)
+        for pool in _POOLS:
+            occupancy = _occupancy(held[int(c)][pool], int(counts[c]))
+            load[pool] += fftconvolve(lam_c, occupancy)[:span]
+    offset = cap
+    return {
+        pool: np.concatenate([[0.0], load[pool]])[offset : offset + horizon + 1] for pool in _POOLS
+    }, prior_days
