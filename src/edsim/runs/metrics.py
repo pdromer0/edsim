@@ -1,11 +1,21 @@
-"""Window KPIs and Manchester counts for completed episodes."""
+"""Window KPIs, Manchester counts, the three clocks and the pretriage of completed episodes."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.analysis import EpisodeRecord, WindowMetrics, completed_in_window
-from edsim.engine.targets import Compliance, manchester_compliance
+from edsim.engine.targets import (
+    CLOCKS,
+    Compliance,
+    LevelClocks,
+    Pretriage,
+    clock_quantiles,
+    manchester_compliance,
+    pretriage,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,18 +81,24 @@ class WindowCompliance:
 
 
 APP_COMPLIANCE_MEASURE = "door_to_doctor"
-"""Clock the app shows for Manchester: A, until task 4.8a moves it to C."""
+"""Default clock of ``window_compliance``: A, what the app shows until task 4.8b passes C."""
 
 
 def window_compliance(
-    table: Sequence[EpisodeRecord], first_day: int, end_day: int
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    *,
+    measure: str = APP_COMPLIANCE_MEASURE,
 ) -> WindowCompliance:
     """Use Manchester's daily targets in [first_day, end_day), pooling patients.
 
-    Measured with ``APP_COMPLIANCE_MEASURE``, passed explicitly so that the
-    default of ``manchester_compliance`` (clock C) does not change the app.
+    ``measure`` is the clock, a name of ``CLOCKS``. Its default is
+    ``APP_COMPLIANCE_MEASURE`` (clock A), passed explicitly so that the default
+    of ``manchester_compliance`` (clock C) does not change the app; task 4.8b
+    passes ``classified_to_doctor`` with its labels.
     """
-    daily = manchester_compliance(table, first_day, end_day, measure=APP_COMPLIANCE_MEASURE)
+    daily = manchester_compliance(table, first_day, end_day, measure=measure)
     done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
     shares = daily.share_out
     levels = []
@@ -101,3 +117,107 @@ def window_compliance(
             )
         )
     return WindowCompliance(daily, tuple(levels))
+
+
+# --- The three clocks, the level 1 and the pretriage (task 4.8a) -------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ClockStatistics:
+    """Mean, median and 90th percentile of one clock, in minutes; None without patients."""
+
+    measure: str
+    mean: float | None
+    median: float | None
+    p90: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class LevelClockSummary:
+    """The clocks A, B and C of one level, in the order of ``CLOCKS``."""
+
+    level: int
+    n: int
+    clocks: tuple[ClockStatistics, ...]
+
+
+def window_clocks(
+    table: Sequence[EpisodeRecord], first_day: int, end_day: int
+) -> tuple[LevelClockSummary, ...]:
+    """The three clocks to the doctor of levels 1 to 5, in days ``[first_day, end_day)``.
+
+    Median and p90 are those of ``clock_quantiles`` (linear interpolation); the
+    mean is over the same patients, those who arrived in the stretch and
+    departed. For the level 1, whose maximum is 0, show only the median and the
+    p90 (``level_one_clocks``): a share of compliance would always be 0 %.
+    """
+    quantiles = clock_quantiles(table, first_day, end_day)
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    out = []
+    for q in quantiles:
+        episodes = [e for e in done if e.level == q.level]
+        clocks = []
+        for name in CLOCKS:
+            values = [getattr(e, name) for e in episodes]
+            mean = float(np.mean(values)) if values else None
+            clocks.append(ClockStatistics(name, mean, q.median[name], q.p90[name]))
+        out.append(LevelClockSummary(q.level, q.n, tuple(clocks)))
+    return tuple(out)
+
+
+def level_one_clocks(table: Sequence[EpisodeRecord], first_day: int, end_day: int) -> LevelClocks:
+    """The level 1 with its time alone: median and p90 of the three clocks, no share."""
+    return clock_quantiles(table, first_day, end_day)[0]
+
+
+@dataclass(frozen=True, slots=True)
+class PretriageGroup:
+    """The pretriage of a group of levels over the stretch.
+
+    ``group`` is a level, 2 to 5, or None for the four together. Shares are
+    fractions of the patients of the stretch (None without patients):
+    ``within_share`` started the triage within the maximum (10 minutes,
+    exactly at it complies) and ``over_share`` waited more than 5 minutes (the
+    TECLA of the SAS). ``days_out`` counts the days below the 85 % target among
+    the ``days_with_patients``.
+    """
+
+    group: int | None
+    n: int
+    within_share: float | None
+    over_share: float | None
+    days_out: int
+    days_with_patients: int
+
+
+@dataclass(frozen=True, slots=True)
+class WindowPretriage:
+    """Daily pretriage of ``engine.targets.pretriage`` and its pooled groups."""
+
+    daily: Pretriage
+    by_group: tuple[PretriageGroup, ...]
+
+
+def window_pretriage(
+    table: Sequence[EpisodeRecord], first_day: int, end_day: int
+) -> WindowPretriage:
+    """The pretriage indicator in days ``[first_day, end_day)``, without the level 1.
+
+    The level 1 is classified at the door and does not count. Groups are those
+    of ``PRETRIAGE_GROUPS``: levels 2, 3, 4 and 5, and the four together.
+    """
+    daily = pretriage(table, first_day, end_day)
+    groups = []
+    for g, group in enumerate(daily.groups):
+        n = int(daily.pooled_n[g])
+        groups.append(
+            PretriageGroup(
+                group,
+                n,
+                float(daily.pooled_within[g]) if n else None,
+                float(daily.pooled_over[g]) if n else None,
+                int(daily.out[:, g].sum()),
+                int(daily.days_with_patients[g]),
+            )
+        )
+    return WindowPretriage(daily, tuple(groups))

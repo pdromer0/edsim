@@ -338,7 +338,7 @@ Entre la llegada y el primer médico hay tres tramos (pretriaje, triaje y espera
 **Reglas:**
 
 - `manchester_compliance` recibe la medida como parámetro y usa C por defecto. Un día está fuera para un nivel si menos del 90 % de sus pacientes llega dentro del máximo (justo en el máximo cumple), como en la tarea 3.8.
-- `runs/metrics.py` pasa la medida de forma explícita: la app sigue mostrando el reloj A hasta la tarea 4.8a, que la cambia a C junto con las etiquetas de la 4.8b.
+- `runs/metrics.py` pasa la medida de forma explícita: `window_compliance` tiene el parámetro `measure` desde la tarea 4.8a, con el reloj A por defecto (`APP_COMPLIANCE_MEASURE`), así que la app sigue mostrando A; la tarea 4.8b pasará C junto con sus etiquetas.
 - **Pretriaje con indicador propio**, por día: porcentaje con pretriaje de 10 minutos o menos (estándar del 85 %) y porcentaje por encima de 5 minutos (el TECLA del SAS). Los niveles 1 no cuentan.
 - **Nivel 1 solo con su tiempo** (mediana y p90), sin porcentaje: su máximo es 0 y el porcentaje sería siempre 0 %.
 - **Cumplimiento por nivel real**, solo con ground truth: la misma regla con el nivel real. La diferencia con el KPI es el coste del infratriaje medido en tiempo. Nunca entra en el log ni en los KPIs observables.

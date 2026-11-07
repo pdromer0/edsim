@@ -59,11 +59,21 @@ from edsim.runs.filters import (
 )
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.metrics import (
+    APP_COMPLIANCE_MEASURE,
+    ClockStatistics,
+    LevelClocks,
+    LevelClockSummary,
     LevelCompliance,
+    Pretriage,
+    PretriageGroup,
     WindowCompliance,
     WindowKPIs,
+    WindowPretriage,
+    level_one_clocks,
+    window_clocks,
     window_compliance,
     window_kpis,
+    window_pretriage,
 )
 from edsim.runs.offered import OfferedWork, offered_work
 from edsim.runs.replay import (
@@ -164,6 +174,16 @@ __all__ = [
     "EpisodeEventIndex",
     "Event",
     "LevelCompliance",
+    "APP_COMPLIANCE_MEASURE",
+    "ClockStatistics",
+    "LevelClocks",
+    "LevelClockSummary",
+    "Pretriage",
+    "PretriageGroup",
+    "WindowPretriage",
+    "level_one_clocks",
+    "window_clocks",
+    "window_pretriage",
     "MAX_VARIANT_NAME_LENGTH",
     "MAX_VIOLATIONS_SHOWN",
     "SUMMARY_MEASURES",
