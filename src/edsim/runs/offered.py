@@ -315,7 +315,7 @@ def _clinical_load(
     midpoints = np.arange(span) + 0.5
     lam = np.asarray(rate(midpoints, early), dtype=float)
     minute_contexts = _context_index(midpoints, early.start_date, starts)
-    counts = np.bincount(contexts, minlength=N_SEASONS * N_DAY_TYPES * 3)
+    counts = np.bincount(contexts, minlength=len(starts) * N_DAY_TYPES * N_SEASONS)
     load = {pool: np.zeros(span) for pool in _POOLS}
     for c in np.unique(minute_contexts[lam > 0]):
         if counts[c] == 0:
