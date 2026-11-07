@@ -68,7 +68,7 @@ from edsim.calibration.window import (
     window_start_dates,
 )
 from edsim.checks import check_count
-from edsim.engine.center import load_center
+from edsim.engine.center import CenterConfig, load_center
 from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
     format_engine_validation,
@@ -104,6 +104,12 @@ SHORT_DAYS = 14
 """Days of each short run of test e, as in the specification."""
 
 DEFAULT_CENTER = "config/centro.toml"
+DEFAULT_PROVISIONAL_CENTER = "tests/data/centro_ejemplo.toml"
+"""Center of the provisional model, with ``[triaje]``, ``[duraciones]`` and ``[pruebas]``.
+
+``config/centro.toml`` has no provisional block since task 4.9: ``motor validar``,
+which validates the engine with the provisional model, uses this one by default.
+"""
 EVENTS_FILE = "eventos.jsonl"
 EPISODES_CSV = "ground_truth_episodios.csv"
 GROUND_TRUTH_DAYS_CSV = "ground_truth_dias.csv"
@@ -324,6 +330,18 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
     return center, profile
 
 
+def _check_provisional_center(
+    center: CenterConfig, args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    """Stop with a usage error (code 2) if the provisional model gets a center without its block."""
+    if not center.has_provisional:
+        parser.error(
+            f"--centro {args.centro}: el modelo provisional necesita las tablas [triaje], "
+            "[duraciones] y [pruebas] del centro, y este no las tiene; su centro es "
+            f"{DEFAULT_PROVISIONAL_CENTER}"
+        )
+
+
 def _model_line(args: argparse.Namespace) -> str:
     if args.perfiles is None:
         return "Modelo provisional"
@@ -341,8 +359,14 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     out_dir = _output_dir(args, parser)
     if out_dir.exists() or out_dir.is_symlink():
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
-    _load_engine_configs(args, parser)
-    if args.perfiles is not None:
+    center, _ = _load_engine_configs(args, parser)
+    # The clinical model is the default (decision 44): without --provisional, the
+    # profiles are --perfiles or config/perfiles.toml.
+    if args.provisional:
+        _check_provisional_center(center, args, parser)
+    else:
+        if args.perfiles is None:
+            args.perfiles = DEFAULT_PROFILES
         _, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
     try:
         check_horizon(args.dias, args.calentamiento)
@@ -379,6 +403,7 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
 def _validate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     out_dir = _output_dir(args, parser)
     center, profile = _load_engine_configs(args, parser)
+    _check_provisional_center(center, args, parser)
     try:
         check_engine_validation_counts(replicas=args.replicas)
     except ValueError as e:
@@ -611,10 +636,10 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
     return 0 if chosen is not None else 1
 
 
-def _add_engine_options(parser: argparse.ArgumentParser) -> None:
+def _add_engine_options(parser: argparse.ArgumentParser, center: str = DEFAULT_CENTER) -> None:
     parser.add_argument(
         "--centro",
-        default=DEFAULT_CENTER,
+        default=center,
         metavar="FICHERO",
         help="configuración del centro en TOML (por defecto: %(default)s)",
     )
@@ -856,16 +881,26 @@ def build_parser() -> argparse.ArgumentParser:
         description=f"Simula N días y guarda en el directorio de salida {EVENTS_FILE} (el "
         f"log de eventos), {EPISODES_CSV} y {GROUND_TRUTH_DAYS_CSV} (el ground truth). "
         "Comprueba las invariantes e imprime un resumen derivado del log. Termina con "
-        "código 1 si alguna invariante falla. Con --perfiles, simula el modelo clínico y "
-        "guarda también una copia de los perfiles; sin la opción, el modelo provisional.",
+        "código 1 si alguna invariante falla. Simula el modelo clínico, el de por defecto: "
+        f"cada paciente sale de los perfiles ({DEFAULT_PROFILES} o --perfiles), y la "
+        "ejecución guarda también una copia de ellos. Con --provisional, el modelo "
+        "provisional del hito 3, que se queda para la validación del motor y necesita un "
+        "centro con [triaje], [duraciones] y [pruebas], como "
+        f"{DEFAULT_PROVISIONAL_CENTER}.",
     )
     _add_engine_options(simulate)
-    simulate.add_argument(
+    model = simulate.add_mutually_exclusive_group()
+    model.add_argument(
         "--perfiles",
         default=None,
         metavar="FICHERO",
-        help="perfiles clínicos en TOML, como config/perfiles.toml; sin la opción, el modelo "
-        "provisional del hito 3",
+        help=f"perfiles clínicos en TOML (por defecto: {DEFAULT_PROFILES})",
+    )
+    model.add_argument(
+        "--provisional",
+        action="store_true",
+        help="simula el modelo provisional del hito 3 en lugar del clínico; necesita un "
+        f"--centro con su bloque provisional, como {DEFAULT_PROVISIONAL_CENTER}",
     )
     simulate.add_argument(
         "--dias",
@@ -897,9 +932,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Ejecuta la validación del motor (invariantes, Little, utilización, "
         "M/G/1, Mₜ/G/∞, capacidad infinita y más médicos), imprime la tabla y guarda "
         f"{CENSUS_PLOT}, {WAITS_PLOT}, {MG1_PLOT} y {HOURLY_CENSUS_PLOT}. Tarda unos "
-        "2 minutos. Termina con código 1 si alguna comprobación falla.",
+        "2 minutos. Termina con código 1 si alguna comprobación falla. Usa el modelo "
+        "provisional, que tiene teoría conocida (M/G/1), con su centro: por defecto "
+        f"{DEFAULT_PROVISIONAL_CENTER}.",
     )
-    _add_engine_options(engine_validate)
+    _add_engine_options(engine_validate, center=DEFAULT_PROVISIONAL_CENTER)
     engine_validate.add_argument(
         "--replicas",
         type=int,
