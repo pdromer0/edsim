@@ -11,3 +11,6 @@ wheels/
 
 # Resultados generados por la CLI: se regeneran, no se versionan
 resultados/
+
+# Sellos de los tests rápidos (scripts/tests-rapidos.sh): estado local, no se versionan
+.cache/edsim/

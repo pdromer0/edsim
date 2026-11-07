@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Un push nuevo a un PR cancela su ejecución anterior. En main el grupo es el commit, así que
+# nunca se cancela una ejecución de main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -17,8 +23,18 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # En serie: en el runner (4 workers con -n logical), xdist no llega al 60 % de la serie
+      # (463 s). worksteal tardó 470 s (101 %) y loadfile 382 s (82 %), porque cada worker
+      # recalcula los fixtures de sesión y de módulo. Los scripts locales sí usan xdist.
       - run: uv run pytest
-      - name: Notebook (modo rápido)
+
+  notebooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --locked
+      - name: Notebooks (modo rápido)
         run: uv run pytest --nbmake notebooks/
         env:
           EDSIM_NB_RAPIDO: "1"
