@@ -189,10 +189,10 @@ def manchester_compliance(
 
     A patient complies if its ``measure`` is at most the maximum of its level
     (exactly at the maximum complies). The default is clock C, from the
-    classification; the app and notebook 03 pass ``door_to_doctor`` (clock A)
-    until task 4.8a. A day is out of target for a
-    level if the share of its patients that comply is below ``target``; a day
-    without patients of the level is not counted.
+    classification, which ``runs/`` and the app use too. Notebook 03 passes
+    ``door_to_doctor`` (clock A) to compare with milestone 3. A day is out of
+    target for a level if the share of its patients that comply is below
+    ``target``; a day without patients of the level is not counted.
 
     Args:
         table: The episodes of the log, from ``episode_table``.
