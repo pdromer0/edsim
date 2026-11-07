@@ -11,6 +11,7 @@ from edsim.runs import (
     RunReadError,
     RunStore,
     curve_steps,
+    observed_profiles,
     read_replay_state,
     read_run_header,
     replay_counts,
@@ -18,7 +19,12 @@ from edsim.runs import (
 )
 from edsim_app.charts import replay_census_chart
 from edsim_app.episodes import open_replay_episode
-from edsim_app.frames import EPISODE_STATE_LABELS, episode_events_frame, wall_times
+from edsim_app.frames import (
+    episode_events_frame,
+    episode_state_label,
+    observed_profile_row,
+    wall_times,
+)
 from edsim_app.plan import render_plan
 from edsim_app.replay import (
     advance_playback,
@@ -29,7 +35,7 @@ from edsim_app.replay import (
     start_playback,
     step_position,
 )
-from edsim_app.results import cached_run_results
+from edsim_app.results import cached_episode_events, cached_run_results
 from edsim_app.state import catalog_store
 
 
@@ -150,7 +156,7 @@ def render_details(result, identity, index, t):
             {
                 "Episodio": p.episode_id,
                 "Nivel": p.level,
-                "Estado": EPISODE_STATE_LABELS[p.state],
+                "Estado": episode_state_label(p.state, results_room=p.results_room),
                 "Box": p.box,
                 "Llegada (UTC+1)": wall_times(result, [p.arrival])[0],
             }
@@ -166,6 +172,24 @@ def render_details(result, identity, index, t):
         key="replay_patient_widget",
         placeholder="Elige un episodio",
     )
+    if selected is not None and result.profiles is not None:
+        events = cached_episode_events(identity[0], identity[1], identity[2], selected)
+        observed = observed_profiles(
+            (event for event in events if event.sim_time <= t), result.profiles.population
+        )[selected]
+        row = observed_profile_row(observed, result.profiles)
+        st.subheader(f"Ficha del paciente {selected}")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Edad": row["Edad"],
+                        "Motivo": row["Motivo"] or "Sin observar",
+                    }
+                ]
+            ),
+            hide_index=True,
+        )
     if st.button("Abrir ficha", key="replay_open_episode", disabled=selected is None):
         open_replay_episode(identity, selected)
 
@@ -235,6 +259,9 @@ with st.expander("¿Qué estoy viendo?"):
         "llegada y la cola de box por nivel y llegada; solo el nivel 1 puede desalojar."
     )
     st.write(
+        "La edad y el motivo de la ficha solo aparecen cuando ya constan en el log. "
+        "Los colores muestran el nivel asignado, nunca el real. La sala de resultados "
+        "está fuera del box; su etiqueta distingue espera de pruebas y vuelta al box. "
         "El laboratorio sigue trabajando si el paciente pierde su box. Los bordes "
         "marcan desalojos de los últimos 60 minutos. Ocupados / plantilla puede "
         "superar 1 al bajar la plantilla: nadie se interrumpe. Horas UTC+1 fijo."
