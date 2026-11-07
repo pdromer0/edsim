@@ -1,5 +1,6 @@
 """Exercise clinical inputs, demand caching and actual one-day simulation."""
 
+import json
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -50,6 +51,8 @@ def test_default_clinical_summary_and_saved_one_day_run(catalog_root):
     app.number_input(key="days_widget").set_value(1).run()
     app.button(key="simulate_run").click().run()
     assert not app.exception and not app.error
+    metadata = json.loads((catalog_root / "centro-r2026" / "run.json").read_text())
+    assert metadata["model"] == "clinico"
     info = RunStore(catalog_root).open("centro-r2026")
     assert info.is_clinical and info.days == 1 and info.warmup_days == 0
     assert info.clinical_profiles_fingerprint == config_fingerprint(defaults.CLINICAL_PROFILES_PATH)
@@ -183,6 +186,8 @@ def test_local_profile_path_survives_navigation_updates_summary_and_is_simulated
     app.number_input(key="days_widget").set_value(1).run()
     app.button(key="simulate_run").click().run(timeout=30)
     assert not app.exception and not app.error
+    metadata = json.loads((catalog_root / "centro-r2026" / "run.json").read_text())
+    assert metadata["model"] == "clinico"
     info = RunStore(catalog_root).open("centro-r2026")
     assert info.is_clinical
     assert info.clinical_profiles_fingerprint == config_fingerprint(path)

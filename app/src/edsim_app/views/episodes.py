@@ -181,7 +181,7 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
         ("Espera inicial de box", record.initial_box_wait),
         ("Espera de box al volver", record.results_box_wait),
     ):
-        st.metric(label, f"{format_number(value)} min")
+        st.metric(label, "—" if value is None else f"{format_number(value)} min")
     if result.observed is not None:
         for label, value in observed_profile_row(
             result.observed[record.episode_id], result.profiles
