@@ -244,6 +244,8 @@ Entre el simulador y el broker hay una red, y cualquiera de los dos puede fallar
 
 **Cuánto se reintenta.** librdkafka reintenta durante `message.timeout.ms`, 300.000 ms (5 minutos) por defecto. Si el broker se cae y vuelve antes, no se pierde nada; si pasa ese tiempo, el aviso de entrega llega con error.
 
+**El primer mensaje tras arrancar Kafka.** Un productor idempotente pide antes un identificador (PID) al broker. Justo después de `docker compose up`, el broker puede contestar «Coordinator load in progress» porque aún carga ese componente: librdkafka lo registra como aviso (`%4|…|GETPID|…`) y reintenta solo. No es un fallo. El healthcheck solo comprueba que el broker responde, no que todo esté cargado. En la 6.1, el primer mensaje de un broker recién levantado tardó 1.031 ms en llegar, y 510 ms en caliente.
+
 ### En EDsim
 
 - **Productor idempotente**, `acks=all`, `partitioner=murmur2_random` (pieza 2) y los valores por defecto de `linger.ms` y `message.timeout.ms`.
@@ -544,6 +546,8 @@ La carpeta aparte evita una trampa de pytest: la rápida del hook ejecuta `pytes
 
 **Tests de integración independientes.** Cada test crea sus topics con un sufijo único (`test.<nombre>.<uuid8>`, con guiones y sin guiones bajos) y los borra al terminar, también si falla. En la 6.1 los crea una fixture de `tests_integracion/conftest.py`; desde la 6.4, con la misma función que `edsim directo preparar` (`ensure_topics`). Así no se pisan entre sí ni leen restos de otra ejecución.
 
+**Un listener mal anunciado no siempre falla igual (lección de la V1 de la 6.1).** librdkafka cierra la conexión de arranque en cuanto conoce las direcciones anunciadas; si no las alcanza, vuelve a empezar, y el resultado dependía de una carrera: unas veces error a los 10 s, otras a los 3 min 30 s, sin decir la causa. Por eso la fixture `bootstrap` comprueba en tres pasos que la dirección de arranque acepta conexiones, que llegan los metadatos y que cada dirección anunciada se alcanza desde aquí. Con un listener mal anunciado, los tests fallan en menos de 1 s con «El broker se anuncia como kafka:9092, que no se alcanza desde aquí». Un error de configuración se prueba con una comprobación que lo nombra, no esperando a que un tiempo límite venza.
+
 **Test de frontera.** Se amplía el que ya impide que el núcleo importe `streamlit` o `pandas`: importar todos los módulos de `edsim`, incluido `edsim.live.kafka`, no carga `confluent_kafka`, y en el código solo `live/kafka.py` lo importa, dentro de las funciones que crean clientes reales (import perezoso). Así el job `tests`, que no instala el extra, importa todo y ejecuta los tests con `FakeProducer`. Sin el extra, `edsim directo lanzar` dice cómo instalarlo en vez de fallar con un `ImportError`.
 
 **En el CI (H6-16).** Un cuarto job, `tests-kafka`, junto a `tests`, `notebooks` y `tests-app`, en un ejecutor Linux de GitHub Actions: `uv sync --locked --extra kafka` y `scripts/tests-integracion.sh`, que levanta el mismo `compose.yaml` que en local con `docker compose up --wait`, ejecuta `tests_integracion/` y lo baja. Se usa Compose y no los contenedores de servicio de Actions (que también exigen Linux) para que el Kafka del CI sea exactamente el del portátil. Pasa a ser obligatorio cuando se fusione la 6.4.
@@ -693,7 +697,7 @@ edsim/
 
 **Interfaces principales** (nombres propuestos; el plan de cada tarea los confirma):
 
-- **Motor por pasos.** `start_engine(center, arrivals, sampler, log, days)` devuelve un objeto con `peek()` (instante del siguiente evento, o infinito al llegar al horizonte), `step()`, `advance_until(t)` (todos los eventos con instante menor que `t`) y `finish()` (la verdad de los episodios y los vivos, como `EngineRun`). `run_engine` pasa a ser `start_engine(…)` y `advance_until(horizonte)`. `simulate_ed` no cambia de firma.
+- **Motor por pasos.** `start_engine(center, arrivals, sampler, log, days)` devuelve un objeto con `peek()` (instante del siguiente evento, o infinito al llegar al horizonte), `step()`, `advance_until(t)` (todos los eventos con instante menor que `t`) y `finish()` (la verdad de los episodios y los vivos, como `EngineRun`). `run_engine` pasa a ser `start_engine(…)` y `advance_until(horizonte)`. `simulate_ed` no cambia de firma: por dentro pasa a ser start\_ed(…), con los mismos argumentos, más avanzar hasta el horizonte y finish(). start\_ed es lo que usará el directo en la 6.3.
 - **Reloj.** Protocolo `Clock` con `monotonic()` (segundos), `sleep(segundos)` y `wall()` (fecha y hora con zona, solo para anclar). `SystemClock` y `FakeClock`.
 - **Pacer.** `Pacer(clock, speed, anchor)`: `wait_until(sim_time, control)` espera hasta el objetivo en tramos de 0,2 s como máximo, atiende las órdenes y devuelve si hay que parar; `set_speed`, `pause`, `resume`; `lag()` (segundos de retraso).
 - **Órdenes.** Protocolo `ControlSource` con `poll() -> Command | None`. `ScriptedControl` (por instante del reloj falso), `NoControl` y, en `kafka.py`, `KafkaControl`.
@@ -905,4 +909,66 @@ Versiones, valores por defecto y comportamientos comprobados el 6 de noviembre d
 
 ## Anexo: guía de referencia del hito 6
 
-Vacío hasta que empiece la implementación. Al cerrar cada tarea se añade su entrada, como en el hito 4: qué se hizo, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), ajustes de la revisión y pendientes.
+Una entrada por tarea, escrita al cerrarla: qué se hizo, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión y pendientes.
+
+### Tarea 6.1: Kafka en local
+
+**Qué se hizo**
+
+PR #56 (rama `feat/h6-compose`, Claude Code, sin `@codex review`): once commits; fusión `23cebda` el 8 de noviembre de 2026.
+
+- **Primer commit:** exportaciones de `docs/specs/hito-6.md` (nuevo) y `docs/specs/hito-4.md` (anexo de la 4.9), sin la línea de firma (en `hito-4.md` se quitó también la que ya estaba en `main`, para dejarlo como los hitos 0 a 3); «Hito en curso» de `AGENTS.md` pasa al hito 6.
+- **`compose.yaml`** (pieza 5): Kafka `apache/kafka:4.4.0` en modo combinado y Redpanda Console v3.13.1, con los listeners `INTERNAL`, `EXTERNAL` y `CONTROLLER`, sin perfiles y sin volumen.
+- **Extra opcional** `kafka = ["confluent-kafka>=2.16.1,<2.17"]` y `uv.lock`. El job `tests` del CI sigue sin él.
+- **`edsim.live`:** `live/kafka.py` con `import_confluent_kafka()` (import perezoso), `MissingKafkaExtraError` (hereda de `ImportError`) y el mensaje «Falta el extra kafka: uv sync --all-packages --extra kafka».
+- **Frontera:** tres tests nuevos. Importar todo `edsim` no carga `confluent_kafka`; con `ast`, el cliente solo se importa en `live/kafka.py` y dentro de funciones (`import`, `from … import`, `importlib.import_module` y `__import__`), con al menos un import encontrado; y un test del propio detector sobre un fuente de ejemplo, que no confunde docstrings, mensajes ni paquetes de nombre parecido.
+- **`tests_integracion/`:** `conftest.py` (fixtures `bootstrap`, `admin` y `make_topic`), `kafka_testing.py` (límites, `PRODUCER_CONFIG`, nombres de topic) y `test_kafka_integracion.py`: prueba de humo, particiones con murmur2 y con CRC32, y autocreación desactivada. Cuatro tests.
+- **`scripts/tests-integracion.sh`**, clasificación en `scripts/sello.sh`, permisos de Docker en `.claude/settings.json`, job `tests-kafka` en el CI (`timeout-minutes: 15`, todavía no obligatorio), sección «Kafka en local» del README y comandos nuevos en `AGENTS.md`.
+- **Pendiente del #55:** el test del reloj C por defecto de `tests/test_window_kpis.py`, en español.
+
+**Decisiones del diff**
+
+- `name: edsim` en Compose: el proyecto se llama igual desde cualquier carpeta y el script reconoce su broker.
+- La imagen, configurada solo con variables, escribe un `server.properties` sin sus valores por defecto: se declaran `KAFKA_LOG_DIRS` y las réplicas del topic interno de los grupos compartidos, y `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0`. El quórum es estático (`controller.quorum.voters`), porque la imagen formatea sin `--standalone`.
+- Redpanda Console se queda en la v3.13.1, aunque exista la v3.14.0 (5 de noviembre): es una versión menor nueva y la consola solo sirve para mirar.
+- Hasta la 6.4, la configuración del productor y la creación de topics de los tests viven en `tests_integracion/`.
+- La fixture `bootstrap` falla (no salta) y comprueba en tres pasos el arranque, los metadatos y las direcciones anunciadas (ver la V1).
+- La ventana de la marca de tiempo es estricta, sin margen.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| `scripts/tests-completos.sh` | 19 min 53 s, en verde: núcleo 2.788 tests en 13:46, app 287 en 4:48, notebooks 1:18 (13 min 21 s en la 4.9; con Kafka en marcha) |
+| `scripts/tests-integracion.sh` sin broker | 29 s (arranque 20 s, pytest 7 s, bajada 2 s) |
+| `scripts/tests-integracion.sh` con el broker en marcha | 2 s |
+| `docker compose up --wait` | 9,8 a 11,4 s con las imágenes descargadas; 221 s la primera vez |
+| `stop` y `start` | sano de nuevo en 8 s |
+| Memoria en reposo | Kafka 304,6 MiB; consola 39,2 MiB |
+| Marca del broker menos `t0` (prueba de humo) | 1.031 ms con un broker recién levantado; 510 ms en caliente |
+| `t1` menos marca (incluye la unión al grupo) | 3.842 ms la primera vez; unos 685 ms en caliente |
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Un solo listener, anunciado como `kafka:9092` | `bootstrap` pasa; los 4 tests fallan por tiempo en unos 2 min; la consola ve el broker | **Solo en parte.** librdkafka cierra la conexión de arranque al conocer las direcciones anunciadas y vuelve a empezar: el resultado dependía de una carrera (hasta 3 min 30 s). Se añadió la comprobación de las direcciones anunciadas: falla en menos de 1 s, 5 de 5 veces |
+| V2 | Sin `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR` | Solo falla la prueba de humo, por tiempo, en menos de 40 s | Exacta: 31,26 s; el registro dice `INVALID_REPLICATION_FACTOR` en `__consumer_offsets` |
+| V3 | `import confluent_kafka` a nivel de módulo | Fallan los dos tests nuevos de frontera | Exacta (`live/kafka.py:10`) |
+| V4 | Autocreación activada | Solo falla el de configuración | Exacta |
+| V5 | Productor sin `murmur2_random` | Solo falla `particiones[murmur2]`, con `[0, 2, 2, 1]` | Exacta |
+| V6 | `import_confluent_kafka` sin `try` | Solo falla el test del mensaje | Exacta (`ModuleNotFoundError`) |
+| V7 | Topic sin `LogAppendTime` | Solo falla la prueba de humo, por el tipo de marca | Exacta |
+
+**Revisión**
+
+Sin ajustes de la revisión. Pedro recreó a mano el topic de prueba tras el `down` (sin volumen se pierde) y vio el aviso `GETPID` («Coordinator load in progress») del primer productor idempotente tras arrancar Kafka: es normal y librdkafka reintenta solo. Queda explicado en la pieza 3.
+
+**Pendiente**
+
+- Pestaña de diseño, «Calidad y tests (QA)»: en la tabla de rutas, `compose.yaml` y `tests_integracion/` (no afectan a ninguna suite) y `schemas/` (núcleo); `scripts/tests-integracion.sh` y el job `tests-kafka`.
+- Medir `scripts/tests-completos.sh` con Docker parado en la 6.2, para saber si los 19 min 53 s se deben a Kafka.
+- Job `tests-kafka`: obligatorio en la protección de `main` al fusionar la 6.4 (Pedro).
+- Redpanda Console v3.14.0: decidir en el cierre del hito.
+- 6.4 y 6.5: el aviso `GETPID` del primer mensaje no es un fallo; el fallo es un aviso de entrega con error.
+- Las dos ampliaciones de la pestaña (pieza 3, primer mensaje; pieza 7, lección de la V1) y este anexo se exportan en el primer commit de la 6.2.
