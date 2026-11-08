@@ -227,3 +227,19 @@ def test_el_detector_ve_las_formas_de_importar_el_cliente_y_no_los_textos():
     # Las líneas 5 a 8 (imports estáticos) y 16 a 18 (dinámicos). No cuentan el docstring, el
     # mensaje, otro paquete con prefijo parecido, un import relativo ni import_module("json").
     assert lines == [5, 6, 7, 8, 16, 17, 18]
+
+
+def test_census_no_carga_simpy_ni_el_motor():
+    """El censo son funciones puras sobre eventos (tarea 6.2): sin SimPy, motor ni Kafka."""
+    script = (
+        "import sys, edsim.live.census\n"
+        "assert 'edsim.engine.events' in sys.modules\n"
+        "bad = sorted(n for n in sys.modules if n.split('.')[0] in ('simpy', 'confluent_kafka')"
+        " or n == 'edsim.engine.engine')\n"
+        "assert not bad, bad\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
