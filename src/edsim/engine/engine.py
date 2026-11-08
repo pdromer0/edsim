@@ -1,6 +1,6 @@
 """The engine: arrivals, patients and the horizon, in one SimPy environment.
 
-``run_engine`` is the core: it takes the arrivals as an iterable and the
+``start_engine`` is the core: it takes the arrivals as an iterable and the
 draws of each patient as an injectable function, so that tests can build exact
 scenarios by hand. It first starts the shifts (``start_shifts``), which set
 the staff of minute 0 and change it at each start of a shift. For each arrival
@@ -8,6 +8,17 @@ it calls the sampler, in arrival order, keeps the ground truth of the episode
 and starts the patient process. The run stops at ``days * 1440`` minutes:
 events scheduled at that instant or later do not happen, and patients still
 inside have no ``patient_departed``.
+
+**Stepped engine** (task 6.2, H6-4). ``start_engine`` builds the run and
+returns a ``SteppedEngine``, which moves forward with SimPy's ``peek()`` and
+``step()`` only: one event at a time, or every event before an instant. The
+live mode of milestone 6 waits between events with it. ``run_engine`` is
+``start_engine`` and ``advance_until`` the horizon, and gives the same log,
+bit for bit, as the ``env.run(until=horizon)`` it replaces: ``run`` schedules
+a stop event at the horizon with ``URGENT`` priority, before the normal events
+of that instant, and SimPy only schedules urgent events with delay 0, so no
+event at the horizon can come before the stop. Both run exactly the events
+before the horizon, in the same order (docs/specs/hito-6.md, piece 1).
 
 ``simulate_ed`` is the run with a seed: it derives five independent streams
 with ``child_streams(seed, 5)`` (ADR 0007). Stream 0 goes as it is to
@@ -19,8 +30,12 @@ With clinical profiles (task 4.5a), ``simulate_ed`` derives eight streams with
 ``child_streams(seed, 8)``: the first five are the same five children, because
 each child depends only on its index, so the arrivals do not change; streams 1
 to 7 go to the ``ClinicalSampler``, and the log is of version 3 of the catalog.
+``start_ed`` prepares all that and returns a ``SteppedED``; ``simulate_ed``
+advances it to the horizon.
 """
 
+import math
+import numbers
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -33,7 +48,12 @@ from edsim.arrivals.thinning import ArrivalRecord, DayRecord, arrival_source, it
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler
 from edsim.engine.clinical_sampler import ClinicalSampler
-from edsim.engine.events import CURRENT_CLINICAL_SCHEMA_VERSION, EventLog, EventSink
+from edsim.engine.events import (
+    CURRENT_CLINICAL_SCHEMA_VERSION,
+    EventLog,
+    EventSink,
+    episode_id,
+)
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.patient import patient
 from edsim.engine.resources import make_pools
@@ -107,6 +127,134 @@ def check_horizon(days: object, warmup_days: object) -> tuple[int, int]:
     return days, _check_warmup(warmup_days, days)
 
 
+def _check_instant(t: object) -> numbers.Real:
+    # bool is a subclass of int in Python; NaN would stop nothing without a word.
+    if isinstance(t, bool) or not isinstance(t, numbers.Real) or math.isnan(t):
+        raise ValueError(f"t must be a number of minutes, got {t!r}")
+    return t
+
+
+class SteppedEngine:
+    """A run of the engine that moves forward one event at a time, up to the horizon.
+
+    Built by ``start_engine``. It only uses ``env.peek()`` and ``env.step()``:
+    ``env.run`` would schedule a stop event of its own in the queue each time
+    it is called. Events at the horizon or later never happen, as with
+    ``env.run(until=horizon)``.
+
+    Attributes:
+        horizon: ``days * 1440`` minutes.
+    """
+
+    def __init__(
+        self,
+        center: CenterConfig,
+        arrivals: Iterable[ArrivalRecord],
+        sampler: Sampler,
+        log: EventLog,
+        days: int,
+    ) -> None:
+        self.horizon = days * MINUTES_PER_DAY
+        self._env = env = simpy.Environment()
+        self._pools = make_pools(env, center)
+        self._log = log
+        self._sampler = sampler
+        # Before any other process: the staffing_changed of minute 0 go first in the
+        # log, and each change of shift is the first event of its instant.
+        start_shifts(env, log, self._pools, center, days)
+        self._episodes: list[EpisodeTruth] = []
+        self._patients: list[tuple[int, simpy.Process]] = []
+        # Only the clinical patients use it (leaves_for_results): the provisional
+        # model ignores espera_resultados_fuera.
+        self._wait_outside = frozenset(center.results_wait_outside)
+        env.process(arrival_source(env, arrivals, self._on_arrival))
+
+    def _on_arrival(self, arrival: ArrivalRecord) -> None:
+        draws = self._sampler(arrival)
+        self._episodes.append(EpisodeTruth.from_draws(arrival, draws))
+        process = self._env.process(
+            patient(
+                self._env, self._log, self._pools, arrival.arrival_id, draws, self._wait_outside
+            )
+        )
+        self._patients.append((arrival.arrival_id, process))
+
+    def peek(self) -> float:
+        """Instant of the next event; ``math.inf`` at the horizon or later, or if none is left."""
+        t = self._env.peek()
+        return t if t < self.horizon else math.inf
+
+    def step(self) -> None:
+        """Run the next event: one SimPy event, which may emit several events of the log.
+
+        Raises:
+            RuntimeError: If no event is left before the horizon (``peek()`` is
+                infinite).
+        """
+        if self.peek() == math.inf:
+            raise RuntimeError(f"no event left before the horizon ({self.horizon} min)")
+        self._env.step()
+
+    def advance_until(self, t: float) -> None:
+        """Run every event before ``t``, and none at ``t`` or later.
+
+        Never goes past the horizon: with ``t`` above it, it stops there. A
+        ``t`` before the next event does nothing.
+
+        Raises:
+            ValueError: If ``t`` is not a number or is NaN.
+        """
+        limit = min(_check_instant(t), self.horizon)
+        peek, step = self._env.peek, self._env.step
+        while peek() < limit:
+            step()
+
+    def alive_episodes(self) -> frozenset[str]:
+        """Episodes whose patient process is still alive in SimPy now.
+
+        A process ends in the same step that emits its ``patient_departed``,
+        and starts in the instant of its arrival; so, after ``advance_until(t)``,
+        these are the episodes with events before ``t`` and no departure
+        before ``t``. Counted from SimPy, not from the log.
+        """
+        return frozenset(episode_id(i) for i, process in self._patients if process.is_alive)
+
+    def finish(self) -> EngineRun:
+        """The ground truth of the episodes and the patients still inside, at the horizon.
+
+        Raises:
+            RuntimeError: If some event before the horizon has not run yet.
+        """
+        if self.peek() != math.inf:
+            raise RuntimeError(
+                f"the run has not reached the horizon ({self.horizon} min): "
+                f"next event at {self.peek()!r}; call advance_until(horizon) first"
+            )
+        return EngineRun(
+            episodes=tuple(self._episodes),
+            inside=sum(process.is_alive for _, process in self._patients),
+        )
+
+
+def start_engine(
+    center: CenterConfig,
+    arrivals: Iterable[ArrivalRecord],
+    sampler: Sampler,
+    log: EventLog,
+    days: int,
+) -> SteppedEngine:
+    """Build a run of the center for ``days`` full days, without running any event.
+
+    Creates the environment and the pools, starts the shifts (the
+    ``staffing_changed`` of minute 0 are emitted now) and the arrival source.
+    The arguments are those of ``run_engine``.
+
+    Raises:
+        ValueError: If ``days`` is not a positive integer.
+    """
+    return SteppedEngine(center, arrivals, sampler, log, _check_days(days))
+
+
 def run_engine(
     center: CenterConfig,
     arrivals: Iterable[ArrivalRecord],
@@ -115,6 +263,9 @@ def run_engine(
     days: int,
 ) -> EngineRun:
     """Simulate the center for ``days`` full days with the given arrivals.
+
+    ``start_engine`` and ``advance_until`` the horizon: the same events, in the
+    same order, as ``env.run(until=horizon)``.
 
     Args:
         center: Staff, boxes and the rest of the configuration.
@@ -130,30 +281,9 @@ def run_engine(
     Raises:
         ValueError: If ``days`` is not a positive integer.
     """
-    days = _check_days(days)
-    env = simpy.Environment()
-    pools = make_pools(env, center)
-    # Before any other process: the staffing_changed of minute 0 go first in the
-    # log, and each change of shift is the first event of its instant.
-    start_shifts(env, log, pools, center, days)
-    episodes: list[EpisodeTruth] = []
-    processes: list[simpy.Process] = []
-    # Only the clinical patients use it (leaves_for_results): the provisional
-    # model ignores espera_resultados_fuera.
-    wait_outside = frozenset(center.results_wait_outside)
-
-    def on_arrival(arrival: ArrivalRecord) -> None:
-        draws = sampler(arrival)
-        episodes.append(EpisodeTruth.from_draws(arrival, draws))
-        processes.append(
-            env.process(patient(env, log, pools, arrival.arrival_id, draws, wait_outside))
-        )
-
-    env.process(arrival_source(env, arrivals, on_arrival))
-    env.run(until=days * MINUTES_PER_DAY)
-    return EngineRun(
-        episodes=tuple(episodes), inside=sum(process.is_alive for process in processes)
-    )
+    engine = start_engine(center, arrivals, sampler, log, days)
+    engine.advance_until(engine.horizon)
+    return engine.finish()
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +324,117 @@ def default_run_id(seed: int | np.random.SeedSequence) -> str:
     return "r" + base + "".join(f".{k}" for k in seed.spawn_key)
 
 
+class SteppedED:
+    """A run of ``simulate_ed`` that moves forward one event at a time.
+
+    Built by ``start_ed``. ``peek``, ``step``, ``advance_until`` and
+    ``alive_episodes`` are those of its ``SteppedEngine``; ``finish`` gives the
+    ``EDResult`` that ``simulate_ed`` returns.
+
+    Attributes:
+        run_id: Identifier of the run, in every event of the log.
+        warmup_days: Full days of warm-up.
+        horizon: ``days * 1440`` minutes.
+    """
+
+    def __init__(
+        self,
+        engine: SteppedEngine,
+        run_id: str,
+        warmup_days: int,
+        day_records: list[DayRecord],
+    ) -> None:
+        self._engine = engine
+        self.run_id = run_id
+        self.warmup_days = warmup_days
+        # Filled by iter_arrivals (on_day) as the days close: the last one, when
+        # the last arrival has been handed over, before the horizon.
+        self._day_records = day_records
+
+    @property
+    def horizon(self) -> int:
+        """``days * 1440`` minutes."""
+        return self._engine.horizon
+
+    def peek(self) -> float:
+        """See ``SteppedEngine.peek``."""
+        return self._engine.peek()
+
+    def step(self) -> None:
+        """See ``SteppedEngine.step``."""
+        self._engine.step()
+
+    def advance_until(self, t: float) -> None:
+        """See ``SteppedEngine.advance_until``."""
+        self._engine.advance_until(t)
+
+    def alive_episodes(self) -> frozenset[str]:
+        """See ``SteppedEngine.alive_episodes``."""
+        return self._engine.alive_episodes()
+
+    def finish(self) -> EDResult:
+        """What ``simulate_ed`` returns, at the horizon.
+
+        Raises:
+            RuntimeError: If some event before the horizon has not run yet.
+        """
+        run = self._engine.finish()
+        return EDResult(
+            run_id=self.run_id,
+            ground_truth=GroundTruth(episodes=run.episodes, days=tuple(self._day_records)),
+            inside=run.inside,
+            warmup_days=self.warmup_days,
+        )
+
+
+def start_ed(
+    center: CenterConfig,
+    profile: ArrivalProfile,
+    days: int,
+    seed: int | np.random.SeedSequence,
+    *,
+    sink: EventSink,
+    warmup_days: int = DEFAULT_WARMUP_DAYS,
+    run_id: str | None = None,
+    sampler: Sampler | None = None,
+    profiles: ClinicalProfiles | None = None,
+) -> SteppedED:
+    """Prepare a run of ``simulate_ed`` without running any event.
+
+    The same arguments as ``simulate_ed``, checked in the same way: it derives
+    the streams, builds the sampler and the ``EventLog`` and starts the engine.
+    The live mode uses it to warm up and then go on at its own pace.
+
+    Returns:
+        The run, at minute 0; ``finish()`` at the horizon gives the
+        ``EDResult``.
+
+    Raises:
+        ValueError: As ``simulate_ed``.
+    """
+    days, warmup_days = check_horizon(days, warmup_days)
+    if sampler is not None and profiles is not None:
+        raise ValueError("give sampler or profiles, not both: the profiles choose the sampler")
+    if run_id is None:
+        run_id = default_run_id(seed)
+
+    day_records: list[DayRecord] = []
+    if profiles is None:
+        streams = child_streams(seed, N_STREAMS)
+        if sampler is None:
+            sampler = ProvisionalSampler(center, streams[1:])
+        log = EventLog(run_id, profile.start_date, sink)
+    else:
+        streams = child_streams(seed, N_CLINICAL_STREAMS)
+        sampler = ClinicalSampler(profiles, profile.start_date, center, streams[1:])
+        log = EventLog(
+            run_id, profile.start_date, sink, schema_version=CURRENT_CLINICAL_SCHEMA_VERSION
+        )
+    arrivals = iter_arrivals(profile, days, streams[0], on_day=day_records.append)
+    engine = start_engine(center, arrivals, sampler, log, days)
+    return SteppedED(engine, run_id, warmup_days, day_records)
+
+
 def simulate_ed(
     center: CenterConfig,
     profile: ArrivalProfile,
@@ -207,6 +448,9 @@ def simulate_ed(
     profiles: ClinicalProfiles | None = None,
 ) -> EDResult:
     """Simulate the emergency department for ``days`` full days.
+
+    ``start_ed`` with the same arguments, ``advance_until`` the horizon and
+    ``finish``.
 
     Args:
         center: Shifts, staff, boxes and destination. Without ``profiles``,
@@ -242,29 +486,16 @@ def simulate_ed(
             ``profiles`` are given, or the provisional model gets a center
             without the provisional block.
     """
-    days, warmup_days = check_horizon(days, warmup_days)
-    if sampler is not None and profiles is not None:
-        raise ValueError("give sampler or profiles, not both: the profiles choose the sampler")
-    if run_id is None:
-        run_id = default_run_id(seed)
-
-    day_records: list[DayRecord] = []
-    if profiles is None:
-        streams = child_streams(seed, N_STREAMS)
-        if sampler is None:
-            sampler = ProvisionalSampler(center, streams[1:])
-        log = EventLog(run_id, profile.start_date, sink)
-    else:
-        streams = child_streams(seed, N_CLINICAL_STREAMS)
-        sampler = ClinicalSampler(profiles, profile.start_date, center, streams[1:])
-        log = EventLog(
-            run_id, profile.start_date, sink, schema_version=CURRENT_CLINICAL_SCHEMA_VERSION
-        )
-    arrivals = iter_arrivals(profile, days, streams[0], on_day=day_records.append)
-    run = run_engine(center, arrivals, sampler, log, days)
-    return EDResult(
-        run_id=run_id,
-        ground_truth=GroundTruth(episodes=run.episodes, days=tuple(day_records)),
-        inside=run.inside,
+    ed = start_ed(
+        center,
+        profile,
+        days,
+        seed,
+        sink=sink,
         warmup_days=warmup_days,
+        run_id=run_id,
+        sampler=sampler,
+        profiles=profiles,
     )
+    ed.advance_until(ed.horizon)
+    return ed.finish()
