@@ -38,6 +38,7 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
 
 ```bash
 uv sync --all-packages    # entorno completo del workspace (uv.lock)
+uv sync --all-packages --extra kafka  # el anterior más el cliente de Kafka (desde la 6.1)
 uv run pytest            # tests del núcleo, incluidos los slow (como el CI)
 uv run pytest -m "not slow"  # tests rápidos del núcleo
 uv run --package edsim-app pytest app/tests  # tests de la app
@@ -47,6 +48,7 @@ uv run ruff format .     # formato
 uv run edsim             # CLI
 scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
 scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
+scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace falta (6.1, 6.4, 6.5)
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
