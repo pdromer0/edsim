@@ -93,7 +93,7 @@ def test_manchester_integer_counts_exact_threshold_immediate_and_weighted_days(s
     # Add a second day with fewer level-2 patients: patient shares and day shares differ.
     extra = dataclasses.replace(table[2], episode_id="EP-000010", arrival=3000, door_to_doctor=10)
     immediate_late = dataclasses.replace(table[3], episode_id="EP-000011", door_to_doctor=0.001)
-    # The sample sets door_to_doctor by hand: clock A, explicit since task 4.9.
+    # La muestra fija door_to_doctor a mano: es el reloj A, explícito desde la tarea 4.9.
     result = window_compliance((*table, extra, immediate_late), 1, 3, measure="door_to_doctor")
     immediate, level2, *empty = result.by_level
     assert (immediate.n, immediate.exceeded, immediate.exceeded_share) == (2, 1, 0.5)
@@ -110,10 +110,10 @@ def test_manchester_integer_counts_exact_threshold_immediate_and_weighted_days(s
     assert len(empty) == 3
 
 
-def test_manchester_of_runs_uses_classified_to_doctor_by_default():
-    # Level 2 (maximum 10): arrives 1500, triage 1502-1507, doctor at 1512. Clock A is
-    # 12 (exceeded), clock C only 5. Since task 4.9 the default is clock C; clock A is
-    # still available explicitly.
+def test_el_manchester_de_runs_usa_el_reloj_c_por_defecto():
+    # Nivel 2 (máximo 10): llega en 1500, triaje de 1502 a 1507 y médico en 1512. El reloj A
+    # da 12 (excedido) y el C solo 5. Desde la tarea 4.9, el C es el de por defecto; el A
+    # sigue disponible de forma explícita.
     events = build(
         [
             (1500, 0, "patient_arrived", {}),
