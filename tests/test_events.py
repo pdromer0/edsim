@@ -23,6 +23,7 @@ from edsim.engine.events import (
     RESULTS_WAIT,
     SCHEMA_VERSIONS,
     SEXES,
+    TERMINAL_EVENTS,
     TEST_RESULTS,
     Event,
     EventLog,
@@ -616,6 +617,21 @@ def test_catalogos_por_version():
     assert SCHEMA_VERSIONS == frozenset({PROVISIONAL_SCHEMA_VERSION, *CLINICAL_SCHEMA_VERSIONS})
     with pytest.raises(TypeError):
         CATALOGS[4] = CATALOG_V3
+
+
+def test_eventos_terminales_por_version():
+    # Tarea 6.2: una entrada por versión del catálogo, ni más ni menos. Cuando el hito 5
+    # traiga la 4, este test obliga a decir qué eventos la cierran (el abandono).
+    assert set(TERMINAL_EVENTS) == SCHEMA_VERSIONS
+    for version, terminal in TERMINAL_EVENTS.items():
+        assert isinstance(terminal, frozenset) and terminal, version
+        assert "patient_departed" in terminal
+        for event_type in terminal:
+            assert event_type in CATALOGS[version], (version, event_type)
+            assert CATALOGS[version][event_type].patient, (version, event_type)
+    assert dict(TERMINAL_EVENTS) == {v: frozenset({"patient_departed"}) for v in (1, 2, 3)}
+    with pytest.raises(TypeError):
+        TERMINAL_EVENTS[4] = frozenset({"patient_departed"})
 
 
 def test_catalogo_2_literal():

@@ -296,6 +296,21 @@ CATALOGS: Mapping[int, Mapping[str, EventSpec]] = MappingProxyType(
 SCHEMA_VERSIONS: frozenset[int] = frozenset(CATALOGS)
 """The schema versions a log can have: 1, 2 and 3."""
 
+TERMINAL_EVENTS: Mapping[int, frozenset[str]] = MappingProxyType(
+    {
+        PROVISIONAL_SCHEMA_VERSION: frozenset({"patient_departed"}),
+        2: frozenset({"patient_departed"}),
+        CURRENT_CLINICAL_SCHEMA_VERSION: frozenset({"patient_departed"}),
+    }
+)
+"""The event types that close an episode, for each schema version.
+
+An episode is open at an instant if it has events before it and none of these
+(docs/specs/hito-6.md, H6-11): the live mode publishes the warm-up of the open
+episodes as its initial census. In versions 1 to 3 only ``patient_departed``
+closes one; catalog 4 of milestone 5 will add the abandonment.
+"""
+
 CATALOG = CATALOG_V1
 """The catalog of version 1, as before task 4.5a."""
 
