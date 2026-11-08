@@ -1,7 +1,5 @@
 # Hito 4 — Perfiles clínicos
 
-Nov 5, 2026 · @Pedro
-
 ## Objetivo y alcance
 
 Al terminar el hito 4, cada paciente de EDsim llega con edad, sexo, medio de llegada y motivo de consulta, tiene una gravedad real que el hospital no ve y recibe un nivel de triaje con error. Sus pruebas y duraciones dependen de esa gravedad y de su motivo. Todo sale de un muestreador clínico que se enchufa en el punto de muestreo inyectable del hito 3, sin cambiar la lógica de colas, recursos ni turnos. El centro base queda calibrado, por primera vez, contra datos españoles observados: pretriaje y tiempo hasta el médico.
@@ -1741,3 +1739,61 @@ Dos ajustes. La CLI no aplicaba el veto: `calibracion sensibilidad` imprimía «
 - Hito 5: con el abandono, volver a mirar la semana del 19 al 25 de enero de la semilla 2026.
 - Menor: la normalización del perfil de llegadas no es idempotente (`dataclasses.replace`).
 - `fecha_inicio` es el 5 de enero: las ejecuciones por defecto caen en el mes de más carga (ver la pestaña de la app).
+
+### Tarea 4.9: cierre del hito 4
+
+**Qué se hizo**
+
+PR #55 (rama `docs/h4-cierre`, Claude Code, con `@codex review`): trece commits; fusión `78a6f9d`, etiqueta `v0.4-hito4`. Las tareas 4.8a, 4.8b y 4.8c (la app) tienen su anexo en App web — incrementos.
+
+- **Separación de `centro.toml` (decisión 36).** `[triaje]`, `[duraciones]` y `[pruebas]` forman el bloque provisional: las tres tablas o ninguna. Sin el bloque, sus seis campos valen `None`, sin valores por defecto escondidos. Con una parte, hay un error por cada clave que falta, con su nombre, y `CenterConfig` también lo exige al construirse. `config/centro.toml` y `config/centro_cumplidor.toml` pierden el bloque; la plantilla no cambia y `[destino]` se queda hasta el hito 5. Las copias con bloque (ejecuciones guardadas, variantes) se leen como antes.
+- **El provisional falla pronto.** `require_provisional` en `ProvisionalSampler`, `simulate_run` sin perfiles (antes de crear ninguna carpeta), `offered_load` sin perfiles, `summarize_center` y `validate_engine`. `center_diff` admite `None`.
+- **`tests/data/centro_ejemplo.toml` es el centro del modelo provisional**, sin cambiar un byte (sus bytes están en las huellas). El notebook 03 lo lee en lugar de `config/centro.toml` con `dataclasses.replace`.
+- **Modelo clínico por defecto (decisión 44)**, en los puntos de entrada: `edsim motor simular` sin opciones usa `config/perfiles.toml`; `--provisional` pide el del hito 3 y es incompatible con `--perfiles`. Si el centro no tiene el bloque, el error es en español y sale antes de escribir nada. `motor validar` usa por defecto `tests/data/centro_ejemplo.toml`. `simulate_ed` y `simulate_run` no cambian de firma: `profiles=None` sigue siendo el provisional.
+- **Reloj C por defecto en `runs/`:** `APP_COMPLIANCE_MEASURE = "classified_to_doctor"`, con el mismo nombre porque está en `__all__`. `RunResults.compliance` es C.
+- **Excepción de zona en `app/tests/`**, sin cambiar ninguna aserción ni `app/src/`. Se quita el `xfail` del contrato de la 4.8c, que construye su centro con `pop(section, None)`. El catálogo de `conftest.py` y dos tests construyen su base con el bloque en un directorio temporal. Un test pasa `measure="door_to_doctor"` explícito.
+- **Documentación:** ADR 0034 a 0047, con notas de actualización en la 0017, la 0031 y la 0032; diario `docs/diario/hito-4.md`, con 14 entradas; README y `AGENTS.md` (último hito cerrado: el 4). El primer commit exportó las pestañas de diseño, hito 3, hito 4 y la de la app.
+
+**Conceptos**
+
+- **Un lector compatible con un formato que pierde claves.** Lo nuevo se escribe sin ellas y lo antiguo se lee con su significado. La ausencia se representa explícitamente (`None`) y el modelo que las necesita falla pronto, con un mensaje que dice qué falta y dónde está.
+- **Valores por defecto en los puntos de entrada, no en la biblioteca.** La CLI y la app eligen el modelo clínico; las funciones del núcleo reciben los perfiles de forma explícita. Así, cada llamada dice qué modelo usa y ninguna huella cambia.
+- **Una comprobación de antes y después byte a byte.** Si el log no cambia, todas las cifras derivadas de él siguen valiendo.
+
+**Decisiones**
+
+- Bloque provisional de todo o nada; ausencia con `None`; `tests/data/centro_ejemplo.toml` se queda sin tocar.
+- Clínico por defecto en la CLI y en la app; el provisional, con `--provisional`. `motor validar` tiene su propio centro por defecto.
+- Reloj C por defecto en `runs/`; la copia con C que hace la app queda redundante (pendiente de la app).
+- Una tabla del bloque vacía cuenta como ausente; una mal formada cuenta como presente.
+
+**Resultados**
+
+| Medida | Valor |
+| --- | --- |
+| `motor simular` sin opciones frente a `main` con `--perfiles config/perfiles.toml` (14 días) | Log idéntico byte a byte (SHA-256 `82cdf478…`). Los CSV solo difieren en `huella_centro` (4.439 episodios y 14 días comparados fila a fila). Todas las cifras del anexo de la 4.8a coinciden: nivel 2 A 10,8 / 45,6, B 7,6 / 16,4, C 1,1 / 10,2; cumple C el 89,7 %, 4 de 12 días fuera; pretriaje 78,0 % en 10 min o menos y 33,8 % por encima de 5; nivel 1 0,5 / 6,5; 0 violaciones |
+| Huellas | Ninguna cambia: provisional, clínicas, con sala, llegadas y M/M/1 |
+| Notebook 03 | 23 salidas de texto y 16 imágenes con los mismos hashes |
+| `calibracion evaluar` | Pretriaje 6,78 \[5,49; 8,06\], reloj A 42,10 \[28,02; 56,18\]; Manchester 16,13 % y pretriaje > 5 min 31,38 % pasan; nivel 3, 18,76, fuera (comprobación) |
+| `scripts/tests-completos.sh` | 13 min 21 s: núcleo 2.783 tests en 9 min 10 s (xdist), app 287 en 3 min 13 s (serie), 4 notebooks en 51 s |
+
+**Comprobación de las versiones incorrectas**
+
+Seis. Exactas V4 (`TypeError` en `center_diff` sin tratar `None`) y V5 (tres fallos en el núcleo y la app en verde). V1, V3 y V6 fallaron donde se predijo y en algún test más, por la misma razón. V2, cumplida.
+
+**Revisión**
+
+El plan aplicó las tres preguntas del agente: el centro por defecto de `motor validar`, un test que dependía del reloj A por defecto y el contrato con `pop`. Añadió tres ajustes: un test de variantes sobre un centro sin bloque, sustituir el test del centro del hito 3 en lugar de borrarlo, y «Último hito cerrado» en `AGENTS.md`. La comprobación clínica compara los CSV sin `huella_centro`, que cambia con los bytes de `config/centro.toml`. Codex dejó un P1: el test renombrado de `tests/test_window_kpis.py` y sus comentarios nuevos están en inglés. Se fusionó sin aplicarlo, por no ser crítico (ver «Pendiente»).
+
+**Lecciones aprendidas**
+
+- El propio test de contrato de la 4.8c daba por hecho que `config/centro.toml` tenía las tablas que iba a borrar (`del document[section]`). Un test que construye «un fichero sin X» debe construirlo igual tenga o no tenga X el original, y comprobar el resultado.
+- Al cambiar un valor por defecto, buscar todo lo que dependía del antiguo sin decirlo, también en la zona del otro agente.
+- Un fichero con una huella de configuración dentro no es comparable byte a byte entre configuraciones distintas: se compara sin esa columna y se dice.
+
+**Pendiente**
+
+- Idioma de los tests: el test renombrado de `tests/test_window_kpis.py` y sus comentarios nuevos, al español en la próxima tarea que toque `tests/`. De fondo, 16 ficheros de `tests/` de la fase 1 de la app tienen nombres en inglés: decidir en una tarea de proceso si se traducen o se exceptúan.
+- App: la copia con el reloj C de `cached_run_results` ya no hace falta; el test del aviso «No hay diferencias frente al centro base» (de la 4.8c).
+- Este anexo se exporta a `docs/specs/hito-4.md` en el primer commit de la siguiente tarea.
+- Lo aplazado del hito, con su destino, está en «Para versiones posteriores» y en la hoja de ruta de la pestaña de diseño.

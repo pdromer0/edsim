@@ -33,6 +33,66 @@ uv run ruff format .         # formato
 uv run pre-commit run --all-files
 ```
 
+## Kafka en local
+
+Desde el hito 6, EDsim publica sus eventos en Apache Kafka. El broker y Redpanda
+Console corren en Docker con `compose.yaml`; el simulador, los tests y los notebooks
+corren fuera, en WSL2. Detalle en [docs/specs/hito-6.md](docs/specs/hito-6.md), pieza 5.
+
+**Requisitos.** Docker Desktop en marcha, con la integración de WSL2 activada para tu
+distribución (Settings → Resources → WSL integration). Comprueba que `docker compose
+version` responde desde la terminal de WSL2.
+
+**Entorno.** El cliente de Kafka (`confluent-kafka`) es un extra opcional:
+
+```bash
+uv sync --all-packages --extra kafka
+```
+
+`uv sync` deja el entorno exactamente como lo pide la orden. Por eso, un `uv sync` o
+un `uv sync --all-packages` sin `--extra kafka` **desinstala** el cliente. Sin él, todo
+EDsim se importa y sus tests pasan; solo lo que habla con Kafka pide el extra.
+`uv run --extra kafka …` lo instala si falta, sin quitar nada.
+
+**Levantar y parar.**
+
+```bash
+docker compose up --wait     # arranca Kafka y la consola y espera a que estén sanos (unos 10 s)
+docker compose ps            # estado
+docker compose logs -f kafka # registro del broker
+docker compose stop          # para los contenedores: los topics y los mensajes se conservan
+docker compose start         # los vuelve a arrancar tal cual
+docker compose down          # para y borra los contenedores
+```
+
+Redpanda Console queda en <http://localhost:8080>: topics, particiones, mensajes con
+su clave y su marca de tiempo, y grupos de consumidores. El broker no tiene volumen: tras
+`down`, el siguiente `up` empieza vacío, sin topics ni mensajes. Para conservarlos, usa
+`stop` y `start`.
+
+**Tests de integración.**
+
+```bash
+scripts/tests-integracion.sh
+```
+
+Si el broker ya está en marcha, lo usa y lo deja así. Si no, lo levanta y lo baja al
+terminar. Ejecuta `tests_integracion/`, que no forma parte de `uv run pytest`. Para
+probar contra otro broker: `EDSIM_KAFKA=host:puerto uv run --extra kafka pytest tests_integracion`.
+
+**Si el cliente no conecta.** Kafka tiene dos direcciones, una para cada lado de Docker:
+
+| Desde | Dirección | Quién |
+| --- | --- | --- |
+| WSL2 (fuera de Docker) | `localhost:9092` | Simulador, tests y notebooks |
+| Dentro de la red de Docker | `kafka:19092` | Redpanda Console |
+
+El cliente pide al broker la lista de direcciones a la que conectarse y usa la que
+le devuelve, no la que le diste. Si desde WSL2 usas `kafka:19092`, el nombre `kafka`
+no existe fuera de Docker y la conexión falla. Si un contenedor usa `localhost:9092`,
+se llama a sí mismo. Si nada conecta, comprueba con `docker compose ps` que `kafka`
+está `healthy` y que el puerto 9092 no lo usa otro programa.
+
 ## Flujo de trabajo
 
 GitHub Flow: cada tarea en una rama corta que entra en `main` por pull request, con el CI (lint, formato y tests) en verde.
