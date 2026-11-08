@@ -5,7 +5,7 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: hito 6, tiempo real — [docs/specs/hito-6.md](docs/specs/hito-6.md); tarea 6.2 (va antes que el 5).
+- Hito en curso: hito 6, tiempo real — [docs/specs/hito-6.md](docs/specs/hito-6.md); tarea 6.3 (va antes que el 5).
 - Último hito cerrado: [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos, `v0.4-hito4`)
 - App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
