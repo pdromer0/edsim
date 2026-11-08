@@ -238,3 +238,39 @@ def test_sobra_una_clave(tmp_path):
 def test_fecha_inicio_no_es_fecha(tmp_path, value):
     with pytest.raises(ValueError, match="fecha_inicio"):
         load_profile(write_profile(tmp_path, fecha_inicio=value))
+
+
+# --- Cambiar la fecha de inicio (tarea 6.3) ----------------------------------
+
+
+def factors(p: ArrivalProfile) -> tuple:
+    return (p.daily_base, p.hour_factors, p.weekday_factors, p.month_factors, p.daily_cv)
+
+
+@pytest.mark.parametrize("path", [EXAMPLE, CONFIG])
+def test_cambiar_la_fecha_es_cargar_el_toml_con_esa_fecha(tmp_path, path):
+    # El directo anclado cambia la fecha del perfil. El resultado debe ser, bit a bit, el
+    # perfil de un TOML con esa fecha_inicio: la normalización depende solo de los factores.
+    new_date = date(2026, 3, 9)
+    original = load_profile(path)
+    text = path.read_text(encoding="utf-8")
+    old_line = f"fecha_inicio = {original.start_date.isoformat()}"
+    assert text.count(old_line) == 1
+    other = tmp_path / "llegadas.toml"
+    other.write_text(text.replace(old_line, f"fecha_inicio = {new_date.isoformat()}"), "utf-8")
+    loaded = load_profile(other)
+
+    changed = original.with_start_date(new_date)
+
+    assert changed == loaded
+    assert factors(changed) == factors(original)
+    assert changed.start_date == new_date
+    assert original.start_date == date(2026, 1, 5)  # el original no cambia
+    # replace vuelve a normalizar y cambia algún factor en el último bit: por eso no vale.
+    assert factors(dataclasses.replace(original, start_date=new_date)) != factors(loaded)
+
+
+@pytest.mark.parametrize("value", ["2026-03-09", datetime(2026, 3, 9, 0, 0), None])
+def test_cambiar_a_una_fecha_no_valida(profile, value):
+    with pytest.raises(ValueError, match="fecha_inicio"):
+        profile.with_start_date(value)
