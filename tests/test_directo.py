@@ -6,20 +6,22 @@ piezas 6 y 7). Primero, el anclaje al calendario y las dos fuentes; después, el
 mano del censo de la 6.2 en directo, con valores calculados a mano.
 """
 
+import hashlib
 import math
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from test_census import emit_hand_log
+from test_clinical_engine import CLINICAL_LOG_FINGERPRINT_V2
 
 from edsim.arrivals.profile import load_profile
 from edsim.engine.center import load_center
 from edsim.engine.engine import simulate_ed, start_ed
-from edsim.engine.events import EventLog, MemorySink, to_json
+from edsim.engine.events import EventLog, JsonlSink, MemorySink, read_events, to_json
 from edsim.engine.scenarios import SCENARIO_START
-from edsim.live.clock import FakeClock
-from edsim.live.control import STOP, Command, NoControl, ScriptedControl
+from edsim.live.clock import FAKE_WALL_START, FakeClock
+from edsim.live.control import PAUSE, RESUME, SPEED, STOP, Command, NoControl, ScriptedControl
 from edsim.live.directo import (
     EngineSource,
     LogSource,
@@ -30,7 +32,8 @@ from edsim.live.directo import (
     anchored_start,
     run_live,
 )
-from edsim.live.pacer import Pacer
+from edsim.live.pacer import MAX_SLICE, Pacer
+from edsim.profiles.config import load_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "tests" / "data"
@@ -446,3 +449,140 @@ def test_datos_de_la_ejecucion_no_validos(field, value):
     }
     with pytest.raises(ValueError, match=field):
         RunInfo(**{**values, field: value})
+
+
+# --- Directo = batch -----------------------------------------------------------------
+
+SEED = 2026
+DAYS = 3
+HORIZON = DAYS * 1440
+W = 2 * 1440
+RUN_ID = "r2026"  # el mismo en los dos lados: el de simulate_ed por defecto
+ANCHOR_WALL = datetime(2026, 3, 11, 9, 30, tzinfo=UTC)  # 10:30 en +01:00: W = 3.510
+SCRIPT = [
+    (100, Command(SPEED, 10)),
+    (200, Command(PAUSE)),
+    (260, Command(RESUME)),
+    (400, Command(SPEED, "max")),  # la última: a velocidad máxima el reloj falso no avanza
+]
+"""Órdenes del test central, en segundos del reloj falso desde el arranque."""
+
+ARRIVALS = DATA / "llegadas_ejemplo.toml"
+PROFILES = DATA / "perfiles_ejemplo.toml"
+CASES = {
+    # caso: (centro, con perfiles clínicos, versión, anclado)
+    "v1": ("centro_ejemplo.toml", False, 1, False),
+    "v2": ("centro_ejemplo.toml", True, 2, False),
+    "v3": ("centro_sala_ejemplo.toml", True, 3, False),
+    "v3-anclada": ("centro_sala_ejemplo.toml", True, 3, True),
+}
+
+
+def write_v2_log(path: Path) -> Path:
+    """Un log de la versión 2: el clínico sin sala con el número de versión de la 2.
+
+    Es el de test_la_version_3_sin_sala_son_los_eventos_de_la_2: se comprueba su huella.
+    """
+    with JsonlSink(path) as sink:
+        simulate_ed(
+            load_center(DATA / "centro_ejemplo.toml"),
+            load_profile(ARRIVALS),
+            DAYS,
+            SEED,
+            sink=sink,
+            profiles=load_profiles(PROFILES),
+        )
+    text = path.read_bytes()
+    assert text.count(b'"schema_version": 3,') == text.count(b"\n")
+    as_v2 = text.replace(b'"schema_version": 3,', b'"schema_version": 2,')
+    assert hashlib.sha256(as_v2).hexdigest() == CLINICAL_LOG_FINGERPRINT_V2
+    path.write_bytes(as_v2)
+    return path
+
+
+@pytest.fixture(scope="module")
+def v2_log(tmp_path_factory):
+    return write_v2_log(tmp_path_factory.mktemp("v2") / "eventos.jsonl")
+
+
+def run_case(case: str, v2_path: Path):
+    """El batch y el directo de un caso; devuelve lo necesario para compararlos."""
+    center_file, clinical, version, anchored = CASES[case]
+    clock = FakeClock(wall_start=ANCHOR_WALL if anchored else FAKE_WALL_START)
+    profile = load_profile(ARRIVALS)
+    start = W
+    if anchored:
+        start_date, start = anchored_start(clock.wall(), 2)
+        profile = profile.with_start_date(start_date)
+
+    if case == "v2":
+        batch = list(read_events(v2_path))
+        source = LogSource(read_events(v2_path), HORIZON)
+    else:
+        center = load_center(DATA / center_file)
+        profiles = load_profiles(PROFILES) if clinical else None
+        sink = MemorySink()
+        simulate_ed(center, profile, DAYS, SEED, sink=sink, run_id=RUN_ID, profiles=profiles)
+        batch = sink.events
+        buffer = MemorySink()
+        ed = start_ed(center, profile, DAYS, SEED, sink=buffer, run_id=RUN_ID, profiles=profiles)
+        source = EngineSource(ed, buffer)
+
+    info = RunInfo(
+        run_id=RUN_ID,
+        mode="replay" if case == "v2" else "directo",
+        schema_version=version,
+        seed=SEED,
+        start_date=profile.start_date,
+        anchored=anchored,
+    )
+    control = ScriptedControl(clock, SCRIPT)
+    live = MemoryLiveSink()
+    end = run_live(
+        source,
+        Pacer(clock, 60, (0.0, 0.0)),
+        control,
+        live,
+        start=start,
+        horizon=HORIZON,
+        run_info=info,
+    )
+    return batch, live, end, control, start
+
+
+def filtered_batch(batch: list, start: float) -> list:
+    """La fórmula de la pieza 7, sin census ni open_episodes: sim_time >= W, sin episodio,
+    o episodio abierto en W (llegó antes de W y no salió antes de W)."""
+    before = [e for e in batch if e.sim_time < start]
+    departed = {e.episode_id for e in before if e.event_type == "patient_departed"}
+    still_open = {e.episode_id for e in before if e.episode_id is not None} - departed
+    return [
+        e
+        for e in batch
+        if e.sim_time >= start or e.episode_id is None or e.episode_id in still_open
+    ]
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_directo_igual_a_batch(case, v2_log):
+    batch, live, end, control, start = run_case(case, v2_log)
+    version = CASES[case][2]
+    expected = filtered_batch(batch, start)
+
+    assert {e.schema_version for e in batch} == {version}
+    assert [to_json(e) for e in live.events] == [to_json(e) for e in expected]
+    assert (end.reason, end.sim_time, end.published) == ("horizonte", HORIZON, len(expected))
+    assert end.last_event_id == expected[-1].event_id
+
+    # Guardas: el caso ocurre.
+    census_size = live.run_start.census_events
+    initial, direct = live.events[:census_size], live.events[census_size:]
+    assert all(e.sim_time < start for e in initial)
+    assert any(e.episode_id is None for e in initial)  # recursos
+    assert any(e.episode_id is not None for e in initial)  # pacientes
+    assert sum(e.sim_time < start for e in batch) > census_size  # calentamiento excluido
+    assert direct
+    assert [command for _, _, command in control.delivered] == [c for _, c in SCRIPT]
+    assert all(0 <= seen - planned <= MAX_SLICE + TOL for planned, seen, _ in control.delivered)
+    if version == 3:
+        assert any(e.event_type == "box_released" for e in direct)  # con sala
