@@ -117,6 +117,8 @@ s_{\text{ahora}} = s_0 + \frac{v\,(w - w_0)}{60}, \qquad (w_0, s_0) \leftarrow (
 
 Pausar es congelar s\_ahora; reanudar es reanclar en (instante de la reanudación, s\_ahora). El reloj simulado ni salta ni retrocede.
 
+**Desde la velocidad máxima** no hay fórmula: el reloj simulado está en el `sim_time` del último evento ejecutado, y ahí se reancla al pasar a una velocidad finita. También se reancla así al empezar el directo: en (instante real del arranque, W).
+
 **Esperar escuchando.** A ×1 el siguiente evento puede estar a 10 minutos reales. El pacer no duerme 10 minutos seguidos: espera en tramos cortos (un máximo de 0,2 s) y, entre tramo y tramo, mira si ha llegado una orden (velocidad, pausa, parar). Así responde en menos de 0,2 s.
 
 **Si se queda atrás.** Si publicar tarda más que el hueco entre eventos (por ejemplo, el broker va lento), el objetivo ya ha pasado: el pacer ejecuta el evento enseguida y el siguiente objetivo, que es absoluto, deja que se ponga al día. Nunca salta eventos: el log en vivo es el mismo que el del batch. El retraso se mide y se informa.
@@ -523,7 +525,7 @@ Un sistema en tiempo real tiene tres enemigos de los tests: el tiempo (no se pue
 
 ### Cómo funciona
 
-**Inyección de dependencias.** El pacer no llama a `time.monotonic()` ni a `time.sleep()` directamente: recibe un objeto reloj con esos dos métodos. En producción es el reloj del sistema; en los tests, un **reloj falso**: `now()` devuelve un número guardado y `sleep(d)` lo aumenta en `d` al instante y anota la espera. El pacer no nota la diferencia, y el test puede comprobar cada espera al microsegundo.
+**Inyección de dependencias.** El pacer no llama a `time.monotonic()` ni a `time.sleep()` directamente: recibe un objeto reloj con esos dos métodos. En producción es el reloj del sistema; en los tests, un **reloj falso**: `monotonic()` devuelve un número guardado y `sleep(d)` lo aumenta en `d` al instante y anota la espera. El pacer no nota la diferencia, y el test puede comprobar cada espera al microsegundo. El reloj falso guarda el tiempo en nanosegundos enteros, como `time.monotonic_ns()`: en coma flotante, 150 tramos de 0,2 s suman 29,999999999999925 s, y una orden programada a los 30 s se vería un tramo tarde. Con enteros, 150 × 0,2 s son 30 s exactos (cada `sleep` se redondea al nanosegundo, y como mínimo 1 ns si `d` es positivo, para que una espera diminuta no deje el bucle parado).
 
 **Los dobles de EDsim.**
 
@@ -534,7 +536,7 @@ Un sistema en tiempo real tiene tres enemigos de los tests: el tiempo (no se pue
 | `MemorySink` (ya existe) | Kafka | Qué se publicó y en qué orden |
 | `FakeProducer` | El productor de `confluent-kafka` | Topic, clave, cabeceras y bytes de cada mensaje; `poll` tras cada evento; `BufferError` y errores de entrega a demanda |
 
-**El test central: «directo = batch».** Con la misma semilla, el directo (reloj falso, órdenes cualesquiera, `MemorySink`) publica exactamente las líneas del batch, salvo los eventos del calentamiento de los episodios cerrados. En fórmula: publicado = {e del batch : `sim_time` ≥ W, o su episodio sigue abierto en W, o no tiene episodio}, en el mismo orden y con los mismos bytes. Se parametriza por versión de catálogo: la 1 con el modelo provisional (`--provisional` y `tests/data/centro_ejemplo.toml`), la 3 con el modelo clínico, que es el de por defecto, y la 2 con el replay de un log guardado en `tests/data/`. Cuando el hito 5 traiga la 4, se añade un caso.
+**El test central: «directo = batch».** Con la misma semilla, el directo (reloj falso, órdenes cualesquiera, `MemorySink`) publica exactamente las líneas del batch, salvo los eventos del calentamiento de los episodios cerrados. En fórmula: publicado = {e del batch : `sim_time` ≥ W, o su episodio sigue abierto en W, o no tiene episodio}, en el mismo orden y con los mismos bytes. Se parametriza por versión de catálogo: la 1 con el modelo provisional (`--provisional` y `tests/data/centro_ejemplo.toml`), la 3 con el modelo clínico, que es el de por defecto, y la 2 con el replay de un log guardado de esa versión, que el propio test genera. Cuando el hito 5 traiga la 4, se añade un caso.
 
 **Las tres capas.**
 
@@ -704,7 +706,7 @@ edsim/
 - **Pacer.** `Pacer(clock, speed, anchor)`: `wait_until(sim_time, control)` espera hasta el objetivo en tramos de 0,2 s como máximo, atiende las órdenes y devuelve si hay que parar; `set_speed`, `pause`, `resume`; `lag()` (segundos de retraso).
 - **Órdenes.** Protocolo `ControlSource` con `poll() -> Command | None`. `ScriptedControl` (por instante del reloj falso), `NoControl` y, en `kafka.py`, `KafkaControl`.
 - **Censo (6.2).** En `edsim.live.census`: `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión de cada evento; `census(events, start) -> list[Event]`, en el orden original; `live_events(events, start) -> list[Event]`, los de `sim_time >= start` (no `live`, que es el nombre del subpaquete). `census` seguido de `live_events` es el log filtrado de la pieza 7.
-- **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info)`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`.
+- **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info)`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`. En la 6.3, `inicio` y `fin` son datos (nombres propuestos: `RunStart` y `RunEnd`) que el sumidero recibe aparte de los eventos; la 6.4 los convierte en los mensajes JSON de `ed.runs`. Tras el último evento, espera al horizonte antes de `fin`. Con Ctrl+C publica `fin` con motivo `interrupcion` y vuelve a lanzar la interrupción.
 - **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función.
 
 **Reglas que se mantienen:** paquete en inglés; tests del núcleo en español; claves de los mensajes y opciones de la CLI en español; lógica en el paquete y CLI fina; `edsim.live` no importa `edsim_app`, `streamlit` ni `pandas`, y la app no importa `edsim.live`.
@@ -732,8 +734,12 @@ La validación del hito es exacta, no estadística: el directo debe publicar los
 - Tramos: a ×1, con el siguiente evento a 10 min, una orden `parar` que llega a los 0,5 s se atiende en el primer tramo siguiente, a los 0,6 s.
 - Deriva: 3.800 eventos de un día a ×60 con un exceso de 1 ms en cada `sleep`: ningún evento sale con más de 1 ms de retraso sobre su objetivo.
 - Retraso: si publicar cada evento cuesta 2 s y los eventos están a 1 minuto simulado (1 s a ×60), se publican todos, en orden, y `lag()` crece 1 s por evento.
+- Máxima y vuelta: ×60 desde (0 s, 0 min); a los 10 s (minuto 10), velocidad máxima: los eventos de los minutos 10,5 y 11 salen a los 10 s. Vuelta a ×60 a los 10 s: ancla (10 s, minuto 11); un evento en el minuto 12 se espera hasta 11 s.
+- Anclaje con 2 días de calentamiento: reloj de pared en `2026-03-11T09:30:00Z` (10:30 en `+01:00`) → fecha de inicio 2026-03-09 y W = 2 × 1.440 + 630 = 3.510 min. En `2026-03-10T23:30:00Z` (las 0:30 del 11 en `+01:00`) → fecha 2026-03-09 y W = 2.910: el día se toma en `+01:00`, no en UTC.
 
-**Directo = batch (6.3)**, parametrizado por versión de catálogo: la 1 con el modelo provisional (`--provisional` y `tests/data/centro_ejemplo.toml`), la 3 con el clínico por defecto y la 2 con el replay de un log de `tests/data/`. Ese log se genera con el modelo clínico sin sala (`espera_resultados_fuera = []`, que no emite `box_released`) y `schema_version` 2, con el comando en un comentario: el catálogo 3 es el 2 más `box_released`. Semilla 2026, 3 días, W = 2 días, ×60 con órdenes programadas (×10, pausa, reanudar, `max`). Lo publicado, sin los mensajes de `ed.runs`, es, byte a byte, el batch filtrado: {e : `sim_time` ≥ W, o su episodio sigue abierto en W, o no tiene episodio}, en el mismo orden. Con `--anclar` y un `FakeClock` en una fecha fija, el mismo test con la fecha de inicio que corresponde.
+**Directo = batch (6.3)**, parametrizado por versión de catálogo, con `tests/data/llegadas_ejemplo.toml` y `tests/data/perfiles_ejemplo.toml`: la 1 con el modelo provisional y `tests/data/centro_ejemplo.toml`; la 3 con el clínico y `tests/data/centro_sala_ejemplo.toml`, para que haya `box_released`; y la 2 con el replay de un log de esa versión. Ese log no se guarda en `tests/data/` (serían varios MB): lo genera una fixture con el clínico y `tests/data/centro_ejemplo.toml`, que no tiene sala, cambiando `"schema_version": 3,` por `"schema_version": 2,`, como `test_la_version_3_sin_sala_son_los_eventos_de_la_2`; la fixture comprueba que su SHA-256 es `CLINICAL_LOG_FINGERPRINT_V2`. Semilla 2026, 3 días, W = 2 días, ×60 con órdenes programadas (×10, pausa, reanudar, `max`). Lo publicado, sin los mensajes de `ed.runs`, es, byte a byte, el batch filtrado: {e : `sim_time` ≥ W, o su episodio sigue abierto en W, o no tiene episodio}, en el mismo orden. Guarda «el caso ocurre»: las cuatro órdenes se aplican, cada una como mucho 0,2 s después de su instante. Con `--anclar` y un `FakeClock` en una fecha fija, el mismo test con la fecha de inicio y el W que corresponden. La fecha se cambia sin volver a normalizar los factores del perfil (la normalización no es idempotente: cambia el último bit y, con él, el log desde el minuto 3.324), así que el perfil anclado es, bit a bit, el de un TOML con esa fecha\_inicio.
+
+**Directo con un log a mano (6.3)**, con el lector de log y `FakeClock`: el log del censo de la 6.2 más la salida de `EP-000002` en 150 y la llegada de `EP-000004` en 170; W = 120, horizonte 180, ×60 desde el instante 0 s. Se publica `inicio`, el censo de golpe en 0 s, la salida de `EP-000003` en 0 s, la de `EP-000002` en 30 s y la llegada de `EP-000004` en 50 s; `fin` en 60 s, con motivo `horizonte`, `sim_time` 180, el `event_id` de esa llegada y publicados = censo + 3. Con una orden `parar` a los 40,1 s, `fin` sale a los 40,2 s (primer tramo después), con motivo `parar`, `sim_time` 160,2 y publicados = censo + 2. Con un Ctrl+C del reloj falso a los 45 s, `fin` con motivo `interrupcion` y `sim_time` 165, y la interrupción sale de `run_live`.
 
 **Kafka sin broker (6.4)**, con `FakeProducer`:
 
@@ -812,7 +818,7 @@ Seis tareas en orden estricto, todas después de `v0.4-hito4` y todas de Claude 
 | --- | --- | --- | --- | --- |
 | 6.1 | Primer commit: exportaciones de `docs/specs/hito-6.md` y `docs/specs/hito-4.md` y «Hito en curso» de `AGENTS.md`. `compose.yaml` (Kafka y Redpanda Console) verificado contra los ejemplos de `apache/kafka`; versiones comprobadas y fijadas; extra `edsim[kafka]`; test de frontera ampliado a `confluent_kafka`; `tests_integracion/` con la prueba de humo; `scripts/tests-integracion.sh` y su clasificación en `scripts/sello.sh`; permisos de Docker para Claude Code; job tests-kafka en el CI, todavía no obligatorio; sección del README «Kafka en local» | `feat/h6-compose` | Prueba de humo | No |
 | 6.2 | Motor por pasos con huellas intactas y test por trozos; evento en el horizonte; `TERMINAL_EVENTS` por versión; `open_episodes` y `census` contra los procesos vivos | `feat/h6-pasos` | — | Sí (toca el motor) |
-| 6.3 | `Clock`, `FakeClock`, `Pacer`, `ControlSource` y `ScriptedControl`; `run_live` con el motor y con un log guardado; anclaje; «directo = batch» por versión de catálogo en memoria, con el log de la versión 2 generado para `tests/data/` | `feat/h6-pacer` | — | No |
+| 6.3 | `Clock`, `FakeClock`, `Pacer`, `ControlSource` y `ScriptedControl`; `run_live` con el motor y con un log guardado; anclaje; «directo = batch» por versión de catálogo en memoria, con el log de la versión 2 generado en una fixture, no en `tests/data/` | `feat/h6-pacer` | — | No |
 | 6.4 | Refactor de las comprobaciones del catálogo (commit aparte); esquemas generados y escritos; `topics.py`, `messages.py`; `KafkaSink`, `KafkaControl` y `ensure_topics` con import perezoso; tests con `FakeProducer` e integración; job `tests-kafka` pasa a obligatorio | `feat/h6-kafka` | Topics, particiones, directo de 1 día, marcas | Sí (contrato y entrega) |
 | 6.5 | CLI `edsim directo` (preparar, lanzar, reemitir, control), línea de estado, Ctrl+C, errores de uso antes de conectar; prueba de extremo a extremo | `feat/h6-cli` | Control y extremo a extremo | No |
 | 6.6 | Notebook `06_tiempo_real.ipynb` (consumidor de censo en vivo con `LocationState`, latencias, particiones), modo rápido sin broker para el CI; ADR 0048 a 0066; exportación de esta especificación; diario; etiqueta `v0.6-hito6` | `docs/h6-cierre` | — | No |
@@ -974,3 +980,66 @@ Sin ajustes de la revisión. Pedro recreó a mano el topic de prueba tras el `do
 - Redpanda Console v3.14.0: decidir en el cierre del hito.
 - 6.4 y 6.5: el aviso `GETPID` del primer mensaje no es un fallo; el fallo es un aviso de entrega con error.
 - Las dos ampliaciones de la pestaña (pieza 3, primer mensaje; pieza 7, lección de la V1) y este anexo se exportan en el primer commit de la 6.2.
+
+### Tarea 6.2: Motor por pasos y censo inicial
+
+**Qué se hizo**
+
+PR #57 (rama `feat/h6-pasos`, Claude Code, con `@codex review`): seis commits, sin cambiar ni un byte del log; fusión `8b38ffa` el 8 de noviembre de 2026.
+
+- **Primer commit:** la exportación de `docs/specs/hito-6.md` sin la línea de firma, y nada más. `docs/specs/hito-4.md` no se toca.
+- **Motor por pasos** (`engine.py`, en un commit sin tocar tests): `start_engine` devuelve un `SteppedEngine` con `peek()`, `step()`, `advance_until(t)`, `alive_episodes()` y `finish()`; `start_ed` devuelve un `SteppedED`, que delega en él y da el `EDResult`. `run_engine` y `simulate_ed` no cambian de firma: son `start_*`, `advance_until(horizonte)` y `finish()`.
+- **Tests del motor** (`tests/test_stepped_engine.py`, 15 tests): por trozos y paso a paso con los dos modelos, evento en el horizonte, de un tirón igual a `simulate_ed`, avance hacia atrás y valores no válidos.
+- **`TERMINAL_EVENTS`** junto a `CATALOGS`: `{"patient_departed"}` en las versiones 1, 2 y 3.
+- **`edsim.live.census`:** `open_episodes`, `census` y `live_events`, con 22 tests en `tests/test_census.py` y un test de frontera (el censo no carga SimPy ni el motor).
+- **Pestaña:** la equivalencia con `run(until=H)` comprobada en el código de SimPy 4.1.2, las cifras medidas, la estructura del código y los tests de la 6.2, y la fila V3 de la tabla del hito corregida. «Tarea 6.2» en `AGENTS.md`.
+
+**Decisiones del diff**
+
+- `peek()` devuelve infinito si el siguiente evento está en el horizonte o después, o si no queda ninguno; `step()` falla si `peek()` es infinito.
+- `advance_until(t)` usa `min(t, horizonte)` como tope y falla con `ValueError` si `t` no es un número real o es NaN (con NaN el bucle no haría nada y no avisaría). Acepta los enteros de numpy. Un `t` hacia atrás no hace nada.
+- `finish()` falla si queda algún evento antes del horizonte; se puede llamar más de una vez.
+- `SteppedED` delega en el `SteppedEngine` en vez de heredar: así cada `finish()` tiene un solo tipo de retorno.
+- La función del directo se llama `live_events`, no `live`, para no chocar con el subpaquete `edsim.live`. `census` materializa la entrada porque la recorre dos veces.
+- No se llama a `env.run` ni de un tirón ni por trozos: el batch también avanza paso a paso (por trozos, cada llamada metería otra parada en la cola).
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Eventos (config/, semilla 2026, 14 días) | 55.511: 3.965 al día; 4.439 pacientes (317 al día) con 12,49 eventos cada uno; 86 de recursos |
+| Censo en W = 2 días (clínico) | 113 abiertos, iguales a los procesos vivos (758 llegados, 645 ya salieron); 520 eventos (506 + 14), el 6,03 % de 8.629 |
+| Censo en W = 2 días (provisional, 3 días) | 27 abiertos; 188 eventos (178 + 10), el 2,27 % de 8.287 |
+| Calentamiento y censo | 0,32 s y 2 ms |
+| `simulate_ed` de 14 días, antes y después | 1,755 s y 1,781 s (mejor de 5); dentro del ±5 %, con ruido |
+| `tests/test_stepped_engine.py` y `tests/test_census.py` | 7,01 s y 1,50 s |
+| `scripts/tests-completos.sh` con Docker parado | 14 min 00 s, en verde: núcleo 2.827 tests en 10:03, app 287 en 3:06, notebooks 0:50 (19:53 en la 6.1 con Kafka en marcha; 13:21 en la 4.9) |
+
+Los casi 6 minutos de más de la 6.1 eran de Kafka en marcha, no de los tests. Desde ahora, la completa se mide con `docker compose stop`.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | `advance_until` ejecuta los eventos con instante `<= t` (también en H) | Fallan los dos del horizonte, el de `test_patient.py` y por trozos (dos modelos) | Exacta (5) |
+| V2 | `open_episodes` sin mirar el terminal | Censo a mano (3), abiertos = vivos (2) y censo más directo (2) | Exacta (7) |
+| V3 | `census` sin los eventos de recursos | Censo a mano (3) y censo más directo (2) | Exacta (5) |
+| V4 | Terminal con `sim_time <= W` | Solo el censo a mano (3): ninguna salida real cae justo en 2.880 | Exacta (3) |
+| V5 | `TERMINAL_EVENTS` sin la versión 2 | El test de eventos terminales y el censo a mano de la 2 | Exacta (2; `KeyError: 2`) |
+| V6 | `alive_episodes` cuenta todos los procesos con llegada | Por trozos y paso a paso (2 + 2), abiertos = vivos y censo más directo | **Detecta más.** Errores en la fixture `at_once`, que comprueba los vivos, y falla también el del horizonte por «ningún vivo tras la salida», añadido al escribirlo. No falta ningún test |
+| V7 (añadida) | `advance_until` sin tope en el horizonte | Solo por trozos (2), por el corte infinito | Exacta (2) |
+| V8 (añadida) | `census` devuelve primero los recursos | Solo censo más directo (2): en el log a mano los recursos ya van primero | Exacta (2) |
+
+La V1, la V4 y la V8 enseñan lo mismo que la V3 de la tabla del hito: ni la ejecución de referencia ni el log a mano ejercitan esos errores, y solo los ve un test construido para ellos.
+
+**Revisión**
+
+Revisado el código y las medidas; `@codex review` sin problemas. Sin ajustes. En el plan se pidieron tres cosas, todas cumplidas: no commitear `docs/specs/hito-4.md`, pasar a código las «start\_ed» de la estructura y dar los tiempos de los tests nuevos y las siete huellas por nombre.
+
+**Pendiente**
+
+- La 6.3 usa `start_ed` y `SteppedED` para el directo, y `census` seguido de `live_events` como referencia del log filtrado.
+- Pestaña de diseño, «Calidad y tests (QA)»: lo de la 6.1, sin cambios.
+- Job `tests-kafka`: obligatorio al fusionar la 6.4 (Pedro).
+- Redpanda Console v3.14.0: decidir en el cierre del hito.
+- Este anexo se exporta en el primer commit de la 6.3.
