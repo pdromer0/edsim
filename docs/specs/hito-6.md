@@ -88,6 +88,8 @@ SimPy da dos herramientas para avanzar a mano:
 
 `env.run(until=t)` es, por dentro, un bucle de `step()`. Internamente, cada evento de la cola lleva la clave (instante, prioridad, número de orden), y `run(until=t)` mete un evento de parada en `t` con prioridad urgente, que se ejecuta antes que los eventos normales de ese instante. Avanzar con `peek()` y `step()` mientras `peek() < t` ejecuta los mismos eventos en el mismo orden. En eso se basa el «motor por pasos» (H6-4).
 
+**Por qué es exactamente lo mismo (comprobado en la 6.2 con el código de SimPy 4.1.2).** La cola es un *heap* de claves (instante, prioridad, número de orden) y `step()` saca siempre la menor. `run(until=H)` programa la parada con `schedule(parada, URGENT, H - now)`: su clave es (H, 0, n). Todo lo anterior a H sale antes, porque su instante es menor. Ningún evento en H sale antes que la parada: los normales tienen prioridad 1, y los urgentes (`Initialize` al arrancar un proceso e `Interruption`) se programan siempre con retraso 0, en el instante en que está el reloj; para que uno quedara en H, el reloj tendría que estar ya en H, y solo llega ahí al sacar la parada. El número de orden de la parada desplaza en uno los de lo que se programa después, sin cambiar su orden relativo. Así que `run(until=H)` ejecuta exactamente los eventos con instante menor que H, como el bucle de `peek()` y `step()`. Lo único distinto es `env.now` al final, que nadie usa. No se usa `env.run` por trozos: cada llamada metería otra parada en la cola.
+
 **El pacer.** Antes de cada `step()`, el pacer mira cuándo es el siguiente evento y espera hasta el instante real que le corresponde. Con un ancla (w₀ en segundos reales, s₀ en minutos simulados) y una velocidad v:
 
 ```latex
@@ -123,7 +125,7 @@ Pausar es congelar s\_ahora; reanudar es reanclar en (instante de la reanudació
 
 ### Las velocidades en números
 
-Con el centro base (300 llegadas al día y unos 12,6 eventos por paciente, estimados con el modelo de la 4.6a: 9 eventos fijos, 4 más con pruebas, en el 72,75 %, y 2 más cuando el paciente sale a la sala de resultados) salen unos 3.800 eventos al día. La tarea 6.2 medirá la cifra exacta.
+Con el centro base (300 llegadas al día y unos 12,6 eventos por paciente, estimados con el modelo de la 4.6a: 9 eventos fijos, 4 más con pruebas, en el 72,75 %, y 2 más cuando el paciente sale a la sala de resultados) salen unos 3.800 eventos al día. **Medido en la 6.2** (config/, semilla 2026, 14 días): 55.511 eventos, 3.965 al día; 4.439 pacientes (317 al día) con 12,49 eventos cada uno, y 86 de recursos.
 
 | Velocidad | Un día simulado | 14 días | Eventos por segundo (media) |
 | --- | --- | --- | --- |
@@ -145,7 +147,7 @@ El log del batch empieza en la fecha del perfil de llegadas (`fecha_inicio`) a l
 
 ### En EDsim
 
-- `run_engine` deja de ser «corre hasta el horizonte» y pasa a construir el motor y avanzarlo por pasos; el batch avanza sin esperas hasta el horizonte (H6-4). Las huellas SHA-256 no cambian, y un test comprueba que avanzar por trozos arbitrarios da el mismo log.
+- `run_engine` deja de ser «corre hasta el horizonte» y pasa a construir el motor y avanzarlo por pasos; el batch avanza sin esperas hasta el horizonte (H6-4). Las huellas SHA-256 no cambian, y un test comprueba que avanzar por trozos arbitrarios da el mismo log. En la 6.2, `simulate_ed` de 14 días tarda lo mismo antes y después (1,755 s frente a 1,781 s, el mejor de 5).
 - El pacer (`edsim.live.pacer`) no sabe nada del motor ni de Kafka: recibe «cuándo es lo siguiente» y «hazlo», un reloj y una fuente de órdenes, todos inyectables (H6-5).
 - **Por qué no `simpy.rt.RealtimeEnvironment`.** SimPy trae un entorno en tiempo real con un factor fijo y un modo estricto que falla si se queda atrás. Al pacer de EDsim le hace falta más: cambiar de velocidad y pausar en caliente, escuchar órdenes mientras espera, calentar a velocidad máxima con el mismo entorno y un reloj falso para los tests. Es la decisión 5 del diseño («pacer propio»).
 
@@ -697,11 +699,11 @@ edsim/
 
 **Interfaces principales** (nombres propuestos; el plan de cada tarea los confirma):
 
-- **Motor por pasos.** `start_engine(center, arrivals, sampler, log, days)` devuelve un objeto con `peek()` (instante del siguiente evento, o infinito al llegar al horizonte), `step()`, `advance_until(t)` (todos los eventos con instante menor que `t`) y `finish()` (la verdad de los episodios y los vivos, como `EngineRun`). `run_engine` pasa a ser `start_engine(…)` y `advance_until(horizonte)`. `simulate_ed` no cambia de firma: por dentro pasa a ser start\_ed(…), con los mismos argumentos, más avanzar hasta el horizonte y finish(). start\_ed es lo que usará el directo en la 6.3.
+- **Motor por pasos (6.2).** `start_engine(center, arrivals, sampler, log, days)` devuelve un `SteppedEngine` con `peek()` (instante del siguiente evento, o infinito si es el horizonte o después, o si no queda ninguno), `step()` (un evento; error si `peek()` es infinito), `advance_until(t)` (todos los eventos con instante menor que `t`, sin pasar del horizonte), `alive_episodes()` (los `episode_id` de los procesos de paciente vivos) y `finish()` (la verdad de los episodios y los vivos, como `EngineRun`; error antes del horizonte). `run_engine` pasa a ser `start_engine(…)`, `advance_until(horizonte)` y `finish()`. `simulate_ed` no cambia de firma: por dentro pasa a ser `start_ed`(…), con los mismos argumentos, más avanzar hasta el horizonte y finish(). `start_ed` devuelve un `SteppedED`, con los mismos métodos y un `finish()` que da el `EDResult`; es lo que usará el directo en la 6.3.
 - **Reloj.** Protocolo `Clock` con `monotonic()` (segundos), `sleep(segundos)` y `wall()` (fecha y hora con zona, solo para anclar). `SystemClock` y `FakeClock`.
 - **Pacer.** `Pacer(clock, speed, anchor)`: `wait_until(sim_time, control)` espera hasta el objetivo en tramos de 0,2 s como máximo, atiende las órdenes y devuelve si hay que parar; `set_speed`, `pause`, `resume`; `lag()` (segundos de retraso).
 - **Órdenes.** Protocolo `ControlSource` con `poll() -> Command | None`. `ScriptedControl` (por instante del reloj falso), `NoControl` y, en `kafka.py`, `KafkaControl`.
-- **Censo.** `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión; `census(events, start) -> list[Event]`, en el orden original.
+- **Censo (6.2).** En `edsim.live.census`: `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión de cada evento; `census(events, start) -> list[Event]`, en el orden original; `live_events(events, start) -> list[Event]`, los de `sim_time >= start` (no `live`, que es el nombre del subpaquete). `census` seguido de `live_events` es el log filtrado de la pieza 7.
 - **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info)`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`.
 - **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función.
 
@@ -716,11 +718,11 @@ La validación del hito es exacta, no estadística: el directo debe publicar los
 **Motor por pasos (6.2)**
 
 - Las huellas SHA-256 de `main` no cambian (motor provisional, clínico y CLI), con la suite completa.
-- Avanzar por trozos (cortes en instantes aleatorios con semilla fija, incluidos cortes en instantes con varios eventos) da el mismo log y la misma verdad que `run_engine`.
-- **Evento justo en el horizonte:** un escenario a mano con un muestreador inyectado que programa un evento exactamente en el minuto horizonte; ese evento no ocurre, como en `simulate_mm1` y en el hito 3.
+- Avanzar por trozos (cortes en instantes aleatorios con semilla fija, incluidos cortes en instantes con varios eventos) da el mismo log y la misma verdad que `run_engine`. En la 6.2: semilla 2026 y 3 días con los modelos provisional y clínico; cortes en 0, 480, 900, 1.320, el instante exacto de una llegada, ocho uniformes con la semilla 62, H + 60 e infinito; y `step()` evento a evento en el primer día. Tras cada corte, ningún evento del log está en el corte o después.
+- **Evento justo en el horizonte:** un escenario a mano con un muestreador inyectado que programa un evento exactamente en el minuto horizonte; ese evento no ocurre, como en `simulate_mm1` y en el hito 3. En la 6.2: un nivel 3 llega en 1.400, con triaje de 10 y valoración de 30; su valoración acabaría en 1.440. Con un día, sigue dentro y `peek()` es infinito; con dos, `peek()` vale 1.440 tras avanzar hasta 1.440 y salen ahí tres eventos.
 - `open_episodes` sobre el log completo en W coincide con los procesos de paciente vivos del motor en W, con los modelos provisional y clínico.
 
-**Censo (6.2)**, con un log a mano: `staffing_changed` en 0; `EP-000001` llega en 10 y sale en 100; `EP-000002` llega en 50 y sigue dentro en W = 120. El censo es el `staffing_changed` y los eventos de `EP-000002` anteriores a 120, en su orden; ninguno de `EP-000001`.
+**Censo (6.2)**, con un log a mano, en las versiones 1, 2 y 3: `staffing_changed` de `enfermeria_triaje` y de `medicos` en 0; `EP-000001` llega en 10 y sale en 100; `EP-000002` llega en 50 y sigue dentro en W = 120; `EP-000003` llega en 60 y sale exactamente en 120. Abiertos: `EP-000002` y `EP-000003`. El censo son los dos `staffing_changed` y los eventos de `EP-000002` y `EP-000003` anteriores a 120, en su orden; ninguno de `EP-000001`. La salida de `EP-000003` es del directo. Con los dos modelos, censo más directo es el log filtrado con los vivos del motor en W.
 
 **Pacer (6.3)**, con `FakeClock`; valores a mano:
 
@@ -758,7 +760,7 @@ Como en los hitos 3 y 4: antes de aplicar cada una, el plan escribe su predicci�
 | --- | --- | --- |
 | V1 | El pacer duerme la diferencia con el evento anterior | Falla solo el test de deriva: los demás usan un reloj sin exceso, donde las dos estrategias coinciden |
 | V2 | Reanclar en el `sim_time` del último evento, no en el instante actual | Fallan reanclaje y pausa; «directo = batch» pasa, porque el ritmo no cambia el contenido |
-| V3 | El motor por pasos ejecuta los eventos con instante igual al horizonte | Falla solo el test del evento en el horizonte; las huellas pasan, porque en la ejecución de referencia no hay eventos justo en el minuto 20.160 |
+| V3 | El motor por pasos ejecuta los eventos con instante igual al horizonte | Corregida en la 6.2 (allí, V1): fallan los dos tests del evento en el horizonte, el de `test_patient.py` que ya existía (es la única ejecución de la suite con un evento en H) y el de por trozos (tras el corte 480 queda un evento en 480); las huellas pasan, porque en sus ejecuciones no hay eventos justo en el horizonte |
 | V4 | El censo sin los eventos de recursos | Fallan el test del censo a mano y «directo = batch» en las tres versiones |
 | V5 | «abierto» = llegó antes de W, sin mirar el evento terminal | Fallan el censo a mano, «abiertos = procesos vivos» y «directo = batch» |
 | V6 | Reparto por tipo (`staffing_changed` a recursos y el resto a pacientes) en vez de por `episode_id` | Falla solo el test del catálogo de prueba: con los catálogos 1 a 3 las dos reglas coinciden |
@@ -771,7 +773,7 @@ La V3, la V6 y la V8 enseñan lo mismo desde tres sitios: un error que la ejecuc
 
 ### Comprobaciones en vivo (en el PR, sin test)
 
-- Eventos por día y por paciente exactos (la pieza 1 los estima en 3.800 y 12,6), tamaño del censo y tiempo del calentamiento.
+- Eventos por día y por paciente exactos (la pieza 1 los estima en 3.800 y 12,6), tamaño del censo y tiempo del calentamiento. Medido en la 6.2 (config/, semilla 2026, W = 2 días): 3.965 eventos al día y 12,49 por paciente; 113 episodios abiertos en W, que coinciden con los procesos vivos (de 758 llegados, 645 ya salieron); censo de 520 eventos (506 de pacientes y 14 de recursos), el 6,03 % de los 8.629 del calentamiento; el calentamiento tarda 0,32 s y el censo 2 ms.
 - Un directo de 1 día a ×60 visto en Redpanda Console: topics, particiones, claves, cabeceras y marcas.
 - Latencia entre la publicación y la marca del broker, y el retraso del pacer, a ×1, ×60 y máxima.
 - El ejercicio de la pieza 3: parar Kafka un minuto en mitad de un directo y comprobar que no falta ni sobra nada.
@@ -905,7 +907,7 @@ Versiones, valores por defecto y comportamientos comprobados el 6 de noviembre d
 | CI | [Contenedores de servicio de GitHub Actions](https://docs.github.com/en/actions/tutorials/use-containerized-services/use-docker-service-containers) | Requieren ejecutores Linux |
 | Cursos | [Kafka 101 de Confluent Developer](https://developer.confluent.io/courses/apache-kafka/events/) | Curso gratuito de introducción |
 
-**Cálculos propios de esta pestaña.** El exceso de `time.sleep` se midió en el contenedor Linux del chat; la deriva del pacer, con una simulación en Python de 3.800 eventos con reloj falso; las particiones, con una implementación de murmur2 que reproduce los seis vectores de prueba de Kafka (`"21"` → −973.932.308, `"foobar"` → −790.332.482…). Los 3.800 eventos al día son una estimación con el modelo de la 4.6a; la 6.2 da la cifra exacta.
+**Cálculos propios de esta pestaña.** El exceso de `time.sleep` se midió en el contenedor Linux del chat; la deriva del pacer, con una simulación en Python de 3.800 eventos con reloj falso; las particiones, con una implementación de murmur2 que reproduce los seis vectores de prueba de Kafka (`"21"` → −973.932.308, `"foobar"` → −790.332.482…). Los 3.800 eventos al día son una estimación con el modelo de la 4.6a; la 6.2 dio la cifra exacta: 3.965.
 
 ## Anexo: guía de referencia del hito 6
 
