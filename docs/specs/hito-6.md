@@ -203,7 +203,7 @@ Con murmur2, 4.200 episodios seguidos (unas dos semanas) se reparten 1.400, 1.39
 - **Cuatro topics** (H6-7): `ed.patient.events` (3 particiones, clave `episode_id`), `ed.resource.events` (1 partición, clave `recurso`), `ed.runs` (1 partición, clave `run_id`: un mensaje al empezar y otro al terminar cada ejecución) y `ed.control` (1 partición, órdenes al simulador). El detalle está en «Especificación: topics y mensajes».
 - **Por qué 3 particiones con un solo broker.** Un nodo no gana velocidad con más particiones, pero con una sola el orden sería global y nunca se vería el fenómeno central de Kafka: orden por clave, no global. Con 3 particiones, el consumidor del notebook tiene que ordenar por `sim_time` lo que necesite ordenado, como cualquier consumidor real.
 - **Regla de reparto genérica:** un evento con `episode_id` va a `ed.patient.events`; uno sin él (hoy `staffing_changed`) va a `ed.resource.events`. Vale para cualquier versión del catálogo.
-- **Topics creados explícitamente** al arrancar Compose, con la autocreación desactivada: un nombre mal escrito da un error en vez de crear un topic nuevo en silencio.
+- **Topics creados explícitamente** por `edsim directo preparar`, no por Compose, con la autocreación desactivada: un nombre mal escrito da un error en vez de crear un topic nuevo en silencio.
 - **Cliente: `confluent-kafka`** (H6-2). Envuelve librdkafka, el cliente en C que mantiene Confluent; tiene productor idempotente y es la base de Quix Streams, el de los consumidores del hito 8. La versión 2.16.1 (28 de octubre de 2026) publica ruedas para Python 3.13 y 3.14. Las alternativas, `kafka-python` (Python puro) y `aiokafka` (asyncio), no aportan nada que EDsim necesite y obligarían a cambiar de cliente en el hito 8.
 
 ### Para aprender más
@@ -372,28 +372,43 @@ El problema: el broker tiene un nombre dentro de la red de Docker (`kafka`) y ot
 
 ### En EDsim
 
-Borrador de `compose.yaml`. Los nombres de las variables siguen la regla de la imagen oficial, pero el fichero se verifica en la tarea 6.1 contra los ejemplos de `apache/kafka` antes de fijarlo.
+`compose.yaml` de la raíz, verificado en la tarea 6.1 contra el ejemplo oficial de un nodo en texto plano (`docker/examples/docker-compose-files/single-node/plaintext` de `apache/kafka` 4.4.0) y contra el código de la imagen:
 
 ```yaml
-# compose.yaml — Kafka de un nodo (KRaft) y Redpanda Console. Ver docs/specs/hito-6.md.
+# compose.yaml — Kafka de un nodo (KRaft) y Redpanda Console. Ver docs/specs/hito-6.md, pieza 5.
+#
+# Sin perfiles (son la base) y sin volumen: `docker compose down` deja el broker vacío.
+# Los topics no se crean aquí: la autocreación está desactivada y los crea EDsim (H6-7).
+name: edsim
+
 services:
   kafka:
     image: apache/kafka:4.4.0
     hostname: kafka
     ports:
-      - "9092:9092"   # EXTERNAL: simulador y tests desde WSL2
+      - "9092:9092" # EXTERNAL: simulador, tests y notebook desde WSL2
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
+      # Dos listeners para clientes: INTERNAL dentro de la red de Docker (la consola) y
+      # EXTERNAL fuera (localhost). CONTROLLER es el de KRaft y no se anuncia.
       KAFKA_LISTENERS: INTERNAL://:19092,EXTERNAL://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # La imagen formatea el almacenamiento con votantes estáticos.
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Con solo variables de entorno, la imagen no aplica su server.properties por defecto.
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      # Un solo nodo: los topics internos con 1 réplica (por defecto, 3).
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      # Un grupo nuevo recibe sus particiones sin los 3 s de espera por defecto.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:19092 > /dev/null 2>&1"]
@@ -411,6 +426,15 @@ services:
     environment:
       KAFKA_BROKERS: kafka:19092
 ```
+
+**Qué cambió respecto al borrador (tarea 6.1).**
+
+- `name: edsim`: el proyecto de Compose se llama igual desde cualquier carpeta, y `scripts/tests-integracion.sh` reconoce su broker.
+- `KAFKA_LOG_DIRS`: con solo variables de entorno, la imagen escribe un `server.properties` con lo que se le pasa y nada más, sin sus valores por defecto; se declara el directorio del ejemplo.
+- `KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR` y `…_MIN_ISR` a 1: el topic interno de los grupos compartidos (KIP-932) también tiene 3 réplicas por defecto.
+- `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0`: un grupo nuevo recibe sus particiones sin los 3 s de espera por defecto (tests y notebook).
+- Se mantiene `KAFKA_CONTROLLER_QUORUM_VOTERS`: la imagen formatea el almacenamiento con votantes estáticos (sin `--standalone`), así que `controller.quorum.bootstrap.servers` no vale con ella. Los scripts de Kafka están en `/opt/kafka/bin`, como suponía el healthcheck.
+- Sin `CLUSTER_ID` (la imagen pone uno si falta; sin volumen da igual cuál) y sin `container_name`.
 
 Los topics no se crean en Compose sino con `edsim directo preparar`, que usa el cliente de administración de Kafka y la definición de topics del código (pieza 6 y especificación). Así la lista de topics vive en un solo sitio, los tests de integración crean sus propios topics con la misma función y `up --wait` no tiene que esperar a un contenedor que arranca y termina.
 
@@ -518,7 +542,7 @@ Un sistema en tiempo real tiene tres enemigos de los tests: el tiempo (no se pue
 
 La carpeta aparte evita una trampa de pytest: la rápida del hook ejecuta `pytest -m "not slow"`, y un `-m` en la línea de comandos sustituye al de la configuración. Si los tests de Kafka fueran una marca excluida en la configuración, el hook los ejecutaría sin broker. Fuera de `testpaths`, solo corren cuando se piden: `uv run pytest tests_integracion`.
 
-**Tests de integración independientes.** Cada test crea sus topics con un sufijo único, usando la misma función que `edsim directo preparar`, y los borra al terminar. Así no se pisan entre sí ni leen restos de otra ejecución.
+**Tests de integración independientes.** Cada test crea sus topics con un sufijo único (`test.<nombre>.<uuid8>`, con guiones y sin guiones bajos) y los borra al terminar, también si falla. En la 6.1 los crea una fixture de `tests_integracion/conftest.py`; desde la 6.4, con la misma función que `edsim directo preparar` (`ensure_topics`). Así no se pisan entre sí ni leen restos de otra ejecución.
 
 **Test de frontera.** Se amplía el que ya impide que el núcleo importe `streamlit` o `pandas`: importar todos los módulos de `edsim`, incluido `edsim.live.kafka`, no carga `confluent_kafka`, y en el código solo `live/kafka.py` lo importa, dentro de las funciones que crean clientes reales (import perezoso). Así el job `tests`, que no instala el extra, importa todo y ejecuta los tests con `FakeProducer`. Sin el extra, `edsim directo lanzar` dice cómo instalarlo en vez de fallar con un `ImportError`.
 
@@ -598,8 +622,9 @@ El Compose es el borrador de la pieza 5; el productor cambia cuatro valores sobr
 
 ### Compose
 
-- `compose.yaml` en la raíz, con los servicios `kafka` y `console` y sin perfiles (la base del perfil `core` del diseño). Borrador en la pieza 5; la tarea 6.1 lo verifica y fija las etiquetas.
-- Versiones del 6 de noviembre de 2026, que la 6.1 vuelve a comprobar (H6-15): `apache/kafka:4.4.0` (publicada el 22 de octubre de 2026; la 4.4, la 4.3 y la 4.2 tienen soporte) y `docker.redpanda.com/redpandadata/console:v3.13.1` (22 de octubre de 2026).
+- `compose.yaml` en la raíz, con los servicios `kafka` y `console` y sin perfiles (la base del perfil `core` del diseño). El fichero final está en la pieza 5, verificado y con las etiquetas fijadas en la tarea 6.1.
+- Versiones fijadas en la 6.1, comprobadas el 8 de noviembre de 2026 (H6-15): `apache/kafka:4.4.0` (22 de octubre de 2026; con soporte, 4.4.0, 4.3.2 y 4.2.2, sin parche 4.4.1), `docker.redpanda.com/redpandadata/console:v3.13.1` (22 de octubre de 2026; la v3.14.0, del 5 de noviembre, es una versión menor nueva y no se adopta en este hito) y el extra `kafka = ["confluent-kafka>=2.16.1,<2.17"]` (2.16.1, del 28 de octubre de 2026, con librdkafka 2.16.0).
+- Healthcheck: el broker está sano cuando `kafka-broker-api-versions.sh` responde por `kafka:19092`, cada 5 s y hasta 24 intentos. `docker compose up --wait` tarda unos 10 s con las imágenes descargadas.
 - Puertos en la máquina: 9092 (Kafka, listener `EXTERNAL`) y 8080 (Redpanda Console).
 - Sin volumen: `docker compose down` deja el broker vacío.
 
@@ -641,7 +666,7 @@ Todo el código nuevo del núcleo vive en `src/edsim/live/` (H6-2); el motor y e
 ```
 edsim/
 ├── compose.yaml                 # nuevo: Kafka y Redpanda Console (6.1)
-├── pyproject.toml               # extra opcional kafka = ["confluent-kafka==2.16.*"]; jsonschema en dev (6.1, 6.4)
+├── pyproject.toml               # extra opcional kafka = ["confluent-kafka>=2.16.1,<2.17"]; jsonschema en dev (6.1, 6.4)
 ├── scripts/
 │   ├── tests-integracion.sh     # nuevo: compose up --wait, pytest tests_integracion, compose down (6.1)
 │   └── sello.sh                 # cambia: clasifica compose.yaml, schemas/ y tests_integracion/ (6.1, 6.4)
