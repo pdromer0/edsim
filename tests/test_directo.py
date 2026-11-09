@@ -29,6 +29,7 @@ from edsim.live.directo import (
     RunEnd,
     RunInfo,
     RunStart,
+    SinkError,
     anchored_start,
     run_live,
 )
@@ -289,6 +290,80 @@ def test_directo_a_mano_con_ctrl_c_publica_fin():
     assert end.reason == "interrupcion"
     assert end.sim_time == approx(165)
     assert end.published == 6 + 2
+
+
+class FailingSink(TimedSink):
+    """Un sumidero que falla en su k-ésimo write: los anteriores se confirmaron.
+
+    Con ``end_fails``, publicar el fin también falla.
+    """
+
+    def __init__(self, clock: FakeClock, k: int, end_fails: bool = False) -> None:
+        super().__init__(clock)
+        self.k = k
+        self.end_fails = end_fails
+        self.end_calls = 0
+
+    def write(self, event):
+        if len(self.events) == self.k - 1:
+            raise SinkError(
+                "message not delivered",
+                delivered=len(self.events),
+                failed=(event.event_id,),
+                last_delivered=self.events[-1].event_id,
+            )
+        super().write(event)
+
+    def end(self, message):
+        self.end_calls += 1
+        if self.end_fails:
+            raise RuntimeError("broker down")
+        super().end(message)
+
+
+def run_failing(sink):
+    return run_live(
+        LogSource(live_hand_log(), 180),
+        Pacer(sink.clock, 60, (0.0, 0.0)),
+        NoControl(),
+        sink,
+        start=120,
+        horizon=180,
+        run_info=INFO,
+    )
+
+
+def test_sumidero_que_falla_publica_fin_con_error():
+    # Falla el 8.º write, la salida de EP-000002 a los 30 s (minuto 150): se confirmaron
+    # el censo (6) y la salida de EP-000003.
+    clock = FakeClock()
+    sink = FailingSink(clock, 8)
+
+    with pytest.raises(SinkError) as raised:
+        run_failing(sink)
+
+    assert raised.value.delivered == 7
+    assert [describe(i) for i in sink.items] == ["inicio", *CENSUS, LIVE[0], "fin"]
+    assert sink.run_end == RunEnd(
+        run_id="rcenso",
+        reason="error",
+        sim_time=approx(150.0),
+        last_event_id="rcenso-000000009",  # la salida de EP-000003
+        published=7,
+    )
+    assert sink.times[-1] == approx(30)
+
+
+def test_si_el_fin_tambien_falla_sale_el_error_original():
+    clock = FakeClock()
+    sink = FailingSink(clock, 3, end_fails=True)
+
+    with pytest.raises(SinkError) as raised:
+        run_failing(sink)
+
+    assert sink.end_calls == 1
+    assert sink.run_end is None
+    assert any("broker down" in note for note in raised.value.__notes__)
 
 
 def test_el_ancla_es_tras_publicar_el_censo():
