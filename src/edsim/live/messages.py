@@ -15,11 +15,21 @@ Standard library only: no Kafka client.
 """
 
 import json
+import numbers
 from collections.abc import Callable, Mapping
+from datetime import date
 from types import MappingProxyType
 
-from edsim.live.control import ORDERS, SPEED, Command
-from edsim.live.directo import RunEnd, RunStart
+from edsim.live.control import MAX_SPEED, ORDERS, SPEED, Command
+from edsim.live.directo import (
+    REASON_ERROR,
+    REASON_HORIZON,
+    REASON_INTERRUPT,
+    REASON_STOP,
+    RunEnd,
+    RunInfo,
+    RunStart,
+)
 
 FORMAT_VERSION = 1
 """Version of the format of the messages of ``ed.runs`` and ``ed.control``."""
@@ -88,6 +98,105 @@ def run_end_json(message: RunEnd) -> str:
             "ultimo_event_id": message.last_event_id,
             "publicados": message.published,
         }
+    )
+
+
+_START_KEYS = frozenset(
+    {
+        "tipo",
+        "version",
+        "run_id",
+        "modo",
+        "schema_version",
+        "semilla",
+        "fecha_inicio",
+        "inicio_directo",
+        "horizonte",
+        "velocidad",
+        "anclado",
+        "censo",
+    }
+)
+_END_KEYS = frozenset(
+    {"tipo", "version", "run_id", "motivo", "sim_time", "ultimo_event_id", "publicados"}
+)
+REASONS = (REASON_HORIZON, REASON_STOP, REASON_INTERRUPT, REASON_ERROR)
+
+
+def _number(data: dict, key: str) -> float:
+    value = data[key]
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise ValueError(f"{key} must be a number, got {value!r}")
+    return float(value)
+
+
+def _count(value: object, key: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{key} must be an integer >= 0, got {value!r}")
+    return value
+
+
+def parse_run_message(text: bytes | str) -> RunStart | RunEnd:
+    """The ``inicio`` or the ``fin`` in a message of ``ed.runs``: what a consumer reads.
+
+    The inverse of ``run_start_json`` and ``run_end_json``: parsing their text gives back
+    the same ``RunStart`` or ``RunEnd``. The keys must be exactly those of the format.
+
+    Raises:
+        ValueError: If the text is not a message of ``ed.runs`` of version 1.
+    """
+    if isinstance(text, bytes | bytearray):
+        text = bytes(text).decode("utf-8")
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"not a JSON object: {text!r}")
+    version = data.get("version")
+    if isinstance(version, bool) or version != FORMAT_VERSION:
+        raise ValueError(f"unknown version {version!r}")
+    kind = data.get("tipo")
+    expected = {START: _START_KEYS, END: _END_KEYS}.get(kind)
+    if expected is None:
+        raise ValueError(f"tipo must be {START!r} or {END!r}, got {kind!r}")
+    if data.keys() != expected:
+        missing = sorted(expected - data.keys())
+        unknown = sorted(data.keys() - expected)
+        raise ValueError(f"{kind}: missing keys {missing}, unknown keys {unknown}")
+    if kind == END:
+        reason, last = data["motivo"], data["ultimo_event_id"]
+        if reason not in REASONS:
+            raise ValueError(f"motivo must be one of {list(REASONS)}, got {reason!r}")
+        if last is not None and not isinstance(last, str):
+            raise ValueError(f"ultimo_event_id must be a string or null, got {last!r}")
+        return RunEnd(
+            run_id=data["run_id"],
+            reason=reason,
+            sim_time=_number(data, "sim_time"),
+            last_event_id=last,
+            published=_count(data["publicados"], "publicados"),
+        )
+    speed = data["velocidad"]
+    if speed != MAX_SPEED:
+        speed = _number(data, "velocidad")
+    census = data["censo"]
+    if not isinstance(census, dict) or census.keys() != {"episodios", "eventos"}:
+        raise ValueError(f"censo must be {{episodios, eventos}}, got {census!r}")
+    if not isinstance(data["fecha_inicio"], str):
+        raise ValueError(f"fecha_inicio must be a date, got {data['fecha_inicio']!r}")
+    info = RunInfo(
+        run_id=data["run_id"],
+        mode=data["modo"],
+        schema_version=data["schema_version"],
+        seed=data["semilla"],
+        start_date=date.fromisoformat(data["fecha_inicio"]),
+        anchored=data["anclado"],
+    )
+    return RunStart(
+        info=info,
+        live_start=_number(data, "inicio_directo"),
+        horizon=_number(data, "horizonte"),
+        speed=speed,
+        census_episodes=_count(census["episodios"], "episodios"),
+        census_events=_count(census["eventos"], "eventos"),
     )
 
 
