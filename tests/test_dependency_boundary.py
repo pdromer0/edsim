@@ -261,6 +261,22 @@ def test_reloj_ordenes_y_pacer_no_cargan_simpy_ni_el_motor():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_el_estado_del_consumidor_no_carga_confluent_kafka():
+    """El estado del consumidor (tarea 6.6) se usa en el modo rápido del notebook 06, sin el
+    extra: ni el tracker ni el resto del paquete cargan el cliente de Kafka al importarse."""
+    script = (
+        "import sys, edsim.live.tracker\n"
+        "assert 'edsim.runs._location' in sys.modules\n"
+        "bad = sorted(n for n in sys.modules if n.split('.')[0] == 'confluent_kafka')\n"
+        "assert not bad, bad\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_el_paquete_no_importa_jsonschema():
     """jsonschema solo está en el grupo dev (tarea 6.4): el paquete genera diccionarios.
 
