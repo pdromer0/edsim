@@ -261,6 +261,7 @@ INVALID = [
     ("anterior-negativa", 3, with_payload(3, "staffing_changed", anterior=-1), None),
     ("sim-time-negativo", 3, changed(3, "test_ordered", sim_time=-1), None),
     ("sim-time-desborda", 3, changed(3, "test_ordered", sim_time=json.loads("1e400")), None),
+    ("sim-time-entero-enorme", 3, changed(3, "test_ordered", sim_time=10**400), None),
     # Valores cerrados.
     ("motivo-fuera", 3, with_payload(3, "triage_completed", motivo="dolor"), None),
     ("circuito-fuera", 1, with_payload(1, "triage_started", circuito="box"), None),

@@ -20,6 +20,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
+from edsim.finite import to_float
 from edsim.live.clock import Clock
 
 SPEED = "velocidad"
@@ -48,11 +49,12 @@ def check_speed(speed: object) -> float | str:
     if (
         isinstance(speed, bool)
         or not isinstance(speed, numbers.Real)
-        or not math.isfinite(speed)
+        or (value := to_float(speed)) is None  # an int such as 10**400
+        or not math.isfinite(value)
         or speed <= 0
     ):
         raise ValueError(f"speed must be a positive finite number or {MAX_SPEED!r}, got {speed!r}")
-    return float(speed)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +104,11 @@ def _check_instant(instant: object) -> float:
     if (
         isinstance(instant, bool)
         or not isinstance(instant, numbers.Real)
-        or not math.isfinite(instant)
+        or (value := to_float(instant)) is None  # an int such as 10**400
+        or not math.isfinite(value)
     ):
         raise ValueError(f"the instant of an order must be a finite number, got {instant!r}")
-    return float(instant)
+    return value
 
 
 class ScriptedControl:

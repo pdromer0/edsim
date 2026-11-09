@@ -57,6 +57,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, Self, TextIO
 
+from edsim.finite import to_float
 from edsim.profiles.config import REASON_KEYS, TEST_TYPES
 
 PROVISIONAL_SCHEMA_VERSION = 1
@@ -474,11 +475,12 @@ def _check_sim_time(where: str, sim_time: object) -> float:
     if (
         isinstance(sim_time, bool)
         or not isinstance(sim_time, int | float)
-        or not math.isfinite(sim_time)
-        or sim_time < 0
+        or (value := to_float(sim_time)) is None  # an int such as 10**400
+        or not math.isfinite(value)
+        or value < 0
     ):
         raise ValueError(f"{where}: sim_time must be a finite number >= 0, got {sim_time!r}")
-    return float(sim_time)
+    return value
 
 
 def _check_start_date(start_date: object) -> date:

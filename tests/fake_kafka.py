@@ -128,3 +128,30 @@ class FakeProducer:
 
     def __len__(self) -> int:
         return len(self._pending)
+
+
+@dataclass
+class FakeConsumerMessage:
+    """Un mensaje leído, como el de confluent_kafka: value() y error()."""
+
+    payload: bytes
+    problem: object = None
+
+    def value(self) -> bytes:
+        return self.payload
+
+    def error(self):
+        return self.problem
+
+
+class FakeConsumer:
+    """Un consumidor falso: poll(timeout) da los mensajes de la lista, uno por llamada."""
+
+    def __init__(self, values) -> None:
+        self._messages = [FakeConsumerMessage(v) for v in values]
+
+    def poll(self, timeout=None):
+        return self._messages.pop(0) if self._messages else None
+
+    def close(self) -> None:
+        pass

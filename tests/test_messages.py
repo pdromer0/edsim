@@ -102,6 +102,11 @@ INVALID_ORDERS = [
     # Más.
     ("velocidad-sin-valor", '{"version": 1, "run_id": "r1", "orden": "velocidad"}'),
     ("velocidad-1e400", '{"version": 1, "run_id": "r1", "orden": "velocidad", "valor": 1e400}'),
+    # Un entero de 401 cifras: json.loads da un int, y float() desborda (revisión del #59).
+    (
+        "velocidad-10e400",
+        '{"version": 1, "run_id": "r1", "orden": "velocidad", "valor": 1' + "0" * 400 + "}",
+    ),
     ("valor-negativo", '{"version": 1, "run_id": "r1", "orden": "velocidad", "valor": -10}'),
     ("valor-booleano", '{"version": 1, "run_id": "r1", "orden": "velocidad", "valor": true}'),
     ("campo-de-mas", '{"version": 1, "run_id": "r1", "orden": "parar", "motivo": "fin"}'),

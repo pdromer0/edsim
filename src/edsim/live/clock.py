@@ -21,6 +21,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from edsim.finite import to_float
+
 NS_PER_SECOND = 1_000_000_000
 
 FAKE_WALL_START = datetime(2026, 1, 5, tzinfo=UTC)
@@ -61,11 +63,12 @@ def _check_seconds(name: str, seconds: object) -> float:
     if (
         isinstance(seconds, bool)
         or not isinstance(seconds, numbers.Real)
-        or not math.isfinite(seconds)
+        or (value := to_float(seconds)) is None  # an int such as 10**400
+        or not math.isfinite(value)
         or seconds < 0
     ):
         raise ValueError(f"{name} must be a finite number of seconds >= 0, got {seconds!r}")
-    return float(seconds)
+    return value
 
 
 def _to_ns(seconds: float) -> int:
