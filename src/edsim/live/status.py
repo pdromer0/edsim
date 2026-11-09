@@ -6,9 +6,10 @@ Two wrappers around the pieces of ``run_live``, which do not change what it publ
   ``inicio`` (the census) and the ``fin`` (the summary) once the inner sink has them.
 - ``StatusControl`` wraps the control source: the pacer asks it for an order between
   events and in each slice of 0.2 s while it waits, also while paused. On each ``poll``,
-  before asking the inner source, it looks at the clock and, if ``interval`` real seconds
-  have passed since the last status (the first one, since the anchor of the live stream),
-  calls back with a ``LiveStatus``.
+  before asking the inner source, it looks at the clock and calls back with a
+  ``LiveStatus`` at the first ``poll`` from each point of a fixed grid: every ``interval``
+  real seconds from the anchor of the live stream. A line comes at most one slice late, and
+  that delay does not add up from one line to the next.
 
 The status reads only public properties of the pacer (``anchor``, ``sim_now()``,
 ``speed``, ``paused`` and ``lag()``); what has been published and what is pending come as
@@ -153,7 +154,12 @@ class StatusControl:
             self._next = self._anchor + self._interval
         if now >= self._next:
             self._on_status(self.status(now))
-            self._next = now + self._interval
+            # A fixed grid from the anchor: a line late by up to one slice does not delay the
+            # next one. After a pause or a slow publication that skipped whole intervals, the
+            # grid starts again from now.
+            self._next += self._interval
+            if self._next <= now:
+                self._next = now + self._interval
         return self._control.poll()
 
     def status(self, now: float) -> LiveStatus:

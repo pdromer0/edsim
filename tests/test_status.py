@@ -12,10 +12,11 @@ from datetime import date
 import pytest
 from test_directo import INFO, TimedSink, live_hand_log
 
+from edsim.engine.events import EventLog, MemorySink
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.clock import FakeClock
 from edsim.live.control import PAUSE, RESUME, Command, ScriptedControl
-from edsim.live.directo import LogSource, RunEnd, RunStart, run_live
+from edsim.live.directo import LogSource, MemoryLiveSink, RunEnd, RunStart, run_live
 from edsim.live.pacer import Pacer
 from edsim.live.report import format_census, format_end, format_status
 from edsim.live.status import LiveStatus, ReportingSink, StatusControl
@@ -106,6 +107,45 @@ def test_estado_empieza_en_el_ancla_del_directo():
     first_time, first = lines[0]
     assert (first_time, first.sim_time, first.published) == (approx(16), approx(130), 7)
     assert first.elapsed == approx(10)
+
+
+def off_grid_log() -> list:
+    """Dos staffing_changed en 0 y llegadas en 120,37 + 2,13 · i (hasta 177,88): a ×60 desde
+    W = 120, ningún evento cae en un segundo entero, y los tramos de 0,2 s del pacer
+    empiezan en cada evento, fuera de la rejilla de 10 s."""
+    sink = MemorySink()
+    log = EventLog("rrejilla", SCENARIO_START, sink, schema_version=3)
+    log.emit("staffing_changed", 0.0, recurso="enfermeria_triaje", anterior=0, nueva=2)
+    log.emit("staffing_changed", 0.0, recurso="medicos", anterior=0, nueva=3)
+    for i in range(28):
+        log.emit("patient_arrived", 120.37 + 2.13 * i, arrival_id=i + 1, medio="propios_medios")
+    return sink.events
+
+
+def test_las_lineas_no_se_retrasan_con_eventos_fuera_de_la_rejilla():
+    # Cada línea sale en el primer poll desde 10k s, como mucho 0,2 s después: la rejilla
+    # va fija desde el ancla, y los retrasos de una línea no se suman a la siguiente.
+    clock = FakeClock()
+    sink = ReportingSink(MemoryLiveSink())
+    pacer = Pacer(clock, 60, (0.0, 0.0))
+    lines = []
+    control = StatusControl(
+        ScriptedControl(clock, []),
+        clock=clock,
+        pacer=pacer,
+        start_date=SCENARIO_START,
+        horizon=180,
+        published=lambda: sink.published,
+        on_status=lambda status: lines.append(clock.monotonic()),
+    )
+    events = off_grid_log()
+    run_live(LogSource(events, 180), pacer, control, sink, start=120, horizon=180, run_info=INFO)
+
+    assert len(lines) == 6
+    assert all(10 * k <= t < 10 * k + 0.2 for k, t in enumerate(lines, start=1)), lines
+    # Guarda: el caso ocurre, alguna línea no sale justo en su múltiplo de 10 s.
+    assert any(t != approx(10 * k) for k, t in enumerate(lines, start=1))
+    assert len(sink.sink.events) == len(events)
 
 
 def test_el_sumidero_que_cuenta_no_cambia_lo_publicado():
