@@ -459,6 +459,7 @@ kafka = [
 [package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
+    { name = "jsonschema" },
     { name = "nbmake" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -480,6 +481,7 @@ provides-extras = ["kafka"]
 [package.metadata.requires-dev]
 dev = [
     { name = "ipykernel", specifier = ">=7.4.0" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "nbmake", specifier = ">=1.5.5" },
     { name = "pre-commit", specifier = ">=4.7.0" },
     { name = "pytest", specifier = ">=9.2.0" },
