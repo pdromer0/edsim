@@ -681,6 +681,16 @@ Opciones de `edsim directo lanzar`: las del modelo de `edsim motor simular` (`--
 
 La validación de opciones va antes de crear nada ni conectar, como en `motor simular` (lección de la tarea 3.7).
 
+**Precisiones para la 6.5** (decididas al preparar la tarea):
+
+- **`lanzar` y `reemitir` comprueban los topics, pero no los crean:** si falta alguno, terminan con código 1 y dicen que se ejecute `edsim directo preparar`; si alguno difiere, el mismo error que `preparar`. Crear es solo de `preparar`, para que un nombre mal escrito en `--kafka` no deje topics nuevos en otro broker.
+- **Códigos de salida:** 0 si el directo acaba con motivo `horizonte` o `parar`; 130 con Ctrl+C (tras publicar el `fin`); 1 si el sumidero falla (`SinkError`), si los topics no están bien o si falta el extra `kafka` (con el mensaje que dice cómo instalarlo); 2 para los errores de uso, antes de conectar.
+- **La línea de estado** sale cada 10 s reales mientras el pacer espera o publica: se engancha a la fuente de órdenes, que el pacer consulta en cada tramo de 0,2 s y entre eventos, así que también sale en pausa y a ×1 entre eventos lejanos. Lleva hora simulada (`event_time` del minuto actual), velocidad, eventos publicados, retraso del pacer y mensajes pendientes de confirmar (`len(producer)`; nada con `--memoria`).
+- **`run_id` por defecto del directo** (H6-19): `r`, la semilla, un guión bajo y la hora de arranque en `+01:00`, la zona de `event_time` (`r2026_20261106T172300`).
+- **`reemitir RUN_ID`** lee `resultados/ejecuciones/RUN_ID/` (`run.json` y `eventos.jsonl`, con la opción `--ejecuciones` para otra carpeta): horizonte = `dias` de `run.json`, W = `--calentamiento` o el de `run.json`, semilla de `run.json` y fecha de inicio = la del primer evento (`event_time` menos `sim_time`, en `+01:00`). Conserva el `run_id` y los `event_id`.
+- **El directo no guarda una ejecución en `resultados/`:** lo que publica está en Kafka, y su batch se reproduce con `edsim motor simular` y el mismo `--run-id`.
+- **`--memoria`** no usa Kafka ni órdenes (`NoControl`) y al acabar imprime el resumen: `inicio`, eventos publicados (censo y directo) y `fin`.
+
 ## Estructura del código
 
 Todo el código nuevo del núcleo vive en `src/edsim/live/` (H6-2); el motor y el catálogo cambian poco y sin cambiar las huellas. Solo `live/kafka.py` importa `confluent_kafka`, y solo dentro de las funciones que crean clientes reales (import perezoso). Así todos los módulos se importan sin el extra (el test de frontera los importa todos) y los tests con `FakeProducer` corren en el job `tests` del CI, que no instala el extra.
@@ -1136,3 +1146,87 @@ Revisados el código, los valores a mano y la especificación (solo añade texto
 - 6.4: `RunStart` y `RunEnd` a JSON de `ed.runs`, el motivo `error` y `KafkaControl`. Medir el coste por evento a velocidad máxima con el `KafkaSink` (0,13 ms por evento en memoria) y volver a medir la completa.
 - Si un log del replay retrocede en el tiempo, el error salta al leer el siguiente y el anterior no se publica: vale para un log corrupto.
 - Este anexo se exporta en el primer commit de la 6.4.
+
+### Tarea 6.4: Esquemas, topics, mensajes y Kafka
+
+**Qué se hizo**
+
+PR #59 (rama `feat/h6-kafka`, Claude Code, con `@codex review`): trece commits y tres más de la revisión; fusión `3c77ba2` el 9 de noviembre de 2026. `tests-kafka` pasa a obligatorio en la protección de `main`.
+
+- **Refactor del catálogo** (commit aparte, sin tocar tests): las comprobaciones son objetos (`Check`, un protocolo con `__call__` y `json_schema()`) que validan igual y describen su esquema. 1.947 comprobaciones dieron el mismo resultado y el mismo mensaje antes y después.
+- **`live/schemas.py`** y `schemas/`: `eventos-v1` a `v3` generados y escritos (`uv run python -m edsim.live.schemas`), y `ed-runs-v1` y `ed-control-v1` a mano. `jsonschema` 4.26.0 solo en el grupo `dev`.
+- **`live/topics.py`** (tabla literal y `route`), **`live/messages.py`** (`inicio`, `fin` y órdenes, con `parse_control`) y **`SinkError`** en `live/directo.py`, con el `fin` de motivo `error`.
+- **`live/kafka.py`:** `producer_config`, `connect_producer`, `KafkaSink`, `KafkaControl` (asignación manual en el offset alto) y `ensure_topics` (comprueba antes de crear y espera a que los topics nuevos se vean).
+- **`edsim/finite.py`** (revisión): `to_float`, para que un entero enorme dé el `ValueError` de siempre.
+- **Tests:** `test_topics.py`, `test_messages.py`, `test_schemas.py` (91 eventos y 32 órdenes a mano en el control cruzado), `test_kafka_sink.py` con `FakeProducer`, `test_kafka_admin.py`, `test_numeros_enormes.py`, añadidos en `test_directo.py` y frontera de `jsonschema`; en `tests_integracion/`, siete nuevos: topics, particiones con murmur2 y CRC32, el directo de un día y las órdenes.
+
+**Decisiones tomadas con Pedro durante el plan**
+
+- **El `fin` de error dice solo lo confirmado:** `publicados` = eventos confirmados y `ultimo_event_id` = el confirmado con el número de orden más alto, aunque los avisos lleguen desordenados. No promete que los anteriores llegaran: dice que la ejecución está incompleta.
+- **Los huecos del esquema que sí se pueden expresar, se expresan:** `maxLength: 9` en los identificadores (el `$` de `re.search` admite un salto final) y `maximum` = el mayor double en `sim_time` y en los números de los mensajes (`1e400` se lee como infinito).
+
+**Decisiones del diff**
+
+- Tras un fallo de entrega, cada `write` lanza `SinkError`, no solo el siguiente.
+- El esquema de la versión N describe solo los eventos de la versión N.
+- Una orden de otro `run_id` se ignora sin aviso aunque sea inválida: es la única diferencia entre `parse_control` y el esquema de `ed.control`.
+- `ensure_topics` espera a que los topics nuevos aparezcan en los metadatos: justo después de crearlos, 7 de 60 no aparecían y una segunda llamada los intentaba crear otra vez (0 fallos en 240 pruebas tras el arreglo).
+- Los tests de integración usan los topics reales, aislados por `run_id` único y por los offsets anotados antes: las ejecuciones `test-…` se quedan en los `ed.*` hasta el siguiente `docker compose down`.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | `test_schemas.py` 142 tests en 35 s (la validación de los tres logs, unos 21 s, marcada `slow`); el resto, menos de 0,5 s por fichero |
+| `scripts/tests-integracion.sh` | 11 tests en 29 s (arranque 0:11, pytest 0:15, bajada 0:03) |
+| `scripts/tests-completos.sh` con Kafka apagado | 20 min 31 s, en verde: núcleo 3.141 tests en 15:07, app 287 en 4:25, notebooks 0:59 |
+| Tras la revisión: integración | 11 tests en 34 s (arranque 0:13, pytest 0:19, bajada 0:02) |
+| Tras la revisión: completa, sin contenedores | 18 min 09 s, en verde: núcleo 3.167 tests en 13:00 (26 más), app 287 en 4:16, notebooks 0:53 |
+| Velocidad máxima, memoria frente a Kafka (9 parejas) | Mejor caso 0,76 s frente a 1,39 s (1,48 s con el `flush`); medianas 1,43 y 2,62 s; Kafka cuesta 0,1 a 0,2 ms por evento |
+| De `produce` a `LogAppendTime`, a ×3.600 | Mediana 5,9 y 6,0 ms (casi todo, `linger.ms`); p95 8,6 y 20,8 ms; máximo 45,8 y 61,4 ms |
+| Esquemas | 23, 27 y 29 kB (`eventos-v1` a `v3`); 2,8 y 1,5 kB los de los mensajes |
+
+La completa varía mucho sin cambios de código: el mismo día, 20:31 y 18:09, y la app, que no cambia desde la 6.2, en 3:06, 3:25, 4:25 y 4:16. Es el portátil, no los tests. En el equipo de Pedro el motor de Docker corre dentro de WSL, sin Docker Desktop (`docker desktop stop` dice que no está en marcha), así que «Docker parado» significa sin contenedores (`docker compose down`). Para comparar entre tareas hay que mirar la parte que cambia, no el total.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predichos | Observados |
+| --- | --- | --- | --- |
+| V6 | Reparto por tipo | 1 | 1 |
+| V7 | Sin `murmur2_random` | 2 | 2 |
+| V8 | Sin idempotencia | 1 | 1 |
+| V9 | `ingest_time` con la hora del productor | 5 | 5 (predicción rehecha en el plan) |
+| V10 | `CreateTime` y marca = `event_time` | 6 | 6; forzada, `SinkError` a los 62,9 s con 406 entregados |
+| V11 | Payload sin `additionalProperties: false` | 5 | 6 (también el sobre de cada rama) |
+| V12 | `BufferError` descarta | 1 | 1 |
+| V13 | Aviso con error ignorado | 4 | 4 |
+| V14 | `parse_control` sin comparar el `run_id` | 3 | 4 (también la orden ajena e inválida) |
+| V15 | Sin la cabecera `schema_version` | 3 | 3 (5 en la primera pasada, por la carrera de `ensure_topics`) |
+| V16 | Sin `flush` al salir | 4 | 5 (también K2) |
+| V17 | `run_live` sin `fin` al fallar | 3 | 3 |
+| V18 | `KafkaControl` desde el principio | 1 | 1 |
+| V19 | Patrones sin `maxLength` | 7 | 7 |
+| V20 | `pruebas` como `items`, sin orden | 6 | 5: S4 no mira `pruebas` (lo cubre S5) |
+| V21 | `fin` de error con lo entregado al sumidero | 1 | 1 |
+| V22 | `sim_time` sin `maximum` | 4 | 5 (también el sobre de cada rama) |
+| V23 | Mensajes sin `maximum` | 1 | 1 (ajuste de la aprobación) |
+| V24 | end sin flush previo (revisión) | 5 | 5: el caso de Codex, el flush antes del fin, Ctrl+C con un fallo pendiente, el fin de error tras el flush e I8 |
+| V25 | check\_speed sin to\_float (revisión) | 6 | 6: check\_speed, Command y el pacer con 10\*\*400, KafkaControl.poll, M7 y el control cruzado |
+
+Las 20 se detectaron. Fallan más de lo previsto la V11, la V14, la V16 y la V22, por tests y casos añadidos después del plan y una comprobación de K2 que no se tuvo en cuenta; falla menos la V20, por un error de la predicción (S4 no mira `pruebas`, lo cubre S5), sin hueco en los tests. La primera pasada de la V15 destapó la carrera de `ensure_topics`.
+
+**Revisión**
+
+Codex revisó `e49a693` y dejó dos comentarios, los dos correctos. Se arreglaron en la misma rama, y cada hilo tiene la respuesta con el commit que lo arregla (`80b03e3` y `1872184`):
+
+- **P1:** `KafkaSink.end` publicaba el `fin` antes de esperar las confirmaciones, así que una entrega que fallaba después del último `write` dejaba un `fin` con motivo `horizonte`. Ahora `end` hace `flush(30)` primero y, si algo falló o quedó pendiente, publica un `fin` con motivo `error` y lo confirmado, y lanza `SinkError`. Cuatro tests nuevos, entre ellos el caso de Codex.
+- **P2:** una `velocidad` de 401 cifras llega como entero, y `math.isfinite` lanza `OverflowError`; salía de `KafkaControl.poll` y paraba el directo sin aviso ni `fin`. Generalizado: todas las comprobaciones de «número real finito» del directo y `_check_sim_time` pasan por `edsim.finite.to_float`.
+
+La segunda `@codex review`, sobre los arreglos, se pidió un minuto antes de fusionar y no había respondido al fusionar. La revisión del chat cubrió los dos arreglos línea a línea.
+
+**Pendiente**
+
+- Comprobaciones con el mismo hueco de los enteros enormes fuera del directo: `engine.advance_until`, `runs/`, `profiles/context.py` y `checks.check_number`. Para una tarea de proceso.
+- 6.5: el directo de un día a ×60 visto en Redpanda Console y el ejercicio de la pieza 3 (parar Kafka un minuto), con la CLI.
+- Redpanda Console v3.14.0: decidir al cerrar el hito.
+- Este anexo se exporta en el primer commit de la 6.5.
