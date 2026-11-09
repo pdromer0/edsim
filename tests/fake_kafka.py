@@ -336,6 +336,84 @@ class FakeTopicPartition:
     offset: int = -1001
 
 
+# --- Un lector falso (tarea 6.6) -------------------------------------------------------
+
+LOG_APPEND_TIME, CREATE_TIME = 2, 1
+"""Los tipos de marca de confluent_kafka (TIMESTAMP_LOG_APPEND_TIME y TIMESTAMP_CREATE_TIME)."""
+
+
+@dataclass
+class FakeRecord:
+    """Un mensaje leído de un topic, como el Message de confluent_kafka."""
+
+    topic_: str
+    partition_: int
+    offset_: int
+    key_: bytes | None
+    value_: bytes
+    stamp: tuple[int, int] = (LOG_APPEND_TIME, 0)
+    problem: object = None
+
+    def topic(self):
+        return self.topic_
+
+    def partition(self):
+        return self.partition_
+
+    def offset(self):
+        return self.offset_
+
+    def key(self):
+        return self.key_
+
+    def value(self):
+        return self.value_
+
+    def timestamp(self):
+        return self.stamp
+
+    def error(self):
+        return self.problem
+
+
+class ManualClock:
+    """Segundos a mano: el lector falso los avanza cuando poll espera sin mensajes."""
+
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ScriptedReader:
+    """Un Consumer falso para read_run: da los mensajes de la lista, uno por poll; sin
+    mensajes, poll(timeout) avanza el reloj ``timeout`` segundos y da None."""
+
+    def __init__(self, config: dict, records, clock: ManualClock) -> None:
+        self.config = config
+        self.records = list(records)
+        self.clock = clock
+        self.subscribed = None
+        self.commits: list[bool] = []
+        self.closed = False
+
+    def subscribe(self, topics):
+        self.subscribed = list(topics)
+
+    def poll(self, timeout=None):
+        if self.records:
+            return self.records.pop(0)
+        self.clock.now += timeout
+        return None
+
+    def commit(self, asynchronous=True):
+        self.commits.append(asynchronous)
+
+    def close(self):
+        self.closed = True
+
+
 def install_fake_confluent_kafka(monkeypatch, admin: FakeAdmin | None = None) -> ModuleType:
     """Pone en sys.modules un confluent_kafka falso (y su .admin) mientras dure el test.
 
@@ -347,6 +425,8 @@ def install_fake_confluent_kafka(monkeypatch, admin: FakeAdmin | None = None) ->
     kafka = ModuleType("confluent_kafka")
     kafka.KafkaException = FakeKafkaException
     kafka.TopicPartition = FakeTopicPartition
+    kafka.TIMESTAMP_LOG_APPEND_TIME = LOG_APPEND_TIME
+    kafka.TIMESTAMP_CREATE_TIME = CREATE_TIME
     kafka.clients = []
 
     def producer(config):

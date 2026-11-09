@@ -26,11 +26,18 @@ reports for 0.1 s and tries again, so the pacer falls behind instead of losing a
 report with an error marks the sink as failed, and the next ``write`` raises ``SinkError``:
 the run never goes on with a gap. And the ``fin`` waits for the confirmations: ``end``
 flushes first, and if an event was not confirmed, the ``fin`` says ``error``.
+
+**The watch** (task 6.6): ``BrokerWatch`` takes the lines, errors and statistics of
+librdkafka instead of stderr, and warns once when the broker is lost and once when it is
+back. **The reading** (task 6.6): ``read_run`` reads one run from Kafka into a
+``LiveTracker`` (``edsim.live.tracker``), in a consumer group of its own, from the
+beginning, until the ``fin`` and every event it published have arrived.
 """
 
 import json
 import logging
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -39,7 +46,7 @@ from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Protocol, Self
 
-from edsim.engine.events import Event, to_json
+from edsim.engine.events import Event, from_json, to_json
 from edsim.live.control import Command
 from edsim.live.directo import REASON_ERROR, RunEnd, RunStart, SinkError
 from edsim.live.messages import (
@@ -47,6 +54,7 @@ from edsim.live.messages import (
     START,
     control_json,
     parse_control,
+    parse_run_message,
     run_end_json,
     run_start_json,
 )
@@ -56,7 +64,17 @@ from edsim.live.report import (
     format_kafka_error,
     format_kafka_log_summary,
 )
-from edsim.live.topics import CONTROL, REPLICATION_FACTOR, RUNS, TOPICS, Topic, route
+from edsim.live.topics import (
+    CONTROL,
+    PATIENT_EVENTS,
+    REPLICATION_FACTOR,
+    RESOURCE_EVENTS,
+    RUNS,
+    TOPICS,
+    Topic,
+    route,
+)
+from edsim.live.tracker import LiveTracker, ReceivedEvent
 
 MISSING_EXTRA_MESSAGE = "Falta el extra kafka: uv sync --all-packages --extra kafka"
 
@@ -621,6 +639,178 @@ class KafkaControl:
     def close(self) -> None:
         """Leave the partition and close the consumer."""
         self._consumer.close()
+
+
+# --- Reading a run ------------------------------------------------------------------
+
+READ_TOPICS = (PATIENT_EVENTS, RESOURCE_EVENTS, RUNS)
+"""What a consumer of a run reads: its events and its ``inicio`` and ``fin``."""
+
+READ_TIMEOUT = 120.0
+"""Seconds a reading waits for the whole run before saying what is missing."""
+
+READ_POLL = 0.1
+"""Seconds of each ``poll`` of the reader."""
+
+PROGRESS_INTERVAL = 5.0
+"""Real seconds between two calls to ``on_progress``."""
+
+
+def reader_group_id(run_id: str) -> str:
+    """A new consumer group for one reading of ``run_id``: ``edsim-lector-<run_id>-<8 hex>``.
+
+    A group keeps its position: a second reading in the same group would start where the
+    first one ended and read nothing. One group per reading reads the whole run again, and
+    Redpanda Console shows each one with its lag.
+    """
+    return f"edsim-lector-{run_id}-{uuid.uuid4().hex[:8]}"
+
+
+def reader_config(
+    bootstrap: str, group_id: str, watch: BrokerWatch | None = None
+) -> dict[str, object]:
+    """The configuration of a reader: a group of its own, read from the beginning.
+
+    ``auto.offset.reset=earliest``: a new group without a position starts at the first
+    message, not at the end (librdkafka's default, ``latest``), so the census, published
+    before the reader joined, is read too. Offsets are committed automatically (the
+    default) and once more at the end, so the group shows a lag of 0.
+    """
+    return _with_watch(
+        {
+            "bootstrap.servers": bootstrap,
+            "group.id": group_id,
+            "client.id": group_id,
+            "auto.offset.reset": "earliest",
+        },
+        watch,
+        READER_CLIENT,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReadReport:
+    """How a reading ended.
+
+    Attributes:
+        group_id: The consumer group of the reading.
+        complete: Whether it saw the ``fin`` and as many distinct events as it published.
+        timed_out: Whether it stopped because ``timeout`` ran out.
+        missing: Events published and not read; ``None`` if the ``fin`` never arrived.
+        seconds: How long it read.
+        messages: Messages read, of any run.
+    """
+
+    group_id: str
+    complete: bool
+    timed_out: bool
+    missing: int | None
+    seconds: float
+    messages: int
+
+
+def read_run(
+    bootstrap: str,
+    run_id: str,
+    tracker: LiveTracker,
+    *,
+    group_id: str | None = None,
+    timeout: float = READ_TIMEOUT,
+    watch: BrokerWatch | None = None,
+    on_progress: Callable[[LiveTracker], None] | None = None,
+    progress_interval: float = PROGRESS_INTERVAL,
+    clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
+) -> ReadReport:
+    """Read the run ``run_id`` from Kafka into ``tracker``, live or once it has ended.
+
+    It subscribes to ``READ_TOPICS`` in a group of its own (``reader_group_id``), from the
+    beginning. The events are those whose ``run_id``, in the value, is ``run_id``: their key
+    is the ``episode_id``, so the topics mix every run. The ``inicio`` and the ``fin`` are
+    the messages of ``ed.runs`` with ``run_id`` as key. Each event goes to the tracker with
+    its topic, partition, offset, ``LogAppendTime`` timestamp and the time it was received.
+
+    It ends when the tracker is complete: the ``fin`` says how many events were published,
+    and it can arrive before the last events, because it travels in another topic. Or when
+    ``timeout`` runs out, and then the report says how many are missing. In both cases it
+    commits its offsets and closes.
+
+    Args:
+        bootstrap: ``host:port`` of the broker.
+        run_id: The run to read.
+        tracker: Where the events go.
+        group_id: The consumer group; a new one if ``None``.
+        timeout: Seconds to wait for the whole run.
+        watch: If given, the lines and errors of librdkafka go there (client ``lector``).
+        on_progress: Called with the tracker every ``progress_interval`` seconds.
+        progress_interval: Seconds between two calls to ``on_progress``.
+        clock: Monotonic seconds, for the timeout.
+        wall: Seconds since the epoch, for the time of reception.
+
+    Raises:
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+        ValueError: If a message of the run is not valid.
+    """
+    kafka = import_confluent_kafka()
+    group_id = group_id or reader_group_id(run_id)
+    consumer = kafka.Consumer(reader_config(bootstrap, group_id, watch))
+    key = run_id.encode("utf-8")
+    started = clock()
+    limit = started + timeout
+    next_progress = started + progress_interval
+    messages = 0
+    try:
+        consumer.subscribe(list(READ_TOPICS))
+        while not tracker.complete and (now := clock()) < limit:
+            message = consumer.poll(min(READ_POLL, limit - now))
+            if on_progress is not None and clock() >= next_progress:
+                on_progress(tracker)
+                next_progress += progress_interval
+            if message is None:
+                continue
+            if message.error():
+                if watch is not None:
+                    watch.on_error(READER_CLIENT, message.error())
+                continue
+            messages += 1
+            received = wall()
+            topic = message.topic()
+            if topic == RUNS:
+                if message.key() == key:
+                    run_message = parse_run_message(message.value())
+                    if isinstance(run_message, RunStart):
+                        tracker.start(run_message)
+                    else:
+                        tracker.end(run_message)
+                continue
+            event = from_json(message.value().decode("utf-8"))
+            if event.run_id != run_id:
+                continue
+            kind, stamp = message.timestamp()
+            tracker.add(
+                ReceivedEvent(
+                    event,
+                    topic=topic,
+                    partition=message.partition(),
+                    offset=message.offset(),
+                    broker_ms=stamp if kind == kafka.TIMESTAMP_LOG_APPEND_TIME else None,
+                    received=received,
+                )
+            )
+    finally:
+        try:
+            consumer.commit(asynchronous=False)
+        except kafka.KafkaException:
+            pass  # nothing read, nothing to commit (_NO_OFFSET)
+        consumer.close()
+    return ReadReport(
+        group_id=group_id,
+        complete=tracker.complete,
+        timed_out=not tracker.complete,
+        missing=tracker.missing,
+        seconds=clock() - started,
+        messages=messages,
+    )
 
 
 class OrderNotDeliveredError(RuntimeError):

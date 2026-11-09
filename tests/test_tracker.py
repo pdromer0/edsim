@@ -34,7 +34,7 @@ DATA = ROOT / "tests" / "data"
 A, D, B, C = "EP-000001", "EP-000002", "EP-000003", "EP-000004"
 
 
-def occupancy_log() -> list:
+def occupancy_log(run_id: str = "rocupa") -> list:
     """Los 36 eventos del plan, en orden de emisión (catálogo 3).
 
     A llega en 0, triaje de 5 a 10, box 1 en 20, valoración inicial de 30 a 40, en 40 pide
@@ -46,7 +46,7 @@ def occupancy_log() -> list:
     sin box_released.
     """
     sink = MemorySink()
-    log = EventLog("rocupa", SCENARIO_START, sink, schema_version=3)
+    log = EventLog(run_id, SCENARIO_START, sink, schema_version=3)
     a, d, b, c = 1, 2, 3, 4
     person = {"edad": 50, "sexo": "mujer"}
 
