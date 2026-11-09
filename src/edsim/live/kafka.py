@@ -9,6 +9,10 @@ already built, the real one (``connect_producer``) or a double in the tests.
 replica (``acks=all``) and partitions with murmur2, as Java and Kafka Streams do. Everything
 else keeps librdkafka's defaults.
 
+**The orders** come from ``ed.control`` through ``KafkaControl``, which reads exactly the
+orders published after it was created, and **the topics** are created and checked by
+``ensure_topics`` from the table of ``edsim.live.topics``.
+
 **The sink** publishes the ``inicio`` and the ``fin`` of the run in ``ed.runs`` and each
 event in its topic (``edsim.live.topics.route``), with the line of the JSONL as value, byte
 for byte, and the headers ``event_type`` and ``schema_version``. It never sets a timestamp:
@@ -21,14 +25,16 @@ report with an error marks the sink as failed, and the next ``write`` raises ``S
 the run never goes on with a gap.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from types import ModuleType, TracebackType
 from typing import Protocol, Self
 
 from edsim.engine.events import Event, to_json
+from edsim.live.control import Command
 from edsim.live.directo import RunEnd, RunStart, SinkError
-from edsim.live.messages import END, START, run_end_json, run_start_json
-from edsim.live.topics import RUNS, route
+from edsim.live.messages import END, START, parse_control, run_end_json, run_start_json
+from edsim.live.topics import CONTROL, REPLICATION_FACTOR, RUNS, TOPICS, Topic, route
 
 MISSING_EXTRA_MESSAGE = "Falta el extra kafka: uv sync --all-packages --extra kafka"
 
@@ -37,6 +43,9 @@ FLUSH_TIMEOUT = 30.0
 
 RETRY_POLL = 0.1
 """Seconds served on a full queue (``BufferError``) before trying again."""
+
+ADMIN_TIMEOUT = 30.0
+"""Seconds of each request to the broker of ``KafkaControl`` and ``ensure_topics``."""
 
 
 class MissingKafkaExtraError(ImportError):
@@ -256,3 +265,151 @@ class KafkaSink:
                 # The local queue is full: serve the reports and try again, never drop.
                 self._producer.poll(RETRY_POLL)
         self._producer.poll(0)
+
+
+# --- The orders ----------------------------------------------------------------------
+
+
+class KafkaControl:
+    """The orders of ``ed.control`` for one run: a ``ControlSource``.
+
+    It joins no consumer group. On creation it reads the high offset of the only
+    partition of ``ed.control`` and assigns itself that partition at that offset: it reads
+    exactly the orders published after it was created, without the old ones and without
+    waiting for a group to form (with ``subscribe`` and ``auto.offset.reset=latest``, an
+    order sent while the group forms could be lost). It commits no offsets.
+
+    Args:
+        bootstrap: ``host:port`` of the broker.
+        run_id: The run; orders of another run are ignored without a warning.
+        on_invalid: Called with the reason of each invalid message, and with the errors of
+            the consumer; the run goes on.
+
+    Raises:
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+    """
+
+    def __init__(self, bootstrap: str, run_id: str, on_invalid: Callable[[str], None]) -> None:
+        kafka = import_confluent_kafka()
+        self.run_id = run_id
+        self._on_invalid = on_invalid
+        self._consumer = kafka.Consumer(
+            {
+                "bootstrap.servers": bootstrap,
+                "group.id": f"edsim-control-{run_id}",
+                "enable.auto.commit": False,
+            }
+        )
+        try:
+            partition = kafka.TopicPartition(CONTROL, 0)
+            _, high = self._consumer.get_watermark_offsets(
+                partition, timeout=ADMIN_TIMEOUT, cached=False
+            )
+            self._consumer.assign([kafka.TopicPartition(CONTROL, 0, high)])
+        except BaseException:
+            self._consumer.close()
+            raise
+        self.start_offset = high
+        """The offset of the first order it can read."""
+
+    def poll(self) -> Command | None:
+        """The next order for this run, if one has arrived; never waits."""
+        message = self._consumer.poll(0)
+        if message is None:
+            return None
+        if message.error():
+            self._on_invalid(f"error reading ed.control: {message.error()}")
+            return None
+        return parse_control(message.value() or b"", self.run_id, self._on_invalid)
+
+    def close(self) -> None:
+        """Leave the partition and close the consumer."""
+        self._consumer.close()
+
+
+# --- The topics ----------------------------------------------------------------------
+
+
+class TopicMismatchError(RuntimeError):
+    """A topic exists with another number of partitions or another timestamp type."""
+
+
+@dataclass(frozen=True, slots=True)
+class TopicsReport:
+    """What ``ensure_topics`` did.
+
+    Attributes:
+        created: The topics it created.
+        existing: The topics that were already there, as expected.
+    """
+
+    created: tuple[str, ...]
+    existing: tuple[str, ...]
+
+
+TIMESTAMP_TYPE = "message.timestamp.type"
+
+
+def ensure_topics(
+    bootstrap: str, topics: Iterable[Topic] = TOPICS, *, timeout: float = ADMIN_TIMEOUT
+) -> TopicsReport:
+    """Create the topics that are missing and check the ones that exist.
+
+    An existing topic must have the number of partitions and the timestamp type
+    (``message.timestamp.type``) of its definition. Everything is checked before anything
+    is created: if a topic differs, nothing is created.
+
+    Args:
+        bootstrap: ``host:port`` of the broker.
+        topics: The definitions; the four of the live mode by default.
+        timeout: Seconds of each request.
+
+    Returns:
+        Which topics it created and which were already there.
+
+    Raises:
+        TopicMismatchError: If an existing topic differs, saying which and how.
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+    """
+    topics = list(topics)
+    import_confluent_kafka()  # the message that says how to install the extra
+    from confluent_kafka.admin import AdminClient, ConfigResource, NewTopic, ResourceType
+
+    admin = AdminClient({"bootstrap.servers": bootstrap})
+    metadata = admin.list_topics(timeout=timeout)
+    existing = [t for t in topics if t.name in metadata.topics]
+    missing = [t for t in topics if t.name not in metadata.topics]
+
+    problems = []
+    for topic in existing:
+        partitions = len(metadata.topics[topic.name].partitions)
+        if partitions != topic.partitions:
+            problems.append(f"{topic.name}: {partitions} partitions, expected {topic.partitions}")
+    if existing:
+        resources = [ConfigResource(ResourceType.TOPIC, t.name) for t in existing]
+        futures = admin.describe_configs(resources, request_timeout=timeout)
+        for topic, resource in zip(existing, resources, strict=True):
+            configs = futures[resource].result(timeout=timeout)
+            found = configs[TIMESTAMP_TYPE].value
+            wanted = topic.config[TIMESTAMP_TYPE]
+            if found != wanted:
+                problems.append(f"{topic.name}: {TIMESTAMP_TYPE} is {found}, expected {wanted}")
+    if problems:
+        raise TopicMismatchError("topics that differ: " + "; ".join(problems))
+
+    if missing:
+        new = [
+            NewTopic(
+                t.name,
+                num_partitions=t.partitions,
+                replication_factor=REPLICATION_FACTOR,
+                config=dict(t.config),
+            )
+            for t in missing
+        ]
+        futures = admin.create_topics(new, request_timeout=timeout)
+        for topic in missing:
+            futures[topic.name].result(timeout=timeout)
+    return TopicsReport(
+        created=tuple(t.name for t in missing), existing=tuple(t.name for t in existing)
+    )
