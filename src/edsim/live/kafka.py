@@ -10,8 +10,10 @@ replica (``acks=all``) and partitions with murmur2, as Java and Kafka Streams do
 else keeps librdkafka's defaults.
 
 **The orders** come from ``ed.control`` through ``KafkaControl``, which reads exactly the
-orders published after it was created, and **the topics** are created and checked by
-``ensure_topics`` from the table of ``edsim.live.topics``.
+orders published after it was created, and ``publish_order`` sends one (``edsim directo
+control``). **The topics** are created and checked by ``ensure_topics`` from the table of
+``edsim.live.topics``; with ``create=False`` it only checks. The first request to the broker
+waits ``CONNECT_TIMEOUT``: without an answer, ``BrokerUnavailableError``.
 
 **The sink** publishes the ``inicio`` and the ``fin`` of the run in ``ed.runs`` and each
 event in its topic (``edsim.live.topics.route``), with the line of the JSONL as value, byte
@@ -35,7 +37,14 @@ from typing import Protocol, Self
 from edsim.engine.events import Event, to_json
 from edsim.live.control import Command
 from edsim.live.directo import REASON_ERROR, RunEnd, RunStart, SinkError
-from edsim.live.messages import END, START, parse_control, run_end_json, run_start_json
+from edsim.live.messages import (
+    END,
+    START,
+    control_json,
+    parse_control,
+    run_end_json,
+    run_start_json,
+)
 from edsim.live.topics import CONTROL, REPLICATION_FACTOR, RUNS, TOPICS, Topic, route
 
 MISSING_EXTRA_MESSAGE = "Falta el extra kafka: uv sync --all-packages --extra kafka"
@@ -49,9 +58,32 @@ RETRY_POLL = 0.1
 ADMIN_TIMEOUT = 30.0
 """Seconds of each request to the broker of ``KafkaControl`` and ``ensure_topics``."""
 
+CONNECT_TIMEOUT = 10.0
+"""Seconds of the first look at the broker: without an answer, ``BrokerUnavailableError``.
+
+Shorter than ``ADMIN_TIMEOUT`` and ``FLUSH_TIMEOUT``, which stay for creating topics and
+for ``flush``: a broker that is not up is reported soon.
+"""
+
 
 class MissingKafkaExtraError(ImportError):
     """The optional ``kafka`` extra (``confluent-kafka``) is not installed."""
+
+
+class BrokerUnavailableError(RuntimeError):
+    """The broker did not answer in time: it is probably not up.
+
+    Args:
+        bootstrap: ``host:port`` that was tried.
+        timeout: Seconds waited.
+        detail: What the client said, if anything.
+    """
+
+    def __init__(self, bootstrap: str, timeout: float, detail: str = "") -> None:
+        text = f"no answer from the Kafka broker at {bootstrap} in {timeout:g} s"
+        super().__init__(f"{text} ({detail})" if detail else text)
+        self.bootstrap = bootstrap
+        self.timeout = timeout
 
 
 def import_confluent_kafka() -> ModuleType:
@@ -327,6 +359,7 @@ class KafkaControl:
 
     Raises:
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+        BrokerUnavailableError: If the broker does not give the offsets in time.
     """
 
     def __init__(self, bootstrap: str, run_id: str, on_invalid: Callable[[str], None]) -> None:
@@ -342,9 +375,12 @@ class KafkaControl:
         )
         try:
             partition = kafka.TopicPartition(CONTROL, 0)
-            _, high = self._consumer.get_watermark_offsets(
-                partition, timeout=ADMIN_TIMEOUT, cached=False
-            )
+            try:
+                _, high = self._consumer.get_watermark_offsets(
+                    partition, timeout=ADMIN_TIMEOUT, cached=False
+                )
+            except kafka.KafkaException as exc:
+                raise BrokerUnavailableError(bootstrap, ADMIN_TIMEOUT, str(exc)) from exc
             self._consumer.assign([kafka.TopicPartition(CONTROL, 0, high)])
         except BaseException:
             self._consumer.close()
@@ -367,11 +403,72 @@ class KafkaControl:
         self._consumer.close()
 
 
+class OrderNotDeliveredError(RuntimeError):
+    """The broker answered the delivery of an order with an error."""
+
+
+def publish_order(
+    producer: Producer,
+    run_id: str,
+    command: Command,
+    *,
+    bootstrap: str,
+    connect_timeout: float = CONNECT_TIMEOUT,
+    timeout: float = FLUSH_TIMEOUT,
+) -> int:
+    """Publish one order for the run ``run_id`` in ``ed.control`` and wait for its delivery.
+
+    First it asks the broker for the metadata of ``ed.control`` (``connect_timeout``), so a
+    broker that is not up is reported soon; then it sends ``control_json`` with ``run_id`` as
+    key and waits up to ``timeout`` for the confirmation.
+
+    Args:
+        producer: A ``confluent_kafka.Producer`` (``connect_producer``) or a double.
+        run_id: The run the order is for; the key of the message.
+        command: The order.
+        bootstrap: ``host:port`` of the broker, for the error messages.
+        connect_timeout: Seconds of the first look at the broker.
+        timeout: Seconds to wait for the confirmation.
+
+    Returns:
+        The offset of the order in ``ed.control``.
+
+    Raises:
+        BrokerUnavailableError: If the broker does not answer in ``connect_timeout`` or the
+            order is still pending after ``timeout``.
+        OrderNotDeliveredError: If the broker answered the delivery with an error.
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+    """
+    kafka = import_confluent_kafka()
+    try:
+        producer.list_topics(CONTROL, timeout=connect_timeout)
+    except kafka.KafkaException as exc:
+        raise BrokerUnavailableError(bootstrap, connect_timeout, str(exc)) from exc
+
+    reports: list[tuple[object, object]] = []
+    producer.produce(
+        CONTROL,
+        key=run_id.encode("utf-8"),
+        value=control_json(run_id, command).encode("utf-8"),
+        on_delivery=lambda error, message: reports.append((error, message)),
+    )
+    if producer.flush(timeout) or not reports:
+        raise BrokerUnavailableError(bootstrap, timeout, "the order was not confirmed")
+    [(error, message)] = reports
+    if error is not None:
+        raise OrderNotDeliveredError(f"the order was not delivered to {CONTROL}: {error}")
+    return message.offset()
+
+
 # --- The topics ----------------------------------------------------------------------
 
 
 class TopicMismatchError(RuntimeError):
     """A topic exists with another number of partitions or another timestamp type."""
+
+
+class MissingTopicsError(RuntimeError):
+    """Some topics do not exist and the caller asked not to create them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,34 +519,49 @@ def _wait_until_visible(admin, topics: list[Topic], timeout: float) -> None:
 
 
 def ensure_topics(
-    bootstrap: str, topics: Iterable[Topic] = TOPICS, *, timeout: float = ADMIN_TIMEOUT
+    bootstrap: str,
+    topics: Iterable[Topic] = TOPICS,
+    *,
+    create: bool = True,
+    timeout: float = ADMIN_TIMEOUT,
+    connect_timeout: float = CONNECT_TIMEOUT,
 ) -> TopicsReport:
     """Create the topics that are missing and check the ones that exist.
 
     When it returns, the topics it created are listed in the broker's metadata with all
     their partitions. An existing topic must have the number of partitions and the timestamp type
     (``message.timestamp.type``) of its definition. Everything is checked before anything
-    is created: if a topic differs, nothing is created.
+    is created: if a topic differs, nothing is created. With ``create=False`` it only
+    checks: ``edsim directo lanzar`` and ``reemitir`` never create a topic, so that a wrong
+    ``--kafka`` does not leave new topics in another broker; only ``preparar`` creates.
 
     Args:
         bootstrap: ``host:port`` of the broker.
         topics: The definitions; the four of the live mode by default.
-        timeout: Seconds of each request.
+        create: Whether to create the missing topics.
+        timeout: Seconds of each request after the first one.
+        connect_timeout: Seconds of the first request, the one that finds out whether the
+            broker is up.
 
     Returns:
         Which topics it created and which were already there.
 
     Raises:
+        BrokerUnavailableError: If the broker does not answer in ``connect_timeout``.
         TopicMismatchError: If an existing topic differs, saying which and how.
+        MissingTopicsError: With ``create=False``, if some topic does not exist.
         TimeoutError: If a topic created is not visible after ``timeout`` seconds.
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
     """
     topics = list(topics)
-    import_confluent_kafka()  # the message that says how to install the extra
+    kafka = import_confluent_kafka()  # the message that says how to install the extra
     from confluent_kafka.admin import AdminClient, ConfigResource, NewTopic, ResourceType
 
     admin = AdminClient({"bootstrap.servers": bootstrap})
-    metadata = admin.list_topics(timeout=timeout)
+    try:
+        metadata = admin.list_topics(timeout=connect_timeout)
+    except kafka.KafkaException as exc:
+        raise BrokerUnavailableError(bootstrap, connect_timeout, str(exc)) from exc
     existing = [t for t in topics if t.name in metadata.topics]
     missing = [t for t in topics if t.name not in metadata.topics]
 
@@ -469,6 +581,11 @@ def ensure_topics(
                 problems.append(f"{topic.name}: {TIMESTAMP_TYPE} is {found}, expected {wanted}")
     if problems:
         raise TopicMismatchError("topics that differ: " + "; ".join(problems))
+    if missing and not create:
+        raise MissingTopicsError(
+            f"topics missing: {', '.join(t.name for t in missing)}; "
+            "create them with `edsim directo preparar`"
+        )
 
     if missing:
         new = [
