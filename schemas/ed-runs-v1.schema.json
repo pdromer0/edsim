@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mensajes de ed.runs de EDsim, versión 1",
+  "description": "Un mensaje «inicio» al empezar y uno «fin» al terminar cada ejecución publicada (docs/specs/hito-6.md, «Mensajes de ed.runs»). version es la de este formato, independiente de la del catálogo. Los minutos son de simulación; todo número lleva como máximo el mayor double, porque 1e400 se lee como infinito.",
+  "$comment": "Escrito a mano. Los mensajes los escribe edsim.live.messages (run_start_json y run_end_json).",
+  "oneOf": [
+    {
+      "title": "inicio",
+      "type": "object",
+      "properties": {
+        "tipo": { "const": "inicio" },
+        "version": { "const": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "modo": { "enum": ["directo", "replay"] },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "semilla": { "type": "integer", "minimum": 0 },
+        "fecha_inicio": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "maxLength": 10 },
+        "inicio_directo": { "type": "number", "minimum": 0, "maximum": 1.7976931348623157e+308 },
+        "horizonte": { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e+308 },
+        "velocidad": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e+308 },
+            { "const": "max" }
+          ]
+        },
+        "anclado": { "type": "boolean" },
+        "censo": {
+          "type": "object",
+          "properties": {
+            "episodios": { "type": "integer", "minimum": 0 },
+            "eventos": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["episodios", "eventos"],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "tipo",
+        "version",
+        "run_id",
+        "modo",
+        "schema_version",
+        "semilla",
+        "fecha_inicio",
+        "inicio_directo",
+        "horizonte",
+        "velocidad",
+        "anclado",
+        "censo"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "fin",
+      "type": "object",
+      "properties": {
+        "tipo": { "const": "fin" },
+        "version": { "const": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "motivo": { "enum": ["horizonte", "parar", "interrupcion", "error"] },
+        "sim_time": { "type": "number", "minimum": 0, "maximum": 1.7976931348623157e+308 },
+        "ultimo_event_id": { "type": ["string", "null"], "minLength": 1 },
+        "publicados": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["tipo", "version", "run_id", "motivo", "sim_time", "ultimo_event_id", "publicados"],
+      "additionalProperties": false
+    }
+  ]
+}

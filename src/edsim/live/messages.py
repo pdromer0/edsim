@@ -30,8 +30,8 @@ END = "fin"
 KNOWN_CONTROL_DIFFERENCES: Mapping[str, str] = MappingProxyType(
     {
         "run-id-ajeno": (
-            "Una orden de otro run_id es válida para el esquema; parse_control la ignora "
-            "sin aviso, porque no es para esta ejecución."
+            "Una orden de otro run_id: parse_control la ignora sin aviso, sea válida o no, "
+            "porque no es para esta ejecución; el esquema la acepta si es válida."
         ),
     }
 )

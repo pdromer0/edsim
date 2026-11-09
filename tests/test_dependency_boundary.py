@@ -259,3 +259,48 @@ def test_reloj_ordenes_y_pacer_no_cargan_simpy_ni_el_motor():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_el_paquete_no_importa_jsonschema():
+    """jsonschema solo está en el grupo dev (tarea 6.4): el paquete genera diccionarios.
+
+    Importar todos los módulos no lo carga, y ningún fichero de src/edsim lo importa, ni
+    dentro de funciones.
+    """
+    script = dedent("""\
+        import importlib
+        import pkgutil
+        import sys
+
+        import edsim
+
+        visited = {"edsim"}
+        for module in pkgutil.walk_packages(edsim.__path__, prefix="edsim."):
+            importlib.import_module(module.name)
+            visited.add(module.name)
+
+        assert "edsim.live.schemas" in visited, sorted(visited)
+        loaded = sorted(name for name in sys.modules if name.split(".")[0] == "jsonschema")
+        assert not loaded, f"El núcleo carga jsonschema al importarse: {loaded}"
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    imports = []
+    for path in sorted(CORE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            else:
+                continue
+            imports += [
+                f"{path.relative_to(CORE)}:{node.lineno}"
+                for n in names
+                if n.split(".")[0] == "jsonschema"
+            ]
+    assert not imports, imports
