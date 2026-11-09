@@ -46,10 +46,11 @@ turnarounds) is in any catalog.
 """
 
 import dataclasses
+import itertools
 import json
 import math
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -83,16 +84,31 @@ _MAX_EVENTS = 10**9
 _EPISODE = re.compile(r"EP-[0-9]{6}")
 _PATIENT = re.compile(r"PT-[0-9]{6}")
 
-# A payload check gets the event type and the key, to name them in errors, and
-# returns the value to keep: the same one, or an immutable copy of a container.
-Check = Callable[[str, str, object], object]
+
+class Check(Protocol):
+    """A payload check of the catalog: it validates a value and describes its JSON Schema.
+
+    Called with the event type and the key, to name them in errors, it returns
+    the value to keep: the same one, or an immutable copy of a container.
+    ``json_schema()`` says the same in JSON Schema 2020-12, for the JSON value
+    (``edsim.live.schemas``, task 6.4).
+    """
+
+    def __call__(self, event_type: str, key: str, value: object) -> object: ...
+
+    def json_schema(self) -> dict[str, object]: ...
 
 
-def _int_range(low: int, high: int | None = None) -> Check:
+@dataclass(frozen=True, slots=True)
+class _IntRange:
     """An integer (not a bool) in ``[low, high]``; no upper limit if ``high`` is None."""
-    limit = f">= {low}" if high is None else f"between {low} and {high}"
 
-    def check(event_type: str, key: str, value: object) -> object:
+    low: int
+    high: int | None = None
+
+    def __call__(self, event_type: str, key: str, value: object) -> object:
+        low, high = self.low, self.high
+        limit = f">= {low}" if high is None else f"between {low} and {high}"
         # bool is a subclass of int in Python: True must not pass as 1.
         if (
             isinstance(value, bool)
@@ -105,36 +121,89 @@ def _int_range(low: int, high: int | None = None) -> Check:
             )
         return value
 
-    return check
+    def json_schema(self) -> dict[str, object]:
+        schema: dict[str, object] = {"type": "integer", "minimum": self.low}
+        if self.high is not None:
+            schema["maximum"] = self.high
+        return schema
 
 
-def _choice(*values: str) -> Check:
+def _int_range(low: int, high: int | None = None) -> Check:
+    """An integer (not a bool) in ``[low, high]``; no upper limit if ``high`` is None."""
+    return _IntRange(low, high)
+
+
+@dataclass(frozen=True, slots=True)
+class _Choice:
     """One of a fixed set of strings."""
 
-    def check(event_type: str, key: str, value: object) -> object:
+    values: tuple[str, ...]
+
+    def __call__(self, event_type: str, key: str, value: object) -> object:
+        values = self.values
         if not isinstance(value, str) or value not in values:
             raise ValueError(
                 f"{event_type}: payload {key} must be one of {values!r}, got {value!r}"
             )
         return value
 
-    return check
+    def json_schema(self) -> dict[str, object]:
+        return {"enum": list(self.values)}
 
 
-def _bool(event_type: str, key: str, value: object) -> object:
+def _choice(*values: str) -> Check:
+    """One of a fixed set of strings."""
+    return _Choice(values)
+
+
+@dataclass(frozen=True, slots=True)
+class _Bool:
     """``True`` or ``False``; 0 and 1 are not."""
-    if not isinstance(value, bool):
-        raise ValueError(f"{event_type}: payload {key} must be true or false, got {value!r}")
-    return value
+
+    def __call__(self, event_type: str, key: str, value: object) -> object:
+        if not isinstance(value, bool):
+            raise ValueError(f"{event_type}: payload {key} must be true or false, got {value!r}")
+        return value
+
+    def json_schema(self) -> dict[str, object]:
+        return {"type": "boolean"}
 
 
-def _episode(event_type: str, key: str, value: object) -> object:
+_bool = _Bool()
+
+EPISODE_SCHEMA: Mapping[str, object] = MappingProxyType(
+    {"type": "string", "pattern": "^EP-[0-9]{6}$", "maxLength": 9}
+)
+"""JSON Schema of an episode identifier.
+
+``maxLength`` is not redundant: ``jsonschema`` checks ``pattern`` with Python's
+``re.search``, where ``$`` also matches before a final newline, so
+``"EP-000137\n"`` would pass the pattern alone (``Event`` refuses it).
+"""
+
+PATIENT_SCHEMA: Mapping[str, object] = MappingProxyType(
+    {"type": "string", "pattern": "^PT-[0-9]{6}$", "maxLength": 9}
+)
+"""JSON Schema of a patient identifier; ``maxLength`` as in ``EPISODE_SCHEMA``."""
+
+
+@dataclass(frozen=True, slots=True)
+class _EpisodeRef:
     """An episode identifier, such as ``EP-000137``."""
-    if not isinstance(value, str) or not _EPISODE.fullmatch(value):
-        raise ValueError(
-            f"{event_type}: payload {key} must be an episode_id such as 'EP-000137', got {value!r}"
-        )
-    return value
+
+    def __call__(self, event_type: str, key: str, value: object) -> object:
+        if not isinstance(value, str) or not _EPISODE.fullmatch(value):
+            raise ValueError(
+                f"{event_type}: payload {key} must be an episode_id such as 'EP-000137', "
+                f"got {value!r}"
+            )
+        return value
+
+    def json_schema(self) -> dict[str, object]:
+        return dict(EPISODE_SCHEMA)
+
+
+_episode = _EpisodeRef()
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,53 +252,85 @@ _BOX = _int_range(1)
 _DESTINO = _choice("alta", "ingreso")
 
 
-def _test_types(event_type: str, key: str, value: object) -> tuple[str, ...]:
+@dataclass(frozen=True, slots=True)
+class _TestTypes:
     """A non-empty list of types of test, in the order of ``TEST_TYPES``, without repeats.
 
     Kept as a tuple, so that the event stays immutable; JSON writes it as a
     list. The order is strict: the engine writes it so, and a list is data.
     """
-    if isinstance(value, str) or not isinstance(value, list | tuple) or not value:
-        raise ValueError(
-            f"{event_type}: payload {key} must be a non-empty list of {TEST_TYPES!r}, got {value!r}"
-        )
-    for item in value:
-        if not isinstance(item, str) or item not in TEST_TYPES:
+
+    def __call__(self, event_type: str, key: str, value: object) -> tuple[str, ...]:
+        if isinstance(value, str) or not isinstance(value, list | tuple) or not value:
             raise ValueError(
-                f"{event_type}: payload {key} must hold types of {TEST_TYPES!r}, got {item!r}"
+                f"{event_type}: payload {key} must be a non-empty list of {TEST_TYPES!r}, "
+                f"got {value!r}"
             )
-    positions = [TEST_TYPES.index(item) for item in value]
-    if any(b <= a for a, b in zip(positions, positions[1:], strict=False)):
-        raise ValueError(
-            f"{event_type}: payload {key} must follow the order of {TEST_TYPES!r} "
-            f"without repeats, got {value!r}"
-        )
-    return tuple(value)
+        for item in value:
+            if not isinstance(item, str) or item not in TEST_TYPES:
+                raise ValueError(
+                    f"{event_type}: payload {key} must hold types of {TEST_TYPES!r}, got {item!r}"
+                )
+        positions = [TEST_TYPES.index(item) for item in value]
+        if any(b <= a for a, b in zip(positions, positions[1:], strict=False)):
+            raise ValueError(
+                f"{event_type}: payload {key} must follow the order of {TEST_TYPES!r} "
+                f"without repeats, got {value!r}"
+            )
+        return tuple(value)
+
+    def json_schema(self) -> dict[str, object]:
+        # Every non-empty list in the order of TEST_TYPES, without repeats: 2**4 - 1 = 15.
+        # JSON Schema cannot say "in this order" for items, so the lists are written out,
+        # shortest first.
+        lists = [
+            list(combination)
+            for size in range(1, len(TEST_TYPES) + 1)
+            for combination in itertools.combinations(TEST_TYPES, size)
+        ]
+        return {"enum": lists}
 
 
-def _test_results(event_type: str, key: str, value: object) -> Mapping[str, str]:
+_test_types = _TestTypes()
+
+
+@dataclass(frozen=True, slots=True)
+class _TestResults:
     """A non-empty mapping from types of test to ``normal`` or ``alterado``.
 
     Kept as a read-only mapping with the keys in the order of ``TEST_TYPES``:
     the order of the keys of a JSON object means nothing, so it is normalized
     and the JSON written does not depend on the caller.
     """
-    if not isinstance(value, Mapping) or not value:
-        raise ValueError(
-            f"{event_type}: payload {key} must be a non-empty object of results, got {value!r}"
-        )
-    for test, result in value.items():
-        if not isinstance(test, str) or test not in TEST_TYPES:
+
+    def __call__(self, event_type: str, key: str, value: object) -> Mapping[str, str]:
+        if not isinstance(value, Mapping) or not value:
             raise ValueError(
-                f"{event_type}: payload {key} must have types of {TEST_TYPES!r} as keys, "
-                f"got {test!r}"
+                f"{event_type}: payload {key} must be a non-empty object of results, got {value!r}"
             )
-        if not isinstance(result, str) or result not in TEST_RESULTS:
-            raise ValueError(
-                f"{event_type}: payload {key} must map each type to one of {TEST_RESULTS!r}, "
-                f"got {result!r} for {test!r}"
-            )
-    return MappingProxyType({t: value[t] for t in TEST_TYPES if t in value})
+        for test, result in value.items():
+            if not isinstance(test, str) or test not in TEST_TYPES:
+                raise ValueError(
+                    f"{event_type}: payload {key} must have types of {TEST_TYPES!r} as keys, "
+                    f"got {test!r}"
+                )
+            if not isinstance(result, str) or result not in TEST_RESULTS:
+                raise ValueError(
+                    f"{event_type}: payload {key} must map each type to one of "
+                    f"{TEST_RESULTS!r}, got {result!r} for {test!r}"
+                )
+        return MappingProxyType({t: value[t] for t in TEST_TYPES if t in value})
+
+    def json_schema(self) -> dict[str, object]:
+        return {
+            "type": "object",
+            "minProperties": 1,
+            "properties": {test: {"enum": list(TEST_RESULTS)} for test in TEST_TYPES},
+            "additionalProperties": False,
+        }
+
+
+_test_results = _TestResults()
 
 
 CATALOG_V1: Mapping[str, EventSpec] = MappingProxyType(
