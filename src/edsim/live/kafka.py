@@ -22,18 +22,19 @@ Sending is asynchronous: ``produce`` queues the message and the result arrives l
 delivery report served by ``poll``. A full queue raises ``BufferError``: the sink serves the
 reports for 0.1 s and tries again, so the pacer falls behind instead of losing a message. A
 report with an error marks the sink as failed, and the next ``write`` raises ``SinkError``:
-the run never goes on with a gap.
+the run never goes on with a gap. And the ``fin`` waits for the confirmations: ``end``
+flushes first, and if an event was not confirmed, the ``fin`` says ``error``.
 """
 
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import ModuleType, TracebackType
 from typing import Protocol, Self
 
 from edsim.engine.events import Event, to_json
 from edsim.live.control import Command
-from edsim.live.directo import RunEnd, RunStart, SinkError
+from edsim.live.directo import REASON_ERROR, RunEnd, RunStart, SinkError
 from edsim.live.messages import END, START, parse_control, run_end_json, run_start_json
 from edsim.live.topics import CONTROL, REPLICATION_FACTOR, RUNS, TOPICS, Topic, route
 
@@ -188,8 +189,46 @@ class KafkaSink:
         )
 
     def end(self, message: RunEnd) -> None:
-        """Publish the ``fin`` of the run in ``ed.runs``, even if the sink failed."""
+        """Wait for the confirmations, then publish the ``fin`` of the run in ``ed.runs``.
+
+        The ``fin`` never gets ahead of the confirmations: a delivery can fail after the
+        last ``write``, and then no ``write`` is left to notice it. So this first calls
+        ``flush(FLUSH_TIMEOUT)`` and then decides:
+
+        a) If something failed (an event or the ``inicio``), something is still pending,
+           or the events confirmed are not ``message.published``: it publishes a ``fin``
+           with reason ``error``, the same ``sim_time``, ``publicados`` = the events
+           confirmed and ``ultimo_event_id`` = the highest one confirmed, and then
+           raises ``SinkError``.
+        b) If ``message`` is already a ``fin`` with reason ``error`` (``run_live`` after a
+           ``SinkError``): it publishes it with the values after the flush, which may be
+           more than those of the error, and does not raise.
+        c) If every event is confirmed: it publishes ``message`` as it is.
+
+        The ``fin`` is published even if the sink failed.
+
+        Raises:
+            SinkError: In case a), after publishing the ``fin`` with reason ``error``.
+            ValueError: If the message is of another run.
+        """
         self._check_run_id("RunEnd", message.run_id)
+        pending = self._producer.flush(FLUSH_TIMEOUT)
+        confirmed = replace(message, last_event_id=self.last_delivered, published=self.delivered)
+        if message.reason == REASON_ERROR:
+            self._publish_end(confirmed)
+            return
+        if not self.failed and not pending and self.delivered == message.published:
+            self._publish_end(message)
+            return
+        self._publish_end(replace(confirmed, reason=REASON_ERROR))
+        self._reported = len(self.failed)
+        raise self._error(
+            f"the run published {message.published} events and {self.delivered} were "
+            f"confirmed ({pending} pending)",
+            pending=pending,
+        )
+
+    def _publish_end(self, message: RunEnd) -> None:
         self._produce(RUNS, self._key, run_end_json(message).encode("utf-8"), None, END)
 
     # -- Context manager --------------------------------------------------------------

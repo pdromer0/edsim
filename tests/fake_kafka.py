@@ -50,6 +50,8 @@ class FakeProducer:
         delivery_errors: Números de mensaje aceptado (desde 1) cuyo aviso llega con error.
         deliver_on_poll: Si poll entrega todo lo pendiente (por defecto). Con False, solo
             flush y release entregan.
+        hold: Números de mensaje aceptado que poll no entrega: esperan al flush, como un
+            mensaje cuya confirmación tarda.
         stuck: Mensajes que flush deja sin entregar, los últimos.
 
     Attributes:
@@ -57,6 +59,7 @@ class FakeProducer:
             lanzaron BufferError.
         polls: El timeout de cada poll.
         delivered: Los mensajes entregados, en orden de entrega, con su error o None.
+        ops: Cada produce aceptado ("produce", topic) y cada flush ("flush",), en orden.
     """
 
     def __init__(
@@ -65,8 +68,10 @@ class FakeProducer:
         buffer_errors=(),
         delivery_errors=(),
         deliver_on_poll: bool = True,
+        hold=(),
         stuck: int = 0,
     ) -> None:
+        self.hold = set(hold)
         self.buffer_errors = set(buffer_errors)
         self.delivery_errors = set(delivery_errors)
         self.deliver_on_poll = deliver_on_poll
@@ -77,6 +82,7 @@ class FakeProducer:
         self.delivered: list[tuple[FakeMessage, FakeError | None]] = []
         self._pending: list[tuple[FakeMessage, object]] = []
         self._accepted = 0
+        self.ops: list[tuple] = []
 
     def produce(self, topic, value=None, key=None, **kwargs):
         on_delivery = kwargs.pop("on_delivery", None)
@@ -85,6 +91,7 @@ class FakeProducer:
         if len(self.calls) in self.buffer_errors:
             raise BufferError("Local: Queue full")
         self._accepted += 1
+        self.ops.append(("produce", topic))
         self._pending.append((FakeMessage(self._accepted, topic, kwargs), on_delivery))
 
     def _deliver(self, position: int) -> None:
@@ -107,13 +114,14 @@ class FakeProducer:
         self.polls.append(timeout)
         if not self.deliver_on_poll:
             return 0
-        served = len(self._pending)
-        while self._pending:
-            self._deliver(0)
-        return served
+        ready = [m.number for m, _ in self._pending if m.number not in self.hold]
+        for number in ready:  # en orden de aceptación
+            self.release(number)
+        return len(ready)
 
     def flush(self, timeout=None) -> int:
         self.flushes.append(timeout)
+        self.ops.append(("flush",))
         while len(self._pending) > self.stuck:
             self._deliver(0)
         return len(self._pending)

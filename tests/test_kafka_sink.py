@@ -17,7 +17,7 @@ from edsim.engine.events import CATALOG_V3, CATALOGS, EventLog, EventSpec, Memor
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.clock import FakeClock
 from edsim.live.control import NoControl
-from edsim.live.directo import LogSource, RunEnd, RunStart, SinkError, run_live
+from edsim.live.directo import LogSource, RunEnd, RunInfo, RunStart, SinkError, run_live
 from edsim.live.kafka import FLUSH_TIMEOUT, KafkaSink, producer_config
 from edsim.live.messages import run_end_json, run_start_json
 from edsim.live.pacer import Pacer
@@ -75,8 +75,9 @@ def test_eventos_a_mano():
 
 
 def test_inicio_y_fin_en_ed_runs():
-    start = RunStart(INFO, 120.0, 180.0, 60.0, 2, 6)
-    end = RunEnd("rcenso", "horizonte", 180.0, "rcenso-000000011", 9)
+    # Una ejecución sin eventos: el fin con 0 publicados coincide con lo confirmado.
+    start = RunStart(INFO, 120.0, 180.0, 60.0, 0, 0)
+    end = RunEnd("rcenso", "horizonte", 180.0, None, 0)
     producer = FakeProducer()
 
     with KafkaSink(producer, "rcenso") as sink:
@@ -257,3 +258,113 @@ def test_run_id_ajeno():
     with pytest.raises(ValueError, match="run_id"):
         KafkaSink(producer, "")
     assert producer.calls == []
+
+
+# --- El fin espera las confirmaciones (revisión del PR #59) ----------------------------
+
+
+def one_event_log():
+    sink = MemorySink()
+    EventLog("runo", SCENARIO_START, sink, schema_version=3).emit(
+        "patient_arrived", 1.0, arrival_id=1, medio="ambulancia"
+    )
+    return sink.events
+
+
+ONE_INFO = RunInfo("runo", "replay", 3, 2026, SCENARIO_START, False)
+
+
+def run_kafka(producer, events, *, run_id, info, start, horizon, clock=None):
+    """run_live con un KafkaSink sobre `producer`, a ×60 desde 0 s; devuelve el sink."""
+    clock = FakeClock() if clock is None else clock
+    sink = KafkaSink(producer, run_id)
+    with sink:
+        run_live(
+            LogSource(events, horizon),
+            Pacer(clock, 60, (0.0, 0.0)),
+            NoControl(),
+            sink,
+            start=start,
+            horizon=horizon,
+            run_info=info,
+        )
+    return sink
+
+
+def last_end(producer) -> dict:
+    topic, call = producer.calls[-1]
+    assert topic == "ed.runs"
+    return json.loads(call["value"])
+
+
+def test_un_fallo_tras_el_ultimo_write_da_fin_con_error():
+    # El caso de Codex: el único evento falla, pero su aviso llega después de su write, en
+    # el flush. Ningún write más lo vería; el fin no puede decir «horizonte, 1 publicado».
+    producer = FakeProducer(deliver_on_poll=False, delivery_errors={2})
+
+    with pytest.raises(SinkError) as raised:
+        run_kafka(producer, one_event_log(), run_id="runo", info=ONE_INFO, start=0, horizon=4)
+
+    assert last_end(producer) == {
+        "tipo": "fin",
+        "version": 1,
+        "run_id": "runo",
+        "motivo": "error",
+        "sim_time": 4.0,
+        "ultimo_event_id": None,
+        "publicados": 0,
+    }
+    assert raised.value.failed == ("runo-000000000",)
+    assert raised.value.delivered == 0
+
+
+def test_sin_errores_el_fin_espera_al_flush():
+    # Ninguna confirmación llega antes del fin: end hace flush y después publica el fin,
+    # horizonte, con los 9 confirmados.
+    producer = FakeProducer(deliver_on_poll=False)
+
+    run_kafka(producer, live_hand_log(), run_id="rcenso", info=INFO, start=120, horizon=180)
+
+    # El flush de end, el fin y el flush del __exit__.
+    assert producer.ops[-3:] == [("flush",), ("produce", "ed.runs"), ("flush",)]
+    end = last_end(producer)
+    assert (end["motivo"], end["publicados"]) == ("horizonte", 9)
+    assert end["ultimo_event_id"] == "rcenso-000000011"
+
+
+def test_ctrl_c_con_un_fallo_pendiente_da_fin_con_error():
+    # Ctrl+C a los 45 s (minuto 165): se publicaron el censo y dos salidas. La segunda
+    # salida (mensaje 9) falla, pero su aviso solo llega en el flush del fin: el fin dice
+    # error, y sale el SinkError, con la interrupción como contexto.
+    producer = FakeProducer(deliver_on_poll=False, delivery_errors={9})
+
+    with pytest.raises(SinkError) as raised:
+        run_kafka(
+            producer,
+            live_hand_log(),
+            run_id="rcenso",
+            info=INFO,
+            start=120,
+            horizon=180,
+            clock=FakeClock(interrupt_at=45),
+        )
+
+    end = last_end(producer)
+    assert (end["motivo"], end["publicados"], end["sim_time"]) == ("error", 7, 165.0)
+    assert end["ultimo_event_id"] == "rcenso-000000009"
+    assert isinstance(raised.value.__context__, KeyboardInterrupt)
+
+
+def test_el_fin_de_error_lleva_lo_confirmado_tras_el_flush():
+    # Mensajes: 1 inicio, 2 y 3 los staffing_changed, retenidos hasta el flush; 4 el tercer
+    # evento, que falla en su poll. El cuarto write lanza SinkError con 0 confirmados, y el
+    # flush del fin confirma los dos retenidos: el fin dice 2.
+    producer = FakeProducer(hold={2, 3}, delivery_errors={4})
+
+    with pytest.raises(SinkError) as raised:
+        run_kafka(producer, live_hand_log(), run_id="rcenso", info=INFO, start=120, horizon=180)
+
+    assert (raised.value.delivered, raised.value.last_delivered) == (0, None)
+    end = last_end(producer)
+    assert (end["motivo"], end["publicados"]) == ("error", 2)
+    assert end["ultimo_event_id"] == "rcenso-000000001"

@@ -464,7 +464,12 @@ def run_live(
             stream, after publishing (if it can) the ``RunEnd`` with reason
             ``error``, with the events the sink confirmed as ``published`` and
             the highest one confirmed as ``last_event_id``. If that end fails
-            too, the ``SinkError`` goes on with a note.
+            too, the ``SinkError`` goes on with a note. Also if ``sink.end``
+            raises it: a sink that waits for its confirmations (``KafkaSink``)
+            publishes a ``fin`` with reason ``error`` instead of the one given and
+            raises. That error goes out of ``run_live`` instead of returning
+            and, after Ctrl+C, instead of the ``KeyboardInterrupt``, which stays
+            as its context: an incomplete run matters more than how it stopped.
     """
     start = _check_minutes("start", start)
     horizon = _check_minutes("horizon", horizon)
