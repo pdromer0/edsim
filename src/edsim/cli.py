@@ -99,9 +99,11 @@ from edsim.live.control import (
 )
 from edsim.live.directo import MemoryLiveSink, SinkError
 from edsim.live.kafka import (
+    ADMIN_CLIENT,
     CONNECT_TIMEOUT,
     MISSING_EXTRA_MESSAGE,
     BrokerUnavailableError,
+    BrokerWatch,
     KafkaControl,
     KafkaSink,
     MissingKafkaExtraError,
@@ -740,13 +742,35 @@ def _warn(reason: str) -> None:
     print(f"Aviso: {reason}", file=sys.stderr, flush=True)
 
 
+def _broker_watch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> BrokerWatch:
+    """The watch of the Kafka clients of a command, with the file of ``--registro-kafka``."""
+    log_path = getattr(args, "registro_kafka", None)
+    try:
+        return BrokerWatch(args.kafka, _warn, log_path=log_path)
+    except OSError as error:
+        parser.error(f"--registro-kafka {log_path}: {error}")
+
+
+def _kafka_summary(watch: BrokerWatch | None) -> None:
+    """Print what librdkafka wrote, if anything, and close the file of the lines."""
+    if watch is None:
+        return
+    text = watch.summary()
+    if text is not None:
+        print(text, file=sys.stderr, flush=True)
+    watch.close()
+
+
 def _destination(args: argparse.Namespace) -> str:
     return "en memoria" if args.memoria else f"Kafka {args.kafka}"
 
 
-def _run_live_command(args: argparse.Namespace, prepared: PreparedRun, clock) -> int:
+def _run_live_command(
+    args: argparse.Namespace, prepared: PreparedRun, clock, watch: BrokerWatch | None
+) -> int:
     """Publish a prepared run in memory or in Kafka, printing the census, the status and
-    the summary; the exit code."""
+    the summary; the exit code. With Kafka, ``watch`` gets what librdkafka says, and what
+    it wrote is summed up at the end, also after Ctrl+C or an error."""
     callbacks = {
         "on_start": lambda start: print(format_census(start), flush=True),
         "on_end": lambda start, end: print(format_end(start, end), flush=True),
@@ -765,11 +789,17 @@ def _run_live_command(args: argparse.Namespace, prepared: PreparedRun, clock) ->
             )
             return 0
         # Only check: creating is for `edsim directo preparar`.
-        ensure_topics(args.kafka, TOPICS, create=False, connect_timeout=CONNECT_TIMEOUT)
+        ensure_topics(
+            args.kafka,
+            TOPICS,
+            create=False,
+            connect_timeout=CONNECT_TIMEOUT,
+            client_config=watch.config(ADMIN_CLIENT),
+        )
         # Before the warm-up: the orders sent meanwhile apply when the live stream starts.
-        control = KafkaControl(args.kafka, run_id, _warn)
+        control = KafkaControl(args.kafka, run_id, _warn, watch=watch)
         try:
-            producer = connect_producer(args.kafka, run_id)
+            producer = connect_producer(args.kafka, run_id, watch=watch)
             with KafkaSink(producer, run_id) as sink:
                 run_prepared(
                     prepared,
@@ -788,9 +818,17 @@ def _run_live_command(args: argparse.Namespace, prepared: PreparedRun, clock) ->
         return 130
     except KAFKA_ERRORS as error:
         return _kafka_failure(error, args.kafka)
+    finally:
+        _kafka_summary(watch)
+
+
+def _check_kafka_log(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.memoria and args.registro_kafka is not None:
+        parser.error("--registro-kafka guarda lo que escribe librdkafka: no vale con --memoria")
 
 
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    _check_kafka_log(args, parser)
     if args.semilla < 0:
         parser.error(f"--semilla debe ser un entero no negativo; se recibió {args.semilla}")
     clock = SystemClock()
@@ -824,6 +862,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         )
     except ValueError as error:
         parser.error(str(error))
+    watch = None if args.memoria else _broker_watch(args, parser)
     anchored = ", anclado al calendario" if args.anclar else ""
     print(
         f"Directo · run_id {run_id} · velocidad {format_speed(args.velocidad)}"
@@ -833,14 +872,16 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         f" · horizonte {prepared.horizon:g} min · semilla {args.semilla}",
         flush=True,
     )
-    return _run_live_command(args, prepared, clock)
+    return _run_live_command(args, prepared, clock, watch)
 
 
 def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    _check_kafka_log(args, parser)
     try:
         prepared = prepare_replay(args.ejecuciones, args.run_id, warmup_days=args.calentamiento)
     except (OSError, ValueError) as error:
         parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    watch = None if args.memoria else _broker_watch(args, parser)
     info = prepared.info
     print(
         f"Replay · run_id {info.run_id} · velocidad {format_speed(args.velocidad)}"
@@ -850,14 +891,22 @@ def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         f" primer evento) · W = {prepared.start:g} min · horizonte {prepared.horizon:g} min",
         flush=True,
     )
-    return _run_live_command(args, prepared, SystemClock())
+    return _run_live_command(args, prepared, SystemClock(), watch)
 
 
 def _prepare_topics(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    watch = _broker_watch(args, parser)
     try:
-        report = ensure_topics(args.kafka, TOPICS, connect_timeout=CONNECT_TIMEOUT)
+        report = ensure_topics(
+            args.kafka,
+            TOPICS,
+            connect_timeout=CONNECT_TIMEOUT,
+            client_config=watch.config(ADMIN_CLIENT),
+        )
     except KAFKA_ERRORS as error:
         return _kafka_failure(error, args.kafka)
+    finally:
+        _kafka_summary(watch)
     print(
         f"Kafka {args.kafka}\nCreados: {', '.join(report.created) or 'ninguno'}"
         f"\nYa estaban: {', '.join(report.existing) or 'ninguno'}"
@@ -873,13 +922,19 @@ def _control(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         order = PAUSE if args.pausar else RESUME if args.reanudar else STOP
         command = Command(order)
         text = order
+    watch = _broker_watch(args, parser)
     try:
-        producer = connect_producer(args.kafka, f"orden-{args.run}")
-        offset = publish_order(
-            producer, args.run, command, bootstrap=args.kafka, connect_timeout=CONNECT_TIMEOUT
-        )
+        producer = connect_producer(args.kafka, f"orden-{args.run}", watch=watch)
+        try:
+            offset = publish_order(
+                producer, args.run, command, bootstrap=args.kafka, connect_timeout=CONNECT_TIMEOUT
+            )
+        finally:
+            producer.poll(0)  # serve its logs and errors to the watch
     except KAFKA_ERRORS as error:
         return _kafka_failure(error, args.kafka)
+    finally:
+        _kafka_summary(watch)
     print(f"Orden {text} para {args.run} publicada en ed.control (offset {offset})")
     return 0
 
@@ -1015,6 +1070,16 @@ def _add_bootstrap_option(parser: argparse.ArgumentParser) -> argparse.Action:
     )
 
 
+def _add_kafka_log_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--registro-kafka",
+        default=None,
+        metavar="FICHERO",
+        help="guarda en FICHERO, con su hora, todas las líneas que escribe librdkafka; sin "
+        "esta opción no van a la terminal y al final se imprime su recuento",
+    )
+
+
 def _add_live_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--velocidad",
@@ -1031,6 +1096,7 @@ def _add_live_options(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="sin Kafka ni órdenes: publica en memoria e imprime el resumen",
     )
+    _add_kafka_log_option(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1467,6 +1533,7 @@ def build_parser() -> argparse.ArgumentParser:
     order.add_argument("--reanudar", action="store_true", help="sigue desde donde se pausó")
     order.add_argument("--parar", action="store_true", help="termina el directo (fin parar)")
     _add_bootstrap_option(control)
+    _add_kafka_log_option(control)
     control.set_defaults(handler=_control, subparser=control)
 
     return parser

@@ -12,7 +12,14 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
-from fake_kafka import FakeProducer, install_fake_confluent_kafka
+from fake_kafka import (
+    REFUSED,
+    FakeKafkaError,
+    FakeProducer,
+    install_fake_confluent_kafka,
+    log_line,
+    stats_json,
+)
 from test_directo import filtered_batch
 from test_launch import REPLAY_DATE, REPLAY_RUN, save_run
 
@@ -334,7 +341,9 @@ class KafkaFake:
         monkeypatch.setattr("edsim.cli.KafkaControl", self.control)
         monkeypatch.setattr("edsim.cli.connect_producer", self.connect)
 
-    def ensure_topics(self, bootstrap, topics, *, create=True, connect_timeout=None):
+    def ensure_topics(
+        self, bootstrap, topics, *, create=True, connect_timeout=None, client_config=None
+    ):
         self.ensure_calls.append((bootstrap, create, connect_timeout))
         names = [t.name for t in topics]
         if self.mismatch:
@@ -348,20 +357,54 @@ class KafkaFake:
         existing = tuple(n for n in names if n not in self.missing)
         return TopicsReport(created=tuple(self.missing), existing=existing)
 
-    def control(self, bootstrap, run_id, on_invalid):
+    def control(self, bootstrap, run_id, on_invalid, *, watch=None):
+        if watch is not None and isinstance(self.producer, CutProducer):
+            self.producer.clients["órdenes"] = watch.config("órdenes")
         fake = FakeControl(on_invalid, self.invalid)
         self.ops.append(("control",))
         self.controls.append(fake)
         return fake
 
-    def connect(self, bootstrap, client):
+    def connect(self, bootstrap, client, *, watch=None):
         self.connects.append((bootstrap, client))
+        if watch is not None and isinstance(self.producer, CutProducer):
+            self.producer.clients["productor"] = watch.config("productor")
         return self.producer
 
     def runs_messages(self):
         return [
             json.loads(kwargs["value"]) for topic, kwargs in self.producer.calls if topic == RUNS
         ]
+
+
+class CutProducer(FakeProducer):
+    """Un productor falso que simula cortes de Kafka con los callbacks del vigilante.
+
+    En cada poll hace lo que haría librdkafka con los dos clientes (el productor y el
+    consumidor de órdenes): en el primero, estadísticas con el broker UP; en el poll
+    ``start`` de cada corte, estadísticas sin UP, y hasta el ``end``, un error _TRANSPORT
+    y una línea FAIL por cliente; en el ``end``, UP otra vez.
+    """
+
+    def __init__(self, cuts, **kwargs):
+        super().__init__(**kwargs)
+        self.cuts = cuts
+        self.clients: dict[str, dict] = {}
+
+    def poll(self, timeout=None):
+        n = len(self.polls)
+        for config in self.clients.values():
+            if n == 0:
+                config["stats_cb"](stats_json(True))
+            for start, end in self.cuts:
+                if n == start:
+                    config["stats_cb"](stats_json(False))
+                if start <= n < end:
+                    config["error_cb"](FakeKafkaError("_TRANSPORT", REFUSED))
+                    log_line(config, "FAIL", REFUSED)
+                if n == end:
+                    config["stats_cb"](stats_json(True))
+        return super().poll(timeout)
 
 
 class FakeControl:
@@ -531,3 +574,92 @@ def test_control_no_entregada_sale_con_1(monkeypatch, capsys):
 
     assert main(["directo", "control", "--run", "r1", "--parar"]) == 1
     assert "Message timed out" in capsys.readouterr().err
+
+
+# --- Cortes de Kafka: los avisos y el resumen de librdkafka (tarea 6.6) ----------------
+
+LOST_WARNING = (
+    f"Aviso: se perdió la conexión con Kafka en localhost:9092 ({REFUSED}); librdkafka"
+    " reintenta solo y los eventos esperan en la cola del productor"
+)
+
+
+def kafka_warnings(err: str) -> list[str]:
+    return [line for line in err.splitlines() if line.startswith("Aviso:") and "Kafka" in line]
+
+
+def test_lanzar_con_un_corte_avisa_dos_veces(monkeypatch, capsys):
+    # A ×60 con el reloj falso, un corte del poll 100 al 200 del productor: 100 errores y
+    # 100 líneas de cada cliente, dos avisos en total y las líneas de estado en la salida.
+    use_clock(monkeypatch, FakeClock())
+    kafka = KafkaFake(monkeypatch, CutProducer(cuts=[(100, 200)]))
+
+    assert main([*LAUNCH, "--velocidad", "60", "--run-id", "rcorte"]) == 0
+
+    out = capsys.readouterr()
+    warnings = kafka_warnings(out.err)
+    assert len(warnings) == 2
+    assert warnings[0] == LOST_WARNING
+    assert re.fullmatch(
+        r"Aviso: Kafka en localhost:9092 vuelve a responder tras \d+ s", warnings[1]
+    )
+    assert len([line for line in out.out.splitlines() if line.startswith("+")]) >= 100
+    assert REFUSED not in out.out
+    assert out.err.count(REFUSED) == 1 + 2  # el aviso y la primera línea de cada cliente
+    assert "librdkafka: 200 líneas (órdenes 100, productor 100); 200 errores (_TRANSPORT 200)" in (
+        out.err
+    )
+    assert kafka.runs_messages()[-1]["motivo"] == "horizonte"
+
+
+def test_lanzar_con_un_corte_y_una_entrega_fallida_sale_con_1(monkeypatch, capsys):
+    # El corte no tapa el error: el mensaje 150 no se entrega, el directo se para con fin
+    # error y el resumen de librdkafka sale igualmente, tras el error.
+    kafka = KafkaFake(monkeypatch, CutProducer(cuts=[(100, 400)], delivery_errors={150}))
+
+    assert main(KAFKA_LAUNCH) == 1
+
+    err = capsys.readouterr().err
+    end = kafka.runs_messages()[-1]
+    assert (end["tipo"], end["motivo"]) == ("fin", "error")
+    assert "Error: un mensaje no se entregó y el directo se paró" in err
+    assert err.index("Error: un mensaje no se entregó") < err.index("librdkafka: ")
+    assert kafka_warnings(err) == [LOST_WARNING]
+
+
+def test_control_guarda_las_lineas_de_librdkafka(monkeypatch, tmp_path, capsys):
+    install_fake_confluent_kafka(monkeypatch)
+    producer = CutProducer(cuts=[(0, 1)])
+    kafka = KafkaFake(monkeypatch, producer)
+    path = tmp_path / "control.log"
+
+    code = main(["directo", "control", "--run", "r1", "--parar", "--registro-kafka", str(path)])
+
+    assert code == 0
+    assert kafka.connects == [("localhost:9092", "orden-r1")]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 and lines[0].endswith(f"productor FAIL [edsim-x#producer-1] {REFUSED}")
+    assert f"todas en {path}" in capsys.readouterr().err
+
+
+def test_preparar_sin_broker_resume_lo_que_escribio_librdkafka(monkeypatch, capsys):
+    def down(bootstrap, topics, *, connect_timeout, client_config):
+        for _ in range(3):
+            log_line(client_config, "FAIL", REFUSED)
+        raise BrokerUnavailableError(bootstrap, connect_timeout)
+
+    monkeypatch.setattr("edsim.cli.ensure_topics", down)
+
+    assert main(["directo", "preparar"]) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert err[0].startswith("Error: no responde el broker de Kafka en localhost:9092")
+    assert err[1] == (
+        "librdkafka: 3 líneas (administración 3); para guardarlas, --registro-kafka FICHERO"
+    )
+
+
+def test_registro_kafka_con_memoria_es_un_error_de_uso(sin_conexion, capsys):
+    with pytest.raises(SystemExit) as exit_:
+        main([*LAUNCH, "--memoria", "--registro-kafka", "x.log"])
+    assert exit_.value.code == 2
+    assert "--registro-kafka" in capsys.readouterr().err
