@@ -47,8 +47,8 @@ jobs:
       - run: uv sync --locked --all-packages
       - run: uv run --package edsim-app pytest app/tests
 
-  # Integración contra un Kafka real, con el mismo compose.yaml que en local (H6-16). Aún no es
-  # obligatorio en la protección de main: lo será desde la tarea 6.4.
+  # Integración contra un Kafka real, con el mismo compose.yaml que en local (H6-16): topics,
+  # productor, directo de un día y órdenes. Obligatorio en la protección de main desde la 6.4.
   tests-kafka:
     runs-on: ubuntu-latest
     timeout-minutes: 15
