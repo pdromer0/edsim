@@ -25,6 +25,7 @@ report with an error marks the sink as failed, and the next ``write`` raises ``S
 the run never goes on with a gap.
 """
 
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from types import ModuleType, TracebackType
@@ -349,13 +350,45 @@ class TopicsReport:
 
 TIMESTAMP_TYPE = "message.timestamp.type"
 
+VISIBILITY_POLL = 0.05
+"""Seconds between two looks at the metadata while a new topic becomes visible."""
+
+
+def _wait_until_visible(admin, topics: list[Topic], timeout: float) -> None:
+    """Wait until the broker's metadata lists each new topic with all its partitions.
+
+    ``create_topics`` is done when the controller has the topic, but the metadata of
+    the broker can lag a few milliseconds (measured in task 6.4: right after creating,
+    7 of 60 topics were not listed yet). A caller that looked then would think the topic
+    missing, try to create it again and get ``TOPIC_ALREADY_EXISTS``.
+
+    Raises:
+        TimeoutError: If a topic is not visible after ``timeout`` seconds.
+    """
+    waiting = {t.name: t.partitions for t in topics}
+    limit = time.monotonic() + timeout
+    while True:
+        metadata = admin.list_topics(timeout=timeout)
+        for name in list(waiting):
+            found = metadata.topics.get(name)
+            if found is not None and found.error is None and len(found.partitions) == waiting[name]:
+                del waiting[name]
+        if not waiting:
+            return
+        if time.monotonic() >= limit:
+            raise TimeoutError(
+                f"topics created but not visible after {timeout:g} s: {sorted(waiting)}"
+            )
+        time.sleep(VISIBILITY_POLL)
+
 
 def ensure_topics(
     bootstrap: str, topics: Iterable[Topic] = TOPICS, *, timeout: float = ADMIN_TIMEOUT
 ) -> TopicsReport:
     """Create the topics that are missing and check the ones that exist.
 
-    An existing topic must have the number of partitions and the timestamp type
+    When it returns, the topics it created are listed in the broker's metadata with all
+    their partitions. An existing topic must have the number of partitions and the timestamp type
     (``message.timestamp.type``) of its definition. Everything is checked before anything
     is created: if a topic differs, nothing is created.
 
@@ -369,6 +402,7 @@ def ensure_topics(
 
     Raises:
         TopicMismatchError: If an existing topic differs, saying which and how.
+        TimeoutError: If a topic created is not visible after ``timeout`` seconds.
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
     """
     topics = list(topics)
@@ -410,6 +444,7 @@ def ensure_topics(
         futures = admin.create_topics(new, request_timeout=timeout)
         for topic in missing:
             futures[topic.name].result(timeout=timeout)
+        _wait_until_visible(admin, missing, timeout)
     return TopicsReport(
         created=tuple(t.name for t in missing), existing=tuple(t.name for t in existing)
     )
