@@ -518,7 +518,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 
 ## Calidad y tests (QA)
 
-Los tests van por niveles (decisión 47, tarea P.1): cada punto del ciclo ejecuta solo lo que el último cambio puede haber roto, y el árbol que llega a `main` pasa siempre la suite completa en local y en el CI. Cifras de `main` en `f410f00` (7 de noviembre de 2026).
+Los tests van por niveles (decisión 47, tarea P.1): cada punto del ciclo ejecuta solo lo que el último cambio puede haber roto, y el árbol que llega a `main` pasa siempre la suite completa en local y en el CI. Cifras de `main` en `f410f00` (7 de noviembre de 2026). El hito 6 añade la suite de integración contra Kafka, su script y su job del CI: ver «Qué añadió el hito 6», al final de esta sección.
 
 ### Qué tests hay
 
@@ -576,8 +576,8 @@ Cuatro niveles, de lo más barato a lo más completo: **N0** ruff; **N1** los fi
 | Al final de cada turno (hook `Stop` de Claude Code y de Codex) | N2 | `scripts/tests-rapidos.sh`. En modo plan, nada. Sin cambios desde el último verde, o con solo documentación, nada. Si no, la rápida de cada suite afectada, con `-x`: el núcleo con xdist y la app en serie. Codex formatea antes con `ruff format .` | El agente no devuelve el turno con la rápida en rojo |
 | Antes de cada commit | N0 + N1 | pre-commit (nbstripout, `ruff check --fix`, `ruff format`, espacios, YAML, ficheros grandes) y los ficheros de test del área tocada | El paso está limpio y su área pasa |
 | Al probar una versión incorrecta | N1 | Los ficheros donde se predice el fallo y los que deben seguir pasando | El test detecta el error previsto |
-| Antes de cada push | N3 | `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa | Lo que se sube pasa todo |
-| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app` y `notebooks`, en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
+| Antes de cada push | N3 | `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka, también `scripts/tests-integracion.sh` (hito 6) | Lo que se sube pasa todo |
+| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y, desde el hito 6, `tests-kafka` (integración contra el Kafka de `compose.yaml`), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
 | Al fusionar en `main` | CI | Lo mismo sobre `main`, sin cancelar nunca | `main` sigue en verde |
 
 Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
@@ -587,7 +587,8 @@ Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
 | `*.md`, `docs/`, `app/docs/`, `notebooks/` | Ninguna; se actualizan los sellos |
 | `app/` | App |
 | `src/edsim/`, `config/`, `pyproject.toml`, `uv.lock`, `tests/data/` | Núcleo y app (la app usa el núcleo y lee `tests/data/`) |
-| `tests/`, `scripts/`, `.claude/`, `.codex/`, `.github/`, `.pre-commit-config.yaml`, `.gitignore` | Núcleo |
+| `compose.yaml`, `tests_integracion/` (hito 6) | Ninguna; se actualizan los sellos. Los prueba `scripts/tests-integracion.sh` |
+| `tests/`, `schemas/`, `scripts/`, `.claude/`, `.codex/`, `.github/`, `.pre-commit-config.yaml`, `.gitignore` | Núcleo |
 | Cualquier otra | Núcleo y app (lo conservador) |
 
 `uv run pytest tests/test_x.py` sigue en serie: xdist no va en `addopts`, y solo lo piden los dos scripts.
@@ -650,6 +651,20 @@ El coste por tarea es una estimación con las medidas de la tabla «Cuánto cues
 - N1 automático con `pytest-testmon`: solo sigue el código Python, así que un cambio en `config/` o `tests/data/` seguiría pidiendo N2. Comprobar antes que admite pytest 9.2.
 - Saltar los tests del CI cuando el PR solo cambia documentación, con una comprobación dentro del job y no con `paths-ignore` (un check obligatorio que no se ejecuta bloquea la fusión).
 - Volver a mirar `loadgroup` cuando xdist publique una versión que admita pytest 9.2.
+
+### Qué añadió el hito 6
+
+El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por eso, va aparte de las demás (decisión H6-3, que será la 50). Estado tras la tarea 6.5 (9 de noviembre de 2026).
+
+| Pieza | Qué es |
+| --- | --- |
+| `tests_integracion/` | Tests contra un Kafka real, fuera de `testpaths`: `uv run pytest` no los recoge. Prueba de humo (6.1); topics, particiones con murmur2, un directo de un día y las órdenes (6.4); la CLI `edsim directo` de extremo a extremo, Ctrl+C, `reemitir` y sin broker (6.5). Eran 11 tras la 6.4 |
+| `scripts/tests-integracion.sh` | Levanta `compose.yaml` si hace falta (`docker compose up --wait`), ejecuta `uv run --locked --extra kafka pytest tests_integracion` y baja los contenedores si los levantó él. De 29 a 34 s en el portátil de Pedro. Se ejecuta antes del push en las tareas que tocan Kafka |
+| Job `tests-kafka` | Cuarto job del CI: `uv sync --locked --extra kafka` y `scripts/tests-integracion.sh`, con `timeout-minutes: 15`. Obligatorio en la protección de `main` desde la 6.4 |
+| Sello | `compose.yaml` y `tests_integracion/` no afectan a la rápida (los prueba el script de integración); `schemas/` es núcleo, porque un test compara los esquemas escritos con los generados |
+| Frontera | El núcleo se importa sin `confluent-kafka`: solo `edsim/live/kafka.py` lo importa, dentro de funciones, y un test lo comprueba. La suite rápida usa un `FakeProducer` y, desde la 6.5, un módulo `confluent_kafka` falso |
+
+**Medir sin contenedores.** Con Kafka en marcha la completa tardó unos 6 minutos más (19:53 en la 6.1 frente a 14:00 en la 6.2). `scripts/tests-completos.sh` se mide sin contenedores (`docker compose down`); en el equipo de Pedro el motor de Docker corre dentro de WSL, sin Docker Desktop. La completa varía entre días sin cambios de código (la app, que no cambió, entre 3:06 y 4:25): se compara la parte que cambia, no el total. Tras la 6.4, 18 min 09 s: núcleo 3.167 tests en 13:00, app 287 en 4:16 y notebooks 0:53.
 
 ## Registro de decisiones y preguntas abiertas
 

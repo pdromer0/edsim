@@ -867,6 +867,7 @@ La V3, la V6 y la V8 enseñan lo mismo desde tres sitios: un error que la ejecuc
   - `lanzar --velocidad max` publica 47.402 de los 55.511 eventos (520 de censo y 46.882 en directo) en 9,6 a 11,2 s con Kafka (tres veces) y en 6,8 s en memoria;
   - `reemitir` de la misma ejecución guardada (`motor simular`, 12,1 s), en 5,8 a 6,7 s.
   - Con `tests/data` a ×60, del `parar` al `fin` pasan 45, 122 y 141 ms según las marcas del broker; `edsim directo control` tarda de 2,1 a 2,7 s, casi todo en arrancar Python.
+- **Comprobado en vivo en la 6.5**, con Pedro y la CLI (`config/`, semilla 2026, 3 días, W = 2 días, ×60): en Redpanda Console, `ed.patient.events` con 3 particiones y `LogAppendTime`, clave = `episode_id`, cabecera `schema_version` y cada episodio siempre en la misma partición; Kafka parado con `docker compose stop kafka` en mitad del directo, los pendientes subieron a 205 y volvieron a 0 menos de 7 s después de que Kafka escuchara, sin cambiar lo publicado; una orden ×600 después del corte; `fin` con motivo `horizonte` y 5.048 publicados, y en los topics 5.048 eventos de ese `run_id` y ningún `event_id` repetido. Detalle en el anexo de la 6.5.
 
 ## Decisiones del hito
 
@@ -911,6 +912,36 @@ Seis tareas en orden estricto, todas después de `v0.4-hito4` y todas de Claude 
 
 **El notebook en el CI.** El CI ejecuta los notebooks con `nbmake` en modo rápido y sin broker. En modo rápido (`EDSIM_NB_RAPIDO`), el notebook 06 usa `--memoria` y lee de un `MemorySink`; con Kafka, del broker. La lógica de los dos caminos está en el paquete, no en el notebook (decisión 18).
 
+**Precisiones para la 6.6** (decididas con Pedro al cerrar la 6.5):
+
+- **Una sola tarea y un solo PR**, con un commit por paso: exportación de esta pestaña; ruido de librdkafka; consumidor en el paquete; notebook 06; versión de Redpanda Console; ADR; diario, README y `AGENTS.md`; esta pestaña. Sin `@codex review`.
+- **El ruido de librdkafka durante un corte (pendiente de la 6.5).** En la comprobación en vivo de la 6.5, con el broker parado, librdkafka escribió en stderr unas 22 líneas por segundo (unas 20 del consumidor de órdenes, que reintentaba cada \~50 ms, y 3 del productor), que enterraban la línea de estado. Se pide:
+  - medirlo antes y después del arreglo con el mismo procedimiento: un directo a ×60 con stderr a un fichero (`2> fichero`), `docker compose stop kafka` durante un minuto y líneas por cliente;
+  - averiguar por qué el consumidor reintenta cada \~50 ms en lugar de espaciar los reintentos (`reconnect.backoff.ms` y `reconnect.backoff.max.ms`; comprobar sus valores por defecto en la documentación de librdkafka 2.16);
+  - durante un corte, la terminal muestra las líneas de estado y, como mucho, un `Aviso:` al perder el broker y otro al recuperarlo;
+  - nada se pierde en silencio: los errores reales siguen como hasta ahora (`SinkError` y `fin` con motivo `error` si una entrega falla; `BrokerUnavailableError` al arrancar), y lo que escribe librdkafka queda consultable o resumido (el plan propone cómo).
+  - el consumidor de `KafkaControl` lleva un `client.id` que lo nombre (en la 6.5 salía como `rdkafka#consumer-2`), para que sus líneas se distingan de las del productor `edsim-<run_id>`.
+- **El consumidor, en el paquete** (decisión 18). La lectura de Kafka va en `live/kafka.py`, el único módulo que importa `confluent_kafka`; el estado, en un módulo sin Kafka (el plan propone los nombres), que se alimenta igual en el modo rápido (un directo en memoria) y con Kafka. El consumidor:
+  - lee los eventos de un `run_id` en `ed.patient.events` y `ed.resource.events`, y su `inicio` y su `fin` en `ed.runs`, con un `group.id` propio, que se ve en Redpanda Console (criterio de aceptación), y `auto.offset.reset=earliest`;
+  - es idempotente: ignora un `event_id` ya visto y cuenta los repetidos;
+  - termina cuando ha visto el `fin` y tantos eventos distintos como dice `publicados`, o cuando vence un tiempo límite. El `fin` puede leerse antes que los últimos eventos, porque va en otro topic;
+  - mantiene el censo en vivo con un `LocationState` por episodio (el reductor de `runs/_location.py`, el mismo del Replay de la app): episodios abiertos y cuántos hay en cada ubicación;
+  - mide, por partición, cuántos eventos llegan y si el orden por `sim_time` se cumple dentro de cada episodio (debe cumplirse) y entre particiones (no tiene por qué), y la latencia del broker al consumidor (hora de recepción menos la marca `LogAppendTime`).
+- **El notebook 06** (`notebooks/06_tiempo_real.ipynb`). En local lanza un directo corto en un subproceso (`edsim directo lanzar` a ×3.600, un día en 24 s, con un `run_id` propio) y lo consume a la vez. En modo rápido (`EDSIM_NB_RAPIDO=1`, el del CI), consume un directo en memoria a velocidad máxima, sin latencias ni particiones reales. Secciones:
+  - qué son un consumidor y un grupo;
+  - el censo en vivo, con una tabla y una gráfica de la ocupación por hora simulada;
+  - «consumidor = batch»: el estado final de cada episodio es el mismo que en el batch filtrado con el mismo `run_id`;
+  - particiones y orden, latencias e idempotencia;
+  - textos para los cinco puntos del criterio «Pedro sabe explicar…».
+- **Redpanda Console:** revisar las notas de la v3.14.x; se queda en la v3.13.1 salvo que traiga un arreglo que importe a EDsim (se decide en el plan, con Pedro).
+- **ADR 0048 a 0066:** una por decisión (H6-1 a H6-19), con el formato de `docs/decisiones/` y lo que cambió al implementarla, sacado de los anexos de las tareas. La tabla de decisiones de esta pestaña pasa de candidatas a definitivas.
+- **Cierre:**
+  - `docs/diario/hito-6.md`, con la sección «Reflexiones de Pedro» vacía;
+  - en `AGENTS.md`, «Hito en curso» pasa al hito 5;
+  - el README;
+  - esta pestaña, exportada al final.
+  - La etiqueta `v0.6-hito6` la crea Pedro después de fusionar.
+
 ## Flujo de git y reparto entre agentes
 
 El flujo es el del hito 4, con un solo agente: todo el hito lo implementa Claude Code, porque necesita Docker y un broker, y Codex no tiene red en su entorno. Codex sigue revisando los PR críticos (6.2 y 6.4) con `@codex review`, que lee el código sin ejecutarlo.
@@ -927,7 +958,7 @@ En cada tarea:
 
 **Permisos de Claude Code que añade la 6.1** en `.claude/settings.json`: `Bash(scripts/tests-integracion.sh*)`, `Bash(docker compose up *)`, `Bash(docker compose down*)`, `Bash(docker compose ps*)`, `Bash(docker compose logs *)` y `Bash(uv sync --all-packages --extra kafka)`. Siguen denegados `gh pr merge`, el push forzado y el push a `main`. Solo una rama abierta a la vez.
 
-**Entorno.** Desde la 6.1, la copia local se sincroniza con `uv sync --all-packages --extra kafka`. Docker Desktop tiene que estar en marcha y con la integración de WSL2 activada para la distribución de Pedro. `scripts/sello.sh` clasifica `compose.yaml` y `tests_integracion/` como rutas que no afectan a la rápida (las prueba `scripts/tests-integracion.sh`) y `schemas/` como núcleo.
+**Entorno.** Desde la 6.1, la copia local se sincroniza con `uv sync --all-packages --extra kafka`. El motor de Docker tiene que estar en marcha: en el equipo de Pedro corre dentro de WSL, sin Docker Desktop (con Docker Desktop, su integración con WSL2 tiene que estar activada para la distribución). `scripts/sello.sh` clasifica `compose.yaml` y `tests_integracion/` como rutas que no afectan a la rápida (las prueba `scripts/tests-integracion.sh`) y `schemas/` como núcleo.
 
 **Coordinación.** El hito 4 está cerrado (`v0.4-hito4`, 7 de noviembre). La sesión del hito 6 escribe en esta pestaña, en `claude/hito-6-preparacion.md` y en el traspaso al cerrar cada tarea, releyendo el traspaso antes de escribirlo.
 
@@ -1285,3 +1316,85 @@ La segunda `@codex review`, sobre los arreglos, se pidió un minuto antes de fus
 - 6.5: el directo de un día a ×60 visto en Redpanda Console y el ejercicio de la pieza 3 (parar Kafka un minuto), con la CLI.
 - Redpanda Console v3.14.0: decidir al cerrar el hito.
 - Este anexo se exporta en el primer commit de la 6.5.
+
+### Tarea 6.5: CLI `edsim directo`
+
+**Qué se hizo**
+
+PR #60 (Claude Code): ocho commits y dos más de la revisión; fusión `5fdd1de` el 9 de noviembre de 2026.
+
+- **`live/kafka.py`:** `ensure_topics(..., create=False)` solo comprueba (`MissingTopicsError` si falta un topic); la primera consulta al broker espera `CONNECT_TIMEOUT` = 10 s (`BrokerUnavailableError`); `publish_order` publica una orden y espera su confirmación (`OrderNotDeliveredError`); `pending_messages` cuenta los pendientes tras servir los avisos.
+- **`live/status.py`:** `ReportingSink` (cuenta lo publicado y avisa con el `inicio` y el `fin`) y `StatusControl` (la línea de estado, enganchada a la fuente de órdenes, sin tocar el pacer).
+- **`live/launch.py`:** `live_run_id`, `prepare_live`, `prepare_replay`, `log_start_date` y `run_prepared`. **`live/report.py`:** los textos en español.
+- **`cli.py`:** `edsim directo preparar`, `lanzar`, `reemitir` y `control`, con `parse_speed` y `parse_bootstrap` como tipos de argparse; códigos 0, 130, 1 y 2.
+- **Tests:** `test_status.py`, `test_launch.py`, `test_cli_directo.py` (22 errores de uso), `test_kafka_orders.py` y ampliación de `test_kafka_admin.py`; en `tests_integracion/test_cli_directo.py`, `preparar`, `lanzar` sin topics, extremo a extremo con órdenes desde otros procesos, Ctrl+C, `reemitir` byte a byte y sin broker.
+- **README** («Directo con Kafka») y `AGENTS.md`.
+
+**Decisiones tomadas con Pedro durante el plan**
+
+- **Broker sin respuesta:** 10 s en la primera consulta, el mismo mensaje en los cuatro comandos y código 1; los 30 s se quedan para crear topics y para `flush`.
+- **Comprobación en vivo antes de fusionar**, con la CLI: el directo visto en Redpanda Console y el corte de la pieza 3, contando pendientes y avisos (hecha el 9 de noviembre, abajo).
+
+**Decisiones del diff y de la revisión**
+
+- **Los pendientes se cuentan tras servir los avisos** (`fda8685`): `len(producer)` solo decía 7 pendientes a los 10 s de un directo sano; con `poll(0)` antes, 0.
+- **La línea de estado en una rejilla fija desde el ancla** (revisión del chat, `42a83f7`): con `next = now + interval` cada línea heredaba el retraso de la anterior (10,09, 20,14, 30,19, 40,31 y 50,36 s, y la de los 60 s no llegaba en el test); ahora 10,09, 20,14, 30,06, 40,11, 50,16 y 60,0 s. En vivo, las 39 líneas de +240 a +620 s de un directo a ×60 cayeron todas entre 0 y 0,19 s después de su marca.
+- **La pestaña decía `len(producer)`** en dos sitios tras el arreglo de los pendientes (revisión del chat, `7af4128`).
+- Los tramos de 0,2 s empiezan en el último evento liberado; `--anclar` con W ≥ horizonte no puede ocurrir y la comprobación se queda como defensa.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | 95 rápidos, sin broker ni el extra: `test_status.py` 14 (0,08 s), `test_launch.py` 20 (4,12 s), `test_cli_directo.py` 51 (8,91 s; el más lento, `lanzar --memoria --velocidad max`, 1,08 s), 5 nuevos en `test_kafka_admin.py` y `test_kafka_orders.py` 5; más el de la rejilla, en la revisión |
+| `scripts/tests-integracion.sh` | 20 tests: 0:53 con el broker en marcha y 1:14 desde frío (arranque 0:12, pytest 0:58, bajada 0:03). Extremo a extremo 21,0 s, Ctrl+C 6,5 s, `reemitir` 1,5 s, sin broker 1,0 s por comando |
+| `scripts/tests-completos.sh` sin contenedores, antes de la revisión | 18 min 30 s, en verde: núcleo 3.262 tests en 14:05 (95 más que en la 6.4, unos 13,5 s), app 287 en 3:29, notebooks 0:56 (6.4: 18:09) |
+| `lanzar --velocidad max`, 14 días, con Kafka | 47.402 eventos (520 + 46.882) en 11,2, 9,6 y 10,3 s, con el arranque del proceso (unos 1,9 s); en memoria, 6,8 s |
+| `reemitir` de la misma ejecución | 6,0, 5,8 y 6,7 s, los mismos 47.402 (la ejecución con `motor simular`, 12,1 s) |
+| Del `parar` al `fin` (`tests/data`, ×60) | 141, 122 y 45 ms, por las marcas del broker |
+| `edsim directo control` | 2,1 a 2,7 s, casi todo el arranque de Python |
+| Corte en la prueba del agente (`config/`, ×60; `stop` a los 25 s y `start` 62 s después) | Pendientes 21, 43, 55, 73, 86 y 100 durante el corte, y 0 en la primera línea tras el `start`; `fin` con motivo `parar` y 697 publicados; su script de recuento, OK (0 repetidos, 520 de censo, 177 en directo consecutivos). En stderr, 1.345 líneas de librdkafka (1.113 del consumidor de órdenes, sin `client.id`, y 232 del productor) y 0 `Aviso:` |
+| Sin broker (V13) | 1.739 líneas de librdkafka en 92 s, unas 19 por segundo |
+
+**Comprobación en vivo (con Pedro, 9 de noviembre)**
+
+Directo `r2026_20261109T153614` (`config/`, semilla 2026, 3 días, W = 2.880 min, ×60), con Redpanda Console abierta:
+
+- **Arranque:** censo de 113 episodios y 520 eventos; a +10 y +20 s, 533 y 547 publicados, las mismas cifras que el ejemplo de la pestaña. Con la misma semilla, el directo publica lo mismo en los mismos minutos.
+- **Console:** los cuatro topics, `ed.patient.events` con 3 particiones y `LogAppendTime`; clave = `episode_id`, cabecera `schema_version`, marca de hoy frente al `event_time` simulado; todos los mensajes de un episodio en la misma partición; el `inicio` en `ed.runs` con el `run_id` como clave.
+- **Corte:** `docker compose stop kafka` hacia +555 s (estimado por los pendientes) y `start` a las 15:46:11,8; Kafka escuchó 5,8 s después. A +600 s, 1.736 publicados y **205 pendientes**; a +610 s, 1.797 y **0**. El retraso del pacer siguió en 0,5 ms: `produce` no espera al broker. Los publicados a +610 y +620 s (1.797 y 1.846) son los mismos que en un directo sin corte: el corte retrasa la confirmación, no la publicación.
+- **Ruido durante el corte:** librdkafka escribe unas 22 líneas por segundo en stderr (unas 20 del consumidor de órdenes, que reintenta cada \~50 ms, y 3 del productor): `%3 … Connection refused` con el puerto cerrado y `%6 … connection reset … APIVERSION_QUERY` mientras Kafka arranca (Docker abre el puerto antes de que Kafka escuche). En un minuto, más de 1.200 líneas: entierran las líneas de estado. Ninguna línea `Aviso:` de EDsim. Pendiente para la 6.6.
+- **Orden tras el corte:** `control --velocidad 600`, offset 1 de `ed.control`, con un aviso `%4 GETPID … Coordinator load in progress: retrying` (primer productor nuevo tras el reinicio; el del directo conservó su PID). Aplicada a +803,6 s (calculado por los minutos: 67,5 min en 10 s); después, 100 minutos por línea.
+- **Fin:** motivo `horizonte`, 5.048 publicados (520 + 4.528, como en la 6.3 y la 6.4), último `event_id` …-000013156 = 8.629 del calentamiento + 4.528 − 1.
+- **Recuento en Kafka** con `kafka-console-consumer.sh` dentro del contenedor: 5.048 eventos con ese `run_id` en los dos topics, **0 `event_id` repetidos**; en `ed.runs`, el `inicio` (censo 113/520, `velocidad 60`, `anclado false`) y el `fin` (`horizonte`, `publicados 5048`).
+- **Directo anterior** (`r2026_20261109T125733`): Ctrl+C con `fin` de motivo `interrupcion` y 2.690 publicados (520 + 2.170, último `event_id` 10.798 = 8.629 + 2.170 − 1). Sus dos líneas `FAIL` de las 13:01:33,7 eran el arranque de Kafka, no la parada (`StartedAt` 13:01:28,8).
+
+**Versiones incorrectas**
+
+Aplicadas y deshechas en el mismo turno, con los ficheros de la 6.5 y la integración cuando aparecía en la predicción.
+
+| # | Versión incorrecta | Predichos | Observados |
+| --- | --- | --- | --- |
+| V1 | `--velocidad` comprobada después de conectar | 5 | 7: también dos que miran la cabecera, por cómo se escribió la V1 (imprimía «max» sin comprobar) |
+| V2 | `lanzar` con `create=True` | 3 (2 + integración) | 3 |
+| V3 | Línea de estado en `write` (solo en el `poll` tras publicar) | 5 | 5 (predicción rehecha antes de aplicarla) |
+| V4 | Ctrl+C sale con 1 | 2 (1 + integración) | 2 |
+| V5 | `run_id` en UTC | 3 | 3 |
+| V6 | `reemitir` con la fecha de `config/llegadas.toml` | 2 | 3: también un test añadido después del plan; la integración pasa, como se predijo (misma fecha) |
+| V7 | `KafkaControl` en el primer `poll` | 1 | 1 |
+| V8 | Sin el `with` de `KafkaSink` | 1 | 1 |
+| V9 | Primera línea desde la creación, no desde el ancla | 1 | 1 |
+| V10 | `create=False` crea igualmente | 2 (1 + integración) | 2 |
+| V11 | Orden sin clave | 5 | 6: el extremo a extremo busca las órdenes por clave para medir el `parar` |
+| V12 | `reemitir` ignora `--calentamiento` | 2 | 4: también los dos errores de «calentamiento ≥ días» |
+| V13 | Primera consulta con 30 s | 1 | 4: la integración sin broker exige menos de 10 s |
+| V14 (añadida) | Pendientes = `len(producer)` sin servir los avisos | 1 | 1 |
+
+Las 14 se detectaron. Ninguna falló en menos tests de los previstos; las que fallaron en más lo hicieron por tests escritos después del plan o por comprobaciones de los mismos tests que no se contaron. La V13 destapó el ruido de librdkafka sin broker antes de la comprobación en vivo.
+
+**Pendiente**
+
+- 6.6: el ruido de librdkafka durante un corte. Medirlo con stderr a un fichero (`2> /tmp/directo-stderr.log`), averiguar por qué el consumidor de órdenes reintenta cada \~50 ms y decidir cómo resumirlo (una línea `Aviso:` al perder y al recuperar el broker).
+- Comprobaciones con el hueco de los enteros enormes fuera del directo (de la 6.4).
+- Redpanda Console v3.14.0: decidir al cerrar el hito.
+- Este anexo se exporta en el primer commit de la 6.6.
