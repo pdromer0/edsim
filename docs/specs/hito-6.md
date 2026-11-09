@@ -629,6 +629,8 @@ Uno al empezar y otro al terminar cada ejecución publicada. Con ellos, un consu
 
 `schemas/eventos-v1.schema.json`, `eventos-v2.schema.json` y `eventos-v3.schema.json`, generados de `CATALOGS`; `schemas/ed-runs-v1.schema.json` y `schemas/ed-control-v1.schema.json`, escritos a mano. Todos en JSON Schema 2020-12 (pieza 4).
 
+**Qué dice el esquema de los eventos (6.4).** Lo mismo que `Event(**datos)`, ni más ni menos, salvo lo que JSON Schema no puede expresar. Esas diferencias se escriben en una lista literal y un test las prueba en los dos sentidos: que `patient_id` lleve el número de `episode_id` (el esquema no compara dos campos); y que un entero escrito `3.0` no valga (en 2020-12, un número con parte decimal cero es entero; Python lo rechaza porque `json.loads` da un `float`). Se compara con `Event`, no con `from_json`, que además completa el `circuito` de los logs de la versión 1 anteriores a la 4.1. El orden de `pruebas` sí se expresa: las 15 listas posibles, en un `enum`.
+
 ## Especificación: Compose, cliente de Kafka y CLI
 
 El Compose es el borrador de la pieza 5; el productor cambia cuatro valores sobre los de librdkafka; la CLI añade el grupo `edsim directo` con cuatro acciones (preparar, lanzar, reemitir y control).
@@ -652,11 +654,11 @@ El Compose es el borrador de la pieza 5; el productor cambia cuatro valores sobr
 | `client.id` | `edsim-<run_id>` | `rdkafka` | Se reconoce en Redpanda Console |
 | `linger.ms`, `message.timeout.ms`, `queue.buffering.max.messages` | Por defecto (5 ms, 300.000 ms, 100.000) | — | Suficientes a 2,6 mensajes por segundo |
 
-Comportamiento: `poll(0)` tras cada `produce`; con `BufferError`, `poll(0.1)` y reintento; un aviso de entrega con error marca el sumidero como fallido y el directo se para en el siguiente paso con motivo `error`; al cerrar, `flush(30)`, y si quedan mensajes, error con el recuento. El `KafkaSink` cumple el protocolo `EventSink` (`write(event)`) y se usa como gestor de contexto, como `JsonlSink`.
+Comportamiento: `poll(0)` tras cada `produce`; con `BufferError`, `poll(0.1)` y reintento; al cerrar, `flush(30)`, y si quedan mensajes, error con el recuento. El `KafkaSink` cumple el protocolo `LiveSink` de la 6.3: `start(RunStart)` publica el `inicio` en `ed.runs`, `write(event)` el evento en su topic y `end(RunEnd)` el `fin`; y se usa como gestor de contexto, como `JsonlSink`. **Un mensaje no entregado (6.4):** el aviso de entrega con error marca el sumidero como fallido, y el siguiente `write` lanza un error del sumidero (nombre propuesto: `SinkError`, en `edsim.live.directo`) con cuántos se entregaron y cuáles fallaron. `run_live` lo captura, publica el `fin` con motivo `error` si puede y vuelve a lanzarlo: nunca sigue con un hueco en lo publicado.
 
 ### Consumidores de EDsim
 
-- **Órdenes (en el simulador):** `group.id` propio por ejecución (`edsim-control-<run_id>`), `auto.offset.reset=latest`, `enable.auto.commit=false` (las órdenes viejas no se repiten). Lee con `poll(0)` entre eventos y con la espera del pacer en los tramos de 0,2 s.
+- **Órdenes (en el simulador):** sin unirse a un grupo. `KafkaControl` lee el offset alto de la partición 0 de `ed.control` al crearse (`get_watermark_offsets`) y se asigna esa partición a mano en ese offset (`assign`). Así lee exactamente las órdenes publicadas después de crearse, sin las viejas y sin esperar a que se forme un grupo: con `subscribe` y `auto.offset.reset=latest`, una orden enviada mientras el grupo se forma podría perderse, y el test de integración dependería de una carrera (la lección de la 6.1). `group.id` = `edsim-control-<run_id>` y `enable.auto.commit=false`: no se confirman offsets. Lee con `poll(0)` entre eventos y con la espera del pacer en los tramos de 0,2 s; ignora las órdenes de otro `run_id` y avisa de las inválidas sin pararse.
 - **Notebook y tests:** `auto.offset.reset=earliest` y un `group.id` único, para leer cada topic desde el principio.
 
 ### CLI
@@ -1051,3 +1053,77 @@ Revisado el código y las medidas; `@codex review` sin problemas. Sin ajustes. E
 - Job `tests-kafka`: obligatorio al fusionar la 6.4 (Pedro).
 - Redpanda Console v3.14.0: decidir en el cierre del hito.
 - Este anexo se exporta en el primer commit de la 6.3.
+
+### Tarea 6.3: Reloj, pacer, órdenes y directo en memoria
+
+**Qué se hizo**
+
+PR #58 (rama `feat/h6-pacer`, Claude Code, sin `@codex review`): diez commits; fusión `cda5d3d` el 9 de noviembre de 2026. Motor, catálogo, `start_ed` y huellas sin tocar.
+
+- **`live/clock.py`:** `Clock`, `SystemClock` y `FakeClock`, en nanosegundos enteros, con exceso configurable, pared que avanza y un Ctrl+C programado.
+- **`live/control.py`:** `Command` con `check_speed`, `ControlSource`, `NoControl` y `ScriptedControl` (una orden por `poll`, la más antigua de las vencidas, con `delivered`).
+- **`live/pacer.py`:** objetivos absolutos, tramos de 0,2 s, reanclaje, pausa, velocidad máxima, `sim_now()` y `lag()`.
+- **`ArrivalProfile.with_start_date`** (`arrivals/profile.py`): cambia la fecha sin renormalizar; docstring corregido.
+- **`live/directo.py`:** `EngineSource` y `LogSource`, `RunInfo`, `RunStart`, `RunEnd`, `LiveSink` y `MemoryLiveSink`, `run_live` y `anchored_start`.
+- **Tests:** `test_clock.py`, `test_control.py`, `test_pacer.py`, `test_directo.py` (con «directo = batch» en las versiones 1, 2 y 3 y la 3 anclada), añadidos en `test_profile.py` y frontera; el log a mano de `test_census.py`, reutilizable en un commit aparte (22 tests antes y después).
+- **Pestaña:** interfaces con los nombres definitivos, medidas en vivo y filas V1, V2, V4 y V5 de la tabla del hito con lo observado. «Tarea 6.3» en `AGENTS.md`.
+
+**Dos hallazgos del plan, decididos con Pedro**
+
+- **Reloj falso en nanosegundos enteros.** En coma flotante, 150 tramos de 0,2 s suman 29,999999999999925 s: una orden «a los 30 s» se veía a los 30,2 s.
+- **`dataclasses.replace` no es inocuo con el perfil de llegadas.** Vuelve a normalizar, cambia 16 factores en el último bit y, con la misma fecha, el log desde el minuto 3.324. De ahí `with_start_date`, comprobado bit a bit contra un TOML con esa `fecha_inicio`.
+
+**Decisiones del diff**
+
+- `wait_until` pide una orden en cada vuelta, antes de decidir si espera, libera o duerme un tramo: las órdenes llegan también a velocidad máxima o con el objetivo pasado, una por evento.
+- Desde la velocidad máxima, s\_ahora es el `sim_time` del último evento liberado; reanudar lo fija en el minuto congelado.
+- `EngineSource` recibe el `MemorySink` que el que llama dio a `start_ed` y lo vacía en cada paso; `peek()` mira primero lo ya emitido (los `staffing_changed` del minuto 0).
+- `run_live` comprueba antes de nada que el horizonte de la fuente es el suyo, y que los abiertos en W son los procesos vivos antes del `inicio`. Con Ctrl+C publica un solo `fin`; durante el censo, con `sim_time` = W.
+- En «directo = batch», lo esperado se calcula en el test sin `census` ni `open_episodes`.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | `test_clock.py` 0,05 s, `test_control.py` 0,07 s, `test_pacer.py` 0,08 s, `test_directo.py` 6,30 s; el más lento, «directo = batch» anclado, 1,33 s (2,01 s en frío) |
+| Órdenes en «directo = batch» | Atendidas entre 0,04 y 0,20 s después de su instante |
+| Directo con `config/` (3 días, W = 2 días) | `inicio` con 113 episodios y 520 eventos; 5.048 publicados (520 + 4.528) |
+| ×3.600 con el reloj del sistema (WSL2) | 24,7 y 24,9 s; retraso final 0,09 y 0,16 ms; peor evento 12,1 y 7,1 ms; media 0,47 ms |
+| Velocidad máxima | 1,15 s, frente a 0,58 s de `simulate_ed` de 3 días |
+| `scripts/tests-completos.sh` con Docker parado | 16 min 17 s, en verde: núcleo 2.945 tests en 11:57, app 287 en 3:25, notebooks 0:55 (6.2: 10:03, 3:06 y 0:50) |
+
+Las tres partes de la completa van entre un 10 y un 19 % más lentas que en la 6.2, también la app, que no cambió; los tests nuevos suman 6,5 s. Es variación del portátil, no de los tests: se vuelve a mirar en la 6.4.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predichos | Observados |
+| --- | --- | --- | --- |
+| V1 | Esperas relativas (reanclar en cada evento liberado) | 2 | 4: también reanclaje y pausa, que leen el ancla |
+| V2 | s\_ahora = último liberado con velocidad finita | 6 | 7: también s\_ahora tras reanclar |
+| V3 | Dormir sin tramos | 10 | 12 |
+| V4 | `run_live` publica todo el calentamiento | 8 | 8 |
+| V5a | `census` sin recursos | 13 | 13 |
+| V5b | «Abierto» = llegó antes de W | 15 | 16: también el mensaje de abiertos ≠ vivos |
+| V6 | Anclaje en UTC | 2 | 3 |
+| V7 | `fin` sin esperar al horizonte | 2 | 2 |
+| V8 | No mirar órdenes si no hay que esperar | 3 | 3 |
+| V9 | `KeyboardInterrupt` tragada | 1 | 2: el test del Ctrl+C está partido en dos |
+| V10 | Sin la comprobación abiertos = vivos | 1 | 1 |
+| V11 | Cambiar la velocidad en pausa reanuda | 1 | 1 |
+| V12 | `with_start_date` con `replace` | 1 | 1 |
+| V13 | `poll` da la vencida más reciente | 2 | 2 |
+| V14 | Reanclar antes de publicar el censo | 1 | 1 |
+| V15 | Sin comprobar el horizonte de la fuente | 2 | 2 |
+
+Todas detectadas; seis fallan en más tests de los previstos y ninguna en menos. La V6 y la V12 no las ve «directo = batch» anclado, porque los dos lados comparten el anclaje: las ven los tests unitarios contra referencias independientes (valores a mano y el TOML cargado).
+
+**Revisión**
+
+Revisados el código, los valores a mano y la especificación (solo añade texto a la pestaña). Sin ajustes. Ajustes de la aprobación, los cuatro hechos: exportación nueva en el primer commit, horizonte de la fuente comprobado, el log a mano en un commit aparte y la tabla de medidas.
+
+**Pendiente**
+
+- `runs/offered.py` usa `replace` para adelantar la fecha del perfil (carga ofrecida): pasarlo a `with_start_date` movería cifras de la carga ofrecida y queda fuera del hito 6.
+- 6.4: `RunStart` y `RunEnd` a JSON de `ed.runs`, el motivo `error` y `KafkaControl`. Medir el coste por evento a velocidad máxima con el `KafkaSink` (0,13 ms por evento en memoria) y volver a medir la completa.
+- Si un log del replay retrocede en el tiempo, el error salta al leer el siguiente y el anterior no se publica: vale para un log corrupto.
+- Este anexo se exporta en el primer commit de la 6.4.
