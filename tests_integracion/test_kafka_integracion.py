@@ -6,7 +6,9 @@ import uuid
 import pytest
 from confluent_kafka import TIMESTAMP_LOG_APPEND_TIME, Consumer, Producer
 from confluent_kafka.admin import ConfigResource, ResourceType
-from kafka_testing import PRODUCER_CONFIG, TIMEOUT, deadline
+from kafka_testing import TIMEOUT, deadline
+
+from edsim.live.kafka import producer_config
 
 KEY = b"EP-000184"
 VALUE = b'{"prueba": "humo", "episode_id": "EP-000184"}'
@@ -15,7 +17,7 @@ VALUE = b'{"prueba": "humo", "episode_id": "EP-000184"}'
 def test_humo_publica_y_lee_un_mensaje_por_localhost(bootstrap, make_topic):
     """Publicar y leer un mensaje por localhost:9092, con la marca de tiempo del broker."""
     topic = make_topic("humo-publica", partitions=3)
-    producer = Producer({"bootstrap.servers": bootstrap, **PRODUCER_CONFIG})
+    producer = Producer(producer_config(bootstrap, f"test-humo-{uuid.uuid4().hex[:8]}"))
     reports = []
 
     t0 = int(time.time() * 1000)
@@ -65,7 +67,7 @@ def test_humo_publica_y_lee_un_mensaje_por_localhost(bootstrap, make_topic):
 @pytest.mark.parametrize(
     ("override", "expected"),
     [
-        # La configuración de EDsim tal cual (murmur2_random, H6-8), como Java y Kafka Streams.
+        # producer_config de EDsim tal cual (murmur2_random, H6-8), como Java y Kafka Streams.
         ({}, [0, 0, 1, 2]),
         # El particionador por defecto de librdkafka (CRC32): la trampa de la pieza 2.
         ({"partitioner": "consistent_random"}, [0, 2, 2, 1]),
@@ -75,7 +77,8 @@ def test_humo_publica_y_lee_un_mensaje_por_localhost(bootstrap, make_topic):
 def test_particiones_de_las_claves(bootstrap, make_topic, request, override, expected):
     """Con 3 particiones, cada clave cae en la partición calculada a mano para su hash."""
     topic = make_topic(f"particiones-{request.node.callspec.id}", partitions=3)
-    producer = Producer({"bootstrap.servers": bootstrap, **PRODUCER_CONFIG, **override})
+    run_id = f"test-particiones-{uuid.uuid4().hex[:8]}"
+    producer = Producer({**producer_config(bootstrap, run_id), **override})
     reports = []
 
     def record(error, message):
