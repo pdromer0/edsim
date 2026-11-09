@@ -93,6 +93,64 @@ no existe fuera de Docker y la conexión falla. Si un contenedor usa `localhost:
 se llama a sí mismo. Si nada conecta, comprueba con `docker compose ps` que `kafka`
 está `healthy` y que el puerto 9092 no lo usa otro programa.
 
+## Directo con Kafka
+
+`edsim directo` publica los eventos del motor en vivo, al ritmo que se le diga. Primero
+calienta sin emitir, después publica el censo (la historia de los pacientes que siguen
+dentro) y luego cada evento cuando le toca. Detalle en
+[docs/specs/hito-6.md](docs/specs/hito-6.md), piezas 1 y 6.
+
+**Preparar y lanzar.**
+
+```bash
+docker compose up --wait
+uv run edsim directo preparar   # crea los cuatro topics; la segunda vez dice «Ya estaban»
+uv run edsim directo lanzar     # 14 días de config/ a ×60: una hora simulada por minuto real
+```
+
+`lanzar` imprime su `run_id` (como `r2026_20261109T172300`: la semilla y la hora de
+arranque), el censo y una línea de estado cada 10 s:
+
+```
++10 s · 2026-01-07T00:10:08.215+01:00 (minuto 2890.1) · ×60 · 533 publicados · retraso 0.6 ms · 0 pendientes
+```
+
+Termina al llegar al horizonte, con una orden `parar` o con Ctrl+C (código 130). En
+los tres casos publica el mensaje `fin` en `ed.runs`. Opciones: las del modelo de
+`edsim motor simular` (`--centro`, `--llegadas`, `--perfiles` o `--provisional`,
+`--semilla`, `--dias`, `--calentamiento`, `--run-id`), `--velocidad` (un número o
+`max`), `--anclar` (empieza hoy, a la hora real), `--kafka HOST:PUERTO` y `--memoria`
+(sin Kafka, para probar).
+
+**Mandar órdenes**, desde otra terminal y con el `run_id` de la cabecera. El directo las
+atiende en menos de 0,2 s:
+
+```bash
+uv run edsim directo control --run r2026_20261109T172300 --velocidad 600
+uv run edsim directo control --run r2026_20261109T172300 --pausar
+uv run edsim directo control --run r2026_20261109T172300 --reanudar
+uv run edsim directo control --run r2026_20261109T172300 --parar
+```
+
+**Ver los mensajes** en Redpanda Console (<http://localhost:8080>):
+
+- en *Topics*, los cuatro `ed.*`;
+- `ed.patient.events` con sus 3 particiones;
+- en cada mensaje, la clave (`episode_id`), las cabeceras `event_type` y
+  `schema_version` y la marca de tiempo del broker (`LogAppendTime`);
+- en `ed.runs`, el `inicio` y el `fin` de cada ejecución.
+
+**Reemitir una ejecución guardada**, con los mismos bytes:
+
+```bash
+uv run edsim motor simular --run-id r2026                   # la guarda en resultados/ejecuciones/r2026
+uv run edsim directo reemitir r2026 --velocidad max         # la publica de golpe
+```
+
+Sin el broker en marcha, `lanzar`, `reemitir`, `preparar` y `control` avisan en 10 s:
+«no responde el broker de Kafka en localhost:9092 en 10 s: ¿está levantado? docker
+compose up --wait».
+
 ## Flujo de trabajo
 
 GitHub Flow: cada tarea en una rama corta que entra en `main` por pull request, con el CI (lint, formato y tests) en verde.
