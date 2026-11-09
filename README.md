@@ -151,6 +151,37 @@ Sin el broker en marcha, `lanzar`, `reemitir`, `preparar` y `control` avisan en 
 «no responde el broker de Kafka en localhost:9092 en 10 s: ¿está levantado? docker
 compose up --wait».
 
+**Si Kafka se cae a mitad de un directo**, nada se pierde: los eventos esperan en la cola
+del productor (hasta 5 minutos) y salen al volver. La terminal muestra un aviso al perder
+el broker y otro al recuperarlo; las líneas de librdkafka no van a la terminal, y al final
+se imprime su recuento por cliente y por tipo. Para guardarlas todas, con su hora:
+
+```bash
+uv run edsim directo lanzar --registro-kafka /tmp/librdkafka.log
+```
+
+## Leer un directo
+
+El consumidor del hito 6 está en el paquete: `edsim.live.kafka.read_run` lee los eventos
+de un `run_id` (y su `inicio` y su `fin`) en un grupo de consumidores propio, desde el
+principio, y los pasa a un `edsim.live.tracker.LiveTracker`, que mantiene el censo en vivo
+(cuántos pacientes hay en cada ubicación), descarta los repetidos por `event_id`, mide el
+orden por partición y la latencia desde el broker.
+
+El notebook `notebooks/06_tiempo_real.ipynb` lo enseña paso a paso: lanza un directo corto,
+lo lee a la vez y comprueba que lo leído es el batch. Con Kafka:
+
+```bash
+docker compose up --wait
+uv run edsim directo preparar
+uv sync --all-packages --extra kafka    # confluent-kafka en .venv, para el kernel
+```
+
+y se abre en Cursor con el kernel de `.venv` (o con
+`uv run --all-packages --extra kafka --with jupyterlab jupyter lab notebooks/06_tiempo_real.ipynb`).
+Con `EDSIM_NB_RAPIDO=1` corre sin Docker ni el extra, con el directo en memoria. Mientras
+corre, Redpanda Console muestra su grupo (`edsim-lector-…`) en *Consumer Groups*.
+
 ## Flujo de trabajo
 
 GitHub Flow: cada tarea en una rama corta que entra en `main` por pull request, con el CI (lint, formato y tests) en verde.

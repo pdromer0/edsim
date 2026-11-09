@@ -14,7 +14,13 @@ from test_directo import run_hand
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.control import MAX_SPEED, PAUSE, RESUME, SPEED, STOP, Command
 from edsim.live.directo import RunEnd, RunInfo, RunStart
-from edsim.live.messages import control_json, parse_control, run_end_json, run_start_json
+from edsim.live.messages import (
+    control_json,
+    parse_control,
+    parse_run_message,
+    run_end_json,
+    run_start_json,
+)
 
 # --- ed.runs ---------------------------------------------------------------------------
 
@@ -70,6 +76,75 @@ def test_fin_sin_eventos():
         '{"tipo": "fin", "version": 1, "run_id": "r2026", "motivo": "parar", '
         '"sim_time": 2880.0, "ultimo_event_id": null, "publicados": 0}'
     )
+
+
+# --- ed.runs, leídos (tarea 6.6) -------------------------------------------------------
+
+
+def test_leer_el_inicio_y_el_fin_a_mano_es_la_inversa():
+    _, sink = run_hand()
+
+    start = parse_run_message(json.dumps(HAND_START, ensure_ascii=False).encode())
+    end = parse_run_message(json.dumps(HAND_END, ensure_ascii=False))
+
+    assert start == sink.run_start
+    assert end == sink.run_end
+    assert run_start_json(start) == json.dumps(HAND_START, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        RunStart(RunInfo("r2026", "directo", 3, 2026, SCENARIO_START, True), 3510.0, 4320.0, MAX_SPEED, 113, 520),  # noqa: E501
+        RunEnd("r2026", "parar", 2880.0, None, 0),
+        RunEnd("r2026", "error", 2900.5, "r2026-000000003", 3),
+    ],
+    ids=["inicio-max", "fin-sin-eventos", "fin-error"],
+)  # fmt: skip
+def test_leer_un_mensaje_ida_y_vuelta(message):
+    text = run_start_json(message) if isinstance(message, RunStart) else run_end_json(message)
+    assert parse_run_message(text) == message
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"tipo": "otro"}, "tipo"),
+        ({"version": 2}, "version"),
+        ({"version": True}, "version"),
+        ({"extra": 1}, "unknown keys"),
+        ({"velocidad": "rápida"}, "velocidad"),
+        ({"horizonte": None}, "horizonte"),
+        ({"censo": {"episodios": 2}}, "censo"),
+        ({"censo": {"episodios": -1, "eventos": 6}}, "episodios"),
+        ({"modo": "otro"}, "mode"),
+        ({"fecha_inicio": "ayer"}, "fecha_inicio|Invalid isoformat"),
+    ],
+)
+def test_un_inicio_no_valido(change, match):
+    with pytest.raises(ValueError, match=match):
+        parse_run_message(json.dumps({**HAND_START, **change}))
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"motivo": "otro"}, "motivo"),
+        ({"publicados": 1.5}, "publicados"),
+        ({"ultimo_event_id": 3}, "ultimo_event_id"),
+        ({"sim_time": "180"}, "sim_time"),
+    ],
+)
+def test_un_fin_no_valido(change, match):
+    with pytest.raises(ValueError, match=match):
+        parse_run_message(json.dumps({**HAND_END, **change}))
+
+
+def test_un_mensaje_que_no_es_json():
+    with pytest.raises(ValueError):
+        parse_run_message(b"no es json")
+    with pytest.raises(ValueError, match="object"):
+        parse_run_message("[1]")
 
 
 # --- ed.control ------------------------------------------------------------------------

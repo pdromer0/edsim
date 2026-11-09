@@ -26,15 +26,27 @@ reports for 0.1 s and tries again, so the pacer falls behind instead of losing a
 report with an error marks the sink as failed, and the next ``write`` raises ``SinkError``:
 the run never goes on with a gap. And the ``fin`` waits for the confirmations: ``end``
 flushes first, and if an event was not confirmed, the ``fin`` says ``error``.
+
+**The watch** (task 6.6): ``BrokerWatch`` takes the lines, errors and statistics of
+librdkafka instead of stderr, and warns once when the broker is lost and once when it is
+back. **The reading** (task 6.6): ``read_run`` reads one run from Kafka into a
+``LiveTracker`` (``edsim.live.tracker``), in a consumer group of its own, from the
+beginning, until the ``fin`` and every event it published have arrived.
 """
 
+import json
+import logging
 import time
-from collections.abc import Callable, Iterable
+import uuid
+from collections import Counter
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
+from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Protocol, Self
 
-from edsim.engine.events import Event, to_json
+from edsim.engine.events import Event, from_json, to_json
 from edsim.live.control import Command
 from edsim.live.directo import REASON_ERROR, RunEnd, RunStart, SinkError
 from edsim.live.messages import (
@@ -42,10 +54,27 @@ from edsim.live.messages import (
     START,
     control_json,
     parse_control,
+    parse_run_message,
     run_end_json,
     run_start_json,
 )
-from edsim.live.topics import CONTROL, REPLICATION_FACTOR, RUNS, TOPICS, Topic, route
+from edsim.live.report import (
+    format_broker_back,
+    format_broker_lost,
+    format_kafka_error,
+    format_kafka_log_summary,
+)
+from edsim.live.topics import (
+    CONTROL,
+    PATIENT_EVENTS,
+    REPLICATION_FACTOR,
+    RESOURCE_EVENTS,
+    RUNS,
+    TOPICS,
+    Topic,
+    route,
+)
+from edsim.live.tracker import LiveTracker, ReceivedEvent
 
 MISSING_EXTRA_MESSAGE = "Falta el extra kafka: uv sync --all-packages --extra kafka"
 
@@ -100,6 +129,183 @@ def import_confluent_kafka() -> ModuleType:
     return confluent_kafka
 
 
+# --- The connection watch ------------------------------------------------------------
+
+STATS_INTERVAL_MS = 1000
+"""Milliseconds between two statistics of each client: how soon a recovery is seen."""
+
+ALL_BROKERS_DOWN = "_ALL_BROKERS_DOWN"
+TRANSPORT = "_TRANSPORT"
+TRANSPORT_ERRORS = frozenset({ALL_BROKERS_DOWN, TRANSPORT})
+"""The errors of a lost connection: they warn once per outage, never one by one."""
+
+_NOT_A_BROKER = frozenset({"logical", "internal"})
+"""Handles in the statistics that are no connection of their own (the group coordinator)."""
+
+
+@dataclass
+class _Client:
+    seen_up: bool = False  # it has had a broker UP: a later loss is an outage
+    up_now: bool = False  # its last statistics had a broker UP
+    down: bool = False  # it is in an outage
+
+
+class _LogHandler(logging.Handler):
+    """Gets the lines of librdkafka of one client (``logger`` of its configuration)."""
+
+    def __init__(self, watch: "BrokerWatch", client: str) -> None:
+        super().__init__(logging.DEBUG)
+        self._watch = watch
+        self._client = client
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # confluent-kafka logs ("%s [%s] %s", facility, client name, text).
+        facility = str(record.args[0]) if record.args else record.levelname
+        self._watch._line(self._client, facility, record.getMessage())
+
+
+class BrokerWatch:
+    """Watches the connection of the Kafka clients of one command (task 6.6).
+
+    librdkafka writes every failed connection on stderr: during an outage, about 22 lines
+    per second, which buried the status line in task 6.5. Each client built with
+    ``config(client)`` sends its lines to a logger of this watch instead, which counts them
+    by client and type (and writes them to ``log_path``, if given), and its errors and
+    statistics here:
+
+    - **Lost.** A client that has been connected is down with ``_ALL_BROKERS_DOWN``, or with
+      ``_TRANSPORT`` if its last statistics had no broker ``UP``: a lone ``_TRANSPORT`` with
+      a broker still ``UP`` is the broker closing an idle connection
+      (``connections.max.idle.ms``, 10 minutes), not an outage. The first client down
+      gives one warning; the rest of the outage, none.
+    - **Back.** A client is back when its statistics show a broker ``UP`` again; that does
+      not need any message, so it also works for the consumer of the orders, which keeps a
+      connection to the leader of its partition. When every client down is back, one
+      warning with the seconds lost.
+    - **Other errors** warn the first time of each code and are counted afterwards: a real
+      problem is never hidden, and a repeated one does not flood the terminal.
+
+    A failed delivery does not come here: it stays in the delivery report of
+    ``KafkaSink`` (``SinkError`` and a ``fin`` with reason ``error``).
+
+    Args:
+        bootstrap: ``host:port`` of the broker, for the warnings.
+        on_warning: Called with the text of each warning, in Spanish.
+        log_path: If given, every line of librdkafka is written there with its time.
+        clock: Monotonic seconds, for the length of an outage.
+
+    Attributes:
+        lines: Lines of librdkafka by ``(client, type)``.
+        first_lines: The first line of each ``(client, type)``.
+        errors: Errors by ``(client, code)``.
+    """
+
+    def __init__(
+        self,
+        bootstrap: str,
+        on_warning: Callable[[str], None],
+        *,
+        log_path: str | Path | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.bootstrap = bootstrap
+        self._on_warning = on_warning
+        self._clock = clock
+        self.log_path = None if log_path is None else Path(log_path)
+        self._file = None if log_path is None else open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+        self._clients: dict[str, _Client] = {}
+        self._lost_at: float | None = None
+        self._warned: set[str] = set()
+        self.lines: Counter[tuple[str, str]] = Counter()
+        self.first_lines: dict[tuple[str, str], str] = {}
+        self.errors: Counter[tuple[str, str]] = Counter()
+
+    def config(self, client: str) -> dict[str, object]:
+        """The part of the configuration of a client that reports to this watch."""
+        self._clients.setdefault(client, _Client())
+        logger = logging.getLogger(f"edsim.librdkafka.{id(self)}.{client}")
+        logger.handlers = [_LogHandler(self, client)]
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        return {
+            "logger": logger,
+            "error_cb": lambda error: self.on_error(client, error),
+            "stats_cb": lambda text: self.on_stats(client, text),
+            "statistics.interval.ms": STATS_INTERVAL_MS,
+        }
+
+    @property
+    def lost(self) -> bool:
+        """Whether an outage is going on."""
+        return self._lost_at is not None
+
+    def on_error(self, client: str, error) -> None:
+        """An error of ``error_cb`` (a ``KafkaError``: ``name()`` and ``str()``)."""
+        name = error.name()
+        self.errors[client, name] += 1
+        state = self._clients.setdefault(client, _Client())
+        if name in TRANSPORT_ERRORS:
+            if name == TRANSPORT and state.up_now:
+                return  # an idle connection closed by the broker, while still UP
+            if state.seen_up and not state.down:
+                state.down = True
+                if self._lost_at is None:
+                    self._lost_at = self._clock()
+                    self._on_warning(format_broker_lost(self.bootstrap, error.str()))
+            return
+        if name not in self._warned:
+            self._warned.add(name)
+            self._on_warning(format_kafka_error(client, name, error.str()))
+
+    def on_stats(self, client: str, text: str) -> None:
+        """The statistics of a client (``stats_cb``): JSON with the state of each broker."""
+        brokers = json.loads(text).get("brokers", {})
+        up = any(
+            b.get("state") == "UP" and b.get("source") not in _NOT_A_BROKER
+            for b in brokers.values()
+        )
+        state = self._clients.setdefault(client, _Client())
+        state.up_now = up
+        if not up:
+            return
+        state.seen_up = True
+        state.down = False
+        if self._lost_at is not None and not any(c.down for c in self._clients.values()):
+            seconds = self._clock() - self._lost_at
+            self._lost_at = None
+            self._on_warning(format_broker_back(self.bootstrap, seconds))
+
+    def summary(self) -> str | None:
+        """What librdkafka wrote, for the end of the command; ``None`` if nothing."""
+        return format_kafka_log_summary(self.lines, self.first_lines, self.errors, self.log_path)
+
+    def close(self) -> None:
+        """Close the file of the lines, if any."""
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def _line(self, client: str, facility: str, text: str) -> None:
+        key = (client, facility)
+        self.lines[key] += 1
+        self.first_lines.setdefault(key, text)
+        if self._file is not None:
+            stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            self._file.write(f"{stamp} {client} {text}\n")
+            self._file.flush()
+
+
+PRODUCER_CLIENT = "productor"
+CONTROL_CLIENT = "órdenes"
+ADMIN_CLIENT = "administración"
+READER_CLIENT = "lector"
+"""Names of the clients in the warnings and in the summary of librdkafka."""
+
+
+def _with_watch(config: dict[str, object], watch: BrokerWatch | None, client: str) -> dict:
+    return config if watch is None else {**config, **watch.config(client)}
+
+
 # --- The producer --------------------------------------------------------------------
 
 
@@ -119,13 +325,17 @@ def producer_config(bootstrap: str, run_id: str) -> dict[str, object]:
     }
 
 
-def connect_producer(bootstrap: str, run_id: str):
+def connect_producer(bootstrap: str, run_id: str, *, watch: BrokerWatch | None = None):
     """A real ``confluent_kafka.Producer`` with ``producer_config``.
+
+    With ``watch``, its lines, errors and statistics go to that ``BrokerWatch`` (client
+    ``productor``) instead of stderr.
 
     Raises:
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
     """
-    return import_confluent_kafka().Producer(producer_config(bootstrap, run_id))
+    config = _with_watch(producer_config(bootstrap, run_id), watch, PRODUCER_CLIENT)
+    return import_confluent_kafka().Producer(config)
 
 
 class Producer(Protocol):
@@ -367,22 +577,39 @@ class KafkaControl:
         run_id: The run; orders of another run are ignored without a warning.
         on_invalid: Called with the reason of each invalid message, and with the errors of
             the consumer; the run goes on.
+        watch: If given, its lines, errors and statistics go to that ``BrokerWatch``
+            (client ``órdenes``) instead of stderr.
 
     Raises:
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
         BrokerUnavailableError: If the broker does not give the offsets in time.
     """
 
-    def __init__(self, bootstrap: str, run_id: str, on_invalid: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        bootstrap: str,
+        run_id: str,
+        on_invalid: Callable[[str], None],
+        *,
+        watch: BrokerWatch | None = None,
+    ) -> None:
         kafka = import_confluent_kafka()
         self.run_id = run_id
         self._on_invalid = on_invalid
+        # The Python client needs a group.id even without subscribe: with it, librdkafka
+        # also looks for the group coordinator, which retries every 50 ms without a broker
+        # (reconnect.backoff.ms / 2). The client.id names its lines apart from the producer.
         self._consumer = kafka.Consumer(
-            {
-                "bootstrap.servers": bootstrap,
-                "group.id": f"edsim-control-{run_id}",
-                "enable.auto.commit": False,
-            }
+            _with_watch(
+                {
+                    "bootstrap.servers": bootstrap,
+                    "group.id": f"edsim-control-{run_id}",
+                    "client.id": f"edsim-control-{run_id}",
+                    "enable.auto.commit": False,
+                },
+                watch,
+                CONTROL_CLIENT,
+            )
         )
         try:
             partition = kafka.TopicPartition(CONTROL, 0)
@@ -412,6 +639,197 @@ class KafkaControl:
     def close(self) -> None:
         """Leave the partition and close the consumer."""
         self._consumer.close()
+
+
+# --- Reading a run ------------------------------------------------------------------
+
+READ_TOPICS = (PATIENT_EVENTS, RESOURCE_EVENTS, RUNS)
+"""What a consumer of a run reads: its events and its ``inicio`` and ``fin``."""
+
+READ_TIMEOUT = 120.0
+"""Seconds a reading waits for the whole run before saying what is missing."""
+
+READ_POLL = 0.1
+"""Seconds of each ``poll`` of the reader."""
+
+PROGRESS_INTERVAL = 5.0
+"""Real seconds between two calls to ``on_progress``."""
+
+
+def reader_group_id(run_id: str) -> str:
+    """A new consumer group for one reading of ``run_id``: ``edsim-lector-<run_id>-<8 hex>``.
+
+    A group keeps its position: a second reading in the same group would start where the
+    first one ended and read nothing. One group per reading reads the whole run again, and
+    Redpanda Console shows each one with its lag.
+    """
+    return f"edsim-lector-{run_id}-{uuid.uuid4().hex[:8]}"
+
+
+def reader_config(
+    bootstrap: str, group_id: str, watch: BrokerWatch | None = None
+) -> dict[str, object]:
+    """The configuration of a reader: a group of its own, read from the beginning.
+
+    ``auto.offset.reset=earliest``: a new group without a position starts at the first
+    message, not at the end (librdkafka's default, ``latest``), so the census, published
+    before the reader joined, is read too. Offsets are committed automatically (the
+    default) and once more at the end, so the group shows a lag of 0.
+    """
+    return _with_watch(
+        {
+            "bootstrap.servers": bootstrap,
+            "group.id": group_id,
+            "client.id": group_id,
+            "auto.offset.reset": "earliest",
+        },
+        watch,
+        READER_CLIENT,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReadReport:
+    """How a reading ended.
+
+    Attributes:
+        group_id: The consumer group of the reading.
+        complete: Whether it saw the ``fin`` and as many distinct events as it published.
+        timed_out: Whether it stopped because ``timeout`` ran out.
+        missing: Events published and not read; ``None`` if the ``fin`` never arrived.
+        seconds: How long it read.
+        messages: Messages read, of any run.
+        unreadable: Messages of the event topics that are not a JSON object, so of no
+            run: skipped.
+    """
+
+    group_id: str
+    complete: bool
+    timed_out: bool
+    missing: int | None
+    seconds: float
+    messages: int
+    unreadable: int = 0
+
+
+def read_run(
+    bootstrap: str,
+    run_id: str,
+    tracker: LiveTracker,
+    *,
+    group_id: str | None = None,
+    timeout: float = READ_TIMEOUT,
+    watch: BrokerWatch | None = None,
+    on_progress: Callable[[LiveTracker], None] | None = None,
+    progress_interval: float = PROGRESS_INTERVAL,
+    clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
+) -> ReadReport:
+    """Read the run ``run_id`` from Kafka into ``tracker``, live or once it has ended.
+
+    It subscribes to ``READ_TOPICS`` in a group of its own (``reader_group_id``), from the
+    beginning. The events are those whose ``run_id``, in the value, is ``run_id``: their key
+    is the ``episode_id``, so the topics mix every run. It looks at that ``run_id`` before
+    validating: only the events of the run are checked, and a message that is not a JSON
+    object is skipped and counted (``unreadable``). The ``inicio`` and the ``fin`` are
+    the messages of ``ed.runs`` with ``run_id`` as key. Each event goes to the tracker with
+    its topic, partition, offset, ``LogAppendTime`` timestamp and the time it was received.
+
+    It ends when the tracker is complete: the ``fin`` says how many events were published,
+    and it can arrive before the last events, because it travels in another topic. Or when
+    ``timeout`` runs out, and then the report says how many are missing. In both cases it
+    commits its offsets and closes.
+
+    Args:
+        bootstrap: ``host:port`` of the broker.
+        run_id: The run to read.
+        tracker: Where the events go.
+        group_id: The consumer group; a new one if ``None``.
+        timeout: Seconds to wait for the whole run.
+        watch: If given, the lines and errors of librdkafka go there (client ``lector``).
+        on_progress: Called with the tracker every ``progress_interval`` seconds.
+        progress_interval: Seconds between two calls to ``on_progress``.
+        clock: Monotonic seconds, for the timeout.
+        wall: Seconds since the epoch, for the time of reception.
+
+    Raises:
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+        ValueError: If a message of the run is not valid (an event of the run, or its
+            ``inicio`` or ``fin``).
+    """
+    kafka = import_confluent_kafka()
+    group_id = group_id or reader_group_id(run_id)
+    consumer = kafka.Consumer(reader_config(bootstrap, group_id, watch))
+    key = run_id.encode("utf-8")
+    started = clock()
+    limit = started + timeout
+    next_progress = started + progress_interval
+    messages = 0
+    unreadable = 0
+    try:
+        consumer.subscribe(list(READ_TOPICS))
+        while not tracker.complete and (now := clock()) < limit:
+            message = consumer.poll(min(READ_POLL, limit - now))
+            if on_progress is not None and clock() >= next_progress:
+                on_progress(tracker)
+                next_progress += progress_interval
+            if message is None:
+                continue
+            if message.error():
+                if watch is not None:
+                    watch.on_error(READER_CLIENT, message.error())
+                continue
+            messages += 1
+            received = wall()
+            topic = message.topic()
+            if topic == RUNS:
+                if message.key() == key:
+                    run_message = parse_run_message(message.value())
+                    if isinstance(run_message, RunStart):
+                        tracker.start(run_message)
+                    else:
+                        tracker.end(run_message)
+                continue
+            # Filter before validating: the topics mix every run, and a message of another
+            # one (or one that is not even JSON) must not stop this reading. Only the events
+            # of this run go through from_json and its checks.
+            value = message.value()
+            try:
+                data = json.loads(value) if value is not None else None
+            except ValueError:  # also UnicodeDecodeError
+                data = None
+            if not isinstance(data, dict):
+                unreadable += 1
+                continue
+            if data.get("run_id") != run_id:
+                continue
+            event = from_json(value.decode("utf-8"))
+            kind, stamp = message.timestamp()
+            tracker.add(
+                ReceivedEvent(
+                    event,
+                    topic=topic,
+                    partition=message.partition(),
+                    offset=message.offset(),
+                    broker_ms=stamp if kind == kafka.TIMESTAMP_LOG_APPEND_TIME else None,
+                    received=received,
+                )
+            )
+    finally:
+        try:
+            consumer.commit(asynchronous=False)
+        except kafka.KafkaException:
+            pass  # nothing read, nothing to commit (_NO_OFFSET)
+        consumer.close()
+    return ReadReport(
+        group_id=group_id,
+        complete=tracker.complete,
+        timed_out=not tracker.complete,
+        missing=tracker.missing,
+        seconds=clock() - started,
+        messages=messages,
+        unreadable=unreadable,
+    )
 
 
 class OrderNotDeliveredError(RuntimeError):
@@ -536,6 +954,7 @@ def ensure_topics(
     create: bool = True,
     timeout: float = ADMIN_TIMEOUT,
     connect_timeout: float = CONNECT_TIMEOUT,
+    client_config: Mapping[str, object] | None = None,
 ) -> TopicsReport:
     """Create the topics that are missing and check the ones that exist.
 
@@ -553,6 +972,9 @@ def ensure_topics(
         timeout: Seconds of each request after the first one.
         connect_timeout: Seconds of the first request, the one that finds out whether the
             broker is up.
+        client_config: More configuration of the ``AdminClient``, such as
+            ``BrokerWatch.config``. Its logs and errors are served (``poll(0)``) before
+            returning or raising, so they are not lost.
 
     Returns:
         Which topics it created and which were already there.
@@ -566,9 +988,20 @@ def ensure_topics(
     """
     topics = list(topics)
     kafka = import_confluent_kafka()  # the message that says how to install the extra
-    from confluent_kafka.admin import AdminClient, ConfigResource, NewTopic, ResourceType
+    from confluent_kafka.admin import AdminClient
 
-    admin = AdminClient({"bootstrap.servers": bootstrap})
+    admin = AdminClient({"bootstrap.servers": bootstrap, **(client_config or {})})
+    try:
+        return _ensure_topics(admin, kafka, bootstrap, topics, create, timeout, connect_timeout)
+    finally:
+        admin.poll(0)  # serve its logs and errors to the watch before letting it go
+
+
+def _ensure_topics(
+    admin, kafka, bootstrap, topics: list[Topic], create, timeout, connect_timeout
+) -> TopicsReport:
+    from confluent_kafka.admin import ConfigResource, NewTopic, ResourceType
+
     try:
         metadata = admin.list_topics(timeout=connect_timeout)
     except kafka.KafkaException as exc:

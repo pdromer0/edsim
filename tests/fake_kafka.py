@@ -7,6 +7,8 @@ servir los avisos. Se puede programar un BufferError en una llamada a produce y 
 con error en un mensaje, y entregar los mensajes a mano y en otro orden.
 """
 
+import json
+import logging
 import sys
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
@@ -218,6 +220,8 @@ class FakeAdmin:
     Attributes:
         list_timeouts: El timeout de cada list_topics, en orden.
         created: Los topics creados, en orden.
+        polls: El timeout de cada poll, que sirve sus registros y errores.
+        config: La configuración con la que se creó (la de install_fake_confluent_kafka).
     """
 
     def __init__(self, topics=None, *, unreachable: bool = False) -> None:
@@ -225,6 +229,12 @@ class FakeAdmin:
         self.unreachable = unreachable
         self.list_timeouts: list[float] = []
         self.created: list[str] = []
+        self.polls: list[float] = []
+        self.config: dict | None = None
+
+    def poll(self, timeout=None) -> int:
+        self.polls.append(timeout)
+        return 0
 
     def list_topics(self, timeout=None):
         self.list_timeouts.append(timeout)
@@ -252,16 +262,193 @@ class FakeAdmin:
         return {topic.topic: FakeFuture(None) for topic in new}
 
 
+# --- Errores, estadísticas y registros de librdkafka (tarea 6.6) ---------------------
+
+
+@dataclass(frozen=True)
+class FakeKafkaError:
+    """Un KafkaError del error_cb: name(), str() y fatal()."""
+
+    code: str
+    text: str = ""
+    is_fatal: bool = False
+
+    def name(self) -> str:
+        return self.code
+
+    def str(self) -> str:
+        return self.text
+
+    def fatal(self) -> bool:
+        return self.is_fatal
+
+
+REFUSED = "localhost:9092/1: Connect to ipv4#127.0.0.1:9092 failed: Connection refused"
+
+
+def stats_json(up: bool, name: str = "edsim-x#producer-1") -> str:
+    """Las estadísticas de un cliente: su broker aprendido, UP o en INIT, y el coordinador
+    del grupo (lógico) siempre UP, que no cuenta como conexión."""
+    return json.dumps(
+        {
+            "name": name,
+            "brokers": {
+                "localhost:9092/1": {"state": "UP" if up else "INIT", "source": "learned"},
+                "GroupCoordinator": {"state": "UP", "source": "logical"},
+            },
+        }
+    )
+
+
+def log_line(config: dict, facility: str, text: str, level: int = logging.ERROR) -> None:
+    """Una línea de librdkafka por el logger de la configuración, como la manda
+    confluent-kafka: ("%s [%s] %s", tipo, nombre del cliente, texto)."""
+    config["logger"].log(level, "%s [%s] %s", facility, "edsim-x#producer-1", text)
+
+
+class FakeClientConsumer:
+    """El Consumer de KafkaControl: offset alto 5, asignación y ningún mensaje."""
+
+    def __init__(self, config: dict) -> None:
+        self.config = config
+        self.assigned = None
+        self.closed = False
+
+    def get_watermark_offsets(self, partition, timeout=None, cached=False):
+        return 0, 5
+
+    def assign(self, partitions):
+        self.assigned = partitions
+
+    def poll(self, timeout=None):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+@dataclass(frozen=True)
+class FakeTopicPartition:
+    """Como confluent_kafka.TopicPartition."""
+
+    topic: str
+    partition: int
+    offset: int = -1001
+
+
+# --- Un lector falso (tarea 6.6) -------------------------------------------------------
+
+LOG_APPEND_TIME, CREATE_TIME = 2, 1
+"""Los tipos de marca de confluent_kafka (TIMESTAMP_LOG_APPEND_TIME y TIMESTAMP_CREATE_TIME)."""
+
+
+@dataclass
+class FakeRecord:
+    """Un mensaje leído de un topic, como el Message de confluent_kafka."""
+
+    topic_: str
+    partition_: int
+    offset_: int
+    key_: bytes | None
+    value_: bytes
+    stamp: tuple[int, int] = (LOG_APPEND_TIME, 0)
+    problem: object = None
+
+    def topic(self):
+        return self.topic_
+
+    def partition(self):
+        return self.partition_
+
+    def offset(self):
+        return self.offset_
+
+    def key(self):
+        return self.key_
+
+    def value(self):
+        return self.value_
+
+    def timestamp(self):
+        return self.stamp
+
+    def error(self):
+        return self.problem
+
+
+class ManualClock:
+    """Segundos a mano: el lector falso los avanza cuando poll espera sin mensajes."""
+
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ScriptedReader:
+    """Un Consumer falso para read_run: da los mensajes de la lista, uno por poll; sin
+    mensajes, poll(timeout) avanza el reloj ``timeout`` segundos y da None."""
+
+    def __init__(self, config: dict, records, clock: ManualClock) -> None:
+        self.config = config
+        self.records = list(records)
+        self.clock = clock
+        self.subscribed = None
+        self.commits: list[bool] = []
+        self.closed = False
+
+    def subscribe(self, topics):
+        self.subscribed = list(topics)
+
+    def poll(self, timeout=None):
+        if self.records:
+            return self.records.pop(0)
+        self.clock.now += timeout
+        return None
+
+    def commit(self, asynchronous=True):
+        self.commits.append(asynchronous)
+
+    def close(self):
+        self.closed = True
+
+
 def install_fake_confluent_kafka(monkeypatch, admin: FakeAdmin | None = None) -> ModuleType:
     """Pone en sys.modules un confluent_kafka falso (y su .admin) mientras dure el test.
 
-    Así ensure_topics y publish_order corren sin el extra, en el job tests del CI. El
-    AdminClient que crean es ``admin``.
+    Así ensure_topics, publish_order, connect_producer y KafkaControl corren sin el extra,
+    en el job tests del CI. El AdminClient que crean es ``admin`` (y guarda su
+    configuración); Producer es un FakeProducer y Consumer, un FakeClientConsumer. El módulo
+    guarda en ``clients`` cada productor y consumidor creado.
     """
     kafka = ModuleType("confluent_kafka")
     kafka.KafkaException = FakeKafkaException
+    kafka.TopicPartition = FakeTopicPartition
+    kafka.TIMESTAMP_LOG_APPEND_TIME = LOG_APPEND_TIME
+    kafka.TIMESTAMP_CREATE_TIME = CREATE_TIME
+    kafka.clients = []
+
+    def producer(config):
+        fake = FakeProducer()
+        fake.config = config
+        kafka.clients.append(fake)
+        return fake
+
+    def consumer(config):
+        fake = FakeClientConsumer(config)
+        kafka.clients.append(fake)
+        return fake
+
+    def admin_client(config):
+        if admin is not None:
+            admin.config = config
+        return admin
+
+    kafka.Producer = producer
+    kafka.Consumer = consumer
     admin_module = ModuleType("confluent_kafka.admin")
-    admin_module.AdminClient = lambda config: admin
+    admin_module.AdminClient = admin_client
     admin_module.ConfigResource = FakeConfigResource
     admin_module.NewTopic = FakeNewTopic
     admin_module.ResourceType = SimpleNamespace(TOPIC="TOPIC")
