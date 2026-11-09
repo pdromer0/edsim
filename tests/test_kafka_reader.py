@@ -130,6 +130,10 @@ def test_configuracion_de_la_lectura(monkeypatch):
     assert first["group.id"] != second["group.id"]
     assert first["group.id"].startswith(f"edsim-lector-{RUN}-")
     assert first["client.id"] == first["group.id"]
+    # La confirmación automática se queda activada (por defecto): con ella, librdkafka
+    # confirma también al cerrar, y el retraso queda en 0 aunque falte el commit final
+    # (V11 de la 6.6: sin el commit, la integración seguía en 0 por esto).
+    assert first.get("enable.auto.commit", True) is True
     assert reading.readers[0].subscribed == list(READ_TOPICS)
 
 
