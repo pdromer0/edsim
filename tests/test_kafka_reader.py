@@ -215,3 +215,37 @@ def test_el_valor_es_el_jsonl():
     # Guarda del doble: el valor es la línea del log, como en KafkaSink.
     [record] = records([occupancy_log()[0]])
     assert json.loads(record.value_)["event_id"] == "rocupa-000000000"
+
+
+def test_un_mensaje_ilegible_o_invalido_de_otro_directo_no_para_la_lectura(monkeypatch):
+    # Los topics mezclan todos los directos: un mensaje que no es JSON y un evento inválido
+    # de otro run_id no son de este directo. Se filtra antes de validar: no paran la
+    # lectura, y el que no es JSON se cuenta como ilegible.
+    start, *events, end = hand_run().items
+    recs = records([start, *events, end])
+    junk = FakeRecord("ed.patient.events", 0, 900, b"EP-000001", b"no es json")
+    other = FakeRecord(
+        "ed.patient.events", 1, 901, b"EP-000002", b'{"run_id": "rotra", "event_type": "nada"}'
+    )
+    recs[2:2] = [junk]
+    recs[5:5] = [other]
+    reading = Reading(monkeypatch, recs)
+
+    tracker, report = reading.run()
+
+    assert (report.complete, tracker.distinct) == (True, 27)
+    assert (report.unreadable, report.messages) == (1, 31)
+
+
+def test_un_evento_invalido_del_directo_si_para_la_lectura(monkeypatch):
+    # Uno de este run_id que no valida es un error, como dice el docstring de read_run.
+    start, *events, end = hand_run().items
+    recs = records([start, *events, end])
+    recs[3:3] = [
+        FakeRecord("ed.patient.events", 2, 902, b"EP-000001", json.dumps({"run_id": RUN}).encode())
+    ]
+    reading = Reading(monkeypatch, recs)
+
+    with pytest.raises(ValueError):
+        reading.run()
+    assert reading.readers[0].closed

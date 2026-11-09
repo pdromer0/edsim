@@ -699,6 +699,8 @@ class ReadReport:
         missing: Events published and not read; ``None`` if the ``fin`` never arrived.
         seconds: How long it read.
         messages: Messages read, of any run.
+        unreadable: Messages of the event topics that are not a JSON object, so of no
+            run: skipped.
     """
 
     group_id: str
@@ -707,6 +709,7 @@ class ReadReport:
     missing: int | None
     seconds: float
     messages: int
+    unreadable: int = 0
 
 
 def read_run(
@@ -726,7 +729,9 @@ def read_run(
 
     It subscribes to ``READ_TOPICS`` in a group of its own (``reader_group_id``), from the
     beginning. The events are those whose ``run_id``, in the value, is ``run_id``: their key
-    is the ``episode_id``, so the topics mix every run. The ``inicio`` and the ``fin`` are
+    is the ``episode_id``, so the topics mix every run. It looks at that ``run_id`` before
+    validating: only the events of the run are checked, and a message that is not a JSON
+    object is skipped and counted (``unreadable``). The ``inicio`` and the ``fin`` are
     the messages of ``ed.runs`` with ``run_id`` as key. Each event goes to the tracker with
     its topic, partition, offset, ``LogAppendTime`` timestamp and the time it was received.
 
@@ -749,7 +754,8 @@ def read_run(
 
     Raises:
         MissingKafkaExtraError: If the ``kafka`` extra is not installed.
-        ValueError: If a message of the run is not valid.
+        ValueError: If a message of the run is not valid (an event of the run, or its
+            ``inicio`` or ``fin``).
     """
     kafka = import_confluent_kafka()
     group_id = group_id or reader_group_id(run_id)
@@ -759,6 +765,7 @@ def read_run(
     limit = started + timeout
     next_progress = started + progress_interval
     messages = 0
+    unreadable = 0
     try:
         consumer.subscribe(list(READ_TOPICS))
         while not tracker.complete and (now := clock()) < limit:
@@ -783,9 +790,20 @@ def read_run(
                     else:
                         tracker.end(run_message)
                 continue
-            event = from_json(message.value().decode("utf-8"))
-            if event.run_id != run_id:
+            # Filter before validating: the topics mix every run, and a message of another
+            # one (or one that is not even JSON) must not stop this reading. Only the events
+            # of this run go through from_json and its checks.
+            value = message.value()
+            try:
+                data = json.loads(value) if value is not None else None
+            except ValueError:  # also UnicodeDecodeError
+                data = None
+            if not isinstance(data, dict):
+                unreadable += 1
                 continue
+            if data.get("run_id") != run_id:
+                continue
+            event = from_json(value.decode("utf-8"))
             kind, stamp = message.timestamp()
             tracker.add(
                 ReceivedEvent(
@@ -810,6 +828,7 @@ def read_run(
         missing=tracker.missing,
         seconds=clock() - started,
         messages=messages,
+        unreadable=unreadable,
     )
 
 
