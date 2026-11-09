@@ -22,4 +22,4 @@ Un cuarto job, `tests-kafka`, en un ejecutor Linux de GitHub Actions: `uv sync -
 ## Qué cambió al implementarla
 
 - 6.1: el job entró sin ser obligatorio; pasó a serlo al fusionar la 6.4.
-- Antes de cada push de las tareas con Kafka, `scripts/tests-integracion.sh` en local: 4 tests en 29 s en la 6.1, 11 en 29 a 34 s en la 6.4, 20 en 0:53 a 1:14 en la 6.5; en la 6.6 se añaden los del consumidor.
+- Antes de cada push de las tareas con Kafka, `scripts/tests-integracion.sh` en local: 4 tests en 29 s en la 6.1, 11 en 29 a 34 s en la 6.4, 20 en 0:53 a 1:14 en la 6.5; 23 en 1:21 en la 6.6, con los del consumidor.

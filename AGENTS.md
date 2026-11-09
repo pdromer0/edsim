@@ -5,8 +5,8 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: hito 6, tiempo real — [docs/specs/hito-6.md](docs/specs/hito-6.md); tarea 6.5 (va antes que el 5).
-- Último hito cerrado: [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos, `v0.4-hito4`)
+- Hito en curso: hito 5 (abandono, boarding y destinos), sin especificación todavía.
+- Último hito cerrado: [docs/specs/hito-6.md](docs/specs/hito-6.md) (tiempo real, `v0.6-hito6`); antes, [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos, `v0.4-hito4`)
 - App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
 ## Modo de trabajo
@@ -52,6 +52,8 @@ scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace 
 uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
 uv run edsim directo preparar    # crea los topics de Kafka (desde la 6.5; Kafka levantado)
 uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe
+uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
+EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka (6.6)
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
@@ -69,7 +71,7 @@ una; el sello vive en `.cache/edsim/`, fuera de `.git`. El de Codex formatea ant
 `uv run pytest tests/test_x.py` sigue en serie, y solo los scripts piden `-n`. El CI va en serie:
 en el runner, xdist no llega al 60 % de la serie.
 
-Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
+Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06 con Kafka necesita el broker (`docker compose up --wait` y `edsim directo preparar`) y el extra en `.venv` (`uv sync --all-packages --extra kafka`); en modo rápido, nada de eso. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
 `--nbmake-timeout` (300 s por defecto) es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. El límite que importa es el de la celda más larga; el de 600 s deja margen en máquinas lentas.
 
