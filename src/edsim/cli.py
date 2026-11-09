@@ -4,8 +4,8 @@ Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
 ``simulate_arrivals``, ``validate_arrivals``, ``simulate_run``,
 ``validate_engine``, ``validate_profiles``, ``simulate_replicas``,
-``sensitivity``) and hands the results to the report modules for the tables,
-the CSV files and the plots.
+``sensitivity``, and ``edsim.live`` for ``directo``) and hands the results to the
+report modules for the tables, the CSV files, the plots and the lines of a live run.
 
 Exit codes: 0 if all goes well; 1 if ``llegadas validar``, ``motor validar``
 or ``perfiles validar`` runs and some check fails, ``motor simular`` finds a
@@ -15,9 +15,16 @@ knob (the files are written anyway, to find out why); 2 for usage
 errors, including a missing or invalid configuration, invalid limits or a
 ``--salida`` that is not a directory, before anything is printed or computed
 and before any file is created.
+
+``directo`` (docs/specs/hito-6.md, "Precisiones para la 6.5"): 0 if the run ends
+by its horizon or by an order ``parar``, and if ``preparar`` or ``control`` do
+their job; 130 with Ctrl+C, after publishing the end; 1 if a message is not
+delivered, the topics are missing or differ, the broker does not answer or the
+``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka.
 """
 
 import argparse
+import sys
 from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
@@ -79,6 +86,36 @@ from edsim.engine.report import (
     plot_waits_by_level,
 )
 from edsim.engine.validation import check_engine_validation_counts, validate_engine
+from edsim.live.clock import SystemClock
+from edsim.live.control import (
+    MAX_SPEED,
+    PAUSE,
+    RESUME,
+    SPEED,
+    STOP,
+    Command,
+    NoControl,
+    check_speed,
+)
+from edsim.live.directo import MemoryLiveSink, SinkError
+from edsim.live.kafka import (
+    CONNECT_TIMEOUT,
+    MISSING_EXTRA_MESSAGE,
+    BrokerUnavailableError,
+    KafkaControl,
+    KafkaSink,
+    MissingKafkaExtraError,
+    MissingTopicsError,
+    OrderNotDeliveredError,
+    TopicMismatchError,
+    connect_producer,
+    ensure_topics,
+    pending_messages,
+    publish_order,
+)
+from edsim.live.launch import PreparedRun, live_run_id, prepare_live, prepare_replay, run_prepared
+from edsim.live.report import format_census, format_end, format_speed, format_status
+from edsim.live.topics import TOPICS
 from edsim.profiles.config import load_profiles
 from edsim.profiles.report import FALSE_ALARM, PLOTS, format_profiles_validation
 from edsim.profiles.validation import (
@@ -126,6 +163,10 @@ EVALUATION_CSV = "evaluacion.csv"
 REPLICAS_CSV = "evaluacion_replicas.csv"
 LEVELS_CSV = "evaluacion_niveles.csv"
 SENSITIVITY_CSV = "sensibilidad_{knob}.csv"
+
+DEFAULT_BOOTSTRAP = "localhost:9092"
+DEFAULT_SPEED = 60.0
+DEFAULT_RUNS = "resultados/ejecuciones"
 
 
 def parse_rhos(text: str) -> tuple[float, ...]:
@@ -636,6 +677,213 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
     return 0 if chosen is not None else 1
 
 
+# --- edsim directo -------------------------------------------------------------------
+
+
+def parse_speed(text: str) -> float | str:
+    """A speed of the live run: ``max`` or a positive, finite number."""
+    if text == MAX_SPEED:
+        return MAX_SPEED
+    try:
+        return check_speed(float(text))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"la velocidad debe ser un número positivo o «max»; se recibió «{text}»"
+        ) from None
+
+
+def parse_bootstrap(text: str) -> str:
+    """The address of the broker, ``HOST:PUERTO``."""
+    host, sep, port = text.rpartition(":")
+    if not sep or not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise argparse.ArgumentTypeError(f"«{text}» no es HOST:PUERTO, como {DEFAULT_BOOTSTRAP}")
+    return text
+
+
+KAFKA_ERRORS = (
+    MissingKafkaExtraError,
+    BrokerUnavailableError,
+    MissingTopicsError,
+    TopicMismatchError,
+    TimeoutError,
+    SinkError,
+    OrderNotDeliveredError,
+)
+"""What ends a ``directo`` command with code 1: the extra, the broker, the topics or a
+message that was not delivered."""
+
+
+def _kafka_failure(error: Exception, bootstrap: str) -> int:
+    """Print what went wrong with Kafka, in Spanish, and return code 1."""
+    if isinstance(error, MissingKafkaExtraError):
+        text = MISSING_EXTRA_MESSAGE
+    elif isinstance(error, BrokerUnavailableError):
+        text = (
+            f"Error: no responde el broker de Kafka en {error.bootstrap} en {error.timeout:g} s:"
+            " ¿está levantado? docker compose up --wait"
+        )
+    elif isinstance(error, MissingTopicsError):
+        text = (
+            f"Error: faltan topics en {bootstrap}; créalos con «edsim directo preparar» ({error})"
+        )
+    elif isinstance(error, TopicMismatchError):
+        text = f"Error: los topics de {bootstrap} no son los de EDsim ({error})"
+    elif isinstance(error, SinkError):
+        text = f"Error: un mensaje no se entregó y el directo se paró ({error})"
+    else:
+        text = f"Error: {error}"
+    print(text, file=sys.stderr, flush=True)
+    return 1
+
+
+def _warn(reason: str) -> None:
+    print(f"Aviso: {reason}", file=sys.stderr, flush=True)
+
+
+def _destination(args: argparse.Namespace) -> str:
+    return "en memoria" if args.memoria else f"Kafka {args.kafka}"
+
+
+def _run_live_command(args: argparse.Namespace, prepared: PreparedRun, clock) -> int:
+    """Publish a prepared run in memory or in Kafka, printing the census, the status and
+    the summary; the exit code."""
+    callbacks = {
+        "on_start": lambda start: print(format_census(start), flush=True),
+        "on_end": lambda start, end: print(format_end(start, end), flush=True),
+        "on_status": lambda status: print(format_status(status), flush=True),
+    }
+    run_id = prepared.info.run_id
+    try:
+        if args.memoria:
+            run_prepared(
+                prepared,
+                clock=clock,
+                speed=args.velocidad,
+                control=NoControl(),
+                sink=MemoryLiveSink(),
+                **callbacks,
+            )
+            return 0
+        # Only check: creating is for `edsim directo preparar`.
+        ensure_topics(args.kafka, TOPICS, create=False, connect_timeout=CONNECT_TIMEOUT)
+        # Before the warm-up: the orders sent meanwhile apply when the live stream starts.
+        control = KafkaControl(args.kafka, run_id, _warn)
+        try:
+            producer = connect_producer(args.kafka, run_id)
+            with KafkaSink(producer, run_id) as sink:
+                run_prepared(
+                    prepared,
+                    clock=clock,
+                    speed=args.velocidad,
+                    control=control,
+                    sink=sink,
+                    pending=lambda: pending_messages(producer),
+                    **callbacks,
+                )
+        finally:
+            control.close()
+        return 0
+    except KeyboardInterrupt:
+        print("Interrumpido con Ctrl+C", file=sys.stderr, flush=True)
+        return 130
+    except KAFKA_ERRORS as error:
+        return _kafka_failure(error, args.kafka)
+
+
+def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.semilla < 0:
+        parser.error(f"--semilla debe ser un entero no negativo; se recibió {args.semilla}")
+    clock = SystemClock()
+    wall = clock.wall()
+    run_id = args.run_id
+    if run_id is None:
+        try:
+            run_id = live_run_id(args.semilla, wall)
+        except ValueError as error:
+            parser.error(f"--run-id: {error}; indica un --run-id explícito válido")
+    center, profile = _load_engine_configs(args, parser)
+    profiles = None
+    if args.provisional:
+        _check_provisional_center(center, args, parser)
+    else:
+        if args.perfiles is None:
+            args.perfiles = DEFAULT_PROFILES
+        profiles, args.huella_perfiles = _load_file(
+            args.perfiles, "--perfiles", load_profiles, parser
+        )
+    try:
+        prepared = prepare_live(
+            center,
+            profile,
+            args.dias,
+            args.semilla,
+            warmup_days=args.calentamiento,
+            run_id=run_id,
+            profiles=profiles,
+            anchor_wall=wall if args.anclar else None,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    anchored = ", anclado al calendario" if args.anclar else ""
+    print(
+        f"Directo · run_id {run_id} · velocidad {format_speed(args.velocidad)}"
+        f" · {_destination(args)}\n{_engine_header(args)}\n{_model_line(args)}"
+        f"\n{args.dias} días desde {prepared.info.start_date.isoformat()}"
+        f" ({args.calentamiento} de calentamiento{anchored}) · W = {prepared.start:g} min"
+        f" · horizonte {prepared.horizon:g} min · semilla {args.semilla}",
+        flush=True,
+    )
+    return _run_live_command(args, prepared, clock)
+
+
+def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        prepared = prepare_replay(args.ejecuciones, args.run_id, warmup_days=args.calentamiento)
+    except (OSError, ValueError) as error:
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    info = prepared.info
+    print(
+        f"Replay · run_id {info.run_id} · velocidad {format_speed(args.velocidad)}"
+        f" · {_destination(args)}\nEjecución {Path(args.ejecuciones) / info.run_id}"
+        f" · catálogo {info.schema_version} · semilla {info.seed}"
+        f"\n{prepared.horizon / 1440:g} días desde {info.start_date.isoformat()} (la fecha del"
+        f" primer evento) · W = {prepared.start:g} min · horizonte {prepared.horizon:g} min",
+        flush=True,
+    )
+    return _run_live_command(args, prepared, SystemClock())
+
+
+def _prepare_topics(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        report = ensure_topics(args.kafka, TOPICS, connect_timeout=CONNECT_TIMEOUT)
+    except KAFKA_ERRORS as error:
+        return _kafka_failure(error, args.kafka)
+    print(
+        f"Kafka {args.kafka}\nCreados: {', '.join(report.created) or 'ninguno'}"
+        f"\nYa estaban: {', '.join(report.existing) or 'ninguno'}"
+    )
+    return 0
+
+
+def _control(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.velocidad is not None:
+        command = Command(SPEED, args.velocidad)
+        text = f"velocidad {format_speed(args.velocidad)}"
+    else:
+        order = PAUSE if args.pausar else RESUME if args.reanudar else STOP
+        command = Command(order)
+        text = order
+    try:
+        producer = connect_producer(args.kafka, f"orden-{args.run}")
+        offset = publish_order(
+            producer, args.run, command, bootstrap=args.kafka, connect_timeout=CONNECT_TIMEOUT
+        )
+    except KAFKA_ERRORS as error:
+        return _kafka_failure(error, args.kafka)
+    print(f"Orden {text} para {args.run} publicada en ed.control (offset {offset})")
+    return 0
+
+
 def _add_engine_options(parser: argparse.ArgumentParser, center: str = DEFAULT_CENTER) -> None:
     parser.add_argument(
         "--centro",
@@ -757,9 +1005,37 @@ def _add_output_options(parser: argparse.ArgumentParser, *, output_help: str | N
     )
 
 
+def _add_bootstrap_option(parser: argparse.ArgumentParser) -> argparse.Action:
+    return parser.add_argument(
+        "--kafka",
+        type=parse_bootstrap,
+        default=DEFAULT_BOOTSTRAP,
+        metavar="HOST:PUERTO",
+        help="dirección del broker de Kafka (por defecto: %(default)s)",
+    )
+
+
+def _add_live_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--velocidad",
+        type=parse_speed,
+        default=DEFAULT_SPEED,
+        metavar="V",
+        help="minutos simulados por minuto real, un número positivo, o max, sin esperas "
+        "(por defecto: %(default)g)",
+    )
+    target = parser.add_mutually_exclusive_group()
+    _add_bootstrap_option(target)
+    target.add_argument(
+        "--memoria",
+        action="store_true",
+        help="sin Kafka ni órdenes: publica en memoria e imprime el resumen",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    """Build the ``edsim`` parser: ``mm1``, ``llegadas``, ``motor``, ``perfiles`` and
-    ``calibracion``."""
+    """Build the ``edsim`` parser: ``mm1``, ``llegadas``, ``motor``, ``perfiles``,
+    ``calibracion`` and ``directo``."""
     parser = argparse.ArgumentParser(
         prog="edsim",
         description="Simulador de urgencias hospitalarias que genera datos "
@@ -1062,6 +1338,136 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_calibration_options(sensitivity_parser)
     sensitivity_parser.set_defaults(handler=_calibration_sensitivity, subparser=sensitivity_parser)
+
+    live = commands.add_parser(
+        "directo",
+        help="directo: los eventos en vivo, en Kafka o en memoria",
+        description="El modo directo del hito 6: calienta sin emitir, publica el censo y "
+        "después cada evento cuando le toca, al ritmo de --velocidad (docs/specs/hito-6.md).",
+    )
+    live_actions = live.add_subparsers(dest="accion", required=True, metavar="accion")
+
+    prepare = live_actions.add_parser(
+        "preparar",
+        help="crea los topics que falten y comprueba los que existen",
+        description="Crea en Kafka los cuatro topics del directo que falten (ed.patient.events, "
+        "ed.resource.events, ed.runs y ed.control) y comprueba los que existen: particiones y "
+        "marca de tiempo del broker. Termina con código 1 si alguno difiere o el broker no "
+        "responde.",
+    )
+    _add_bootstrap_option(prepare)
+    prepare.set_defaults(handler=_prepare_topics, subparser=prepare)
+
+    launch = live_actions.add_parser(
+        "lanzar",
+        help="lanza un directo del motor",
+        description="Calienta el motor hasta W sin emitir, publica el inicio en ed.runs y el "
+        "censo, y después cada evento cuando le toca, hasta el horizonte, una orden parar o "
+        "Ctrl+C (código 130, tras publicar el fin). Las opciones del modelo son las de motor "
+        "simular, con el modelo clínico por defecto. Comprueba los topics sin crearlos (eso es "
+        "de preparar). Cada 10 s reales imprime una línea de estado. No guarda una ejecución en "
+        "resultados/: su batch es motor simular con el mismo --run-id.",
+    )
+    _add_engine_options(launch)
+    launch_model = launch.add_mutually_exclusive_group()
+    launch_model.add_argument(
+        "--perfiles",
+        default=None,
+        metavar="FICHERO",
+        help=f"perfiles clínicos en TOML (por defecto: {DEFAULT_PROFILES})",
+    )
+    launch_model.add_argument(
+        "--provisional",
+        action="store_true",
+        help="el modelo provisional del hito 3 (catálogo 1); necesita un --centro con su "
+        f"bloque provisional, como {DEFAULT_PROVISIONAL_CENTER}",
+    )
+    launch.add_argument(
+        "--semilla",
+        type=int,
+        default=2026,
+        metavar="N",
+        help="semilla maestra (por defecto: %(default)s)",
+    )
+    launch.add_argument(
+        "--dias",
+        type=int,
+        default=14,
+        metavar="N",
+        help="días completos, con el calentamiento: el horizonte (por defecto: %(default)s)",
+    )
+    launch.add_argument(
+        "--calentamiento",
+        type=int,
+        default=2,
+        metavar="N",
+        help="días completos de calentamiento, sin emitir; con --anclar, días antes de hoy "
+        "(por defecto: %(default)s)",
+    )
+    launch.add_argument(
+        "--run-id",
+        type=validate_run_id,
+        default=None,
+        metavar="ID",
+        help="identificador de la ejecución (por defecto: r, la semilla, _ y la hora de "
+        "arranque en +01:00, como r2026_20261106T172300)",
+    )
+    launch.add_argument(
+        "--anclar",
+        action="store_true",
+        help="ancla al calendario: empieza --calentamiento días antes de hoy a las 0:00 y "
+        "calienta hasta ahora (en +01:00), en vez de la fecha_inicio de --llegadas",
+    )
+    _add_live_options(launch)
+    launch.set_defaults(handler=_launch, subparser=launch)
+
+    replay = live_actions.add_parser(
+        "reemitir",
+        help="reemite una ejecución guardada",
+        description="Reemite con el mismo pacer, censo y productor una ejecución guardada por "
+        "motor simular: el horizonte, el calentamiento y la semilla de su run.json, la fecha de "
+        "su primer evento y sus mismos run_id y event_id (los mismos bytes).",
+    )
+    replay.add_argument("run_id", metavar="RUN_ID", help="la ejecución que se reemite")
+    replay.add_argument(
+        "--calentamiento",
+        type=int,
+        default=None,
+        metavar="N",
+        help="días antes de W (por defecto: los de la ejecución)",
+    )
+    replay.add_argument(
+        "--ejecuciones",
+        default=DEFAULT_RUNS,
+        metavar="DIR",
+        help="carpeta de las ejecuciones guardadas (por defecto: %(default)s)",
+    )
+    _add_live_options(replay)
+    replay.set_defaults(handler=_replay, subparser=replay)
+
+    control = live_actions.add_parser(
+        "control",
+        help="manda una orden a un directo en marcha",
+        description="Publica una orden en ed.control para el directo --run y espera su "
+        "confirmación: cambiar la velocidad, pausar, reanudar o parar. El directo la atiende en "
+        "menos de 0,2 s. Termina con código 1 si la orden no se entrega.",
+    )
+    control.add_argument(
+        "--run", required=True, type=validate_run_id, metavar="RUN_ID", help="el directo"
+    )
+    order = control.add_mutually_exclusive_group(required=True)
+    order.add_argument(
+        "--velocidad",
+        type=parse_speed,
+        default=None,
+        metavar="V",
+        help="nueva velocidad: un número positivo o max",
+    )
+    order.add_argument("--pausar", action="store_true", help="congela el reloj simulado")
+    order.add_argument("--reanudar", action="store_true", help="sigue desde donde se pausó")
+    order.add_argument("--parar", action="store_true", help="termina el directo (fin parar)")
+    _add_bootstrap_option(control)
+    control.set_defaults(handler=_control, subparser=control)
 
     return parser
 

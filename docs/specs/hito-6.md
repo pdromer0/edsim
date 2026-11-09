@@ -681,6 +681,45 @@ Opciones de `edsim directo lanzar`: las del modelo de `edsim motor simular` (`--
 
 La validación de opciones va antes de crear nada ni conectar, como en `motor simular` (lección de la tarea 3.7).
 
+**Precisiones para la 6.5** (decididas al preparar la tarea):
+
+- **`lanzar` y `reemitir` comprueban los topics, pero no los crean:** si falta alguno, terminan con código 1 y dicen que se ejecute `edsim directo preparar`; si alguno difiere, el mismo error que `preparar`. Crear es solo de `preparar`, para que un nombre mal escrito en `--kafka` no deje topics nuevos en otro broker.
+- **Códigos de salida:** 0 si el directo acaba con motivo `horizonte` o `parar`; 130 con Ctrl+C (tras publicar el `fin`); 1 si el sumidero falla (`SinkError`), si los topics no están bien o si falta el extra `kafka` (con el mensaje que dice cómo instalarlo); 2 para los errores de uso, antes de conectar.
+- **La línea de estado** sale cada 10 s reales mientras el pacer espera o publica: se engancha a la fuente de órdenes, que el pacer consulta en cada tramo de 0,2 s y entre eventos, así que también sale en pausa y a ×1 entre eventos lejanos. Lleva hora simulada (`event_time` del minuto actual), velocidad, eventos publicados, retraso del pacer y mensajes pendientes de confirmar (`pending_messages(producer)`: `poll(0)` y después `len(producer)`; nada con `--memoria`).
+- **`run_id` por defecto del directo** (H6-19): `r`, la semilla, un guión bajo y la hora de arranque en `+01:00`, la zona de `event_time` (`r2026_20261106T172300`).
+- **`reemitir RUN_ID`** lee `resultados/ejecuciones/RUN_ID/` (`run.json` y `eventos.jsonl`, con la opción `--ejecuciones` para otra carpeta): horizonte = `dias` de `run.json`, W = `--calentamiento` o el de `run.json`, semilla de `run.json` y fecha de inicio = la del primer evento (`event_time` menos `sim_time`, en `+01:00`). Conserva el `run_id` y los `event_id`.
+- **El directo no guarda una ejecución en `resultados/`:** lo que publica está en Kafka, y su batch se reproduce con `edsim motor simular` y el mismo `--run-id`.
+- **`--memoria`** no usa Kafka ni órdenes (`NoControl`) y al acabar imprime el resumen: `inicio`, eventos publicados (censo y directo) y `fin`.
+
+**Comandos y opciones definitivos (6.5).**
+
+| Comando | Opciones | Qué hace |
+| --- | --- | --- |
+| `edsim directo preparar` | `--kafka HOST:PUERTO` (`localhost:9092`) | Crea los topics que falten con `ensure_topics` e imprime «Creados: …» y «Ya estaban: …». Código 1 si alguno difiere, sin broker o sin el extra |
+| `edsim directo lanzar` | Las del modelo de `motor simular` (`--centro`, `--llegadas`, `--perfiles` o `--provisional`, `--semilla` 2026, `--dias` 14, `--calentamiento` 2, `--run-id`), `--anclar`, `--velocidad V` o `max` (60) y `--kafka HOST:PUERTO` o `--memoria`, excluyentes | Comprueba los topics sin crearlos, crea las órdenes antes del calentamiento y publica con `KafkaSink`; con `--memoria`, sin Kafka ni órdenes. Imprime la cabecera (run_id, velocidad, destino, centro, llegadas, modelo, días, fecha de inicio, W, horizonte y semilla), el censo al anunciar, una línea de estado cada 10 s y el resumen |
+| `edsim directo reemitir RUN_ID` | `--calentamiento N` (el de `run.json`), `--ejecuciones DIR` (`resultados/ejecuciones`), `--velocidad`, `--kafka` o `--memoria` | Lo mismo con la ejecución guardada; la cabecera dice la carpeta, el catálogo, la semilla y la fecha del primer evento |
+| `edsim directo control --run RUN_ID` | Una de `--velocidad V` o `max`, `--pausar`, `--reanudar` y `--parar`; `--kafka` | Publica la orden con el run_id como clave, espera su confirmación e imprime su offset. Código 1 sin broker, sin el extra o si no se entrega |
+
+Las líneas de un directo de `config/` a ×60 con Kafka, parado con `control --parar` a los 24 s:
+
+```
+Censo en W = 2880 min: 113 episodios abiertos, 520 eventos; empieza el directo
++10 s · 2026-01-07T00:10:08.215+01:00 (minuto 2890.1) · ×60 · 533 publicados · retraso 0.6 ms · 0 pendientes
++20 s · 2026-01-07T00:20:10.465+01:00 (minuto 2900.2) · ×60 · 547 publicados · retraso 0.7 ms · 0 pendientes
+Fin · motivo parar · 551 publicados (520 de censo y 31 en directo) · minuto 2903.1 · último event_id rejemplo-1794222870-000008659
+```
+
+**Decisiones de la 6.5.**
+
+- **Broker sin respuesta (decidido con Pedro en el plan).** La primera consulta al broker espera `CONNECT_TIMEOUT` = 10 s: la de `ensure_topics` en `preparar`, `lanzar` y `reemitir`, y la de `list_topics` del productor en `control`. Es un argumento (`connect_timeout`) para que los tests usen menos; los 30 s se quedan para crear topics y para `flush`. Sin respuesta, `BrokerUnavailableError(bootstrap, timeout)`, y los cuatro comandos dicen lo mismo y salen con 1: «no responde el broker de Kafka en HOST:PUERTO en N s: ¿está levantado? docker compose up --wait». En `control`, también si el `flush` no confirma la orden a tiempo; si el broker responde con un error de entrega, `OrderNotDeliveredError`. `KafkaControl` convierte en el mismo error un fallo al leer el offset alto.
+- **La lógica, en el paquete:** `edsim.live.launch` (`prepare_live`, `prepare_replay`, `run_prepared`, `live_run_id` y `log_start_date`), `edsim.live.status` (los envoltorios del estado) y `edsim.live.report` (los textos en español, como `engine/report.py`). La CLI construye el reloj, las órdenes y el sumidero reales, y solo imprime.
+- **La línea de estado no toca el pacer.** `StatusControl` envuelve la fuente de órdenes: en cada `poll`, antes de pedir la orden, mira el reloj y, si toca, da un `LiveStatus` con lo que leen las propiedades públicas del pacer (`anchor`, `sim_now()`, `speed`, `paused`, `lag()`). Lo publicado lo cuenta `ReportingSink`, que envuelve el sumidero, y lo pendiente es `pending_messages(producer)` (`poll(0)` y después `len(producer)`). El primer intervalo empieza en el primer `poll`, que llega justo después de anclar el directo tras el censo: la primera línea sale 10 s después del ancla, no del arranque.
+- **Los pendientes se cuentan tras servir los avisos** (`pending_messages`: `poll(0)` y `len(producer)`). `len(producer)` solo también cuenta los mensajes cuya confirmación ya llegó pero no se ha servido: `KafkaSink` llama a `poll(0)` tras cada `produce`, y entre dos eventos a ×60 nadie lo hace. Con `len(producer)` solo, un directo de `config/` decía 7 pendientes a los 10 s; ahora dice 0.
+- **Los tramos de 0,2 s empiezan en el último evento liberado, no en el 0.** Con un log real no hay un `poll` exactamente a los 10 s: la línea sale en el primer `poll` desde ese instante, como mucho 0,2 s después (con `tests/data` a ×60, a los 10,12 s, minuto 1.450,1). Con el log a mano, cuyos eventos caen en segundos enteros, sale justo a los 10 s.
+- **`--anclar` con W ≥ horizonte no puede ocurrir:** tras `check_horizon` (días > calentamiento), W = cal × 1.440 + m < (cal + 1) × 1.440 ≤ días × 1.440. La comprobación se queda en `prepare_live` como defensa.
+- `--kafka` y `--memoria` son excluyentes; una `--semilla` negativa es un error de uso. El resumen desglosa lo publicado en censo y directo en los dos modos.
+- `reemitir` comprueba que el primer evento es de ese `run_id` y que el log empieza a las 0:00. Lo redondea al minuto, porque `event_time` se trunca al milisegundo.
+
 ## Estructura del código
 
 Todo el código nuevo del núcleo vive en `src/edsim/live/` (H6-2); el motor y el catálogo cambian poco y sin cambiar las huellas. Solo `live/kafka.py` importa `confluent_kafka`, y solo dentro de las funciones que crean clientes reales (import perezoso). Así todos los módulos se importan sin el extra (el test de frontera los importa todos) y los tests con `FakeProducer` corren en el job `tests` del CI, que no instala el extra.
@@ -704,11 +743,14 @@ edsim/
 │   │   ├── pacer.py             # pacer: ancla, velocidad, pausa, retraso (6.3)
 │   │   ├── control.py           # órdenes, fuente programada y fuente vacía (6.3)
 │   │   ├── census.py            # episodios abiertos y filtro del censo (6.2)
-│   │   ├── directo.py           # orquesta los seis pasos del directo y del replay (6.3, 6.5)
+│   │   ├── directo.py           # orquesta los seis pasos del directo y del replay (6.3)
+│   │   ├── launch.py            # prepara y lanza un directo o un replay: lo que hace la CLI (6.5)
+│   │   ├── status.py            # línea de estado: envoltorios del sumidero y de las órdenes (6.5)
+│   │   ├── report.py            # textos del directo en la terminal (6.5)
 │   │   ├── messages.py          # mensajes de ed.runs y ed.control (6.4)
 │   │   ├── schemas.py           # genera los JSON Schema del catálogo (6.4)
 │   │   ├── topics.py            # definición de los topics (tabla literal) (6.4)
-│   │   └── kafka.py             # KafkaSink, KafkaControl, ensure_topics; importa confluent_kafka solo al crear clientes (6.4)
+│   │   └── kafka.py             # KafkaSink, KafkaControl, ensure_topics, publish_order; importa confluent_kafka solo al crear clientes (6.4, 6.5)
 │   └── cli.py                   # cambia: grupo edsim directo (6.5)
 ├── tests/                       # rápidos y slow, sin broker (también los de FakeProducer)
 ├── tests_integracion/           # nuevo: contra Kafka real (6.1, 6.4, 6.5)
@@ -724,6 +766,8 @@ edsim/
 - **Censo (6.2).** En `edsim.live.census`: `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión de cada evento; `census(events, start) -> list[Event]`, en el orden original; `live_events(events, start) -> list[Event]`, los de `sim_time >= start` (no `live`, que es el nombre del subpaquete). `census` seguido de `live_events` es el log filtrado de la pieza 7.
 - **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info) -> RunEnd`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`. En la 6.3, `inicio` y `fin` son datos (nombres propuestos: `RunStart` y `RunEnd`) que el sumidero recibe aparte de los eventos; la 6.4 los convierte en los mensajes JSON de `ed.runs`. Tras el último evento, espera al horizonte antes de `fin`. Con Ctrl+C publica `fin` con motivo `interrupcion` y vuelve a lanzar la interrupción. **Nombres definitivos (6.3):** fuentes `EngineSource(ed, buffer)` y `LogSource(events, horizon)` (protocolo `LiveSource`: `peek()` y `step() -> list[Event]`); `RunInfo(run_id, mode, schema_version, seed, start_date, anchored)`, `RunStart(info, live_start, horizon, speed, census_episodes, census_events)` y `RunEnd(run_id, reason, sim_time, last_event_id, published)`, con los modos `directo` y `replay` y los motivos `horizonte`, `parar`, `interrupcion` y `error`; sumidero `LiveSink` con `start`, `write` y `end`, y `MemoryLiveSink`; `anchored_start(wall, warmup_days) -> (fecha, W)`.
 - **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función. **Nombres definitivos (6.4):** en `edsim.live.topics`, `Topic(name, partitions, key, config)`, `TOPICS`, `TOPIC_CONFIG`, `REPLICATION_FACTOR`, las constantes `PATIENT_EVENTS`, `RESOURCE_EVENTS`, `RUNS` y `CONTROL`, y `route(event) -> (topic, clave)`; en `edsim.live.messages`, `run_start_json(RunStart)`, `run_end_json(RunEnd)`, `control_json(run_id, Command)`, `parse_control(texto, run_id, on_invalid) -> Command | None` y `KNOWN_CONTROL_DIFFERENCES`; en `edsim.live.schemas`, `event_schema(versión)`, `schema_text(versión)`, `write_event_schemas(carpeta)` y `KNOWN_DIFFERENCES`; en `edsim.live.directo`, `SinkError(mensaje, *, delivered, failed, pending, last_delivered)`; en `edsim.live.kafka`, `producer_config(bootstrap, run_id)`, `connect_producer(bootstrap, run_id)`, `KafkaSink(producer, run_id)`, `KafkaControl(bootstrap, run_id, on_invalid)` con `poll()`, `close()` y `start_offset`, y `ensure_topics(bootstrap, topics=TOPICS, *, timeout=30) -> TopicsReport(created, existing)`, con `TopicMismatchError`. En `edsim.engine.events`, `EPISODE_SCHEMA` y `PATIENT_SCHEMA`; en `edsim.finite`, `to_float(valor) -> float | None` (revisión del PR #59).
+
+- **CLI y lanzamiento. Nombres definitivos (6.5):** en `edsim.live.kafka`, `ensure_topics(bootstrap, topics=TOPICS, *, create=True, timeout=30, connect_timeout=10)` con `MissingTopicsError` (con `create=False`, si falta alguno), `CONNECT_TIMEOUT`, `BrokerUnavailableError(bootstrap, timeout, detail="")`, `publish_order(producer, run_id, command, *, bootstrap, connect_timeout=10, timeout=30) -> offset`, `OrderNotDeliveredError` y `pending_messages(producer)`; en `edsim.live.launch`, `live_run_id(semilla, pared)`, `PreparedRun(source, info, start, horizon)`, `prepare_live(centro, perfil, días, semilla, *, warmup_days, run_id, profiles=None, anchor_wall=None)`, `prepare_replay(carpeta, run_id, *, warmup_days=None)`, `log_start_date(evento)` y `run_prepared(prepared, *, clock, speed, control, sink, on_start=None, on_end=None, on_status=None, pending=None, status_interval=10)`; en `edsim.live.status`, `LiveStatus`, `ReportingSink(sink, *, on_start, on_end)`, `StatusControl(control, *, clock, pacer, start_date, horizon, published, on_status, pending=None, interval=10)` y `STATUS_INTERVAL`; en `edsim.live.report`, `format_speed`, `format_status`, `format_census` y `format_end(inicio, fin)`.
 
 **Reglas que se mantienen:** paquete en inglés; tests del núcleo en español; claves de los mensajes y opciones de la CLI en español; lógica en el paquete y CLI fina; `edsim.live` no importa `edsim_app`, `streamlit` ni `pandas`, y la app no importa `edsim.live`.
 
@@ -767,6 +811,17 @@ La validación del hito es exacta, no estadística: el directo debe publicar los
 - Frontera: importar todos los módulos de `edsim` no carga `confluent_kafka`, y solo `live/kafka.py` lo importa, dentro de funciones. Estos tests corren sin el extra instalado, en el job `tests`.
 - **En la 6.4:** `tests/test_topics.py` (la tabla literal y el reparto a mano), `tests/test_messages.py` (el `inicio` y el `fin` del directo a mano, texto exacto; órdenes válidas, ajenas e inválidas), `tests/test_schemas.py` (escritos = generados, los tres logs, 91 eventos a mano contra `Event` y 32 órdenes contra `parse_control`, con las diferencias probadas en los dos sentidos), `tests/test_kafka_sink.py` con `FakeProducer` (`tests/fake_kafka.py`: `BufferError` por número de llamada, avisos con error por número de mensaje, entrega a mano y `flush` que no vacía), `tests/test_kafka_admin.py` (la espera de `ensure_topics`, con un cliente de administración falso), los dos de `run_live` con un sumidero en memoria que falla y la frontera de `jsonschema`. En la revisión del PR #59: cuatro de `KafkaSink` sobre el fin que espera a las confirmaciones y `tests/test_numeros_enormes.py` (cada comprobación con `10**400` da el mensaje de siempre). El catálogo de prueba se monta con `monkeypatch` de `CATALOGS` y `SCHEMA_VERSIONS`: una versión 99 con un evento de recurso sin `recurso`.
 
+**CLI y lanzamiento (6.5)**, sin broker:
+
+- `tests/test_status.py`: la línea de estado con el directo a mano de la 6.3. Hay líneas a los 10, 20, 30, 40, 50 y 60 s, con los minutos 130 a 180 y 7, 7, 7, 8, 8 y 9 publicados; la de los 30 s va antes de publicar la salida de EP-000002. Con pausa a los 15 s y reanudación a los 35 s, las de 20 y 30 s dicen «en pausa» y minuto 135. Si publicar cuesta 1 s, la primera sale a los 16 s (10 s después del ancla). Se prueban también los textos exactos.
+- `tests/test_launch.py`: el run_id por defecto a mano (`r2026_20261106T172300` y `r2026_20270101T003000`), `prepare_live` con la fecha del perfil, provisional y anclado, `log_start_date`, `prepare_replay` y sus errores, «directo = batch» del caso v3 por `run_prepared` con la línea de estado, y el replay en memoria. Las ejecuciones guardadas usan una copia del perfil con `fecha_inicio` 2026-03-09, porque `tests/data` y `config/` tienen la misma fecha.
+- `tests/test_cli_directo.py`, con dobles de `connect_producer`, `KafkaControl`, `ensure_topics` y el reloj:
+  - 22 errores de uso que salen con 2 sin conectar;
+  - `lanzar` y `reemitir` en memoria (lo publicado es el batch filtrado, byte a byte), el run_id por defecto y el anclaje;
+  - sin el extra (1 y el mensaje; `--memoria` funciona) y Ctrl+C con `--memoria` (130, fin `interrupcion` y las líneas de estado);
+  - con Kafka falso: comprobar sin crear, las órdenes antes del `inicio`, el `flush` final, los avisos en stderr, los topics que faltan o difieren, `SinkError` (1 y fin `error`), sin broker (el mismo mensaje en los cuatro comandos) y `control`.
+- `tests/test_kafka_admin.py` y `tests/test_kafka_orders.py`, con un módulo `confluent_kafka` falso en `sys.modules` (corren sin el extra): `create=False`, la primera consulta con `connect_timeout` y `publish_order`.
+
 **Integración (`tests_integracion/`, 6.1, 6.4 y 6.5)**
 
 - Prueba de humo: publicar y leer un mensaje por `localhost:9092`.
@@ -774,6 +829,12 @@ La validación del hito es exacta, no estadística: el directo debe publicar los
 - Particiones: con 3 particiones, `EP-000184` → 0, `EP-000185` → 0, `EP-000186` → 1, `EP-000187` → 2 (murmur2, comprobado contra los vectores de prueba de Kafka).
 - Un directo de 1 día a velocidad máxima: lo leído de los cuatro topics, ordenado por número de `event_id`, es igual al batch filtrado; ningún `event_id` falta ni se repite; dentro de cada partición, el orden por episodio es el de emisión; todas las marcas son de tipo `LogAppendTime`.
 - Control: una orden `parar` publicada con `edsim directo control` termina el directo con motivo `parar`.
+- **En la 6.5** (`tests_integracion/test_cli_directo.py`):
+  - `preparar` con la CLI crea los topics y la segunda vez no crea nada; `lanzar` sin los topics no los crea. Los dos usan nombres únicos, cambiando `edsim.cli.TOPICS`, para no tocar los reales.
+  - Extremo a extremo: `lanzar` en un subproceso y las órdenes desde otros procesos con `edsim directo control`, que cambian a ×600, pausan (durante 2 s no llega ningún evento), reanudan y paran. El `fin` llega menos de 1 s después de la orden, por las marcas `LogAppendTime`, y lo leído es un prefijo del batch filtrado.
+  - Ctrl+C (SIGINT): código 130 y `fin` con motivo `interrupcion`.
+  - `reemitir` publica los mismos bytes que el `eventos.jsonl` guardado.
+  - Sin broker (`--kafka localhost:1`, 1 s): código 1 y el mensaje, sin traza, en los cuatro comandos.
 
 ### Versiones incorrectas (temporales, con predicción firme)
 
@@ -802,6 +863,10 @@ La V3, la V6 y la V8 enseñan lo mismo desde tres sitios: un error que la ejecuc
 - Latencia entre la publicación y la marca del broker, y el retraso del pacer, a ×1, ×60 y máxima.
 - **Medido en la 6.4** con `KafkaSink` y el broker de `compose.yaml` (`config/`, semilla 2026, 3 días, W = 2 días, 5.048 publicados): a velocidad máxima, en nueve parejas, el mejor `run_live` en memoria tardó 0,76 s y con Kafka 1,39 s (1,48 s con el `flush`), con medianas de 1,43 y 2,62 s y mucho ruido de WSL2; el sumidero de Kafka cuesta unos 0,1 a 0,2 ms por evento (`produce` y `poll(0)`). A ×3.600, en dos ejecuciones (25,1 y 26,3 s): de `produce` a la marca `LogAppendTime`, mediana 5,9 y 6,0 ms (casi todo es `linger.ms` = 5 ms), p95 8,6 y 20,8 ms, máximo 45,8 y 61,4 ms; retraso del pacer tras cada evento, mediana 0,59 y 0,66 ms, p95 1,9 y 2,1 ms, máximo 19 y 25 ms, y 1,25 y 0,62 ms al final.
 - El ejercicio de la pieza 3: parar Kafka un minuto en mitad de un directo y comprobar que no falta ni sobra nada.
+- **Medido en la 6.5** con la CLI y el broker de `compose.yaml` (`config/`, semilla 2026, 14 días, W = 2 días), con el arranque del proceso incluido (unos 1,9 s):
+  - `lanzar --velocidad max` publica 47.402 de los 55.511 eventos (520 de censo y 46.882 en directo) en 9,6 a 11,2 s con Kafka (tres veces) y en 6,8 s en memoria;
+  - `reemitir` de la misma ejecución guardada (`motor simular`, 12,1 s), en 5,8 a 6,7 s.
+  - Con `tests/data` a ×60, del `parar` al `fin` pasan 45, 122 y 141 ms según las marcas del broker; `edsim directo control` tarda de 2,1 a 2,7 s, casi todo en arrancar Python.
 
 ## Decisiones del hito
 
@@ -1136,3 +1201,87 @@ Revisados el código, los valores a mano y la especificación (solo añade texto
 - 6.4: `RunStart` y `RunEnd` a JSON de `ed.runs`, el motivo `error` y `KafkaControl`. Medir el coste por evento a velocidad máxima con el `KafkaSink` (0,13 ms por evento en memoria) y volver a medir la completa.
 - Si un log del replay retrocede en el tiempo, el error salta al leer el siguiente y el anterior no se publica: vale para un log corrupto.
 - Este anexo se exporta en el primer commit de la 6.4.
+
+### Tarea 6.4: Esquemas, topics, mensajes y Kafka
+
+**Qué se hizo**
+
+PR #59 (rama `feat/h6-kafka`, Claude Code, con `@codex review`): trece commits y tres más de la revisión; fusión `3c77ba2` el 9 de noviembre de 2026. `tests-kafka` pasa a obligatorio en la protección de `main`.
+
+- **Refactor del catálogo** (commit aparte, sin tocar tests): las comprobaciones son objetos (`Check`, un protocolo con `__call__` y `json_schema()`) que validan igual y describen su esquema. 1.947 comprobaciones dieron el mismo resultado y el mismo mensaje antes y después.
+- **`live/schemas.py`** y `schemas/`: `eventos-v1` a `v3` generados y escritos (`uv run python -m edsim.live.schemas`), y `ed-runs-v1` y `ed-control-v1` a mano. `jsonschema` 4.26.0 solo en el grupo `dev`.
+- **`live/topics.py`** (tabla literal y `route`), **`live/messages.py`** (`inicio`, `fin` y órdenes, con `parse_control`) y **`SinkError`** en `live/directo.py`, con el `fin` de motivo `error`.
+- **`live/kafka.py`:** `producer_config`, `connect_producer`, `KafkaSink`, `KafkaControl` (asignación manual en el offset alto) y `ensure_topics` (comprueba antes de crear y espera a que los topics nuevos se vean).
+- **`edsim/finite.py`** (revisión): `to_float`, para que un entero enorme dé el `ValueError` de siempre.
+- **Tests:** `test_topics.py`, `test_messages.py`, `test_schemas.py` (91 eventos y 32 órdenes a mano en el control cruzado), `test_kafka_sink.py` con `FakeProducer`, `test_kafka_admin.py`, `test_numeros_enormes.py`, añadidos en `test_directo.py` y frontera de `jsonschema`; en `tests_integracion/`, siete nuevos: topics, particiones con murmur2 y CRC32, el directo de un día y las órdenes.
+
+**Decisiones tomadas con Pedro durante el plan**
+
+- **El `fin` de error dice solo lo confirmado:** `publicados` = eventos confirmados y `ultimo_event_id` = el confirmado con el número de orden más alto, aunque los avisos lleguen desordenados. No promete que los anteriores llegaran: dice que la ejecución está incompleta.
+- **Los huecos del esquema que sí se pueden expresar, se expresan:** `maxLength: 9` en los identificadores (el `$` de `re.search` admite un salto final) y `maximum` = el mayor double en `sim_time` y en los números de los mensajes (`1e400` se lee como infinito).
+
+**Decisiones del diff**
+
+- Tras un fallo de entrega, cada `write` lanza `SinkError`, no solo el siguiente.
+- El esquema de la versión N describe solo los eventos de la versión N.
+- Una orden de otro `run_id` se ignora sin aviso aunque sea inválida: es la única diferencia entre `parse_control` y el esquema de `ed.control`.
+- `ensure_topics` espera a que los topics nuevos aparezcan en los metadatos: justo después de crearlos, 7 de 60 no aparecían y una segunda llamada los intentaba crear otra vez (0 fallos en 240 pruebas tras el arreglo).
+- Los tests de integración usan los topics reales, aislados por `run_id` único y por los offsets anotados antes: las ejecuciones `test-…` se quedan en los `ed.*` hasta el siguiente `docker compose down`.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | `test_schemas.py` 142 tests en 35 s (la validación de los tres logs, unos 21 s, marcada `slow`); el resto, menos de 0,5 s por fichero |
+| `scripts/tests-integracion.sh` | 11 tests en 29 s (arranque 0:11, pytest 0:15, bajada 0:03) |
+| `scripts/tests-completos.sh` con Kafka apagado | 20 min 31 s, en verde: núcleo 3.141 tests en 15:07, app 287 en 4:25, notebooks 0:59 |
+| Tras la revisión: integración | 11 tests en 34 s (arranque 0:13, pytest 0:19, bajada 0:02) |
+| Tras la revisión: completa, sin contenedores | 18 min 09 s, en verde: núcleo 3.167 tests en 13:00 (26 más), app 287 en 4:16, notebooks 0:53 |
+| Velocidad máxima, memoria frente a Kafka (9 parejas) | Mejor caso 0,76 s frente a 1,39 s (1,48 s con el `flush`); medianas 1,43 y 2,62 s; Kafka cuesta 0,1 a 0,2 ms por evento |
+| De `produce` a `LogAppendTime`, a ×3.600 | Mediana 5,9 y 6,0 ms (casi todo, `linger.ms`); p95 8,6 y 20,8 ms; máximo 45,8 y 61,4 ms |
+| Esquemas | 23, 27 y 29 kB (`eventos-v1` a `v3`); 2,8 y 1,5 kB los de los mensajes |
+
+La completa varía mucho sin cambios de código: el mismo día, 20:31 y 18:09, y la app, que no cambia desde la 6.2, en 3:06, 3:25, 4:25 y 4:16. Es el portátil, no los tests. En el equipo de Pedro el motor de Docker corre dentro de WSL, sin Docker Desktop (`docker desktop stop` dice que no está en marcha), así que «Docker parado» significa sin contenedores (`docker compose down`). Para comparar entre tareas hay que mirar la parte que cambia, no el total.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predichos | Observados |
+| --- | --- | --- | --- |
+| V6 | Reparto por tipo | 1 | 1 |
+| V7 | Sin `murmur2_random` | 2 | 2 |
+| V8 | Sin idempotencia | 1 | 1 |
+| V9 | `ingest_time` con la hora del productor | 5 | 5 (predicción rehecha en el plan) |
+| V10 | `CreateTime` y marca = `event_time` | 6 | 6; forzada, `SinkError` a los 62,9 s con 406 entregados |
+| V11 | Payload sin `additionalProperties: false` | 5 | 6 (también el sobre de cada rama) |
+| V12 | `BufferError` descarta | 1 | 1 |
+| V13 | Aviso con error ignorado | 4 | 4 |
+| V14 | `parse_control` sin comparar el `run_id` | 3 | 4 (también la orden ajena e inválida) |
+| V15 | Sin la cabecera `schema_version` | 3 | 3 (5 en la primera pasada, por la carrera de `ensure_topics`) |
+| V16 | Sin `flush` al salir | 4 | 5 (también K2) |
+| V17 | `run_live` sin `fin` al fallar | 3 | 3 |
+| V18 | `KafkaControl` desde el principio | 1 | 1 |
+| V19 | Patrones sin `maxLength` | 7 | 7 |
+| V20 | `pruebas` como `items`, sin orden | 6 | 5: S4 no mira `pruebas` (lo cubre S5) |
+| V21 | `fin` de error con lo entregado al sumidero | 1 | 1 |
+| V22 | `sim_time` sin `maximum` | 4 | 5 (también el sobre de cada rama) |
+| V23 | Mensajes sin `maximum` | 1 | 1 (ajuste de la aprobación) |
+| V24 | end sin flush previo (revisión) | 5 | 5: el caso de Codex, el flush antes del fin, Ctrl+C con un fallo pendiente, el fin de error tras el flush e I8 |
+| V25 | check\_speed sin to\_float (revisión) | 6 | 6: check\_speed, Command y el pacer con 10\*\*400, KafkaControl.poll, M7 y el control cruzado |
+
+Las 20 se detectaron. Fallan más de lo previsto la V11, la V14, la V16 y la V22, por tests y casos añadidos después del plan y una comprobación de K2 que no se tuvo en cuenta; falla menos la V20, por un error de la predicción (S4 no mira `pruebas`, lo cubre S5), sin hueco en los tests. La primera pasada de la V15 destapó la carrera de `ensure_topics`.
+
+**Revisión**
+
+Codex revisó `e49a693` y dejó dos comentarios, los dos correctos. Se arreglaron en la misma rama, y cada hilo tiene la respuesta con el commit que lo arregla (`80b03e3` y `1872184`):
+
+- **P1:** `KafkaSink.end` publicaba el `fin` antes de esperar las confirmaciones, así que una entrega que fallaba después del último `write` dejaba un `fin` con motivo `horizonte`. Ahora `end` hace `flush(30)` primero y, si algo falló o quedó pendiente, publica un `fin` con motivo `error` y lo confirmado, y lanza `SinkError`. Cuatro tests nuevos, entre ellos el caso de Codex.
+- **P2:** una `velocidad` de 401 cifras llega como entero, y `math.isfinite` lanza `OverflowError`; salía de `KafkaControl.poll` y paraba el directo sin aviso ni `fin`. Generalizado: todas las comprobaciones de «número real finito» del directo y `_check_sim_time` pasan por `edsim.finite.to_float`.
+
+La segunda `@codex review`, sobre los arreglos, se pidió un minuto antes de fusionar y no había respondido al fusionar. La revisión del chat cubrió los dos arreglos línea a línea.
+
+**Pendiente**
+
+- Comprobaciones con el mismo hueco de los enteros enormes fuera del directo: `engine.advance_until`, `runs/`, `profiles/context.py` y `checks.check_number`. Para una tarea de proceso.
+- 6.5: el directo de un día a ×60 visto en Redpanda Console y el ejercicio de la pieza 3 (parar Kafka un minuto), con la CLI.
+- Redpanda Console v3.14.0: decidir al cerrar el hito.
+- Este anexo se exporta en el primer commit de la 6.5.

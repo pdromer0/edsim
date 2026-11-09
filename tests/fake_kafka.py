@@ -7,7 +7,9 @@ servir los avisos. Se puede programar un BufferError en una llamada a produce y 
 con error en un mensaje, y entregar los mensajes a mano y en otro orden.
 """
 
+import sys
 from dataclasses import dataclass, field
+from types import ModuleType, SimpleNamespace
 
 
 @dataclass
@@ -29,6 +31,10 @@ class FakeMessage:
     @property
     def headers(self):
         return self.kwargs.get("headers")
+
+    def offset(self) -> int:
+        """El offset de un mensaje entregado, como Message.offset(): desde 0."""
+        return self.number - 1
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,7 @@ class FakeProducer:
         hold: Números de mensaje aceptado que poll no entrega: esperan al flush, como un
             mensaje cuya confirmación tarda.
         stuck: Mensajes que flush deja sin entregar, los últimos.
+        unreachable: Si list_topics falla como sin broker (FakeKafkaException).
 
     Attributes:
         calls: Cada llamada a produce: (topic, kwargs sin on_delivery), también las que
@@ -70,7 +77,10 @@ class FakeProducer:
         deliver_on_poll: bool = True,
         hold=(),
         stuck: int = 0,
+        unreachable: bool = False,
     ) -> None:
+        self.unreachable = unreachable
+        self.list_calls: list[tuple] = []
         self.hold = set(hold)
         self.buffer_errors = set(buffer_errors)
         self.delivery_errors = set(delivery_errors)
@@ -129,6 +139,13 @@ class FakeProducer:
     def __len__(self) -> int:
         return len(self._pending)
 
+    def list_topics(self, topic=None, timeout=None):
+        """Los metadatos, como Producer.list_topics; sin broker, FakeKafkaException."""
+        self.list_calls.append((topic, timeout))
+        if self.unreachable:
+            raise FakeKafkaException(NO_BROKER)
+        return SimpleNamespace(topics={})
+
 
 @dataclass
 class FakeConsumerMessage:
@@ -155,3 +172,100 @@ class FakeConsumer:
 
     def close(self) -> None:
         pass
+
+
+# --- Un módulo confluent_kafka falso -------------------------------------------------
+
+NO_BROKER = 'KafkaError{code=_TRANSPORT,val=-195,str="Local: Broker transport failure"}'
+"""El texto de la excepción del cliente sin broker."""
+
+
+class FakeKafkaException(Exception):
+    """Como confluent_kafka.KafkaException."""
+
+
+@dataclass(frozen=True)
+class FakeConfigResource:
+    """Como confluent_kafka.admin.ConfigResource: se usa de clave en un diccionario."""
+
+    restype: object
+    name: str
+
+
+@dataclass
+class FakeNewTopic:
+    """Como confluent_kafka.admin.NewTopic."""
+
+    topic: str
+    num_partitions: int
+    replication_factor: int
+    config: dict
+
+
+class FakeFuture:
+    """Un futuro ya resuelto."""
+
+    def __init__(self, value) -> None:
+        self.value = value
+
+    def result(self, timeout=None):
+        return self.value
+
+
+class FakeAdmin:
+    """Un AdminClient falso con los topics del broker: {nombre: (particiones, marca)}.
+
+    Attributes:
+        list_timeouts: El timeout de cada list_topics, en orden.
+        created: Los topics creados, en orden.
+    """
+
+    def __init__(self, topics=None, *, unreachable: bool = False) -> None:
+        self.topics = dict(topics or {})
+        self.unreachable = unreachable
+        self.list_timeouts: list[float] = []
+        self.created: list[str] = []
+
+    def list_topics(self, timeout=None):
+        self.list_timeouts.append(timeout)
+        if self.unreachable:
+            raise FakeKafkaException(NO_BROKER)
+        topics = {
+            name: SimpleNamespace(partitions=dict.fromkeys(range(n)), error=None)
+            for name, (n, _) in self.topics.items()
+        }
+        return SimpleNamespace(topics=topics)
+
+    def describe_configs(self, resources, request_timeout=None):
+        return {
+            r: FakeFuture({"message.timestamp.type": SimpleNamespace(value=self.topics[r.name][1])})
+            for r in resources
+        }
+
+    def create_topics(self, new, request_timeout=None):
+        for topic in new:
+            self.created.append(topic.topic)
+            self.topics[topic.topic] = (
+                topic.num_partitions,
+                topic.config["message.timestamp.type"],
+            )
+        return {topic.topic: FakeFuture(None) for topic in new}
+
+
+def install_fake_confluent_kafka(monkeypatch, admin: FakeAdmin | None = None) -> ModuleType:
+    """Pone en sys.modules un confluent_kafka falso (y su .admin) mientras dure el test.
+
+    Así ensure_topics y publish_order corren sin el extra, en el job tests del CI. El
+    AdminClient que crean es ``admin``.
+    """
+    kafka = ModuleType("confluent_kafka")
+    kafka.KafkaException = FakeKafkaException
+    admin_module = ModuleType("confluent_kafka.admin")
+    admin_module.AdminClient = lambda config: admin
+    admin_module.ConfigResource = FakeConfigResource
+    admin_module.NewTopic = FakeNewTopic
+    admin_module.ResourceType = SimpleNamespace(TOPIC="TOPIC")
+    kafka.admin = admin_module
+    monkeypatch.setitem(sys.modules, "confluent_kafka", kafka)
+    monkeypatch.setitem(sys.modules, "confluent_kafka.admin", admin_module)
+    return kafka
