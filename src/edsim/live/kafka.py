@@ -148,6 +148,17 @@ class Producer(Protocol):
     def __len__(self) -> int: ...
 
 
+def pending_messages(producer: Producer) -> int:
+    """Messages still waiting for their confirmation, for the status line.
+
+    It serves the delivery reports already arrived (``poll(0)``) and then counts what is
+    left: ``len(producer)`` alone also counts the messages whose confirmation arrived but
+    was not served yet, and between two events at ×60 nobody calls ``poll``.
+    """
+    producer.poll(0)
+    return len(producer)
+
+
 class KafkaSink:
     """Publishes a live run in Kafka: a ``LiveSink`` and a context manager.
 

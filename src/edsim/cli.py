@@ -110,6 +110,7 @@ from edsim.live.kafka import (
     TopicMismatchError,
     connect_producer,
     ensure_topics,
+    pending_messages,
     publish_order,
 )
 from edsim.live.launch import PreparedRun, live_run_id, prepare_live, prepare_replay, run_prepared
@@ -776,7 +777,7 @@ def _run_live_command(args: argparse.Namespace, prepared: PreparedRun, clock) ->
                     speed=args.velocidad,
                     control=control,
                     sink=sink,
-                    pending=lambda: len(producer),
+                    pending=lambda: pending_messages(producer),
                     **callbacks,
                 )
         finally:
