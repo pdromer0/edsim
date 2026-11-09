@@ -23,13 +23,19 @@ import numbers
 from collections.abc import Iterable
 
 from edsim.engine.events import TERMINAL_EVENTS, Event
+from edsim.finite import to_float
 
 
 def _check_start(start: object) -> float:
     # bool is a subclass of int in Python; NaN would leave every event out without a word.
-    if isinstance(start, bool) or not isinstance(start, numbers.Real) or math.isnan(start):
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, numbers.Real)
+        or (value := to_float(start)) is None  # an int such as 10**400
+        or math.isnan(value)
+    ):
         raise ValueError(f"start must be a number of minutes, got {start!r}")
-    return float(start)
+    return value
 
 
 def open_episodes(events: Iterable[Event], start: float) -> frozenset[str]:

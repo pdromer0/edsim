@@ -318,7 +318,8 @@ Con `additionalProperties: false`, añadir un campo (como hizo la versión 2 con
 
 - **Un esquema por versión de catálogo**, `schemas/eventos-v1.schema.json` a `eventos-v3.schema.json`, generados por código a partir de `CATALOGS`. Cuando el hito 5 añada la versión 4, su esquema saldrá solo.
 - **Patrón «derivado y escrito»**, como los umbrales del hito 4: el esquema se genera una vez, se escribe en el repositorio con el comando que lo genera y un test comprueba que «escritos = generados». Si alguien cambia el catálogo sin regenerar, el test falla.
-- **Un cambio en el catálogo que hace falta para generar.** Hoy cada comprobación del catálogo (`_choice`, `_int_range`, `_test_types`…) es una función de Python: valida, pero no dice qué forma tiene. La tarea 6.4 las convierte en objetos pequeños que validan igual y, además, describen su esquema. Es un refactor sin cambio de comportamiento, en un commit aparte y sin tocar tests.
+- **Un cambio en el catálogo que hace falta para generar.** Hasta la 6.3, cada comprobación del catálogo (`_choice`, `_int_range`, `_test_types`…) era una función de Python: validaba, pero no decía qué forma tiene. La tarea 6.4 las convirtió en objetos pequeños que validan igual y, además, describen su esquema (`Check`, un protocolo con `__call__` y `json_schema()`). Fue un refactor sin cambio de comportamiento, en un commit aparte y sin tocar tests: las fábricas `_int_range` y `_choice` y las instancias `_bool`, `_episode`, `_test_types` y `_test_results` conservan su nombre, así que el texto de `CATALOG_V1` a `CATALOG_V3` no cambió, y 1.947 comprobaciones dieron el mismo resultado y el mismo mensaje antes y después.
+- **En la 6.4.** `edsim.live.schemas`: `event_schema(versión)` da el diccionario, `schema_text(versión)` el texto del fichero (sangría 2, UTF-8 tal cual, salto final) y `uv run python -m edsim.live.schemas`, desde la raíz, los escribe; el comando va en el `$comment` de cada esquema. Pesan 23, 27 y 29 kB (1.021, 1.169 y 1.252 líneas): cada rama repite el sobre entero, para que un consumidor lea la de su tipo sin saltos. Validar los tres logs de «directo = batch» de la 6.3 (12.173, 12.858 y 13.492 eventos) con `jsonschema` tarda unos 21 s: cada línea prueba las 13 o 14 ramas del `oneOf`, y el test va marcado `slow`.
 - **Dos fuentes independientes, comparadas.** Un test pasa los mismos eventos, válidos e inválidos, por el validador de Python y por el esquema, y exige que digan lo mismo. Es la lección de la app: dos fuentes independientes comparadas por un test son un control cruzado.
 - **Los mensajes de `ed.runs` y `ed.control`** tienen también su esquema, escrito a mano y con su propio número de versión.
 - **Sin registro de esquemas ni Avro** hasta la v1 (diseño): JSON se lee tal cual en Redpanda Console y no necesita otro servicio. Los ficheros del repositorio hacen de registro.
@@ -581,7 +582,7 @@ Cuatro topics, todos con la marca de tiempo del broker (`LogAppendTime`), retenc
 | `ed.runs` | 1 | `run_id` | Mensajes `inicio` y `fin` de cada ejecución | Simulador | Consumidores, para saber la versión y W |
 | `ed.control` | 1 | `run_id` | Órdenes al simulador | `edsim directo control` | Simulador |
 
-Configuración de los cuatro: `message.timestamp.type=LogAppendTime`, `cleanup.policy=delete` y la retención por defecto (`retention.ms` de 7 días). El broker tiene la autocreación desactivada, y `edsim directo preparar` crea los que falten y comprueba los que existen: si un topic tiene otro número de particiones u otra marca de tiempo, el directo no arranca y dice qué difiere. La definición vive en el código (`edsim.live.topics`), en una tabla literal que un test compara con esta especificación.
+Configuración de los cuatro: `message.timestamp.type=LogAppendTime`, `cleanup.policy=delete` y la retención por defecto (`retention.ms` de 7 días). El broker tiene la autocreación desactivada, y `edsim directo preparar` crea los que falten y comprueba los que existen: si un topic tiene otro número de particiones u otra marca de tiempo, el directo no arranca y dice qué difiere (`TopicMismatchError`, antes de crear nada). Al volver, los topics que creó ya están en los metadatos del broker con todas sus particiones: en la 6.4, justo después de `create_topics`, 7 de 60 topics no aparecían todavía y una segunda llamada los intentaba crear otra vez (`TOPIC_ALREADY_EXISTS`). La definición vive en el código (`edsim.live.topics`), en una tabla literal que un test compara con esta especificación.
 
 ### Eventos del log
 
@@ -629,6 +630,12 @@ Uno al empezar y otro al terminar cada ejecución publicada. Con ellos, un consu
 
 `schemas/eventos-v1.schema.json`, `eventos-v2.schema.json` y `eventos-v3.schema.json`, generados de `CATALOGS`; `schemas/ed-runs-v1.schema.json` y `schemas/ed-control-v1.schema.json`, escritos a mano. Todos en JSON Schema 2020-12 (pieza 4).
 
+**Qué dice el esquema de los eventos (6.4).** Lo mismo que `Event(**datos)`, ni más ni menos, salvo lo que JSON Schema no puede expresar. Esas diferencias se escriben en una lista literal y un test las prueba en los dos sentidos: que `patient_id` lleve el número de `episode_id` (el esquema no compara dos campos); y que un entero escrito `3.0` no valga (en 2020-12, un número con parte decimal cero es entero; Python lo rechaza porque `json.loads` da un `float`). Se compara con `Event`, no con `from_json`, que además completa el `circuito` de los logs de la versión 1 anteriores a la 4.1. El orden de `pruebas` sí se expresa: las 15 listas posibles, en un `enum`.
+
+**Lo que se descubrió al compararlos (6.4).** Dos huecos más, que sí se pueden expresar y por eso se expresan: `jsonschema` comprueba `pattern` con `re.search` de Python, donde `$` admite un salto de línea final, así que `"EP-000137\n"` pasaba `^EP-[0-9]{6}$` (Event lo rechaza): los identificadores llevan además `maxLength: 9`. Y `json.loads("1e400")` da infinito, que Event rechaza y un `minimum` sin tope acepta: `sim_time`, y todos los números de `ed.runs` y `ed.control`, llevan como `maximum` el mayor double (`1.7976931348623157e+308`). El esquema de la versión N describe los eventos de la versión N: en la comparación, un evento válido de otra versión cuenta como rechazado. La lista literal (`KNOWN_DIFFERENCES`) va también en la `description` de cada esquema, para el consumidor. Las órdenes tienen el mismo control cruzado: `parse_control` frente a `ed-control-v1` en una misma colección, con una sola diferencia (`KNOWN_CONTROL_DIFFERENCES`): una orden de otro `run_id` se ignora sin aviso, sea válida o no, y el esquema la acepta si lo es. Un `"version": 1.0` vale para los dos, porque `parse_control` compara el número.
+
+**Enteros enormes (revisión del PR #59).** Los enteros de Python no tienen límite: `json.loads` lee un 1 seguido de 400 ceros como un `int`, y con él `float`, `math.isfinite` y `math.isnan` lanzan `OverflowError` en vez de responder. Una orden `velocidad` así salía de `KafkaControl.poll` y paraba el directo sin aviso ni `fin`. La regla: toda comprobación de «número real finito» convierte primero con `edsim.finite.to_float`, que da `None` si el número no cabe en un `float`, y rechaza el entero enorme con el `ValueError` y el mensaje que da con infinito. La siguen `events._check_sim_time`, `control.check_speed` y el instante de `ScriptedControl`, el reloj, `directo._check_minutes`, el pacer y el censo (que admite el infinito y rechaza NaN). Los logs y las huellas no cambian. Fuera del directo quedan comprobaciones con el mismo hueco (`engine.advance_until`, `runs/`, `profiles/context.py`, `checks.check_number`).
+
 ## Especificación: Compose, cliente de Kafka y CLI
 
 El Compose es el borrador de la pieza 5; el productor cambia cuatro valores sobre los de librdkafka; la CLI añade el grupo `edsim directo` con cuatro acciones (preparar, lanzar, reemitir y control).
@@ -652,11 +659,13 @@ El Compose es el borrador de la pieza 5; el productor cambia cuatro valores sobr
 | `client.id` | `edsim-<run_id>` | `rdkafka` | Se reconoce en Redpanda Console |
 | `linger.ms`, `message.timeout.ms`, `queue.buffering.max.messages` | Por defecto (5 ms, 300.000 ms, 100.000) | — | Suficientes a 2,6 mensajes por segundo |
 
-Comportamiento: `poll(0)` tras cada `produce`; con `BufferError`, `poll(0.1)` y reintento; un aviso de entrega con error marca el sumidero como fallido y el directo se para en el siguiente paso con motivo `error`; al cerrar, `flush(30)`, y si quedan mensajes, error con el recuento. El `KafkaSink` cumple el protocolo `EventSink` (`write(event)`) y se usa como gestor de contexto, como `JsonlSink`.
+Comportamiento: `poll(0)` tras cada `produce`; con `BufferError`, `poll(0.1)` y reintento; al cerrar, `flush(30)`, y si quedan mensajes, error con el recuento. El `KafkaSink` cumple el protocolo `LiveSink` de la 6.3: `start(RunStart)` publica el `inicio` en `ed.runs`, `write(event)` el evento en su topic y `end(RunEnd)` el `fin`; y se usa como gestor de contexto, como `JsonlSink`. **Un mensaje no entregado (6.4):** el aviso de entrega con error marca el sumidero como fallido, y desde entonces cada `write` lanza `SinkError` (en `edsim.live.directo`) sin enviar nada, con `delivered` (eventos confirmados), `failed` (los `event_id` que fallaron, o `inicio` y `fin`), `pending` y `last_delivered`. `run_live` lo captura mientras publica el censo o el directo, publica el `fin` con motivo `error` y vuelve a lanzarlo: nunca sigue con un hueco en lo publicado. Ese `fin` dice solo lo que el broker confirmó: `publicados` = eventos confirmados y `ultimo_event_id` = el confirmado con el número de orden más alto (las particiones confirman por separado y los avisos pueden llegar desordenados). No promete que todos los anteriores llegaran: dice que la ejecución está incompleta. Si ese `fin` también falla, sale el `SinkError` original con una nota. `end` publica aunque el sumidero haya fallado, y al salir del `with`, si `flush(30)` deja pendientes o hay fallos sin informar, `SinkError` (o una nota, si ya sale otra excepción).
+
+**El fin espera a las confirmaciones (revisión del PR #59).** Una entrega que falla después del último `write` no la ve ningún `write`: el `fin` saldría con motivo `horizonte` y los eventos enviados, y el consumidor daría por completa una ejecución incompleta. Por eso `end` hace primero `flush(30)` y después decide. Si algo falló (un evento o el `inicio`), queda algo pendiente o lo confirmado no es lo publicado, publica un `fin` con motivo `error`, el mismo `sim_time` y lo confirmado, y lanza `SinkError`. Si el `fin` ya era de error (el de `run_live` tras un `SinkError`), lo publica con los valores tras el `flush`, que pueden ser más que los del error, y no lanza. Si todo está confirmado, publica el `fin` tal cual. El `SinkError` de `end` sale de `run_live`, también tras Ctrl+C, con la interrupción como contexto: una ejecución incompleta importa más que cómo se paró. Las cabeceras de los eventos son `[("event_type", …), ("schema_version", b"3")]`; los mensajes de `ed.runs` no llevan.
 
 ### Consumidores de EDsim
 
-- **Órdenes (en el simulador):** `group.id` propio por ejecución (`edsim-control-<run_id>`), `auto.offset.reset=latest`, `enable.auto.commit=false` (las órdenes viejas no se repiten). Lee con `poll(0)` entre eventos y con la espera del pacer en los tramos de 0,2 s.
+- **Órdenes (en el simulador):** sin unirse a un grupo. `KafkaControl` lee el offset alto de la partición 0 de `ed.control` al crearse (`get_watermark_offsets`) y se asigna esa partición a mano en ese offset (`assign`). Así lee exactamente las órdenes publicadas después de crearse, sin las viejas y sin esperar a que se forme un grupo: con `subscribe` y `auto.offset.reset=latest`, una orden enviada mientras el grupo se forma podría perderse, y el test de integración dependería de una carrera (la lección de la 6.1). `group.id` = `edsim-control-<run_id>` y `enable.auto.commit=false`: no se confirman offsets. Lee con `poll(0)` entre eventos y con la espera del pacer en los tramos de 0,2 s; ignora las órdenes de otro `run_id` y avisa de las inválidas sin pararse. El aviso es un callback inyectable, `on_invalid(motivo)`, que recibe también los errores del consumidor; la CLI de la 6.5 lo imprimirá.
 - **Notebook y tests:** `auto.offset.reset=earliest` y un `group.id` único, para leer cada topic desde el principio.
 
 ### CLI
@@ -714,7 +723,7 @@ edsim/
 - **Órdenes (6.3).** `Command(order, value=None)` con las órdenes `velocidad`, `pausar`, `reanudar` y `parar` (constantes `SPEED`, `PAUSE`, `RESUME`, `STOP`) y `check_speed` (número positivo y finito o `"max"`, `MAX_SPEED`). Protocolo `ControlSource` con `poll() -> Command | None`. `ScriptedControl(clock, script)` (una orden por `poll`, la más antigua de las vencidas, y `delivered` con cuándo se entregó cada una), `NoControl` y, en `kafka.py`, `KafkaControl`.
 - **Censo (6.2).** En `edsim.live.census`: `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión de cada evento; `census(events, start) -> list[Event]`, en el orden original; `live_events(events, start) -> list[Event]`, los de `sim_time >= start` (no `live`, que es el nombre del subpaquete). `census` seguido de `live_events` es el log filtrado de la pieza 7.
 - **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info) -> RunEnd`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`. En la 6.3, `inicio` y `fin` son datos (nombres propuestos: `RunStart` y `RunEnd`) que el sumidero recibe aparte de los eventos; la 6.4 los convierte en los mensajes JSON de `ed.runs`. Tras el último evento, espera al horizonte antes de `fin`. Con Ctrl+C publica `fin` con motivo `interrupcion` y vuelve a lanzar la interrupción. **Nombres definitivos (6.3):** fuentes `EngineSource(ed, buffer)` y `LogSource(events, horizon)` (protocolo `LiveSource`: `peek()` y `step() -> list[Event]`); `RunInfo(run_id, mode, schema_version, seed, start_date, anchored)`, `RunStart(info, live_start, horizon, speed, census_episodes, census_events)` y `RunEnd(run_id, reason, sim_time, last_event_id, published)`, con los modos `directo` y `replay` y los motivos `horizonte`, `parar`, `interrupcion` y `error`; sumidero `LiveSink` con `start`, `write` y `end`, y `MemoryLiveSink`; `anchored_start(wall, warmup_days) -> (fecha, W)`.
-- **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función.
+- **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función. **Nombres definitivos (6.4):** en `edsim.live.topics`, `Topic(name, partitions, key, config)`, `TOPICS`, `TOPIC_CONFIG`, `REPLICATION_FACTOR`, las constantes `PATIENT_EVENTS`, `RESOURCE_EVENTS`, `RUNS` y `CONTROL`, y `route(event) -> (topic, clave)`; en `edsim.live.messages`, `run_start_json(RunStart)`, `run_end_json(RunEnd)`, `control_json(run_id, Command)`, `parse_control(texto, run_id, on_invalid) -> Command | None` y `KNOWN_CONTROL_DIFFERENCES`; en `edsim.live.schemas`, `event_schema(versión)`, `schema_text(versión)`, `write_event_schemas(carpeta)` y `KNOWN_DIFFERENCES`; en `edsim.live.directo`, `SinkError(mensaje, *, delivered, failed, pending, last_delivered)`; en `edsim.live.kafka`, `producer_config(bootstrap, run_id)`, `connect_producer(bootstrap, run_id)`, `KafkaSink(producer, run_id)`, `KafkaControl(bootstrap, run_id, on_invalid)` con `poll()`, `close()` y `start_offset`, y `ensure_topics(bootstrap, topics=TOPICS, *, timeout=30) -> TopicsReport(created, existing)`, con `TopicMismatchError`. En `edsim.engine.events`, `EPISODE_SCHEMA` y `PATIENT_SCHEMA`; en `edsim.finite`, `to_float(valor) -> float | None` (revisión del PR #59).
 
 **Reglas que se mantienen:** paquete en inglés; tests del núcleo en español; claves de los mensajes y opciones de la CLI en español; lógica en el paquete y CLI fina; `edsim.live` no importa `edsim_app`, `streamlit` ni `pandas`, y la app no importa `edsim.live`.
 
@@ -756,6 +765,7 @@ La validación del hito es exacta, no estadística: el directo debe publicar los
 - `BufferError` provoca `poll` y reintento sin perder el mensaje; un aviso de entrega con error para el directo con motivo `error`; `flush` deja 0 pendientes.
 - Esquemas: «escritos = generados»; cada línea de un log de cada versión valida contra su esquema; el validador de Python y el esquema coinciden en una colección de eventos válidos e inválidos hechos a mano.
 - Frontera: importar todos los módulos de `edsim` no carga `confluent_kafka`, y solo `live/kafka.py` lo importa, dentro de funciones. Estos tests corren sin el extra instalado, en el job `tests`.
+- **En la 6.4:** `tests/test_topics.py` (la tabla literal y el reparto a mano), `tests/test_messages.py` (el `inicio` y el `fin` del directo a mano, texto exacto; órdenes válidas, ajenas e inválidas), `tests/test_schemas.py` (escritos = generados, los tres logs, 91 eventos a mano contra `Event` y 32 órdenes contra `parse_control`, con las diferencias probadas en los dos sentidos), `tests/test_kafka_sink.py` con `FakeProducer` (`tests/fake_kafka.py`: `BufferError` por número de llamada, avisos con error por número de mensaje, entrega a mano y `flush` que no vacía), `tests/test_kafka_admin.py` (la espera de `ensure_topics`, con un cliente de administración falso), los dos de `run_live` con un sumidero en memoria que falla y la frontera de `jsonschema`. En la revisión del PR #59: cuatro de `KafkaSink` sobre el fin que espera a las confirmaciones y `tests/test_numeros_enormes.py` (cada comprobación con `10**400` da el mensaje de siempre). El catálogo de prueba se monta con `monkeypatch` de `CATALOGS` y `SCHEMA_VERSIONS`: una versión 99 con un evento de recurso sin `recurso`.
 
 **Integración (`tests_integracion/`, 6.1, 6.4 y 6.5)**
 
@@ -776,11 +786,11 @@ Como en los hitos 3 y 4: antes de aplicar cada una, el plan escribe su predicci�
 | V3 | El motor por pasos ejecuta los eventos con instante igual al horizonte | Corregida en la 6.2 (allí, V1): fallan los dos tests del evento en el horizonte, el de `test_patient.py` que ya existía (es la única ejecución de la suite con un evento en H) y el de por trozos (tras el corte 480 queda un evento en 480); las huellas pasan, porque en sus ejecuciones no hay eventos justo en el horizonte |
 | V4 | El censo sin los eventos de recursos | Corregida en la 6.3 (allí, V5a): fallan 13, el censo a mano (3) y censo más directo (2) de la 6.2, el directo a mano (3), el ancla tras el censo y «directo = batch» en las tres versiones y la anclada (4) |
 | V5 | «abierto» = llegó antes de W, sin mirar el evento terminal | Corregida en la 6.3 (allí, V5b): fallan 16, los 7 de la 6.2 (censo a mano, abiertos = vivos y censo más directo), el directo a mano (3), el ancla tras el censo, el de abiertos ≠ vivos (sigue el `RuntimeError`, pero el mensaje cuenta 2 abiertos y no vivos en vez de 1) y «directo = batch» (4): con el motor, la 1, la 3 y la anclada se paran con el `RuntimeError` de abiertos ≠ vivos antes de publicar; el replay de la 2, por contenido |
-| V6 | Reparto por tipo (`staffing_changed` a recursos y el resto a pacientes) en vez de por `episode_id` | Falla solo el test del catálogo de prueba: con los catálogos 1 a 3 las dos reglas coinciden |
-| V7 | Productor sin `partitioner=murmur2_random` | Fallan el test de configuración y el de particiones (`EP-000185` cae en la 2) |
-| V8 | Productor sin idempotencia | Falla solo el test de configuración: sin fallos de red, la idempotencia no se ve en los mensajes |
-| V9 | `ingest_time` relleno en el valor con la hora del productor | Fallan «directo = batch» y la validación con el esquema (`ingest_time` debe ser nulo) |
-| V10 | Topics sin `LogAppendTime` y con la marca del mensaje = `event_time` | Falla la comprobación de `ensure_topics`; forzándola, un directo anclado a ×60 se para con error de entrega hacia los 61 s reales, cuando la simulación va más de una hora por delante del reloj (Kafka 4 rechaza esas marcas) |
+| V6 | Reparto por tipo (`staffing_changed` a recursos y el resto a pacientes) en vez de por `episode_id` | Comprobada en la 6.4: falla solo el test del catálogo de prueba (1); con los catálogos 1 a 3 las dos reglas coinciden, y el reparto a mano y el directo de integración pasan |
+| V7 | Productor sin `partitioner=murmur2_random` | Comprobada en la 6.4: fallan el test de configuración y el de particiones con murmur2 (`[0, 2, 2, 1]`); el de CRC32 pasa, porque pone su particionador |
+| V8 | Productor sin idempotencia | Comprobada en la 6.4: falla solo el test de configuración |
+| V9 | `ingest_time` relleno en el valor con la hora del productor | **Rehecha en la 6.4:** fallan 5, los cuatro de `FakeProducer` que comparan valores y el directo de integración; «directo = batch» en memoria y la validación de los logs pasan, porque `MemoryLiveSink` guarda los `Event` y los logs son los del batch |
+| V10 | Topics sin `LogAppendTime` y con la marca del mensaje = `event_time` | Comprobada en la 6.4: fallan 6, la tabla literal y el de los mensajes a mano (lleva `timestamp`), y en la integración la prueba de humo, la creación y la detección de la marca de `ensure_topics` y el directo. Forzada: un directo anclado de `config/` a ×60 en topics `CreateTime` se paró con `SinkError` a los 62,9 s del directo (`INVALID_TIMESTAMP`), con 406 eventos entregados |
 
 La V3, la V6 y la V8 enseñan lo mismo desde tres sitios: un error que la ejecución de referencia no ejercita solo lo ve un test construido para él.
 
@@ -790,6 +800,7 @@ La V3, la V6 y la V8 enseñan lo mismo desde tres sitios: un error que la ejecuc
 - Medido en la 6.3, en memoria y con el reloj del sistema (`config/`, semilla 2026, 3 días, W = 2 días): el `inicio` lleva el censo de la 6.2, 113 episodios y 520 eventos, y se publican 5.048 eventos (520 + 4.528). A ×3.600, 24,7 s con 0,09 ms de retraso final y 12,1 ms en el peor evento; a velocidad máxima, 1,15 s frente a 0,58 s de `simulate_ed` (pieza 1). En «directo = batch» (`tests/data/`), las cuatro órdenes se atienden entre 0,04 y 0,20 s después de su instante.
 - Un directo de 1 día a ×60 visto en Redpanda Console: topics, particiones, claves, cabeceras y marcas.
 - Latencia entre la publicación y la marca del broker, y el retraso del pacer, a ×1, ×60 y máxima.
+- **Medido en la 6.4** con `KafkaSink` y el broker de `compose.yaml` (`config/`, semilla 2026, 3 días, W = 2 días, 5.048 publicados): a velocidad máxima, en nueve parejas, el mejor `run_live` en memoria tardó 0,76 s y con Kafka 1,39 s (1,48 s con el `flush`), con medianas de 1,43 y 2,62 s y mucho ruido de WSL2; el sumidero de Kafka cuesta unos 0,1 a 0,2 ms por evento (`produce` y `poll(0)`). A ×3.600, en dos ejecuciones (25,1 y 26,3 s): de `produce` a la marca `LogAppendTime`, mediana 5,9 y 6,0 ms (casi todo es `linger.ms` = 5 ms), p95 8,6 y 20,8 ms, máximo 45,8 y 61,4 ms; retraso del pacer tras cada evento, mediana 0,59 y 0,66 ms, p95 1,9 y 2,1 ms, máximo 19 y 25 ms, y 1,25 y 0,62 ms al final.
 - El ejercicio de la pieza 3: parar Kafka un minuto en mitad de un directo y comprobar que no falta ni sobra nada.
 
 ## Decisiones del hito
@@ -1051,3 +1062,77 @@ Revisado el código y las medidas; `@codex review` sin problemas. Sin ajustes. E
 - Job `tests-kafka`: obligatorio al fusionar la 6.4 (Pedro).
 - Redpanda Console v3.14.0: decidir en el cierre del hito.
 - Este anexo se exporta en el primer commit de la 6.3.
+
+### Tarea 6.3: Reloj, pacer, órdenes y directo en memoria
+
+**Qué se hizo**
+
+PR #58 (rama `feat/h6-pacer`, Claude Code, sin `@codex review`): diez commits; fusión `cda5d3d` el 9 de noviembre de 2026. Motor, catálogo, `start_ed` y huellas sin tocar.
+
+- **`live/clock.py`:** `Clock`, `SystemClock` y `FakeClock`, en nanosegundos enteros, con exceso configurable, pared que avanza y un Ctrl+C programado.
+- **`live/control.py`:** `Command` con `check_speed`, `ControlSource`, `NoControl` y `ScriptedControl` (una orden por `poll`, la más antigua de las vencidas, con `delivered`).
+- **`live/pacer.py`:** objetivos absolutos, tramos de 0,2 s, reanclaje, pausa, velocidad máxima, `sim_now()` y `lag()`.
+- **`ArrivalProfile.with_start_date`** (`arrivals/profile.py`): cambia la fecha sin renormalizar; docstring corregido.
+- **`live/directo.py`:** `EngineSource` y `LogSource`, `RunInfo`, `RunStart`, `RunEnd`, `LiveSink` y `MemoryLiveSink`, `run_live` y `anchored_start`.
+- **Tests:** `test_clock.py`, `test_control.py`, `test_pacer.py`, `test_directo.py` (con «directo = batch» en las versiones 1, 2 y 3 y la 3 anclada), añadidos en `test_profile.py` y frontera; el log a mano de `test_census.py`, reutilizable en un commit aparte (22 tests antes y después).
+- **Pestaña:** interfaces con los nombres definitivos, medidas en vivo y filas V1, V2, V4 y V5 de la tabla del hito con lo observado. «Tarea 6.3» en `AGENTS.md`.
+
+**Dos hallazgos del plan, decididos con Pedro**
+
+- **Reloj falso en nanosegundos enteros.** En coma flotante, 150 tramos de 0,2 s suman 29,999999999999925 s: una orden «a los 30 s» se veía a los 30,2 s.
+- **`dataclasses.replace` no es inocuo con el perfil de llegadas.** Vuelve a normalizar, cambia 16 factores en el último bit y, con la misma fecha, el log desde el minuto 3.324. De ahí `with_start_date`, comprobado bit a bit contra un TOML con esa `fecha_inicio`.
+
+**Decisiones del diff**
+
+- `wait_until` pide una orden en cada vuelta, antes de decidir si espera, libera o duerme un tramo: las órdenes llegan también a velocidad máxima o con el objetivo pasado, una por evento.
+- Desde la velocidad máxima, s\_ahora es el `sim_time` del último evento liberado; reanudar lo fija en el minuto congelado.
+- `EngineSource` recibe el `MemorySink` que el que llama dio a `start_ed` y lo vacía en cada paso; `peek()` mira primero lo ya emitido (los `staffing_changed` del minuto 0).
+- `run_live` comprueba antes de nada que el horizonte de la fuente es el suyo, y que los abiertos en W son los procesos vivos antes del `inicio`. Con Ctrl+C publica un solo `fin`; durante el censo, con `sim_time` = W.
+- En «directo = batch», lo esperado se calcula en el test sin `census` ni `open_episodes`.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | `test_clock.py` 0,05 s, `test_control.py` 0,07 s, `test_pacer.py` 0,08 s, `test_directo.py` 6,30 s; el más lento, «directo = batch» anclado, 1,33 s (2,01 s en frío) |
+| Órdenes en «directo = batch» | Atendidas entre 0,04 y 0,20 s después de su instante |
+| Directo con `config/` (3 días, W = 2 días) | `inicio` con 113 episodios y 520 eventos; 5.048 publicados (520 + 4.528) |
+| ×3.600 con el reloj del sistema (WSL2) | 24,7 y 24,9 s; retraso final 0,09 y 0,16 ms; peor evento 12,1 y 7,1 ms; media 0,47 ms |
+| Velocidad máxima | 1,15 s, frente a 0,58 s de `simulate_ed` de 3 días |
+| `scripts/tests-completos.sh` con Docker parado | 16 min 17 s, en verde: núcleo 2.945 tests en 11:57, app 287 en 3:25, notebooks 0:55 (6.2: 10:03, 3:06 y 0:50) |
+
+Las tres partes de la completa van entre un 10 y un 19 % más lentas que en la 6.2, también la app, que no cambió; los tests nuevos suman 6,5 s. Es variación del portátil, no de los tests: se vuelve a mirar en la 6.4.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predichos | Observados |
+| --- | --- | --- | --- |
+| V1 | Esperas relativas (reanclar en cada evento liberado) | 2 | 4: también reanclaje y pausa, que leen el ancla |
+| V2 | s\_ahora = último liberado con velocidad finita | 6 | 7: también s\_ahora tras reanclar |
+| V3 | Dormir sin tramos | 10 | 12 |
+| V4 | `run_live` publica todo el calentamiento | 8 | 8 |
+| V5a | `census` sin recursos | 13 | 13 |
+| V5b | «Abierto» = llegó antes de W | 15 | 16: también el mensaje de abiertos ≠ vivos |
+| V6 | Anclaje en UTC | 2 | 3 |
+| V7 | `fin` sin esperar al horizonte | 2 | 2 |
+| V8 | No mirar órdenes si no hay que esperar | 3 | 3 |
+| V9 | `KeyboardInterrupt` tragada | 1 | 2: el test del Ctrl+C está partido en dos |
+| V10 | Sin la comprobación abiertos = vivos | 1 | 1 |
+| V11 | Cambiar la velocidad en pausa reanuda | 1 | 1 |
+| V12 | `with_start_date` con `replace` | 1 | 1 |
+| V13 | `poll` da la vencida más reciente | 2 | 2 |
+| V14 | Reanclar antes de publicar el censo | 1 | 1 |
+| V15 | Sin comprobar el horizonte de la fuente | 2 | 2 |
+
+Todas detectadas; seis fallan en más tests de los previstos y ninguna en menos. La V6 y la V12 no las ve «directo = batch» anclado, porque los dos lados comparten el anclaje: las ven los tests unitarios contra referencias independientes (valores a mano y el TOML cargado).
+
+**Revisión**
+
+Revisados el código, los valores a mano y la especificación (solo añade texto a la pestaña). Sin ajustes. Ajustes de la aprobación, los cuatro hechos: exportación nueva en el primer commit, horizonte de la fuente comprobado, el log a mano en un commit aparte y la tabla de medidas.
+
+**Pendiente**
+
+- `runs/offered.py` usa `replace` para adelantar la fecha del perfil (carga ofrecida): pasarlo a `with_start_date` movería cifras de la carga ofrecida y queda fuera del hito 6.
+- 6.4: `RunStart` y `RunEnd` a JSON de `ed.runs`, el motivo `error` y `KafkaControl`. Medir el coste por evento a velocidad máxima con el `KafkaSink` (0,13 ms por evento en memoria) y volver a medir la completa.
+- Si un log del replay retrocede en el tiempo, el error salta al leer el siguiente y el anterior no se publica: vale para un log corrupto.
+- Este anexo se exporta en el primer commit de la 6.4.

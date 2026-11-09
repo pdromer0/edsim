@@ -16,7 +16,8 @@ e) **Live.** The pacer is anchored at (now, ``W``), after the census, and
 f) **End.** After the last event, it waits for the horizon and calls
    ``sink.end(RunEnd)`` with reason ``horizonte``; with an order ``parar``,
    reason ``parar``; with Ctrl+C, reason ``interrupcion`` and the
-   ``KeyboardInterrupt`` goes on.
+   ``KeyboardInterrupt`` goes on; if the sink fails (``SinkError``), reason
+   ``error`` and the error goes on.
 
 What it publishes is the batch log without the warm-up of the closed
 episodes, with the same ``Event`` objects and in the same order, whatever the
@@ -26,8 +27,9 @@ Two sources: ``EngineSource``, the stepped engine of a run, and ``LogSource``,
 a saved log (the replay of H6-13). ``anchored_start`` gives the start date and
 ``W`` of a run anchored to the calendar (H6-12).
 
-``RunStart`` and ``RunEnd`` are data here; task 6.4 turns them into the JSON
-messages of ``ed.runs``. Their values are in Spanish, as in those messages.
+``RunStart`` and ``RunEnd`` are data here; ``edsim.live.messages`` turns them
+into the JSON messages of ``ed.runs``. Their values are in Spanish, as in those
+messages.
 """
 
 import math
@@ -40,6 +42,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.events import SCHEMA_VERSIONS, TIMEZONE, Event, MemorySink
+from edsim.finite import to_float
 from edsim.live.census import census, open_episodes
 from edsim.live.control import ControlSource
 from edsim.live.pacer import Pacer
@@ -127,9 +130,14 @@ class EngineSource:
 
 def _check_minutes(name: str, value: object) -> float:
     # bool is a subclass of int in Python; NaN and infinity are no instant.
-    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, numbers.Real)
+        or (number := to_float(value)) is None  # an int such as 10**400
+        or not math.isfinite(number)
+    ):
         raise ValueError(f"{name} must be a finite number of minutes, got {value!r}")
-    return float(value)
+    return number
 
 
 class LogSource:
@@ -280,6 +288,40 @@ class RunEnd:
 # --- Where the run goes --------------------------------------------------------------
 
 
+class SinkError(Exception):
+    """The sink could not publish: a message was not delivered (H6-8).
+
+    ``run_live`` never goes on with a gap in what it published: it publishes
+    the ``fin`` with reason ``error``, saying only what the sink confirmed, and
+    raises this error again.
+
+    Args:
+        message: What happened.
+        delivered: Events whose delivery was confirmed.
+        failed: What was not delivered: the ``event_id`` of each event, or
+            ``inicio`` and ``fin`` for the messages of the run.
+        pending: Messages still waiting for their confirmation.
+        last_delivered: ``event_id`` of the confirmed event with the highest
+            emission number (confirmations may come in another order); ``None``
+            if none.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        delivered: int,
+        failed: tuple[str, ...] = (),
+        pending: int = 0,
+        last_delivered: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.delivered = delivered
+        self.failed = tuple(failed)
+        self.pending = pending
+        self.last_delivered = last_delivered
+
+
 class LiveSink(Protocol):
     """Where a live run publishes: the announcement, the events and the end."""
 
@@ -424,6 +466,16 @@ def run_live(
             patient processes.
         KeyboardInterrupt: After publishing the ``RunEnd`` with reason
             ``interrupcion``, if it arrived after the ``RunStart``.
+        SinkError: If the sink fails while publishing the census or the live
+            stream, after publishing (if it can) the ``RunEnd`` with reason
+            ``error``, with the events the sink confirmed as ``published`` and
+            the highest one confirmed as ``last_event_id``. If that end fails
+            too, the ``SinkError`` goes on with a note. Also if ``sink.end``
+            raises it: a sink that waits for its confirmations (``KafkaSink``)
+            publishes a ``fin`` with reason ``error`` instead of the one given and
+            raises. That error goes out of ``run_live`` instead of returning
+            and, after Ctrl+C, instead of the ``KeyboardInterrupt``, which stays
+            as its context: an incomplete run matters more than how it stopped.
     """
     start = _check_minutes("start", start)
     horizon = _check_minutes("horizon", horizon)
@@ -471,6 +523,21 @@ def run_live(
         reason = _publish(source, control, publication, initial)
     except KeyboardInterrupt:
         sink.end(publication.end(run_info.run_id, REASON_INTERRUPT, publication.sim_now()))
+        raise
+    except SinkError as error:
+        # Only what the sink confirmed: this end does not promise that every event
+        # before the last one arrived; it says that the run is incomplete.
+        end = RunEnd(
+            run_id=run_info.run_id,
+            reason=REASON_ERROR,
+            sim_time=publication.sim_now(),
+            last_event_id=error.last_delivered,
+            published=error.delivered,
+        )
+        try:
+            sink.end(end)
+        except Exception as second:
+            error.add_note(f"the end of the run could not be published either: {second!r}")
         raise
     sim_time = horizon if reason == REASON_HORIZON else publication.sim_now()
     end = publication.end(run_info.run_id, reason, sim_time)

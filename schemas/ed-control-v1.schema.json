@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Órdenes de ed.control de EDsim, versión 1",
+  "description": "Una orden a un directo en marcha (docs/specs/hito-6.md, «Mensajes de ed.control»): velocidad (con valor, un número positivo o \"max\"), pausar, reanudar o parar. version es la de este formato. El simulador ignora las órdenes de otro run_id y avisa de las que no validan. Todo número lleva como máximo el mayor double, porque 1e400 se lee como infinito.",
+  "$comment": "Escrito a mano. Los mensajes los escribe edsim.live.messages.control_json y los lee parse_control; un test los compara con este esquema.",
+  "oneOf": [
+    {
+      "title": "velocidad",
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "orden": { "const": "velocidad" },
+        "valor": {
+          "oneOf": [
+            { "type": "number", "exclusiveMinimum": 0, "maximum": 1.7976931348623157e+308 },
+            { "const": "max" }
+          ]
+        }
+      },
+      "required": ["version", "run_id", "orden", "valor"],
+      "additionalProperties": false
+    },
+    {
+      "title": "pausar, reanudar o parar",
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "orden": { "enum": ["pausar", "reanudar", "parar"] }
+      },
+      "required": ["version", "run_id", "orden"],
+      "additionalProperties": false
+    }
+  ]
+}

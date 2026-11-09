@@ -10,13 +10,6 @@ BROKER_TIMEOUT = 10.0
 TIMEOUT = 30.0
 """Límite de cada operación de administración, `flush` y bucle de `poll`."""
 
-PRODUCER_CONFIG = {
-    "enable.idempotence": True,
-    "acks": "all",
-    "partitioner": "murmur2_random",
-}
-"""La configuración del productor de la especificación (H6-8), que la 6.4 llevará a KafkaSink."""
-
 TOPIC_PART = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 """Minúsculas, cifras y guiones: Kafka avisa si un nombre mezcla «.» y «_»."""
 

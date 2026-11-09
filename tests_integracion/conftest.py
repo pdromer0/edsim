@@ -12,8 +12,11 @@ import uuid
 
 import pytest
 from confluent_kafka import KafkaError, KafkaException
-from confluent_kafka.admin import AdminClient, NewTopic
+from confluent_kafka.admin import AdminClient
 from kafka_testing import BROKER_TIMEOUT, DEFAULT_BOOTSTRAP, TIMEOUT, TOPIC_PART, reachable
+
+from edsim.live.kafka import TopicsReport, ensure_topics
+from edsim.live.topics import TOPIC_CONFIG, Topic
 
 LISTENER_HINT = (
     "Suele ser una dirección anunciada que no se alcanza desde aquí: el cliente vuelve a llamar "
@@ -67,28 +70,38 @@ def admin(bootstrap: str) -> AdminClient:
     return AdminClient({"bootstrap.servers": bootstrap})
 
 
+@pytest.fixture(scope="session")
+def edsim_topics(bootstrap: str) -> TopicsReport:
+    """Los cuatro topics reales de EDsim, con `ensure_topics`, como `edsim directo preparar`.
+
+    KafkaSink y KafkaControl publican y leen en los nombres de la tabla, que no se pueden
+    pasar: los tests que los usan necesitan que existan, y el broker no autocrea topics y
+    queda vacío tras `docker compose down`. No se borran al terminar; los independizan el
+    `run_id` único de cada test y los offsets altos anotados antes de publicar.
+    """
+    return ensure_topics(bootstrap)
+
+
 @pytest.fixture
-def make_topic(admin: AdminClient):
+def make_topic(bootstrap: str, admin: AdminClient):
     """Crea topics `test.<nombre>.<uuid8>` y los borra al terminar el test, también si falla.
 
-    Los crea como los de EDsim: una réplica y la marca de tiempo del broker (`LogAppendTime`).
+    Los crea con `ensure_topics`, como los de EDsim: una réplica, la marca de tiempo del
+    broker (`LogAppendTime`) y borrado por antigüedad. `config` cambia esa configuración.
     """
     created: list[str] = []
 
-    def make(name: str, partitions: int) -> str:
+    def make(name: str, partitions: int, config: dict | None = None) -> str:
         if not TOPIC_PART.fullmatch(name):
             raise ValueError(f"Nombre de topic de test no válido: {name!r}")
         topic = f"test.{name}.{uuid.uuid4().hex[:8]}"
-        new = NewTopic(
-            topic,
-            num_partitions=partitions,
-            replication_factor=1,
-            config={"message.timestamp.type": "LogAppendTime"},
-        )
-        # Se apunta antes de esperar: si la creación vence pero el topic llega a existir, el
+        # Se apunta antes de crearlo: si la creación vence pero el topic llega a existir, el
         # teardown también lo borra.
         created.append(topic)
-        admin.create_topics([new], request_timeout=TIMEOUT)[topic].result(timeout=TIMEOUT)
+        report = ensure_topics(
+            bootstrap, [Topic(topic, partitions, "test", {**TOPIC_CONFIG, **(config or {})})]
+        )
+        assert report.created == (topic,)
         return topic
 
     yield make

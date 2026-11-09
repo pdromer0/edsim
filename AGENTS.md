@@ -5,7 +5,7 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: hito 6, tiempo real — [docs/specs/hito-6.md](docs/specs/hito-6.md); tarea 6.3 (va antes que el 5).
+- Hito en curso: hito 6, tiempo real — [docs/specs/hito-6.md](docs/specs/hito-6.md); tarea 6.4 (va antes que el 5).
 - Último hito cerrado: [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos, `v0.4-hito4`)
 - App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
 
@@ -49,6 +49,7 @@ uv run edsim             # CLI
 scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
 scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
 scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace falta (6.1, 6.4, 6.5)
+uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal

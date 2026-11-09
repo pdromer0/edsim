@@ -35,6 +35,7 @@ instants. Standard library only.
 import math
 import numbers
 
+from edsim.finite import to_float
 from edsim.live.clock import Clock
 from edsim.live.control import (
     MAX_SPEED,
@@ -53,9 +54,14 @@ MAX_SLICE = 0.2
 
 def _check_minutes(name: str, value: object) -> float:
     # bool is a subclass of int; NaN or infinity would make every target meaningless.
-    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, numbers.Real)
+        or (number := to_float(value)) is None  # an int such as 10**400
+        or not math.isfinite(number)
+    ):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
-    return float(value)
+    return number
 
 
 def _check_anchor(anchor: object) -> tuple[float, float]:
