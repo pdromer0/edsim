@@ -29,15 +29,14 @@ CONFIG = ROOT / "config"
 W_HAND = 120
 
 
-def hand_log(version: int) -> list:
-    """El log a mano, emitido con un EventLog de la versión dada.
+def emit_hand_log(log: EventLog) -> None:
+    """Emite el log a mano con ``log``, de cualquier versión.
 
     staffing_changed de enfermería y de médicos en 0; EP-000001 llega en 10 y sale en 100;
     EP-000002 llega en 50 y sigue dentro; EP-000003 llega en 60 y sale justo en 120 = W.
+    El directo de la tarea 6.3 sigue emitiendo con el mismo log.
     """
-    sink = MemorySink()
-    log = EventLog("rcenso", SCENARIO_START, sink, schema_version=version)
-    clinical = version >= 2
+    clinical = log.schema_version >= 2
     arrived = {"medio": "propios_medios"} if clinical else {}
     registered = {"edad": 40, "sexo": "mujer"} if clinical else {}
 
@@ -48,6 +47,12 @@ def hand_log(version: int) -> list:
         log.emit("patient_registered", t, arrival_id=arrival_id, **registered)
     log.emit("patient_departed", 100.0, arrival_id=1, destino="alta")
     log.emit("patient_departed", 120.0, arrival_id=3, destino="ingreso")
+
+
+def hand_log(version: int) -> list:
+    """El log a mano, emitido con un EventLog de la versión dada."""
+    sink = MemorySink()
+    emit_hand_log(EventLog("rcenso", SCENARIO_START, sink, schema_version=version))
     return sink.events
 
 

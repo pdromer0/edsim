@@ -14,6 +14,7 @@ The months are weighted by their number of days (a 365-day year): a factor of
 1.10 in a 31-day month weighs more in the annual mean than 1.05 in February.
 """
 
+import dataclasses
 import tomllib
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -51,6 +52,14 @@ def _check_values(key: str, values: object, n: int) -> tuple[float, ...]:
     return tuple(checked)
 
 
+def _check_start_date(start_date: object) -> None:
+    # datetime is a subclass of date: a TOML date-time must not pass as a date.
+    if not isinstance(start_date, date) or isinstance(start_date, datetime):
+        raise ValueError(
+            f"fecha_inicio must be a date without time, such as 2026-01-05, got {start_date!r}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ArrivalProfile:
     """Validated and normalized parameters of the arrival rate.
@@ -62,8 +71,10 @@ class ArrivalProfile:
     The three factor fields accept any positive weights, integers or floats,
     such as percentages that do not add up to exactly 100; the profile stores
     the normalized factors instead. Normalizing an already normalized profile
-    leaves it as it is (up to rounding in the last bit), which makes
-    ``dataclasses.replace`` safe.
+    leaves it as it is only up to rounding in the last bit, and that bit
+    changes the arrivals: ``dataclasses.replace`` normalizes again, so the
+    same profile with the same date gives another log (from minute 3,324 with
+    ``config/``, task 6.3). To change only the date, use ``with_start_date``.
 
     The factors are stored as tuples: a NumPy array inside a frozen dataclass
     could still be modified in place, and arrays do not compare with ``==``.
@@ -102,12 +113,7 @@ class ArrivalProfile:
         if cv < 0:
             raise ValueError(f"cv_diario must not be negative, got {self.daily_cv!r}")
 
-        # datetime is a subclass of date: a TOML date-time must not pass as a date.
-        if not isinstance(self.start_date, date) or isinstance(self.start_date, datetime):
-            raise ValueError(
-                f"fecha_inicio must be a date without time, such as 2026-01-05, "
-                f"got {self.start_date!r}"
-            )
+        _check_start_date(self.start_date)
 
         hours_sum = sum(hours)
         weekdays_sum = sum(weekdays)
@@ -120,6 +126,25 @@ class ArrivalProfile:
         object.__setattr__(self, "weekday_factors", tuple(7 * x / weekdays_sum for x in weekdays))
         object.__setattr__(self, "month_factors", tuple(m / months_mean for m in months))
         object.__setattr__(self, "daily_cv", cv)
+
+    def with_start_date(self, start_date: date) -> "ArrivalProfile":
+        """The same profile with another ``start_date``, without normalizing again.
+
+        The factors are copied bit for bit, so the result is the profile that
+        ``load_profile`` gives for the same file with that ``fecha_inicio``.
+        The live mode anchored to the calendar uses it (docs/specs/hito-6.md,
+        piece 1).
+
+        Raises:
+            ValueError: If ``start_date`` is not a date without time.
+        """
+        _check_start_date(start_date)
+        # Building it with the constructor would normalize the factors again.
+        new = object.__new__(ArrivalProfile)
+        for field in dataclasses.fields(self):
+            object.__setattr__(new, field.name, getattr(self, field.name))
+        object.__setattr__(new, "start_date", start_date)
+        return new
 
 
 def load_profile(path: str | Path) -> ArrivalProfile:
