@@ -17,7 +17,7 @@ Desde el 10 de noviembre de 2026, este repositorio es la fuente de verdad de la 
 | Diario de aprendizaje del núcleo y de las tareas de proceso | [diario/](diario/README.md) |
 | Diario de la app | [app/docs/diario/](../app/docs/diario/README.md) |
 | Instrucciones de los agentes | [AGENTS.md](../AGENTS.md), [CLAUDE.md](../CLAUDE.md) y [app/AGENTS.md](../app/AGENTS.md) |
-| Proceso de trabajo | `docs/proceso/`, que llega en los PR siguientes de la P.2 |
+| Proceso de trabajo: el flujo (tablero, papeles y reglas) y el ciclo de una tarea | [proceso/flujo.md](proceso/flujo.md) y [proceso/tarea.md](proceso/tarea.md) |
 | Tareas y estado | [issues de GitHub](https://github.com/pdromer0/edsim/issues) y el tablero del proyecto, desde la P.2 |
 
 ## Cómo leer las especificaciones grandes
