@@ -1,5 +1,7 @@
 # Hito 3 — Motor y eventos
 
+> **Estado:** cerrado (`v0.3-hito3`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 ## Objetivo y alcance
 
 Al terminar el hito 3, EDsim tiene un motor de eventos discretos en SimPy en el que cada paciente es un proceso que recorre la máquina de estados del diseño. Los pacientes llegan con el generador del hito 2, pasan por triaje, esperan box y médico con prioridad por nivel, y el nivel 1 puede desalojar a otro paciente de un box. La única salida del motor es un log de eventos en JSONL, con el sobre común del diseño; el ground truth va aparte, y estado y métricas se derivan del log. El motor se valida sin fórmula cerrada: invariantes, leyes operacionales, un caso de referencia M/G/1 y condiciones extremas.
@@ -53,7 +55,7 @@ Los conceptos se explicaron en la conversación de arranque del hito, con diagra
 
 Las llegadas del hito 2 y los sorteos de cada paciente alimentan el motor, que solo escribe el log de eventos y, aparte, el ground truth; estado, métricas y validación se derivan de esas dos salidas.
 
-&#91;embedded content: flujo del hito 3 · de la configuración y la semilla a la validación\]
+> Diagrama «flujo del hito 3 · de la configuración y la semilla a la validación»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#b696232b-6338).
 
 El motor no calcula métricas: todo lo que hay debajo del log se puede recalcular a partir del fichero, con la misma semilla o con otra ejecución.
 

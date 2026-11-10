@@ -1,5 +1,7 @@
 # App web — fase 1
 
+> **Estado:** cerrado (`app-v0.1.0`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 La app web de EDsim crece por fases: una app local en Streamlit al cerrar el hito 3, un paso pequeño en cada hito y una aplicación completa, con API y frontend propio, después de la v0. Esta pestaña recoge esa decisión y especifica la fase 1.
 
 ## Decisión y estrategia
@@ -250,7 +252,7 @@ Debajo, una tabla con la utilización prevista por turno (carga media entre capa
 
 ## Arquitectura
 
-&#91;embedded content: arquitectura de la fase 1 · 4 capas\]
+> Diagrama «arquitectura de la fase 1 · 4 capas»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#7608a30d-49b9).
 
 Las páginas solo llaman a `edsim.runs`, que usa el motor del hito 3 sin cambiarlo y guarda cada ejecución en su carpeta; la CLI pasa por los mismos servicios, así que las dos producen lo mismo.
 

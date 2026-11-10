@@ -1,5 +1,7 @@
 # Hito 0 — Entorno de desarrollo
 
+> **Estado:** cerrado (`v0.0-hito0`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 ## Objetivo y alcance
 
 Al terminar el hito 0, Pedro tiene en Windows un entorno de desarrollo reproducible, un repositorio `edsim` en GitHub con todas las comprobaciones de calidad funcionando y Claude Code configurado para el modo de trabajo acordado. El primer pull request se fusiona siguiendo GitHub Flow de principio a fin.
@@ -38,7 +40,7 @@ Antes de instalar nada, una sesión para entender qué pieza hace qué. Pedro pr
 
 Cursor es la única aplicación de trabajo que corre en Windows; el código, Python, git y Claude Code viven dentro de WSL2, igual que en el Linux donde corre el CI.
 
-&#91;embedded content: entorno de desarrollo · Windows y WSL2\]
+> Diagrama «entorno de desarrollo · Windows y WSL2»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#507e05b6-6fbc).
 
 - **Cursor → WSL:** Cursor se conecta a WSL con su propia extensión Remote WSL, publicada por Anysphere; la de Microsoft no es compatible con Cursor.
 - **Claude Code en WSL:** se instala dentro de Ubuntu con el instalador de Linux. En WSL2 admite el sandbox de comandos, que en Windows nativo no está disponible, y no necesita Git for Windows.

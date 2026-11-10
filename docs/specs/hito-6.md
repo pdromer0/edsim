@@ -1,5 +1,7 @@
 # Hito 6 — Tiempo real
 
+> **Estado:** cerrado (`v0.6-hito6`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 Al terminar el hito 6, EDsim emite sus eventos en vivo: un pacer convierte el tiempo virtual de SimPy en tiempo real (×1, ×10, ×60, pausa) y cada evento del log se publica en Apache Kafka, donde Redpanda Console y cualquier consumidor lo ven llegar. Es una pestaña didáctica: cada pieza explica para qué sirve, su base conceptual, cómo se usa en EDsim y cómo aprender más. Las decisiones (H6-n) son definitivas desde la tarea 6.6, con sus ADR 0048 a 0066, y la implementación empezó con la etiqueta `v0.4-hito4`.
 
 ## Objetivo y alcance
@@ -39,7 +41,34 @@ Las tareas con código empiezan con la etiqueta `v0.4-hito4`. Las implementa Cla
 
 El motor sigue escribiendo hechos en un sumidero, como en el hito 3; lo nuevo es que el pacer decide cuándo avanza y que uno de los sumideros publica en Kafka.
 
-&#91;embedded content: piezas del hito 6 · del motor a los consumidores\]
+```mermaid
+---
+title: "El motor no cambia: el pacer marca el ritmo y el sumidero elige el destino"
+---
+flowchart TD
+    subgraph wsl["WSL2: uv run edsim directo lanzar"]
+        motor["motor por pasos<br/>SimPy con peek() y step()<br/>el mismo log, bit a bit, que el batch"]
+        pacer["pacer<br/>espera hasta el instante objetivo<br/>x1, x10, x60 o max; pausa; ancla"]
+        sumidero["sumidero (EventSink)<br/>memoria, JSONL o KafkaSink<br/>una línea del JSONL = un mensaje"]
+        motor -->|"siguiente evento"| pacer
+        pacer -->|"emite cuando toca"| sumidero
+    end
+    subgraph compose["Docker Compose (compose.yaml)"]
+        kafka["Kafka 4.4, KRaft, un nodo<br/>ed.patient.events: 3 particiones<br/>ed.resource.events: 1<br/>ed.runs: 1<br/>ed.control: 1"]
+        consola["Redpanda Console<br/>localhost:8080 en el navegador<br/>topics, mensajes y grupos"]
+        kafka -->|"kafka:19092 (INTERNAL)"| consola
+    end
+    subgraph consumidores["consumidores: cada uno lee a su ritmo, desde su offset"]
+        notebook["notebook 06 (hito 6)<br/>censo en vivo<br/>y latencias de llegada"]
+        postgres["Postgres (hito 7)<br/>capa bronce<br/>ingest_time = marca del broker"]
+        grafana["Grafana (hito 8)<br/>Quix Streams, KPIs<br/>por ventana y alertas"]
+    end
+    sumidero -->|"publica por localhost:9092"| kafka
+    kafka -->|"órdenes"| pacer
+    kafka -->|"leen los topics"| consumidores
+```
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#9e4b3f9e-01cc).
 
 El simulador corre en WSL2 y entra en Kafka por `localhost:9092`; la consola, dentro de Docker, por `kafka:19092` (pieza 5). Las órdenes de control viajan al revés: de `ed.control` al pacer (pieza 6).
 

@@ -1,5 +1,7 @@
 # Hito 4 — Perfiles clínicos
 
+> **Estado:** cerrado (`v0.4-hito4`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 ## Objetivo y alcance
 
 Al terminar el hito 4, cada paciente de EDsim llega con edad, sexo, medio de llegada y motivo de consulta, tiene una gravedad real que el hospital no ve y recibe un nivel de triaje con error. Sus pruebas y duraciones dependen de esa gravedad y de su motivo. Todo sale de un muestreador clínico que se enchufa en el punto de muestreo inyectable del hito 3, sin cambiar la lógica de colas, recursos ni turnos. El centro base queda calibrado, por primera vez, contra datos españoles observados: pretriaje y tiempo hasta el médico.
@@ -56,7 +58,7 @@ Los conceptos se explicaron en la conversación de arranque del hito (3 y 5 de n
 
 Cada llegada del hito 2 pasa por el muestreador clínico, que sortea al paciente en orden fijo y con un flujo aleatorio por fuente; el motor del hito 3 solo usa el resultado.
 
-&#91;embedded content: cadena generativa del muestreador clínico · 8 flujos\]
+> Diagrama «cadena generativa del muestreador clínico · 8 flujos»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#8e055767-9ee0).
 
 La gravedad se bifurca: el nivel asignado (G más el error de la enfermera) va al log y decide la prioridad, y el nivel real (G sola) va al ground truth. Pruebas y duraciones dependen de la gravedad real; el destino sigue siendo el provisional.
 

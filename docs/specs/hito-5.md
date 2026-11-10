@@ -1,5 +1,7 @@
 # Hito 5 — Cierre del flujo
 
+> **Estado:** en curso. Especificación aprobada el 10 de noviembre de 2026; el original está en este repositorio.
+
 Al terminar el hito 5, cada paciente de EDsim termina como en un hospital de verdad: puede irse sin ser visto si su espera supera su paciencia, sale con uno de cuatro destinos (alta, ingreso, traslado o exitus) que dependen de su gravedad real, su edad, su motivo y sus pruebas, y si ingresa espera la cama dentro de su box, que queda bloqueado. Es una pestaña didáctica, con el formato de la del hito 6: cada pieza explica para qué sirve, cómo funciona, cómo se usa en EDsim y cómo aprender más. Las decisiones son candidatas (H5-n) y su número definitivo será 66 + n (H5-1 = 67, H5-13 = 79); la tarea de cierre escribe sus ADR 0067 a 0079. La sesión conceptual fue el 9 y el 10 de noviembre de 2026, y la implementación empieza con la etiqueta `v0.6-hito6`.
 
 ## Objetivo y alcance
@@ -40,7 +42,23 @@ Las tareas con código empiezan con `v0.6-hito6`. El núcleo lo implementa Claud
 
 El motor del hito 3, con el muestreador clínico del hito 4, sigue llevando al paciente de la llegada al médico; lo nuevo está en las esperas, donde puede irse, y en el final, donde cada destino tiene su camino.
 
-&#91;embedded content: recorrido del paciente en el hito 5 · tres esperas con abandono, cuatro destinos y la espera de cama\]
+```mermaid
+---
+title: "El hito 5 cierra el flujo: abandono, destino y espera de cama"
+---
+flowchart TD
+    llegada["llegada"] --> triaje["triaje"] --> box["box"] --> medico["médico"] --> destino{"destino"}
+    llegada -.->|"antes del triaje"| se_va["se va sin ser visto<br/>patient_left_wbs · espera: triaje, box o médico"]
+    triaje -.->|"esperando box"| se_va
+    box -.->|"esperando médico"| se_va
+    destino --> sale["sale al decidirse<br/>alta, traslado o exitus"]
+    destino -->|"ingreso"| boarding["ingreso: espera cama<br/>en su box, que queda bloqueado"]
+    boarding -->|"desalojo"| pasillo["pasillo<br/>si un nivel 1 lo desaloja"]
+    boarding --> cama["cama asignada: sale<br/>bed_assigned y patient_departed"]
+    pasillo --> cama
+```
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#b5b8255f-6e17).
 
 Las tres flechas discontinuas son el abandono: solo antes del primer médico (pieza 1). Alta, traslado y exitus salen en el instante de la decisión, como hoy; el ingreso pide cama y la espera en su box (pieza 3). Todo lo sorteado sale del muestreador al llegar, con un flujo aleatorio por fuente (pieza 6), y lo oculto va al ground truth (pieza 7).
 
