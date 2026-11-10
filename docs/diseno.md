@@ -196,7 +196,7 @@ Conversión de mediana y p90 a parámetros de la lognormal:
 
 Hay dos tipos de parámetros. Los directos (mezcla de motivos, triaje, ingresos) se fijan contra datos. Los indirectos se consiguen iterando la simulación: plantilla y tiempos de servicio se ajustan hasta que los KPIs emergentes se parezcan a los objetivos.
 
-**Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en la pestaña del hito 4 y en `docs/calibracion/registro.md`.
+**Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en [docs/specs/hito-4.md](specs/hito-4.md) y en `docs/calibracion/registro.md`.
 
 ## Motor de simulación y reloj
 
@@ -778,7 +778,7 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su pestaña), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y la 80, de la tarea de proceso P.2 (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y la 80, de la tarea de proceso P.2 (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |

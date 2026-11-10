@@ -1,6 +1,7 @@
 # App web de EDsim
 
-Especificación: [docs/specs/fase-1.md](docs/specs/fase-1.md).
+Especificación vigente: [docs/specs/incrementos.md](docs/specs/incrementos.md); la fase 1
+([docs/specs/fase-1.md](docs/specs/fase-1.md)) está cerrada (`app-v0.1.0`).
 Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 
 ## Arquitectura y frontera
@@ -22,9 +23,11 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
   además de la ausencia de excepciones, para evitar tests que pasen en vacío.
 - Los tests de la app se ejecutan en serie, también en los scripts y en el CI: con
   xdist y la CPU ocupada, algunos `AppTest` superan el límite de 3 s por página.
-  Hasta que ese límite se pueda configurar, un fallo de `AppTest` por tiempo
-  («AppTest script run timed out») con la máquina cargada se repite en serie antes
-  de investigarlo.
+  `AppTest.from_file(..., default_timeout=...)` sube ese límite: los tests nuevos lo
+  usan (de 15 a 30 s según la página) y todo test nuevo lo pasa. Quedan 29 de las 42
+  llamadas con el límite de 3 s, pendientes de QA; si una de ellas falla por tiempo
+  («AppTest script run timed out») con la máquina cargada, se repite en serie antes
+  de investigarla.
 - No arranques servidores de Streamlit: no terminan y bloquean la sesión.
   Pedro revisa la app en el navegador. El lanzador se prueba con un doble.
 - Las páginas viven en `src/edsim_app/views/`. No crees una carpeta `pages/`
@@ -33,8 +36,8 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 - Código, nombres y docstrings en inglés, también en los tests de `app/tests/`; interfaz y documentación en español. Los tests del núcleo (`tests/`) van en español ([ADR 0015](../docs/decisiones/0015-idiomas-del-proyecto.md)).
 - Commits de funcionalidad y correcciones con ámbito: `feat(app)` y `fix(app)`.
 - Las decisiones van en `docs/decisiones/` con serie `APP-0001`… si obligan solo
-  a la app; si obligan al núcleo, van en la serie del núcleo. Las ADR de la fase 1
-  y la entrada de su diario se escriben en A.8; las notas de cada tarea van en el PR.
+  a la app; si obligan al núcleo, van en la serie del núcleo. Las notas de cada
+  tarea van en el PR.
 
 ### Selección de tests `slow`
 

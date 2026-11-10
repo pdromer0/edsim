@@ -5,9 +5,9 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: hito 5 (abandono, boarding y destinos), sin especificación todavía.
+- Hito en curso: hito 5 (abandono, boarding y destinos) — [docs/specs/hito-5.md](docs/specs/hito-5.md)
 - Último hito cerrado: [docs/specs/hito-6.md](docs/specs/hito-6.md) (tiempo real, `v0.6-hito6`); antes, [docs/specs/hito-4.md](docs/specs/hito-4.md) (perfiles clínicos, `v0.4-hito4`)
-- App en curso: fase 1 — [app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)
+- App: vigente, [app/docs/specs/incrementos.md](app/docs/specs/incrementos.md); la fase 1 ([app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)) está cerrada (`app-v0.1.0`)
 
 ## Modo de trabajo
 
@@ -33,12 +33,15 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
   respecto al plan, las comprobaciones, las medidas y las versiones incorrectas.
 - No arranques procesos que no terminan, como servidores (`streamlit run`, `uv run edsim-app`): las páginas de la app se prueban con `AppTest` y Pedro las revisa en el navegador.
 - Si cambias dependencias en `pyproject.toml`, `uv sync` necesita red: pide permiso antes de ejecutarlo.
+- El repositorio es la fuente de verdad: diseño, especificaciones, anexos y diario se cambian en el
+  repositorio, en el mismo PR que el código. Las pestañas del documento online son un archivo y no
+  se editan.
 
 ## Comandos
 
 ```bash
 uv sync --all-packages    # entorno completo del workspace (uv.lock)
-uv sync --all-packages --extra kafka  # el anterior más el cliente de Kafka (desde la 6.1)
+uv sync --all-packages --extra kafka  # el anterior más el cliente de Kafka
 uv run pytest            # tests del núcleo, incluidos los slow (como el CI)
 uv run pytest -m "not slow"  # tests rápidos del núcleo
 uv run --package edsim-app pytest app/tests  # tests de la app
@@ -48,12 +51,12 @@ uv run ruff format .     # formato
 uv run edsim             # CLI
 scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
 scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
-scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace falta (6.1, 6.4, 6.5)
+scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace falta
 uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
-uv run edsim directo preparar    # crea los topics de Kafka (desde la 6.5; Kafka levantado)
+uv run edsim directo preparar    # crea los topics de Kafka (Kafka levantado)
 uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe
 uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
-EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka (6.6)
+EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal
@@ -90,7 +93,7 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06
 - Nunca subas (`git push`) sin permiso explícito.
 - Nunca fusiones pull requests: la fusión es de Pedro.
 
-Flujo de cada tarea (desde el hito 2, el agente ejecuta git):
+Flujo de cada tarea (el agente ejecuta git):
 
 1. Actualiza `main` (`git switch main && git pull`) y crea la rama de la tarea (`git switch -c <rama>`).
 2. Haz los commits en la rama, uno por paso lógico, sin esperar revisión entre ellos.
