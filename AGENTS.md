@@ -104,7 +104,8 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06
 ## Reglas de git
 
 - Nunca trabajes en `main`: cada tarea va en su rama y entra por pull request.
-- Nunca subas (`git push`) sin permiso explícito.
+- Nunca subas (`git push`) sin permiso explícito. Claude Code tiene su excepción en `CLAUDE.md`:
+  aprobar el plan cuenta como ese permiso.
 - Nunca fusiones pull requests: la fusión es de Pedro.
 
 Flujo de cada tarea (el agente ejecuta git):

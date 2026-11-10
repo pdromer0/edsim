@@ -24,10 +24,10 @@ Se aplican también las instrucciones del [AGENTS.md raíz](../AGENTS.md).
 - Los tests de la app se ejecutan en serie, también en los scripts y en el CI: con
   xdist y la CPU ocupada, algunos `AppTest` superan el límite de 3 s por página.
   `AppTest.from_file(..., default_timeout=...)` sube ese límite: los tests nuevos lo
-  usan (de 15 a 30 s según la página) y todo test nuevo lo pasa. Quedan 29 de las 42
-  llamadas con el límite de 3 s, pendientes de QA; si una de ellas falla por tiempo
-  («AppTest script run timed out») con la máquina cargada, se repite en serie antes
-  de investigarla.
+  usan (de 15 a 30 s según la página) y todo test nuevo de `AppTest` lo lleva.
+  Aplicarlo a los tests antiguos es un pendiente de QA; mientras tanto, si uno de
+  ellos falla por tiempo («AppTest script run timed out») con la máquina cargada,
+  se repite en serie antes de investigarlo.
 - No arranques servidores de Streamlit: no terminan y bloquean la sesión.
   Pedro revisa la app en el navegador. El lanzador se prueba con un doble.
 - Las páginas viven en `src/edsim_app/views/`. No crees una carpeta `pages/`
