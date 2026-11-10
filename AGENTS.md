@@ -83,13 +83,13 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06
 ## Shell y edición
 
 - Heredocs siempre con comillas (`<<'EOF'`).
-- Edit antes que `sed` para cambiar ficheros, y nunca `sed -i` sobre markdown.
+- La herramienta de edición del agente antes que `sed` para cambiar ficheros, y nunca `sed -i` sobre markdown.
 - Nada que espere entrada: sin paginador (`git --no-pager` o `GIT_PAGER=cat`), sin editores y
   sin `cat` sin argumentos.
 - `ruff format` y `ruff check` antes de cada commit.
 - `git push` siempre en un comando propio, nunca encadenado con `&&`.
 - Los ficheros grandes generados o copiados (exportaciones, datos) se escriben con un script; el
-  modelo no reescribe su contenido con Write ni Edit.
+  modelo no reescribe su contenido con la herramienta de edición del agente.
 - Antes de un comando largo (tests lentos, notebooks, Kafka), avisa de qué se ejecuta y cuánto
   suele tardar.
 
