@@ -770,7 +770,6 @@ edsim/
 - **Censo (6.2).** En `edsim.live.census`: `open_episodes(events, start) -> frozenset[str]` con `TERMINAL_EVENTS` de la versión de cada evento; `census(events, start) -> list[Event]`, en el orden original; `live_events(events, start) -> list[Event]`, los de `sim_time >= start` (no `live`, que es el nombre del subpaquete). `census` seguido de `live_events` es el log filtrado de la pieza 7.
 - **Directo.** `run_live(source, pacer, control, sink, *, start, horizon, run_info) -> RunEnd`: `source` es el motor por pasos o un lector de log guardado; publica `inicio`, censo, directo y `fin`. En la 6.3, `inicio` y `fin` son datos (nombres propuestos: `RunStart` y `RunEnd`) que el sumidero recibe aparte de los eventos; la 6.4 los convierte en los mensajes JSON de `ed.runs`. Tras el último evento, espera al horizonte antes de `fin`. Con Ctrl+C publica `fin` con motivo `interrupcion` y vuelve a lanzar la interrupción. **Nombres definitivos (6.3):** fuentes `EngineSource(ed, buffer)` y `LogSource(events, horizon)` (protocolo `LiveSource`: `peek()` y `step() -> list[Event]`); `RunInfo(run_id, mode, schema_version, seed, start_date, anchored)`, `RunStart(info, live_start, horizon, speed, census_episodes, census_events)` y `RunEnd(run_id, reason, sim_time, last_event_id, published)`, con los modos `directo` y `replay` y los motivos `horizonte`, `parar`, `interrupcion` y `error`; sumidero `LiveSink` con `start`, `write` y `end`, y `MemoryLiveSink`; `anchored_start(wall, warmup_days) -> (fecha, W)`.
 - **Kafka.** `KafkaSink(producer, run_id)` recibe un productor ya creado (el real o un `FakeProducer`) y es un gestor de contexto con `write(event)`; `connect_producer(bootstrap)`, `KafkaControl(bootstrap, run_id)` y `ensure_topics(bootstrap, topics)` crean los clientes reales e importan `confluent_kafka` dentro de la función. **Nombres definitivos (6.4):** en `edsim.live.topics`, `Topic(name, partitions, key, config)`, `TOPICS`, `TOPIC_CONFIG`, `REPLICATION_FACTOR`, las constantes `PATIENT_EVENTS`, `RESOURCE_EVENTS`, `RUNS` y `CONTROL`, y `route(event) -> (topic, clave)`; en `edsim.live.messages`, `run_start_json(RunStart)`, `run_end_json(RunEnd)`, `control_json(run_id, Command)`, `parse_control(texto, run_id, on_invalid) -> Command | None` y `KNOWN_CONTROL_DIFFERENCES`; en `edsim.live.schemas`, `event_schema(versión)`, `schema_text(versión)`, `write_event_schemas(carpeta)` y `KNOWN_DIFFERENCES`; en `edsim.live.directo`, `SinkError(mensaje, *, delivered, failed, pending, last_delivered)`; en `edsim.live.kafka`, `producer_config(bootstrap, run_id)`, `connect_producer(bootstrap, run_id)`, `KafkaSink(producer, run_id)`, `KafkaControl(bootstrap, run_id, on_invalid)` con `poll()`, `close()` y `start_offset`, y `ensure_topics(bootstrap, topics=TOPICS, *, timeout=30) -> TopicsReport(created, existing)`, con `TopicMismatchError`. En `edsim.engine.events`, `EPISODE_SCHEMA` y `PATIENT_SCHEMA`; en `edsim.finite`, `to_float(valor) -> float | None` (revisión del PR #59).
-
 - **CLI y lanzamiento. Nombres definitivos (6.5):** en `edsim.live.kafka`, `ensure_topics(bootstrap, topics=TOPICS, *, create=True, timeout=30, connect_timeout=10)` con `MissingTopicsError` (con `create=False`, si falta alguno), `CONNECT_TIMEOUT`, `BrokerUnavailableError(bootstrap, timeout, detail="")`, `publish_order(producer, run_id, command, *, bootstrap, connect_timeout=10, timeout=30) -> offset`, `OrderNotDeliveredError` y `pending_messages(producer)`; en `edsim.live.launch`, `live_run_id(semilla, pared)`, `PreparedRun(source, info, start, horizon)`, `prepare_live(centro, perfil, días, semilla, *, warmup_days, run_id, profiles=None, anchor_wall=None)`, `prepare_replay(carpeta, run_id, *, warmup_days=None)`, `log_start_date(evento)` y `run_prepared(prepared, *, clock, speed, control, sink, on_start=None, on_end=None, on_status=None, pending=None, status_interval=10)`; en `edsim.live.status`, `LiveStatus`, `ReportingSink(sink, *, on_start, on_end)`, `StatusControl(control, *, clock, pacer, start_date, horizon, published, on_status, pending=None, interval=10)` y `STATUS_INTERVAL`; en `edsim.live.report`, `format_speed`, `format_status`, `format_census` y `format_end(inicio, fin)`.
 - **Consumidor y ruido. Nombres definitivos (6.6):** en `edsim.live.kafka`, `BrokerWatch(bootstrap, on_warning, *, log_path=None, clock=time.monotonic)` con `config(cliente)`, `on_error`, `on_stats`, `lost`, `summary()` y `close()`; `TRANSPORT_ERRORS`, `STATS_INTERVAL_MS` y los nombres de cliente `PRODUCER_CLIENT`, `CONTROL_CLIENT`, `ADMIN_CLIENT` y `READER_CLIENT`; `connect_producer(..., *, watch=None)`, `KafkaControl(..., *, watch=None)` (con `client.id` `edsim-control-<run_id>`) y `ensure_topics(..., client_config=None)`; `READ_TOPICS`, `READ_TIMEOUT`, `reader_group_id(run_id)`, `reader_config(bootstrap, group_id, watch=None)`, `read_run(bootstrap, run_id, tracker, *, group_id=None, timeout=120, watch=None, on_progress=None, progress_interval=5, clock, wall) -> ReadReport(group_id, complete, timed_out, missing, seconds, messages)`. En `edsim.live.tracker`, `ReceivedEvent(event, topic, partition, offset, broker_ms, received)`, `LiveTracker(run_id=None)`, `Occupancy(at, open, by_location, results_room)`, `LatencySummary(count, median_ms, p95_ms, max_ms)`, `LOCATIONS` y `fold_states(eventos)`. En `edsim.live.messages`, `parse_run_message(texto) -> RunStart | RunEnd`. En `edsim.live.report`, `format_broker_lost`, `format_broker_back`, `format_kafka_error` y `format_kafka_log_summary`. En la CLI, `--registro-kafka FICHERO`.
 
@@ -1434,3 +1433,67 @@ Las 14 se detectaron. Ninguna falló en menos tests de los previstos; las que fa
 - Comprobaciones con el hueco de los enteros enormes fuera del directo (de la 6.4).
 - Redpanda Console v3.14.0: decidir al cerrar el hito.
 - Este anexo se exporta en el primer commit de la 6.6.
+
+### Tarea 6.6: cierre del hito 6
+
+**Qué se hizo**
+
+PR #61 (Claude Code): diez commits y dos más de la revisión; fusión `e612d9c` el 9 de noviembre de 2026 y etiqueta `v0.6-hito6` sobre ese commit, creada por Pedro.
+
+- **Ruido de librdkafka:** `BrokerWatch` en `live/kafka.py` recibe las líneas (`logger`), los errores (`error_cb`) y las estadísticas (`stats_cb`, cada 1 s) de todos los clientes de un comando. Un aviso al perder Kafka y otro al recuperarlo, y al final un resumen por cliente y por tipo, con la primera línea de cada tipo; `--registro-kafka FICHERO` guarda todas las líneas. Lo usan `preparar`, `lanzar`, `reemitir` y `control`. El consumidor de órdenes tiene `client.id` `edsim-control-<run_id>`.
+- **Consumidor en el paquete:** `parse_run_message` (la inversa de `run_start_json` y `run_end_json`), `live/tracker.py` (`LiveTracker`, `fold_states`) y `read_run` en `live/kafka.py`.
+- **Notebook 06** (`notebooks/06_tiempo_real.ipynb`): un directo corto leído en vivo, el censo en vivo, «consumidor = batch», particiones, latencias, idempotencia y las cinco ideas del criterio «Pedro sabe explicar…». En modo rápido, sin Docker ni el extra.
+- **ADR 0048 a 0066**, el registro de decisiones de la pestaña de diseño con las 48 a 66, `docs/diario/hito-6.md`, `AGENTS.md` («Hito en curso»: el 5, sin especificación todavía) y el README («Leer un directo»).
+
+**Decisiones tomadas con Pedro**
+
+- **Una sola tarea**, sin partir en código y cierre.
+- **Redpanda Console se queda en la v3.13.1:** la v3.14.0 solo cambia Redpanda Connect, Kafka Connect, un modo oscuro tras un flag y 44 avisos de dependencias del frontend. En la ADR 0062, corregido el dato del puerto: `compose.yaml` publica `"8080:8080"`, que es `0.0.0.0:8080` (todas las interfaces de WSL); con la red NAT de WSL2, no se llega desde la red local sin reenvío. Pendiente: `"127.0.0.1:8080:8080"` si la consola tiene que quedarse en la máquina.
+- **El registro:** resumen siempre (en un `finally`, también con Ctrl+C o error, y solo si hubo líneas), con la primera línea de cada tipo para que un error raro no quede escondido detrás de un número; fichero completo solo con `--registro-kafka`.
+- **Los avisos, en total:** uno al caer el primer cliente y otro cuando vuelven todos.
+- **La reconexión, con el valor por defecto.** El consumidor de órdenes reintenta cada 50 ms porque el coordinador del grupo pide «conexiones dispersas» limitadas por `min(reconnect.backoff.ms / 2, 1000)`; con 1.000 ms serían 2 por segundo, como midió el agente. Con las líneas fuera de la terminal, no cuesta nada y las órdenes vuelven antes.
+
+**Ajustes de la aprobación (chat)**
+
+- El log a mano del tracker, con sus 36 eventos listados: la diferencia con mi cuenta de 34 eran los `disposition_decided` de A y de D. El motor real sale de un box sin `box_released` (700 de 700 salidas en `tests/data` con sala).
+- El porqué de la V1: con los repetidos al final, A acaba en la sala tras salir, no con `box = 1`.
+- **Pérdida sin falsas alarmas:** un cliente cae con `_ALL_BROKERS_DOWN`, o con `_TRANSPORT` si sus últimas estadísticas no tienen ningún broker `UP`; un `_TRANSPORT` suelto con el broker conectado es el cierre de una conexión inactiva (`connections.max.idle.ms`, 10 min). Test H11.
+- Los errores que no son de conexión avisan la primera vez de cada código; `ensure_topics` sirve los registros de su `AdminClient`; `preparar` también vigilado; el comando exacto para abrir el notebook con el extra.
+
+**Decisiones del diff y de la revisión**
+
+- El tracker carga SimPy: `LocationState` se reutiliza tal cual desde `edsim.runs._location`, y ese paquete importa SimPy. El test de frontera nuevo comprueba solo que no carga `confluent_kafka`.
+- La V11 enseñó que, con la confirmación automática, librdkafka confirma los offsets al cerrar: un test fija que el lector no la desactiva.
+- **Revisión del chat:** `read_run` validaba cada mensaje antes de mirar su `run_id`, y un mensaje mal formado de otro directo paraba la lectura (los topics guardan todos los directos hasta el `docker compose down`). Ahora filtra por el `run_id` del JSON antes de validar y cuenta en `unreadable` lo que no es un objeto JSON (`e6ac18d`). Y el notebook para el subproceso del directo si la lectura falla (`ddfdc16`).
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Corte de 60 s, antes (`main`) | 1.582 líneas de librdkafka en stderr en 73,5 s (1.229 del consumidor de órdenes, 353 del productor), 0 `Aviso:`; la línea de estado, enterrada |
+| Corte de 60 s, después | 0 líneas en stderr salvo 2 avisos («se perdió la conexión…» y «vuelve a responder tras 68 s») y el resumen (1.346 líneas; `_TRANSPORT` 1.093 y `_ALL_BROKERS_DOWN` 14, ningún otro código); los mismos 719 publicados |
+| Consumidor (notebook 06 con Kafka, un día a ×3.600) | 5.048 eventos en 25,9 s, completos; 456 episodios y 0 distintos del batch; particiones 1.585, 1.529 y 1.914 más 20 de recursos; 0 errores de orden; 653 y 706 inversiones |
+| Latencia del broker al consumidor | Mediana 1,6 y 1,7 ms, p95 4,9 y 3,6 ms, máximo 10,8 y 35,1 ms (notebook); mediana 3,9 ms y p95 17,9 ms en la integración a ×14.400 |
+| Notebook 06 | 3,7 s en modo rápido; 28 s con Kafka |
+| `scripts/tests-completos.sh` sin contenedores | 13 min 44 s en verde: núcleo 3.334 tests en 8:54, app 287 en 3:46, notebooks 5 en 1:03 (la variación del portátil sigue siendo grande: comparar la parte que cambia) |
+| `scripts/tests-integracion.sh` | 23 tests en 1:21 |
+
+**Versiones incorrectas:** las 14 de la tabla de la sección de tests, todas detectadas. La V4, la V6, la V7 y la V14 fallaron en más tests de los previstos (tests escritos después del plan); la V8, en uno menos, por la defensa de `end` de la revisión de la 6.4; la V11, en uno menos, y destapó el test que faltaba.
+
+**Comprobación en vivo (con Pedro, 9 de noviembre)**
+
+- **Directo sin corte** (`r2026_20261109T192653`, `config/`, 3 días, W = 2 días, ×60, con `--registro-kafka` y stderr a un fichero): en los 24 minutos del día, 0 líneas en stderr (ni avisos ni resumen) y 0 en el registro de librdkafka. No hubo cierre por inactividad; ese caso lo cubre el test H11. Los publicados, los mismos de siempre (533, 547, 568 y 590 a +10, +20, +30 y +40 s).
+- **Directo con corte** (`r2026_20261109T201547`): `docker compose stop kafka` a las 20:15:55 (hacia +8 s) y `start` a las 20:16:27 (hacia +39 s). La terminal mostró solo las líneas de estado: pendientes 14, 35 y 57, y 0 a +50 s, con los mismos publicados que sin corte. En stderr, los 2 avisos y el resumen; `fin` con motivo `parar`.
+- **`control` tras el reinicio:** el aviso `GETPID` («Coordinator load in progress») ya no sale crudo, sino como un resumen de dos líneas. Una orden enviada por error a `--run RUN_ID` (el texto del ejemplo) se publicó y el directo la ignoró: `KafkaControl` solo atiende la clave de su `run_id`.
+- No se miró en vivo el notebook 06 con Kafka ni su grupo en Redpanda Console; lo cubren la integración (grupo con retraso 0) y las dos ejecuciones del agente.
+
+**Pendiente**
+
+- Pedro: el notebook 06 con Kafka y su grupo en Redpanda Console, cuando quiera; y el repaso de los cinco puntos de «Pedro sabe explicar…» con el chat.
+- `"127.0.0.1:8080:8080"` para la consola, si algún día tiene que quedarse en la máquina.
+- Esta pestaña no guarda enlaces relativos: la tabla de decisiones y una medida de la 6.6 tienen en `docs/specs/hito-6.md` enlaces a las ADR que aquí no están. Si se vuelve a exportar la pestaña, reponerlos.
+- Para una tarea de proceso: el hueco de los enteros enormes fuera del directo (de la 6.4) y, si un consumidor ligero lo necesita, sacar `LocationState` a un módulo sin SimPy.
+
+### Cierre del hito 6
+
+El hito 6 queda cerrado el 9 de noviembre de 2026 con `v0.6-hito6` (`e612d9c`): seis tareas (PR #56 a #61), las decisiones 48 a 66 con sus ADR y un directo que publica en Kafka lo mismo que el batch, se controla en vivo, sobrevive a un corte sin perder ni duplicar nada y se lee con un consumidor que reconstruye el mismo estado que el batch. Siguiente: el hito 5 (cierre del flujo), sin especificación todavía.

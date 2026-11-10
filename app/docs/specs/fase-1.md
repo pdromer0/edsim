@@ -1,7 +1,5 @@
 # App web — fase 1
 
-Nov 2, 2026 · @Pedro
-
 La app web de EDsim crece por fases: una app local en Streamlit al cerrar el hito 3, un paso pequeño en cada hito y una aplicación completa, con API y frontend propio, después de la v0. Esta pestaña recoge esa decisión y especifica la fase 1.
 
 ## Decisión y estrategia
@@ -1298,7 +1296,7 @@ Sin hallazgos que bloqueen la fusión. Cuatro observaciones menores:
 
 ### Tarea A.8: cierre de la fase 1
 
-PR #39 (rama `docs/app-cierre`), implementado con Codex (codex-cli 0.166.0) y revisado el 4 de noviembre de 2026; pendiente de las correcciones de la revisión, de la exportación final y de que Pedro lo fusione con *squash and merge*. Seis commits: exportaciones, ADR del núcleo, ADR de la app, diario, README y marcas `slow` con el título; el séptimo será la exportación final de esta pestaña. Tarea no crítica: sin `@codex review`.
+PR #39 (rama `docs/app-cierre`), implementado con Codex (codex-cli 0.166.0), revisado el 4 de noviembre de 2026 y fusionado por Pedro el 5 de noviembre (08db87a) con *squash and merge*. Contenido, por commits: exportaciones, ADR del núcleo, ADR de la app, diario, README, marcas `slow` con el título, las dos correcciones de la revisión y la exportación final de esta pestaña. Etiqueta `app-v0.1.0` sobre 08db87a. Tarea no crítica: sin `@codex review`.
 
 **Qué se hizo**
 
@@ -1349,7 +1347,7 @@ PR #39 (rama `docs/app-cierre`), implementado con Codex (codex-cli 0.166.0) y re
 
 **Revisión del PR**
 
-Sin errores de fondo. Dos correcciones antes de la exportación final y dos comprobaciones:
+Sin errores de fondo. Dos correcciones y dos comprobaciones, todas resueltas antes de fusionar:
 
 - **Diario, entrada de la A.7:** la frase que dice que el anexo aún describe la espera deja de ser cierta con la exportación final; se quita.
 - **README de la app:** enlaza a `AGENTS.md#pruebas-y-convenciones`, pero la regla vive en su propio apartado, `#selección-de-tests-slow`.
@@ -1365,6 +1363,6 @@ Sin errores de fondo. Dos correcciones antes de la exportación final y dos comp
 
 **Pendiente tras la fase 1**
 
-- Etiqueta `app-v0.1.0` sobre el commit de `main` tras la fusión, y «Reflexiones de Pedro» en el diario.
+- «Reflexiones de Pedro» en el diario (la etiqueta `app-v0.1.0` ya está creada).
 - Para la fase siguiente: la doble lectura del log en la primera entrada del Replay, el `Styler` de Episodios, el adaptador de fragmentos de AppTest y la revisión visual de la gráfica de esperas.
 - Hito 4 con Claude Code, con su tarea de app y los hallazgos del hito 3 sobre el triaje y el centro provisional.
