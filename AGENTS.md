@@ -25,7 +25,8 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
   - antes de cada push, `scripts/tests-completos.sh` una vez.
 
   Una versión incorrecta se comprueba con los ficheros donde se predice el fallo y con los que
-  deben seguir pasando.
+  deben seguir pasando. Cada valor esperado calculado a mano lleva su cálculo escrito en el plan,
+  con aritmética o con código independiente de la función probada, nunca de memoria.
 - Para y pregunta solo si algo contradice el plan o la especificación, una biblioteca no se
   comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño
   nueva. Nunca cambies una semilla para que un test pase.
@@ -78,6 +79,19 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06
 
 `--nbmake-timeout` (300 s por defecto) es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. El límite que importa es el de la celda más larga; el de 600 s deja margen en máquinas lentas.
 
+## Shell y edición
+
+- Heredocs siempre con comillas (`<<'EOF'`).
+- Edit antes que `sed` para cambiar ficheros, y nunca `sed -i` sobre markdown.
+- Nada que espere entrada: sin paginador (`git --no-pager` o `GIT_PAGER=cat`), sin editores y
+  sin `cat` sin argumentos.
+- `ruff format` y `ruff check` antes de cada commit.
+- `git push` siempre en un comando propio, nunca encadenado con `&&`.
+- Los ficheros grandes generados o copiados (exportaciones, datos) se escriben con un script; el
+  modelo no reescribe su contenido con Write ni Edit.
+- Antes de un comando largo (tests lentos, notebooks, Kafka), avisa de qué se ejecuta y cuánto
+  suele tardar.
+
 ## Convenciones
 
 - Código, nombres y docstrings del paquete en inglés: `src/` y `app/src/`.
@@ -103,7 +117,12 @@ Flujo de cada tarea (el agente ejecuta git):
 
 Codex sigue el paso 3 tal cual; Claude Code tiene su excepción en `CLAUDE.md`.
 
-Encadena con `&&` los pasos que dependen del anterior, para que ninguno se ejecute si el previo falla.
+Encadena con `&&` los pasos que dependen del anterior, para que ninguno se ejecute si el previo falla,
+salvo `git push`, que va solo.
+
+Después de la fusión: antes de actualizar `main` o borrar una rama, comprueba con
+`gh pr view N --json state,mergedAt` que el PR está fusionado. Si no lo está, para. Nunca des un PR
+por fusionado sin esa comprobación.
 
 ## Review guidelines
 
