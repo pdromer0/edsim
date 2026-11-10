@@ -759,7 +759,7 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su pestaña), la 47, de la tarea de proceso P.1, y las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su pestaña), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y la 80, de la tarea de proceso P.2 (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -829,6 +829,7 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 64 | Etiqueta de cierre `v0.6-hito6`; la `v0.5-hito5` llegará después | La etiqueta nombra el hito, no el orden |
 | 65 | El simulador no va en un contenedor en este hito: corre en WSL2 con `uv` y entra por el listener `EXTERNAL`; Compose levanta solo Kafka y la consola | Ciclo de desarrollo y tests igual que hoy; el contenedor del simulador llega con la API |
 | 66 | `run_id` del directo = `r`, semilla, `_` y hora de arranque (o `--run-id`); el replay conserva el `run_id` y los `event_id` originales | Dos directos con la misma semilla no comparten `event_id`; reemitir la misma ejecución publica los mismos hechos |
+| 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo (candidata; ADR al cerrar la P.2) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
 
 ### Preguntas resueltas
 
