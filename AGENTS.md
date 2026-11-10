@@ -13,6 +13,7 @@ Simulador de urgencias hospitalarias que genera datos sintéticos para un labora
 
 Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de trabajo con Claude Code y Cursor".
 
+- Cada tarea sigue [docs/proceso/tarea.md](docs/proceso/tarea.md).
 - Explica en español el concepto antes de implementar; Pedro pregunta hasta entenderlo.
 - Usa modo plan para cualquier cambio no trivial y espera la aprobación del plan.
 - Con el plan aprobado, implementa la tarea completa sin esperar revisión entre pasos: un commit
