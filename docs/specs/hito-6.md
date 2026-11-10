@@ -66,7 +66,13 @@ flowchart TD
     sumidero -->|"publica por localhost:9092"| kafka
     kafka -->|"órdenes"| pacer
     kafka -->|"leen los topics"| consumidores
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    classDef discontinuo stroke-dasharray:5 4
+    class pacer destacado
+    class postgres,grafana discontinuo
 ```
+
+En azul, la pieza central del hito, el pacer; con borde discontinuo, lo que llega en los hitos 7 y 8.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#9e4b3f9e-01cc).
 

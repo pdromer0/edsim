@@ -56,7 +56,12 @@ flowchart TD
     boarding -->|"desalojo"| pasillo["pasillo<br/>si un nivel 1 lo desaloja"]
     boarding --> cama["cama asignada: sale<br/>bed_assigned y patient_departed"]
     pasillo --> cama
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class se_va,boarding,pasillo,cama destacado
+    linkStyle 4,5,6,8,9,10,11 stroke:#1f6feb,stroke-width:2px
 ```
+
+En azul, lo nuevo del hito 5: el abandono, la espera de cama, el pasillo y la salida con cama.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#b5b8255f-6e17).
 

@@ -46,7 +46,13 @@ flowchart TD
     decision --> ingreso["ingreso<br/>espera de cama"]
     espera_triaje -.-> abandono["abandono<br/>sin ser visto"]
     espera_atencion -.-> abandono
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    classDef discontinuo stroke-dasharray:5 4
+    class espera_triaje,espera_atencion destacado
+    class abandono discontinuo
 ```
+
+En azul, las esperas, que son estados propios; con borde discontinuo, el abandono.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
@@ -215,7 +221,11 @@ flowchart TD
     log --> obs["capa de observación<br/>ruido, retrasos, huecos"]
     obs --> stream["stream<br/>Apache Kafka"]
     obs --> almacen["almacén<br/>Postgres, Parquet"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class log destacado
 ```
+
+En azul, el log de eventos, la única salida del motor.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
@@ -378,15 +388,20 @@ flowchart TD
     kafka -.- consola["Redpanda Console"]
     kafka --> streaming["procesado en streaming<br/>Quix Streams"]
     streaming --> operacional["BD operacional<br/>Postgres + TimescaleDB"]
-    sim -->|"modo batch"| analitica["BD analítica<br/>Parquet + DuckDB"]
-    orquestacion["orquestación<br/>CLI → Dagster"] -.-> analitica
+    sim --> batch(["modo batch"])
+    batch --> analitica["BD analítica<br/>Parquet + DuckDB"]
+    orquestacion["orquestación<br/>CLI → Dagster"] -.-> batch
     operacional --> dbt["transformación: dbt<br/>bronce → plata → oro, con tests de datos"]
     analitica --> dbt
     operacional --> grafana["Grafana<br/>tiempo real y alertas"]
     dbt --> metabase["Metabase<br/>BI educativo"]
     dbt --> streamlit["Streamlit, Jupyter<br/>escenarios y ejercicios"]
     dbt --> modelos["modelos<br/>scikit-learn, LightGBM<br/>MLflow"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class sim destacado
 ```
+
+En azul, el simulador; la orquestación entra en el camino batch.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
@@ -686,7 +701,11 @@ flowchart TD
     ci --> revision["revisión en el chat<br/>Pedro y el chat recalculan y revisan el PR"]
     revision -->|"ajustes de la revisión o CI en rojo"| impl
     revision -->|"aprobado y CI en verde"| fusion["fusión en main (squash)<br/>el CI vuelve a ejecutarse sobre main"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class fusion destacado
 ```
+
+En azul, la fusión en `main`, que solo hace Pedro.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
