@@ -594,7 +594,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 | 6 | Commit local | Claude Code | Mensaje estándar: `feat(sim): cola M/M/1 con SimPy` |
 | 7 | Comprobar al hacer commit | Automático | Hooks de pre-commit; si fallan, no hay commit |
 | 8 | Comprobar la tarea completa | Claude Code | scripts/tests-completos.sh (N3) una vez antes de cada push y revisión de sus propias gráficas |
-| 9 | Subir la rama | Claude Code, con permiso | `git push` |
+| 9 | Subir la rama | Claude Code, sin confirmación; Codex, con permiso | `git push` |
 | 10 | Abrir el pull request | Claude Code | `gh pr create` con resumen y checklist |
 | 11 | Ejecutar el CI | Automático | GitHub Actions |
 | 12 | Corregir si el CI falla | Claude Code | `gh run view` y vuelta al paso 4 |
@@ -604,7 +604,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 - **Inicio de hito:** sesión conceptual y especificación en `docs/specs/`, redactada por Claude y aprobada por Pedro.
 - **Cierre de hito:** nota en el diario, ADR si procede y etiqueta de versión (`v0.1-hito1`).
 - **Configuración única (Pedro, guiado por Claude):** cuenta y repositorio en GitHub, `gh auth login` y protección de `main` (solo por pull request con CI en verde).
-- **Permisos de Claude Code:** lectura y tests sin preguntar; subidas con permiso; fusión reservada a Pedro.
+- **Permisos de Claude Code:** lectura y tests sin preguntar; subidas de sus ramas sin confirmación (Codex, con permiso); fusión reservada a Pedro.
 - **Aprendizaje de git:** en los hitos 0 y 1, Pedro ejecuta a mano los pasos de git (rama, commit, push, pull request) siguiendo las indicaciones de Claude; desde el hito 2 los ejecuta Claude Code.
 
 ## Calidad y tests (QA)

@@ -101,6 +101,8 @@ Flujo de cada tarea (el agente ejecuta git):
 4. Abre el pull request con `gh pr create`.
 5. Pedro revisa y fusiona siempre.
 
+Codex sigue el paso 3 tal cual; Claude Code tiene su excepción en `CLAUDE.md`.
+
 Encadena con `&&` los pasos que dependen del anterior, para que ninguno se ejecute si el previo falla.
 
 ## Review guidelines
