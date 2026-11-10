@@ -1,6 +1,6 @@
 # EDsim — Documento de diseño
 
-Oct 27, 2026 · @Pedro
+> **Estado:** documento vivo. Original en este repositorio desde el 10 de noviembre de 2026.
 
 ## Visión y objetivos
 
@@ -29,7 +29,32 @@ Seis principios guían todas las decisiones técnicas del proyecto.
 
 El paciente recorre una máquina de estados en la que las esperas son estados explícitos, porque ahí se miden los KPIs y se producen los abandonos. El centro no está programado en el código: se describe en configuración (áreas, recursos por turno, reglas de enrutado).
 
-&#91;embedded content: máquina de estados del paciente · v0\]
+```mermaid
+---
+title: "Las esperas son estados propios: ahí se miden los KPIs y nacen los abandonos"
+---
+flowchart TD
+    llegada["llegada y registro"] --> espera_triaje["espera de triaje"]
+    espera_triaje --> triaje["triaje (nivel 1–5)"]
+    triaje --> espera_atencion["espera de atención"]
+    espera_atencion --> atencion["atención médica"]
+    atencion --> pruebas["pruebas<br/>lab, imagen"]
+    pruebas --> atencion
+    atencion --> decision["decisión de destino"]
+    decision --> alta["alta<br/>domicilio"]
+    decision --> observacion["observación<br/>estancia corta"]
+    decision --> ingreso["ingreso<br/>espera de cama"]
+    espera_triaje -.-> abandono["abandono<br/>sin ser visto"]
+    espera_atencion -.-> abandono
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    classDef discontinuo stroke-dasharray:5 4
+    class espera_triaje,espera_atencion destacado
+    class abandono discontinuo
+```
+
+En azul, las esperas, que son estados propios; con borde discontinuo, el abandono.
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
 Las flechas discontinuas son abandonos desde las esperas; las pruebas forman un bucle con la atención y pueden repetirse.
 
@@ -171,13 +196,38 @@ Conversión de mediana y p90 a parámetros de la lognormal:
 
 Hay dos tipos de parámetros. Los directos (mezcla de motivos, triaje, ingresos) se fijan contra datos. Los indirectos se consiguen iterando la simulación: plantilla y tiempos de servicio se ajustan hasta que los KPIs emergentes se parezcan a los objetivos.
 
-**Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en la pestaña del hito 4 y en `docs/calibracion/registro.md`.
+**Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en [docs/specs/hito-4.md](specs/hito-4.md) y en `docs/calibracion/registro.md`.
 
 ## Motor de simulación y reloj
 
 El motor es una simulación de eventos discretos con SimPy que corre siempre en tiempo virtual (minutos); un marcapasos propio lo convierte en tiempo real cuando hace falta.
 
-&#91;embedded content: arquitectura del motor · de la configuración a los destinos de datos\]
+```mermaid
+---
+title: "El motor escribe un único log del que salen la verdad y lo observado"
+---
+flowchart TD
+    subgraph motor["motor de simulación (SimPy)"]
+        llegadas["llegadas<br/>Poisson no homogéneo"]
+        procesos["procesos paciente<br/>máquina de estados"]
+        recursos["recursos y colas<br/>pools con prioridad"]
+        reloj["reloj (pacer de velocidad)"]
+        shocks["inyector de shocks"]
+    end
+    config["configuración<br/>escenario YAML + semilla"] --> motor
+    control["API de control<br/>pausa, velocidad, shocks"] --> motor
+    motor --> log["log de eventos<br/>verdad, inmutable"]
+    log --> gt["ground truth<br/>Parquet separado"]
+    log --> obs["capa de observación<br/>ruido, retrasos, huecos"]
+    obs --> stream["stream<br/>Apache Kafka"]
+    obs --> almacen["almacén<br/>Postgres, Parquet"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class log destacado
+```
+
+En azul, el log de eventos, la única salida del motor.
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
 El log de eventos es la única salida del motor; el ground truth y la capa de observación se derivan de él.
 
@@ -327,7 +377,33 @@ Cada réplica es un *run* de MLflow; las salidas detalladas van a Parquet por ex
 
 Todo corre en un portátil con Docker Compose, usando piezas estándar de la industria que se introducen de una en una a lo largo de los hitos.
 
-&#91;embedded content: bloques del proyecto y su tecnología\]
+```mermaid
+---
+title: "Un simulador, dos caminos: el directo por Kafka y el batch por Parquet"
+---
+flowchart TD
+    config["configuración<br/>YAML + Pydantic"] --> sim["simulador<br/>Python · SimPy · NumPy<br/>directo · batch · replay"]
+    api["API de control<br/>FastAPI"] --> sim
+    sim -->|"modo directo"| kafka["Apache Kafka 4<br/>broker de eventos, KRaft"]
+    kafka -.- consola["Redpanda Console"]
+    kafka --> streaming["procesado en streaming<br/>Quix Streams"]
+    streaming --> operacional["BD operacional<br/>Postgres + TimescaleDB"]
+    sim --> batch(["modo batch"])
+    batch --> analitica["BD analítica<br/>Parquet + DuckDB"]
+    orquestacion["orquestación<br/>CLI → Dagster"] -.-> batch
+    operacional --> dbt["transformación: dbt<br/>bronce → plata → oro, con tests de datos"]
+    analitica --> dbt
+    operacional --> grafana["Grafana<br/>tiempo real y alertas"]
+    dbt --> metabase["Metabase<br/>BI educativo"]
+    dbt --> streamlit["Streamlit, Jupyter<br/>escenarios y ejercicios"]
+    dbt --> modelos["modelos<br/>scikit-learn, LightGBM<br/>MLflow"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class sim destacado
+```
+
+En azul, el simulador; la orquestación entra en el camino batch.
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
 El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batch alimenta experimentos y modelos desde Parquet; dbt une las dos bases y la orquestación lanza los trabajos por lotes.
 
@@ -418,7 +494,22 @@ La gran mayoría de los casos de uso ya son posibles con la v0; sirven también 
 
 La v0 se construye en 11 hitos agrupados en cuatro fases, cada una con un criterio de salida; después, las versiones v1–v3 añaden complejidad al modelo.
 
-&#91;embedded content: hoja de ruta · 11 hitos en 4 fases\]
+```mermaid
+---
+title: "Once hitos en cuatro fases llevan del entorno al primer modelo"
+---
+flowchart LR
+    f1["fundamentos<br/>0 · entorno<br/>1 · colas y SimPy<br/>2 · llegadas"] --> f2["motor v0<br/>3 · motor y eventos<br/>4 · perfiles clínicos<br/>5 · cierre del flujo"]
+    f2 --> f3["datos y streaming<br/>6 · tiempo real<br/>7 · persistencia<br/>8 · analítica"]
+    f3 --> f4["experimentos y ML<br/>9 · experimentos<br/>10 · modelos"]
+    f1 --- g1{"M/M/1 cuadra<br/>con la teoría"}
+    f2 --- g2{"episodios completos<br/>en JSONL"}
+    f3 --- g3{"KPIs en Grafana<br/>en tiempo real"}
+    f4 --- g4{"A/B emparejado y<br/>primer modelo"}
+    g4 --> despues["después: v1 circuitos · v2 congestión y boarding · v3 perfiles de centro"]
+```
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
 Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de datos se monta sobre el modelo v0 antes de complicarlo.
 
@@ -503,7 +594,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 | 6 | Commit local | Claude Code | Mensaje estándar: `feat(sim): cola M/M/1 con SimPy` |
 | 7 | Comprobar al hacer commit | Automático | Hooks de pre-commit; si fallan, no hay commit |
 | 8 | Comprobar la tarea completa | Claude Code | scripts/tests-completos.sh (N3) una vez antes de cada push y revisión de sus propias gráficas |
-| 9 | Subir la rama | Claude Code, con permiso | `git push` |
+| 9 | Subir la rama | Claude Code, sin confirmación; Codex, con permiso | `git push` |
 | 10 | Abrir el pull request | Claude Code | `gh pr create` con resumen y checklist |
 | 11 | Ejecutar el CI | Automático | GitHub Actions |
 | 12 | Corregir si el CI falla | Claude Code | `gh run view` y vuelta al paso 4 |
@@ -513,7 +604,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 - **Inicio de hito:** sesión conceptual y especificación en `docs/specs/`, redactada por Claude y aprobada por Pedro.
 - **Cierre de hito:** nota en el diario, ADR si procede y etiqueta de versión (`v0.1-hito1`).
 - **Configuración única (Pedro, guiado por Claude):** cuenta y repositorio en GitHub, `gh auth login` y protección de `main` (solo por pull request con CI en verde).
-- **Permisos de Claude Code:** lectura y tests sin preguntar; subidas con permiso; fusión reservada a Pedro.
+- **Permisos de Claude Code:** lectura y tests sin preguntar; subidas de sus ramas sin confirmación (Codex, con permiso); fusión reservada a Pedro.
 - **Aprendizaje de git:** en los hitos 0 y 1, Pedro ejecuta a mano los pasos de git (rama, commit, push, pull request) siguiendo las indicaciones de Claude; desde el hito 2 los ejecuta Claude Code.
 
 ## Calidad y tests (QA)
@@ -597,7 +688,26 @@ Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
 
 Una tarea pasa por siete pasos y cada uno tiene su nivel de tests; los dos bucles vuelven a la implementación.
 
-&#91;embedded content: ciclo de una tarea · los tests de cada paso\]
+```mermaid
+---
+title: "A main solo llega un árbol que pasó N3 y el CI"
+---
+flowchart TD
+    plan["plan<br/>modo plan: el Stop no ejecuta nada"] --> impl["paso de implementación y commit<br/>N1: tests del área; pre-commit en el commit"]
+    impl --> turno["fin de turno<br/>N2: scripts/tests-rapidos.sh, con sello"]
+    turno -->|"siguiente paso"| impl
+    turno -->|"tarea completa"| push["push de la rama<br/>N3: scripts/tests-completos.sh, una vez"]
+    push --> ci["pull request y CI<br/>tests, tests-app y notebooks, en paralelo"]
+    ci --> revision["revisión en el chat<br/>Pedro y el chat recalculan y revisan el PR"]
+    revision -->|"ajustes de la revisión o CI en rojo"| impl
+    revision -->|"aprobado y CI en verde"| fusion["fusión en main (squash)<br/>el CI vuelve a ejecutarse sobre main"]
+    classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
+    class fusion destacado
+```
+
+En azul, la fusión en `main`, que solo hace Pedro.
+
+Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
 Dentro de la implementación, cada paso lógico es un commit con N1, y al final de cada turno el `Stop` ejecuta N2 sobre lo que haya cambiado. N3 se ejecuta una vez por push, no por commit. Una revisión con ajustes o un CI en rojo vuelven a la implementación con commits nuevos en la misma rama, y el ciclo de tests se repite desde N1.
 
@@ -668,7 +778,7 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su pestaña), la 47, de la tarea de proceso P.1, y las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y la 80, de la tarea de proceso P.2 (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -738,6 +848,7 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 64 | Etiqueta de cierre `v0.6-hito6`; la `v0.5-hito5` llegará después | La etiqueta nombra el hito, no el orden |
 | 65 | El simulador no va en un contenedor en este hito: corre en WSL2 con `uv` y entra por el listener `EXTERNAL`; Compose levanta solo Kafka y la consola | Ciclo de desarrollo y tests igual que hoy; el contenedor del simulador llega con la API |
 | 66 | `run_id` del directo = `r`, semilla, `_` y hora de arranque (o `--run-id`); el replay conserva el `run_id` y los `event_id` originales | Dos directos con la misma semilla no comparten `event_id`; reemitir la misma ejecución publica los mismos hechos |
+| 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo (candidata; ADR al cerrar la P.2) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
 
 ### Preguntas resueltas
 

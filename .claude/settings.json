@@ -25,6 +25,14 @@
       "Bash(git push -u origin docs/*)",
       "Bash(git push origin chore/*)",
       "Bash(git push -u origin chore/*)",
+      "Bash(git push origin fix/*)",
+      "Bash(git push -u origin fix/*)",
+      "Bash(git push origin refactor/*)",
+      "Bash(git push -u origin refactor/*)",
+      "Bash(git push origin test/*)",
+      "Bash(git push -u origin test/*)",
+      "Bash(git push origin ci/*)",
+      "Bash(git push -u origin ci/*)",
       "Bash(scripts/tests-rapidos.sh*)",
       "Bash(scripts/tests-completos.sh*)",
       "Bash(scripts/tests-integracion.sh*)",
@@ -56,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r uv run ruff format"
+            "command": "command -v jq >/dev/null 2>&1 || { echo 'ruff format (PostToolUse): jq no está instalado; no se formatea el fichero.' >&2; exit 1; }; jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r uv run ruff format"
           }
         ]
       }

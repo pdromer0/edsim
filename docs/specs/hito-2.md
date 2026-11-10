@@ -1,5 +1,7 @@
 # Hito 2 — Llegadas
 
+> **Estado:** cerrado (`v0.2-hito2`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 ## Objetivo y alcance
 
 Al terminar el hito 2, EDsim genera las llegadas de un centro de 300 urgencias al día como un proceso de Poisson no homogéneo. Su tasa varía con la hora, el día de la semana y el mes, y un efecto aleatorio diario añade sobredispersión. El generador usa el algoritmo de *thinning*, es reproducible por semilla y se valida estadísticamente: volumen, forma horaria, propiedad de Poisson y dispersión diaria.
@@ -48,7 +50,7 @@ Los conceptos se explicaron en la conversación de arranque del hito, con gráfi
 
 El perfil define λ(t) y Λ(t); la semilla da dos flujos independientes; el generador por *thinning* combina ambos y deja dos tipos de registros, que consumen el proceso SimPy, la validación (que usa también Λ) y las salidas.
 
-&#91;embedded content: flujo del hito 2 · del perfil y la semilla a la validación\]
+> Diagrama «flujo del hito 2 · del perfil y la semilla a la validación»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#d7689d72-d547).
 
 ## Modelo de llegadas
 

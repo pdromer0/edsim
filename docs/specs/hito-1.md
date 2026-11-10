@@ -1,5 +1,7 @@
 # Hito 1 — Colas y SimPy
 
+> **Estado:** cerrado (`v0.1-hito1`). Original en este repositorio desde el 10 de noviembre de 2026; la pestaña del documento online es un archivo.
+
 ## Objetivo y alcance
 
 Al terminar el hito 1, EDsim contiene un modelo M/M/1 en SimPy, reproducible por semilla, que mide esperas, ocupación y número en cola. Un experimento con réplicas demuestra, con intervalos de confianza, que sus resultados coinciden con la teoría de colas. Es el primer paso del criterio de salida de la fase de fundamentos: "M/M/1 cuadra con la teoría".
@@ -43,7 +45,7 @@ Los conceptos se explicaron en la conversación de arranque del hito. Esta tabla
 
 La semilla genera flujos aleatorios independientes; el modelo los consume y deja registros, de los que salen las métricas; las réplicas producen intervalos de confianza que se comparan con las fórmulas.
 
-&#91;embedded content: flujo del hito 1 · de la semilla a la comparación\]
+> Diagrama «flujo del hito 1 · de la semilla a la comparación»: en la [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#52b081bb-c2a2).
 
 ## Diseño del modelo M/M/1
 

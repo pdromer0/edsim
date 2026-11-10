@@ -3,10 +3,12 @@
 # Un fallo devuelve código 2 y las últimas 50 líneas por stderr para que el agente continúe.
 set -u
 
-# Sin jq no podemos interpretar la entrada: avisar y no bloquear.
+# Sin jq no podemos interpretar la entrada: avisar sin bloquear. Con código 0, Codex espera
+# JSON en stdout y muestra systemMessage como aviso en la interfaz; el 2 bloquearía.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "run-tests.sh: jq no está instalado; se omiten el formato y los tests." >&2
-  printf '{}\n'
+  mensaje="run-tests.sh: jq no está instalado; se omiten el formato y los tests."
+  echo "$mensaje" >&2
+  printf '{"systemMessage":"%s"}\n' "$mensaje"
   exit 0
 fi
 

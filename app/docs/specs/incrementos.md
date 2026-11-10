@@ -1,6 +1,6 @@
 # App web — incrementos
 
-Nov 5, 2026 · @Pedro
+> **Estado:** documento vivo. Original en este repositorio desde el 10 de noviembre de 2026.
 
 Cada hito añade a EDsim Lab lo nuevo del modelo, y esta pestaña especifica cada incremento: objetivo, cambios en el núcleo y en las páginas, tests, decisiones, tareas y anexo. La pestaña del hito solo lista las tareas de la app y enlaza aquí. La fase 1, cerrada con `app-v0.1.0`, sigue en App web — fase 1.
 
