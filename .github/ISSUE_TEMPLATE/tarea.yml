@@ -1,0 +1,60 @@
+name: Tarea
+description: Trabajo planificado que se hace con plan, rama y pull request.
+labels: ["tipo:tarea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        El issue resume y enlaza la especificación; no la copia. El PR que la cierra lleva «Closes #N».
+  - type: textarea
+    id: objetivo
+    attributes:
+      label: Objetivo
+      description: Qué cambia cuando la tarea termina, en dos o tres frases.
+    validations:
+      required: true
+  - type: textarea
+    id: contenido
+    attributes:
+      label: Contenido
+      description: Qué incluye, resumido; casillas si son varias piezas.
+    validations:
+      required: true
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Criterios de aceptación
+      description: De 3 a 6 viñetas comprobables.
+    validations:
+      required: true
+  - type: input
+    id: especificacion
+    attributes:
+      label: Enlace a la especificación
+      placeholder: docs/specs/hito-N.md#seccion
+  - type: input
+    id: rama
+    attributes:
+      label: Rama
+      placeholder: feat/…
+  - type: dropdown
+    id: quien
+    attributes:
+      label: Quién
+      options:
+        - Claude Code
+        - Codex
+        - Pedro
+    validations:
+      required: true
+  - type: checkboxes
+    id: critica
+    attributes:
+      label: Crítica
+      options:
+        - label: Revisión reforzada con @codex review
+  - type: input
+    id: depende
+    attributes:
+      label: Depende de
+      placeholder: "#N, #M"
