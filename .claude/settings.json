@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r uv run ruff format"
+            "command": "command -v jq >/dev/null 2>&1 || { echo 'ruff format (PostToolUse): jq no está instalado; no se formatea el fichero.' >&2; exit 1; }; jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r uv run ruff format"
           }
         ]
       }

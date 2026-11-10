@@ -4,10 +4,12 @@
 # Si fallan, sale con código 2 y Claude recibe el final de la salida por stderr.
 set -u
 
-# Sin jq no podemos leer la entrada: avisar y no bloquear.
+# Sin jq no podemos leer la entrada: avisar sin bloquear. El código 1 es un error que no
+# bloquea y que Claude Code muestra en la sesión. El 2 bloquearía y, sin poder leer
+# stop_hook_active, entraría en bucle; el stderr de un 0 no se ve.
 if ! command -v jq >/dev/null 2>&1; then
   echo "run-tests.sh: jq no está instalado; se omiten los tests." >&2
-  exit 0
+  exit 1
 fi
 
 entrada=$(cat)
