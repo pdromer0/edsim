@@ -205,3 +205,58 @@ def test_simulate_cli_characterization_clinico_con_sala(tmp_path, monkeypatch):
     # Los mismos pacientes y sorteos: solo cambian el nombre y la huella del centro.
     for name in ("ground_truth_episodios.csv", "ground_truth_dias.csv"):
         assert _rows_without_center(room / name) == _rows_without_center(plain / name)
+
+
+# --- El modelo del hito 5 (tarea 5.3) ---------------------------------------------------------
+
+# motor simular con los ejemplos del hito 5 (tests/data/perfiles_h5_ejemplo.toml y
+# centro_h5_ejemplo.toml) y los mismos argumentos que las demás caracterizaciones. Huellas de
+# los tres ficheros y de la salida estándar, con la carpeta de salida en lugar de su ruta.
+# Generadas en la tarea 5.3; la de la salida cambia con la 5.4, que trae el resumen completo
+# del hito 5 en lugar de los recuentos.
+H5_CHARACTERIZATION = {
+    "eventos.jsonl": "db45aee1cf8bbec7d17da389e3cb409d8a1c70a6415c4511522acc97c3024686",
+    "ground_truth_episodios.csv": (
+        "bbeedfec9b2fa67c0ede4eedac4f3daa83ee5d02b3e561804564068072f7da5b"
+    ),
+    "ground_truth_dias.csv": "8e11a7d6e1d6a3fa99bfecb59e04dd153dad58155ec5655fa184684e3b9df4c1",
+}
+H5_STDOUT = "4e8398f7c33ecf61c5281a2f579c7d325dae9eef8d78e0204fb4153aa95faa36"
+
+
+def test_simulate_cli_characterization_hito_5(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    output = tmp_path / "salida"
+    arguments = [
+        "motor",
+        "simular",
+        "--centro",
+        "tests/data/centro_h5_ejemplo.toml",
+        "--llegadas",
+        "tests/data/llegadas_ejemplo.toml",
+        "--perfiles",
+        "tests/data/perfiles_h5_ejemplo.toml",
+        "--dias",
+        "2",
+        "--calentamiento",
+        "1",
+        "--semilla",
+        "7",
+        "--run-id",
+        "caracterizacion-a2a",
+        "--salida",
+        str(output),
+    ]
+    assert main(arguments) == 0
+    stdout = capsys.readouterr().out.replace(str(output), "SALIDA")
+
+    for name, digest in H5_CHARACTERIZATION.items():
+        assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest, name
+    assert hashlib.sha256(stdout.encode("utf-8")).hexdigest() == H5_STDOUT
+    # Guarda: es el modelo del hito 5, con su línea de modelo y sus recuentos, no el resumen.
+    assert "Modelo del hito 5 (abandono, destinos y espera de cama)" in stdout
+    assert "Se van sin ser vistos: 16 (5.2 %): triaje 0, box 13, médico 3" in stdout
+    assert "Las métricas con abandono y espera de cama llegan con la tarea 5.4." in stdout
+    assert "Esperas y estancia por nivel" not in stdout
+    events = list(read_events(output / "eventos.jsonl"))
+    assert {e.schema_version for e in events} == {4}

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from edsim.cli import main
 from edsim.engine.center import load_center
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.profiles.config import load_profiles
@@ -146,3 +147,56 @@ def test_un_bloque_a_medias_dentro_de_un_fichero_es_un_error(tmp_path, name, tex
     message = str(error.value)
     assert message.startswith(f"{path}:")
     assert key in message
+
+
+# --- Desde la CLI: código 2 antes de escribir nada -------------------------------------------
+
+
+def simulate_cli(tmp_path: Path, center: Path, profiles: Path) -> Path:
+    output = tmp_path / "salida"
+    with pytest.raises(SystemExit) as stop:
+        main(
+            [
+                "motor",
+                "simular",
+                "--centro",
+                str(center),
+                "--llegadas",
+                str(DATA / "llegadas_ejemplo.toml"),
+                "--perfiles",
+                str(profiles),
+                "--dias",
+                "2",
+                "--calentamiento",
+                "1",
+                "--salida",
+                str(output),
+            ]
+        )
+    assert stop.value.code == 2
+    assert not output.exists()
+    return output
+
+
+@pytest.mark.parametrize(
+    ("center", "profiles", "file", "key"),
+    [
+        (CENTER_4, PROFILES_5, CENTER_4, "[camas]"),
+        (CENTER_5, PROFILES_4, PROFILES_4, "[abandono]"),
+    ],
+)
+def test_la_cli_da_codigo_2_con_un_bloque_entre_ficheros(
+    tmp_path, capsys, center, profiles, file, key
+):
+    simulate_cli(tmp_path, center, profiles)
+
+    error = capsys.readouterr().err
+    assert f"error: {file}:" in error and key in error
+
+
+def test_la_cli_da_codigo_2_con_un_bloque_a_medias_en_un_fichero(tmp_path, capsys):
+    path = write(tmp_path, "sin_destinos.toml", profiles_without(H5_PROFILES, "[destinos]", None))
+    simulate_cli(tmp_path, CENTER_5, path)
+
+    error = capsys.readouterr().err
+    assert str(path) in error and "destinos" in error

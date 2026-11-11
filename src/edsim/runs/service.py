@@ -12,8 +12,9 @@ from time import perf_counter
 from typing import Literal
 
 from edsim.arrivals.profile import load_profile
+from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.report import config_fingerprint
-from edsim.engine.analysis import RunAnalysis, analyze_run
+from edsim.engine.analysis import OutcomeCounts, RunAnalysis, analyze_run, outcome_counts
 from edsim.engine.center import load_center, require_provisional
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
@@ -53,11 +54,16 @@ def _load_configuration[T](loader: Callable[[Path], T], original: str | Path, co
 
 @dataclass(frozen=True, slots=True)
 class SimulationResult:
-    """Persisted metadata and the complete analysis of a newly simulated run."""
+    """Persisted metadata and the complete analysis of a newly simulated run.
+
+    ``outcome_counts`` exists only with the milestone 5 model (task 5.3): how
+    the episodes of the window end. Its metrics with abandonment are task 5.4.
+    """
 
     info: RunInfo
     analysis: RunAnalysis
     violations: tuple[Violation, ...]
+    outcome_counts: OutcomeCounts | None = None
 
 
 def _utc_now() -> datetime:
@@ -286,7 +292,12 @@ def simulate_run(
         info.write(temporary / "run.json")
         _check_destination(destination)
         temporary.rename(destination)
-        return SimulationResult(info=info, analysis=analysis, violations=violations)
+        counts = None
+        if model is PatientModel.MILESTONE_5:
+            counts = outcome_counts(events, warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY)
+        return SimulationResult(
+            info=info, analysis=analysis, violations=violations, outcome_counts=counts
+        )
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)

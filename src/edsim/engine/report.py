@@ -36,10 +36,17 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.report import WEEKDAYS
 from edsim.arrivals.thinning import DayRecord
 from edsim.arrivals.validation import ValidationResult
-from edsim.engine.analysis import SHIFTS, LevelMetrics, RunAnalysis, StepCurves, WindowMetrics
+from edsim.engine.analysis import (
+    SHIFTS,
+    LevelMetrics,
+    OutcomeCounts,
+    RunAnalysis,
+    StepCurves,
+    WindowMetrics,
+)
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical_sampler import ClinicalTruth
-from edsim.engine.events import ARRIVAL_MODES, SEXES, episode_id
+from edsim.engine.events import ARRIVAL_MODES, LWBS_WAITS, SEXES, episode_id
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
 from edsim.engine.targets import (
@@ -390,6 +397,40 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
         )
 
     lines += ["", *_violation_lines(violations)]
+    return "\n".join(lines)
+
+
+METRICS_WITH_ABANDONMENT = "Las métricas con abandono y espera de cama llegan con la tarea 5.4."
+"""What the summary of a run of milestone 5 says instead of its metrics (task 5.3)."""
+
+_WAIT_LABELS = {"triaje": "triaje", "box": "box", "medico": "médico"}
+
+
+def format_outcome_counts(counts: OutcomeCounts, violations: Sequence[Violation]) -> str:
+    """Summarize a run of milestone 5: how its episodes end, and the invariants.
+
+    The metrics of ``format_run_summary`` count a patient who left as still
+    inside; until task 5.4 the summary of milestone 5 gives the counts of
+    ``outcome_counts`` and says so.
+
+    Args:
+        counts: The counts of the episodes that arrive in the window.
+        violations: The result of ``check_invariants`` on the same log.
+    """
+    share = counts.left_total / counts.arrivals if counts.arrivals else 0.0
+    left = ", ".join(f"{_WAIT_LABELS[w]} {n}" for w, n in zip(LWBS_WAITS, counts.left, strict=True))
+    departed = ", ".join(f"{d} {n}" for d, n in zip(DESTINATIONS, counts.departed, strict=True))
+    lines = [
+        "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
+        f"Llegadas: {counts.arrivals}",
+        f"Se van sin ser vistos: {counts.left_total} ({_share(share)}): {left}",
+        f"Salidas: {departed}",
+        f"Siguen dentro al final: {counts.inside}",
+        "",
+        METRICS_WITH_ABANDONMENT,
+        "",
+        *_violation_lines(violations),
+    ]
     return "\n".join(lines)
 
 

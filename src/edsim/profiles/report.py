@@ -31,18 +31,32 @@ CHECK_LABELS = {
     "triage": "Triaje",
     "workup": "Pruebas",
     "durations": "Duraciones",
+    "patience": "Paciencia",
+    "destinations": "Destinos",
 }
 """The rows of the table, in Spanish."""
 
 MAX_FAILURES_SHOWN = 10
 """Failing categories listed under the table for each check."""
 
-FALSE_ALARM = (
-    f"Cada comprobación usa α = {ALPHA:g} con Bonferroni dentro de ella; con las "
-    f"{len(CHECK_NAMES)}, un muestreador correcto falla alguna hasta un "
-    f"{100 * len(CHECK_NAMES) * ALPHA:g} % de las veces (desigualdad de Boole)."
-)
+
+def false_alarm(checks: int) -> str:
+    """The joint false alarm rate of ``checks`` checks, by Boole's inequality."""
+    return (
+        f"Cada comprobación usa α = {ALPHA:g} con Bonferroni dentro de ella; con las "
+        f"{checks}, un muestreador correcto falla alguna hasta un "
+        f"{100 * checks * ALPHA:g} % de las veces (desigualdad de Boole)."
+    )
+
+
+FALSE_ALARM = false_alarm(len(CHECK_NAMES))
 """The joint false alarm rate of the four checks, under the table and in the help."""
+
+WITHOUT_OUTCOME = (
+    "Paciencia y destinos: no se comprueban; los perfiles no tienen el bloque del hito 5 "
+    "([abandono], [destinos] e ingreso en los motivos)."
+)
+"""What the table says with profiles of milestone 4 (task 5.3)."""
 
 PLOT_NOTE = (
     f"Exacto (perfiles) y observado con su IC al {100 * CONFIDENCE:g} %. Con muchas categorías, "
@@ -76,7 +90,8 @@ def _failing(c: CheckOutcome) -> list[str]:
 
 
 def format_profiles_validation(validation: ProfilesValidation) -> str:
-    """Format the four checks as a table, with the failing categories below.
+    """Format the four checks (six with the milestone 5 block) as a table, with the
+    failing categories below.
 
     One row per check: patients drawn, categories, failures, the smallest
     p-value against the level of each category (Bonferroni), the error of a
@@ -85,13 +100,13 @@ def format_profiles_validation(validation: ProfilesValidation) -> str:
     """
     rows = [
         f"{'comprobación':<19}{'pacientes':>10}{'categorías':>12}{'fallos':>8}"
-        f"{'p mínimo':>11}{'α (Bonferroni)':>16}  {'error detectable (80 %)':<44}"
+        f"{'p mínimo':>11}{'α (Bonferroni)':>16}  {'error detectable (80 %)':<56}"
         f"{'tiempo':>8}  resultado"
     ]
     for c in validation.checks:
         rows.append(
             f"{CHECK_LABELS[c.name]:<19}{c.patients:>10}{c.categories:>12}{c.failures:>8}"
-            f"{c.min_p:>11.3g}{c.alpha:>16.3g}  {_detectable(c):<44}"
+            f"{c.min_p:>11.3g}{c.alpha:>16.3g}  {_detectable(c):<56}"
             f"{c.seconds:>6.1f} s  {'pasa' if c.passed else 'FALLA'}"
         )
     rows.append("")
@@ -99,7 +114,9 @@ def format_profiles_validation(validation: ProfilesValidation) -> str:
         f"Muestra del año: {validation.year_patients} pacientes, sorteados una vez en "
         f"{validation.year_seconds:.1f} s para el triaje, las pruebas y las duraciones."
     )
-    rows.append(FALSE_ALARM)
+    if not validation.has_outcome:
+        rows.append(WITHOUT_OUTCOME)
+    rows.append(false_alarm(len(validation.checks)))
     failed = [c for c in validation.checks if not c.passed]
     for c in failed:
         rows.append(f"\n{CHECK_LABELS[c.name]}: fallan {c.failures} categorías")

@@ -15,10 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from edsim.engine.analysis import OutcomeCounts, outcome_counts
 from edsim.engine.center import load_center
 from edsim.engine.events import OUTCOME_SCHEMA_VERSION
 from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.invariants import InvariantContext, check_abandonment, check_invariants
+from edsim.engine.report import format_outcome_counts
 from edsim.engine.scenarios import (
     Scenario,
     abandonment,
@@ -572,3 +574,63 @@ def test_la_espera_de_cama_es_la_base_por_los_factores_del_centro(center):
         )
         == []
     )
+
+
+# --- Recuentos del desenlace (tarea 5.3), con los escenarios a mano --------------------------
+
+
+def test_recuentos_del_escenario_m(center):
+    # Q4 se va en 3 + 1 = 4 (triaje), Q2 en 1 + 25 = 26 (médico); Q1 alta en 45 y Q3 alta
+    # (empate en 45: se queda). 4 llegadas, 2 abandonos, 2 altas, nadie dentro.
+    counts = outcome_counts(run_scenario(abandonment(center)).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=4, left=(1, 0, 1), departed=(2, 0, 0, 0), inside=0)
+    assert counts.left_total == 2
+
+
+def test_recuentos_del_escenario_c(center):
+    # R1 ingresa (cama en 35 + 100 × 1,5 = 185); R2 y R3, alta.
+    counts = outcome_counts(run_scenario(admission(center)).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=3, left=(0, 0, 0), departed=(2, 1, 0, 0), inside=0)
+
+
+def test_los_recuentos_son_de_los_que_llegan_en_la_ventana(center):
+    # [2, 1440): Q3 (llega en 2, alta) y Q4 (llega en 3, se va en el triaje); Q1 y Q2, fuera.
+    counts = outcome_counts(run_scenario(abandonment(center)).events, 2.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=2, left=(1, 0, 0), departed=(1, 0, 0, 0), inside=0)
+
+
+def test_quien_sigue_en_el_pasillo_cuenta_dentro(center):
+    # Con cama base 1000 (de noche, 1500), R1 sigue esperando cama en el horizonte.
+    base = admission(center)
+    r1 = outcome_draws(3, 5, 30, destination="ingreso", bed_base=1000)
+    scenario = dataclasses.replace(base, patients=((0.0, r1), *base.patients[1:]))
+    counts = outcome_counts(run_scenario(scenario).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=3, left=(0, 0, 0), departed=(2, 0, 0, 0), inside=1)
+
+
+def test_recuentos_de_un_log_vacio():
+    assert outcome_counts([], 0.0, 1440.0) == OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0)
+
+
+def test_el_texto_de_los_recuentos(center):
+    # Los del escenario M: 2 de 4 se van, el 50,0 %; sin violaciones.
+    counts = OutcomeCounts(arrivals=4, left=(1, 0, 1), departed=(2, 0, 0, 0), inside=0)
+
+    assert format_outcome_counts(counts, []).splitlines() == [
+        "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
+        "Llegadas: 4",
+        "Se van sin ser vistos: 2 (50.0 %): triaje 1, box 0, médico 1",
+        "Salidas: alta 2, ingreso 0, traslado 0, exitus 0",
+        "Siguen dentro al final: 0",
+        "",
+        "Las métricas con abandono y espera de cama llegan con la tarea 5.4.",
+        "",
+        "Invariantes: 0 violaciones",
+    ]
+    # Sin llegadas, el porcentaje es 0 y no una división por cero.
+    empty = format_outcome_counts(OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0), [])
+    assert "Se van sin ser vistos: 0 (0.0 %)" in empty

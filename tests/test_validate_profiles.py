@@ -22,6 +22,7 @@ from edsim.profiles.context import ArrivalContext, all_contexts
 from edsim.profiles.durations import ASSESSMENT, duration_model
 from edsim.profiles.mixing import band_probabilities, reason_probabilities
 from edsim.profiles.validation import (
+    CHECK_NAMES,
     MAX_MIXING_ERROR,
     check_durations,
     check_mixing,
@@ -325,11 +326,15 @@ def test_tabla_del_informe(validated):
     for column in ("pacientes", "categorías", "fallos", "p mínimo", "α (Bonferroni)"):
         assert column in lines[0]
     assert "error detectable (80 %)" in lines[0] and "tiempo" in lines[0]
-    for label, c in zip(report.CHECK_LABELS.values(), result.checks, strict=True):
-        (row,) = [line for line in lines if line.startswith(label)]
+    # Los perfiles de ejemplo son del hito 4: las cuatro filas de siempre, y la salida dice
+    # que la paciencia y los destinos no se comprueban (tarea 5.3).
+    assert [c.name for c in result.checks] == list(CHECK_NAMES)
+    for c in result.checks:
+        (row,) = [line for line in lines if line.startswith(report.CHECK_LABELS[c.name])]
         assert f"{c.patients}" in row and f"{c.categories}" in row and row.endswith("pasa")
         assert c.detectable.category in row
     assert f"Muestra del año: {patients} pacientes" in text
+    assert report.WITHOUT_OUTCOME in lines
     assert report.FALSE_ALARM in lines
     assert "hasta un 4 % de las veces" in report.FALSE_ALARM
     assert lines[-1] == "Resultado: pasan las 4 comprobaciones"

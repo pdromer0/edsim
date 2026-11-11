@@ -14,18 +14,25 @@ import pytest
 
 from edsim.arrivals.profile import load_profile
 from edsim.profiles.config import load_profiles
+from edsim.profiles.context import ArrivalContext
 from edsim.profiles.outcome import outcome_model
+from edsim.profiles.report import WITHOUT_OUTCOME, false_alarm, format_profiles_validation
 from edsim.profiles.validation import (
+    CHECK_NAMES,
     N_DESTINATION_CATEGORIES,
     N_PATIENCE_CATEGORIES,
+    OUTCOME_CHECK_NAMES,
     PATIENCE_YEARS,
     _draw_year,
     check_destinations,
     check_patience,
     detectable_share,
     detection_power,
+    mixing_minimum,
+    validate_profiles,
     year_patients,
 )
+from edsim.seeds import child_streams
 
 DATA = Path(__file__).parent / "data"
 SEED = 2026
@@ -171,3 +178,58 @@ def test_detecta_otra_paciencia(profiles, arrivals):
 
     failing = {d.name for d in result.details if not d.passed}
     assert "paciencia/real_4/banda_15_44/mediana" in failing
+
+
+# --- edsim perfiles validar con el bloque del hito 5 (tarea 5.3) -----------------------------
+
+
+@pytest.fixture(scope="module")
+def validated_h5(profiles, arrivals):
+    """La validación de los perfiles del hito 5 y la de los mismos sin el bloque."""
+    context = (ArrivalContext(0, 0, 0),)  # un contexto, el mínimo con margen: la mezcla rápida
+    patients = mixing_minimum(profiles, context)
+    h5 = validate_profiles(profiles, arrivals, seed=SEED, patients=patients, contexts=context)
+    h4 = validate_profiles(
+        load_profiles(DATA / "perfiles_ejemplo.toml"),
+        arrivals,
+        seed=SEED,
+        patients=patients,
+        contexts=context,
+    )
+    return h5, h4
+
+
+@pytest.mark.slow
+def test_validar_con_el_bloque_da_seis_filas(profiles, arrivals, validated_h5):
+    # Las cuatro de siempre, iguales a las de los perfiles sin el bloque (los hijos 0 y 1
+    # de child_streams(semilla, 4) son los de child_streams(semilla, 2)), y la paciencia y
+    # los destinos, == a sus check_* con los hijos 2 y 3.
+    h5, h4 = validated_h5
+    _, _, patience_seed, destinations_seed = child_streams(SEED, 4)
+
+    assert [c.name for c in h5.checks] == [*CHECK_NAMES, *OUTCOME_CHECK_NAMES]
+    assert h5.has_outcome and not h4.has_outcome
+    assert [c.result for c in h5.checks[:4]] == [c.result for c in h4.checks]
+    assert h5.check("patience").result == check_patience(profiles, arrivals, seed=patience_seed)
+    assert h5.check("destinations").result == check_destinations(
+        profiles, arrivals, seed=destinations_seed
+    )
+    year = year_patients(profiles, arrivals)
+    assert (h5.check("patience").patients, h5.check("destinations").patients) == (2 * year, year)
+    assert (h5.check("patience").categories, h5.check("destinations").categories) == (40, 108)
+    assert h5.passed
+
+
+@pytest.mark.slow
+def test_la_tabla_con_el_bloque(validated_h5):
+    h5, _ = validated_h5
+    lines = format_profiles_validation(h5).splitlines()
+
+    for label in ("Paciencia", "Destinos"):
+        (row,) = [line for line in lines if line.startswith(label)]
+        assert row.endswith("pasa")
+    # La referencia de los destinos es la de la 5.2: el ingreso del quintil más grave.
+    assert "destino/ingreso/quintil_5: 25.5 % → 26.9 %" in "\n".join(lines)
+    assert WITHOUT_OUTCOME not in lines
+    assert false_alarm(6) in lines and "hasta un 6 % de las veces" in false_alarm(6)
+    assert lines[-1] == "Resultado: pasan las 6 comprobaciones"
