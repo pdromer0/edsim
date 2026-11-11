@@ -283,21 +283,23 @@ def test_el_replay_publica_las_lineas_filtradas(saved):
     assert math.isclose(end.sim_time, 2880)
 
 
-# --- El hito 5 (tarea 5.3): el directo de la versión 4 es de la 5.4 -------------------------
+# --- El hito 5: el directo de la versión 4 (tarea 5.4) --------------------------------------
 
 
-def test_el_directo_rechaza_los_ficheros_del_hito_5(models):
-    # Nunca los etiqueta como versión 3: hasta la 5.4, un error claro.
-    with pytest.raises(ValueError, match="live mode of the milestone 5 model .* task 5.4"):
-        prepare_live(
-            load_center(DATA / "centro_h5_ejemplo.toml"),
-            models["llegadas"],
-            2,
-            2026,
-            warmup_days=1,
-            run_id="rh5",
-            profiles=load_profiles(DATA / "perfiles_h5_ejemplo.toml"),
-        )
+def test_el_directo_del_hito_5_es_la_version_4(models):
+    # Hasta la 5.4 se rechazaba; nunca se etiqueta como versión 3.
+    prepared = prepare_live(
+        load_center(DATA / "centro_h5_ejemplo.toml"),
+        models["llegadas"],
+        2,
+        2026,
+        warmup_days=1,
+        run_id="rh5",
+        profiles=load_profiles(DATA / "perfiles_h5_ejemplo.toml"),
+    )
+
+    assert prepared.info.schema_version == 4
+    assert {e.schema_version for e in prepared.source.step()} == {4}
 
 
 def test_el_directo_rechaza_un_bloque_a_medias(models):

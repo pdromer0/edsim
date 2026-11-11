@@ -11,11 +11,12 @@ batch filtrado con el mismo run_id.
 from pathlib import Path
 
 import pytest
+from v4_logs import HandLog, episode
 
 from edsim.arrivals.profile import load_profile
 from edsim.engine.center import load_center
 from edsim.engine.engine import simulate_ed
-from edsim.engine.events import EventLog, MemorySink
+from edsim.engine.events import WARD, EventLog, MemorySink
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.census import census, live_events
 from edsim.live.clock import FakeClock
@@ -309,6 +310,7 @@ W = WARMUP * 1440
 MODELS = {
     1: (DATA / "centro_ejemplo.toml", None),
     3: (DATA / "centro_sala_ejemplo.toml", DATA / "perfiles_ejemplo.toml"),
+    4: (DATA / "centro_h5_ejemplo.toml", DATA / "perfiles_h5_ejemplo.toml"),
 }
 
 
@@ -331,7 +333,7 @@ def live_and_batch(version: int, run_id: str):
     return tracker, census(batch.events, W) + live_events(batch.events, W)
 
 
-@pytest.mark.parametrize("version", [1, 3])
+@pytest.mark.parametrize("version", [1, 3, 4])
 def test_consumidor_igual_a_batch(version):
     tracker, filtered = live_and_batch(version, f"rconsumidor{version}")
 
@@ -341,6 +343,12 @@ def test_consumidor_igual_a_batch(version):
     assert tracker.episode_order_errors == 0
     if version == 3:  # guarda: el caso de la sala de resultados ocurre
         assert any(e.event_type == "box_released" for e in filtered)
+    if version == 4:  # guardas: hay abandonos y camas, y el abandono cierra el episodio
+        kinds = {e.event_type for e in filtered}
+        assert {"patient_left_wbs", "bed_requested", "bed_assigned"} <= kinds
+        left = {e.episode_id for e in filtered if e.event_type == "patient_left_wbs"}
+        assert left and not left & tracker.open_episodes()
+        assert tracker.occupancy().left == len(left)
 
 
 def test_el_orden_entre_particiones_no_cambia_el_estado():
@@ -365,3 +373,61 @@ def test_el_orden_entre_particiones_no_cambia_el_estado():
     assert shuffled.states == tracker.states
     assert shuffled.episode_order_errors == 0
     assert shuffled.cross_partition_inversions > 0
+
+
+# --- La versión 4: esperando cama, pasillo y abandono (tarea 5.4, H5-11) ---------------
+
+
+def bed_log() -> list:
+    """El log a mano F del plan de la 5.4: el escenario C más un abandono.
+
+    R1 (EP-000001) llega en 0, triaje de 0 a 5 (nivel 3), box 1 en 5 y valoración de 5 a
+    35; ingresa y pide cama en 35; R3 la desaloja en 60 y espera en el pasillo hasta la cama,
+    en 185. R2 (EP-000002) llega en 10, triaje de 10 a 15 (nivel 4), box 1 en 80 y
+    valoración de 80 a 100, alta en 100. Q (EP-000003) llega en 20, triaje de 20 a 25 (nivel
+    5) y se va en 50 esperando box. R3 (EP-000004), nivel 1, llega en 60 a la puerta, recibe
+    el box 1 de R1, valoración de 60 a 80 y alta en 80.
+    """
+    log = HandLog()
+    log.arrive(1, 0.0).triage(1, 0.0, 5.0, 3).box(1, 5.0, 1).assess(1, 5.0, 35.0, 1)
+    log.add(35.0, "disposition_decided", 1, destino="ingreso")
+    log.add(35.0, "bed_requested", 1, servicio=WARD)
+    log.arrive(2, 10.0).triage(2, 10.0, 15.0, 4)
+    log.arrive(3, 20.0).triage(3, 20.0, 25.0, 5).leave(3, 50.0, "box")
+    log.arrive(4, 60.0).triage(4, 60.0, 60.0, 1, door=True)
+    log.displace(1, 60.0, 1, by=4).box(4, 60.0, 1).assess(4, 60.0, 80.0, 1).depart(4, 80.0)
+    log.box(2, 80.0, 1).assess(2, 80.0, 100.0, 1).depart(2, 100.0)
+    log.add(185.0, "bed_assigned", 1, servicio=WARD)
+    log.add(185.0, "patient_departed", 1, destino="ingreso")
+    return log.events("rcama")
+
+
+@pytest.mark.parametrize(
+    ("t", "expected", "still_open", "hallway", "departed", "left"),
+    [
+        (40, row(waiting_bed=1, waiting_box=2), 3, 0, 0, 0),
+        (70, row(waiting_bed=1, waiting_box=1, assessment=1), 3, 1, 0, 1),
+        (190, row(), 0, 0, 3, 1),
+    ],
+)
+def test_esperando_cama_pasillo_y_abandono_a_mano(t, expected, still_open, hallway, departed, left):
+    tracker = LiveTracker()
+    for event in bed_log():
+        tracker.write(event)
+
+    occupancy = tracker.occupancy_at(t)
+
+    assert dict(occupancy.by_location) == expected
+    assert (occupancy.open, occupancy.hallway) == (still_open, hallway)
+    assert (occupancy.departed, occupancy.left) == (departed, left)
+
+
+def test_el_abandono_cierra_y_el_pasillo_se_ve_en_el_estado():
+    tracker = LiveTracker()
+    events = bed_log()
+    for event in events[: next(i for i, e in enumerate(events) if e.sim_time > 70)]:
+        tracker.write(event)
+    r1, q = episode(1), episode(3)
+    assert tracker.states[r1].location() == "waiting_bed" and tracker.states[r1].hallway
+    assert tracker.states[q].left and q not in tracker.open_episodes()
+    assert tracker.open_episodes() == {episode(1), episode(2), episode(4)}

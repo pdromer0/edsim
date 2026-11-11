@@ -134,9 +134,12 @@ def test_ensure_topics_detecta_un_topic_distinto(
 
 def filtered_batch(batch: list, start: float) -> list:
     """La fórmula de la pieza 7, como en tests/test_directo.py: sim_time >= W, sin
-    episodio, o episodio abierto en W (llegó antes de W y no salió antes de W)."""
+    episodio, o episodio abierto en W (llegó antes de W y no salió antes de W). Con la
+    versión 4, también se sale yéndose sin ser visto (patient_left_wbs, tarea 5.4)."""
     before = [e for e in batch if e.sim_time < start]
-    departed = {e.episode_id for e in before if e.event_type == "patient_departed"}
+    departed = {
+        e.episode_id for e in before if e.event_type in ("patient_departed", "patient_left_wbs")
+    }
     still_open = {e.episode_id for e in before if e.episode_id is not None} - departed
     return [
         e
