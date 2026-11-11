@@ -23,6 +23,15 @@ from edsim.engine.clinical_sampler import ClinicalSampler, PatientModel
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import OUTCOME_SCHEMA_VERSION, JsonlSink, MemorySink
 from edsim.engine.invariants import check_invariants
+from edsim.engine.report import (
+    CLINICAL_EPISODE_COLUMNS,
+    OUTCOME_COLUMNS,
+    OUTCOME_EPISODE_COLUMNS,
+    ProfilesParameters,
+    RunParameters,
+    read_episodes_csv,
+    write_episodes_csv,
+)
 from edsim.profiles.config import load_profiles
 from edsim.seeds import child_streams
 
@@ -313,3 +322,165 @@ def test_la_verdad_del_desenlace_solo_tiene_tipos_de_python(simulated):
     assert {("destination_draws", i) for i in range(4)} | {("patience_z",), ("bed_z",)} <= (
         outcome_leaves
     )
+
+
+# --- El CSV del ground truth del hito 5 -------------------------------------------------------
+
+PARAMETERS = RunParameters(
+    center="tests/data/centro_h5_ejemplo.toml",
+    center_fingerprint="5b86440058ee",
+    profile="tests/data/llegadas_ejemplo.toml",
+    profile_fingerprint="63d0ae1fb4f0",
+    days=DAYS,
+    warmup_days=1,
+    seed=SEED,
+    run_id="r2026",
+)
+PROFILES = ProfilesParameters(
+    profiles="tests/data/perfiles_h5_ejemplo.toml", profiles_fingerprint="0123456789ab"
+)
+OUTCOME_HEADER = (
+    "z_paciencia",
+    "paciencia",
+    "sorteo_destino_alta",
+    "sorteo_destino_ingreso",
+    "sorteo_destino_traslado",
+    "sorteo_destino_exitus",
+    "z_cama",
+    "espera_cama_base",
+)
+"""Las 8 columnas nuevas, escritas a mano en el orden de la especificación."""
+
+
+def write_h5(episodes, path):
+    write_episodes_csv(episodes, path, PARAMETERS, PROFILES, outcome=True)
+    return path
+
+
+def test_las_columnas_del_desenlace_van_al_final(simulated, tmp_path):
+    _, result = simulated
+    path = write_h5(result.ground_truth.episodes, tmp_path / "episodios.csv")
+    header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert OUTCOME_COLUMNS == OUTCOME_HEADER
+    assert len(header) == 57 + 8 == 65
+    assert tuple(header) == (*CLINICAL_EPISODE_COLUMNS, *OUTCOME_HEADER) == OUTCOME_EPISODE_COLUMNS
+
+
+def test_ida_y_vuelta_del_csv_del_hito_5(simulated, tmp_path):
+    # Con ==, floats bit a bit, también el destino contrafactual de quien se fue.
+    events, result = simulated
+    episodes = result.ground_truth.episodes
+    path = write_h5(episodes, tmp_path / "episodios.csv")
+
+    assert read_episodes_csv(path) == episodes
+    # Guarda: la muestra tiene los cuatro destinos, y quien se fue tiene destino sorteado
+    # aunque nunca llegó a la decisión, también uno distinto del alta.
+    left = {e.episode_id for e in events if e.event_type == "patient_left_wbs"}
+    assert {e.outcome.destination for e in episodes} == {"alta", "ingreso", "traslado", "exitus"}
+    assert {e.outcome.destination for e in episodes if e.episode_id in left} > {"alta"}
+
+
+def test_lo_leido_del_hito_5_solo_tiene_tipos_de_python(simulated, tmp_path):
+    # El gemelo de test_lo_leido_solo_tiene_tipos_de_python (test_clinical_csv.py).
+    _, result = simulated
+    path = write_h5(result.ground_truth.episodes, tmp_path / "episodios.csv")
+    outcome_leaves = set()
+    for e in read_episodes_csv(path):
+        for where, value in leaves(asdict(e)):
+            assert type(value) in PLAIN, (e.episode_id, where, type(value))
+            if where[0] == "outcome":
+                outcome_leaves.add(where[1:])
+    assert {("destination_draws", i) for i in range(4)} <= outcome_leaves
+
+
+def test_un_csv_del_hito_5_sin_episodios(tmp_path):
+    # El modelo, no los episodios, decide las columnas: 65 aunque no haya filas.
+    path = write_h5((), tmp_path / "episodios.csv")
+
+    assert path.read_text(encoding="utf-8") == ",".join(OUTCOME_EPISODE_COLUMNS) + "\n"
+    assert read_episodes_csv(path) == ()
+
+
+def test_el_csv_del_hito_5_exige_el_desenlace(simulated, tmp_path):
+    _, result = simulated
+    episodes = result.ground_truth.episodes
+    path = tmp_path / "episodios.csv"
+    h4 = dataclasses.replace(episodes[0], outcome=None)
+
+    with pytest.raises(ValueError, match="needs the profiles"):
+        write_episodes_csv(episodes, path, PARAMETERS, outcome=True)
+    with pytest.raises(ValueError, match="needs outcome=True"):
+        write_episodes_csv(episodes, path, PARAMETERS, PROFILES)
+    with pytest.raises(ValueError, match="has no outcome"):
+        write_h5((*episodes[1:], h4), path)
+    assert not path.exists()  # se comprueba antes de crear el fichero
+
+
+def h5_csv_rows(simulated, tmp_path) -> list[list[str]]:
+    _, result = simulated
+    path = write_h5(result.ground_truth.episodes[:3], tmp_path / "episodios.csv")
+    return [line.split(",") for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.parametrize("column", OUTCOME_HEADER)
+@pytest.mark.parametrize("text", ["nan", "inf", "", "1e400"])
+def test_un_valor_no_finito_en_el_desenlace_no_se_lee(simulated, tmp_path, column, text):
+    rows = h5_csv_rows(simulated, tmp_path)
+    rows[1][rows[0].index(column)] = text
+    path = tmp_path / "roto.csv"
+    path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"{column} must be"):
+        read_episodes_csv(path)
+
+
+def test_un_destino_desconocido_no_se_lee(simulated, tmp_path):
+    rows = h5_csv_rows(simulated, tmp_path)
+    rows[1][rows[0].index("destino")] = "uci"
+    path = tmp_path / "roto.csv"
+    path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="destino must be one of"):
+        read_episodes_csv(path)
+
+
+@pytest.mark.parametrize("cut", [-1, 1])
+def test_una_cabecera_de_64_o_66_columnas_no_se_lee(simulated, tmp_path, cut):
+    rows = h5_csv_rows(simulated, tmp_path)
+    rows = [r[:cut] if cut < 0 else [*r, "x"] for r in rows]
+    path = tmp_path / "roto.csv"
+    path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid episode ground truth header"):
+        read_episodes_csv(path)
+
+
+def test_un_csv_de_57_columnas_es_del_hito_4(arrival_profile, tmp_path):
+    # El CSV clínico de siempre se lee como hasta ahora: sin desenlace.
+    result = simulate_ed(
+        load_center(DATA / "centro_sala_ejemplo.toml"),
+        arrival_profile,
+        DAYS,
+        SEED,
+        sink=MemorySink(),
+        profiles=load_profiles(DATA / "perfiles_ejemplo.toml"),
+    )
+    path = tmp_path / "episodios.csv"
+    write_episodes_csv(result.ground_truth.episodes, path, PARAMETERS, PROFILES)
+
+    assert len(path.read_text(encoding="utf-8").splitlines()[0].split(",")) == 57
+    read = read_episodes_csv(path)
+    assert read == result.ground_truth.episodes
+    assert all(e.outcome is None for e in read)
+
+
+# --- Decisión 28: ni la paciencia ni el destino de quien se fue van al log --------------------
+
+
+def test_quien_se_fue_no_tiene_destino_en_el_log(simulated):
+    events, _ = simulated
+    left = {e.episode_id for e in events if e.event_type == "patient_left_wbs"}
+
+    assert left
+    assert not [e for e in events if e.episode_id in left and "destino" in e.payload]

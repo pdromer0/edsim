@@ -59,10 +59,10 @@ from edsim.engine.validation import (
     HourlyCensus,
     MG1Replicas,
 )
-from edsim.profiles.config import N_BANDS, N_LEVELS, REASON_KEYS, TEST_TYPES
+from edsim.profiles.config import DESTINATIONS, N_BANDS, N_LEVELS, REASON_KEYS, TEST_TYPES
 from edsim.profiles.context import DAY_TYPES, SEASONS, SHIFT_BANDS, ArrivalContext
 from edsim.profiles.population import Person
-from edsim.profiles.sampler import SeverityAndTriage
+from edsim.profiles.sampler import Outcome, SeverityAndTriage
 from edsim.profiles.severity import CORRECT, OVER, UNDER, triage_quality
 from edsim.profiles.workup import Workup
 
@@ -180,6 +180,24 @@ CLINICAL_EPISODE_COLUMNS = (
     *PROFILES_COLUMNS,
 )
 """The columns of the episodes CSV of the clinical model: 10 + 37 + 8 + 2 = 57."""
+
+OUTCOME_COLUMNS = (
+    "z_paciencia",
+    "paciencia",
+    *(f"sorteo_destino_{d}" for d in DESTINATIONS),
+    "z_cama",
+    "espera_cama_base",
+)
+"""The outcome of an episode of milestone 5, in the order of the specification: 8 columns.
+
+The normal of stream 8 and the patience in minutes, the 4 Gumbel draws of
+stream 4 in the order of ``DESTINATIONS``, and the normal of stream 9 and the
+base wait for a bed (factor 1). The destination drawn from them is the column
+``destino``, also for a patient who left (H5-10).
+"""
+
+OUTCOME_EPISODE_COLUMNS = (*CLINICAL_EPISODE_COLUMNS, *OUTCOME_COLUMNS)
+"""The columns of the episodes CSV of the milestone 5 model: 57 + 8 = 65."""
 
 DAY_COLUMNS = (
     "dia",
@@ -526,7 +544,37 @@ def _episode_cells(e: EpisodeTruth) -> tuple:
         e.reassessment_time,
         e.needs_tests,
         "" if e.test_turnaround is None else e.test_turnaround,
-        "ingreso" if e.admitted else "alta",
+        _destination(e),
+    )
+
+
+def _destination(e: EpisodeTruth) -> str:
+    """The drawn destination: one of four with milestone 5, else ``alta`` or ``ingreso``."""
+    if e.outcome is None:
+        return "ingreso" if e.admitted else "alta"
+    return e.outcome.destination
+
+
+def _outcome_cells(e: EpisodeTruth) -> tuple:
+    """The 8 cells of the outcome, or ``ValueError`` if they cannot be read back."""
+    outcome = e.outcome
+    if outcome is None:
+        raise ValueError(f"{e.episode_id} has no outcome: it is not of the milestone 5 model")
+    if outcome.destination not in DESTINATIONS or len(outcome.destination_draws) != len(
+        DESTINATIONS
+    ):
+        raise ValueError(f"{e.episode_id}: its outcome has no valid destination and draws")
+    if e.admitted != (outcome.destination == "ingreso"):
+        raise ValueError(
+            f"{e.episode_id}: admitted={e.admitted!r} but the destination is "
+            f"{outcome.destination!r}"
+        )
+    return (
+        outcome.patience_z,
+        outcome.patience,
+        *outcome.destination_draws,
+        outcome.bed_z,
+        outcome.bed_base,
     )
 
 
@@ -569,6 +617,8 @@ def write_episodes_csv(
     path: Path,
     parameters: RunParameters,
     profiles: ProfilesParameters | None = None,
+    *,
+    outcome: bool = False,
 ) -> None:
     """Write the ground truth of the episodes as a tidy CSV, one row per episode.
 
@@ -584,13 +634,41 @@ def write_episodes_csv(
     parameters and ``respuesta_pruebas`` empty (``None``: the turnaround of a
     round depends on the shift band of its order).
 
+    With ``outcome`` too, the CSV of the milestone 5 model (task 5.3):
+    ``OUTCOME_EPISODE_COLUMNS``, the clinical one with ``OUTCOME_COLUMNS`` at the
+    end and ``destino`` one of the four drawn destinations, also the
+    counterfactual one of a patient who left. The model says it, not the
+    episodes, so a run of milestone 5 without episodes has its 65 columns too.
+
     Raises:
         ValueError: If ``profiles`` is given and some episode is provisional,
             or not given and some episode is clinical, or a clinical episode
             cannot be read back (its ``test_turnaround`` is not ``None``, or
-            its level or ``needs_tests`` contradict its clinical truth). It is
-            checked before the file is created.
+            its level or ``needs_tests`` contradict its clinical truth); if
+            ``outcome`` is given without ``profiles``, or some episode has no
+            outcome with it or has one without it. It is checked before the
+            file is created.
     """
+    if outcome:
+        if profiles is None:
+            raise ValueError("the CSV of the milestone 5 model needs the profiles")
+        rows = [
+            (
+                *_episode_cells(e),
+                *_clinical_cells(e),
+                *astuple(parameters),
+                *astuple(profiles),
+                *_outcome_cells(e),
+            )
+            for e in episodes
+        ]
+        _write_rows(path, OUTCOME_EPISODE_COLUMNS, rows)
+        return
+    with_outcome = [e.episode_id for e in episodes if e.outcome is not None]
+    if with_outcome:
+        raise ValueError(
+            f"{with_outcome[0]} has an outcome: the CSV of the milestone 5 model needs outcome=True"
+        )
     if profiles is None:
         clinical = [e.episode_id for e in episodes if e.clinical is not None]
         if clinical:
@@ -603,6 +681,10 @@ def write_episodes_csv(
             (*_episode_cells(e), *_clinical_cells(e), *astuple(parameters), *astuple(profiles))
             for e in episodes
         ]
+    _write_rows(path, header, rows)
+
+
+def _write_rows(path: Path, header: Sequence[str], rows: Sequence[tuple]) -> None:
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(header)
@@ -687,14 +769,28 @@ def _clinical_truth(row: Mapping[str, str], level: int, needs_tests: bool) -> Cl
     )
 
 
+def _outcome(row: Mapping[str, str]) -> Outcome:
+    return Outcome(
+        destination_draws=tuple(_real(row, f"sorteo_destino_{d}") for d in DESTINATIONS),
+        destination=_token(row, "destino", DESTINATIONS),
+        patience_z=_real(row, "z_paciencia"),
+        patience=_real(row, "paciencia", non_negative=True),
+        bed_z=_real(row, "z_cama"),
+        bed_base=_real(row, "espera_cama_base", non_negative=True),
+    )
+
+
 def episode_from_row(row: Mapping[str, str]) -> EpisodeTruth:
-    """The ``EpisodeTruth`` of one row of an episodes CSV, of either model.
+    """The ``EpisodeTruth`` of one row of an episodes CSV, of any model.
 
     A row with the clinical columns (``CLINICAL_TRUTH_COLUMNS``) is of the
     clinical model: its ``respuesta_pruebas`` must be empty and is read as
-    ``None``. Tokens are exact (``True``/``False``, the words of the log and of
-    the contexts), integers are written as Python writes them, and floats are
-    finite and read bit for bit. The run parameters are not read here.
+    ``None``. A clinical row with the outcome columns (``OUTCOME_COLUMNS``) is
+    of milestone 5: its ``destino`` is one of the four destinations, and
+    ``admitted`` is whether it is ``ingreso``. Tokens are exact
+    (``True``/``False``, the words of the log and of the contexts), integers
+    are written as Python writes them, and floats are finite and read bit for
+    bit. The run parameters are not read here.
 
     Raises:
         ValueError: If a value is invalid or contradicts another one.
@@ -706,6 +802,7 @@ def episode_from_row(row: Mapping[str, str]) -> EpisodeTruth:
     level = _integer(row, "nivel", 1, N_LEVELS)
     needs_tests = _boolean(row, "pruebas")
     clinical = "franja" in row
+    outcome = _outcome(row) if clinical and "z_paciencia" in row else None
     if clinical:
         if row["respuesta_pruebas"] != "":
             raise ValueError("respuesta_pruebas must be empty with the clinical model")
@@ -722,17 +819,23 @@ def episode_from_row(row: Mapping[str, str]) -> EpisodeTruth:
         reassessment_time=_real(row, "reevaluacion", non_negative=True),
         needs_tests=needs_tests,
         test_turnaround=turnaround,
-        admitted=_token(row, "destino", ("alta", "ingreso")) == "ingreso",
+        admitted=(
+            outcome.destination == "ingreso"
+            if outcome is not None
+            else _token(row, "destino", ("alta", "ingreso")) == "ingreso"
+        ),
         clinical=_clinical_truth(row, level, needs_tests) if clinical else None,
+        outcome=outcome,
     )
 
 
 def read_episodes_csv(path: Path) -> tuple[EpisodeTruth, ...]:
     """Read an episodes CSV of either model, as ``write_episodes_csv`` wrote it.
 
-    The header must be exactly ``EPISODE_COLUMNS`` or
-    ``CLINICAL_EPISODE_COLUMNS``, and the run parameters (and profiles) the
-    same in every row. Each row is read with ``episode_from_row``.
+    The header must be exactly ``EPISODE_COLUMNS``, ``CLINICAL_EPISODE_COLUMNS``
+    (57 columns, milestone 4) or ``OUTCOME_EPISODE_COLUMNS`` (65, milestone 5),
+    and the run parameters (and profiles) the same in every row. Each row is
+    read with ``episode_from_row``.
 
     Raises:
         ValueError: With ``path:line``, if the header, a row or its
@@ -743,9 +846,12 @@ def read_episodes_csv(path: Path) -> tuple[EpisodeTruth, ...]:
         reader = csv.DictReader(source, strict=True)
         try:
             header = tuple(reader.fieldnames or ())
-            if header not in (EPISODE_COLUMNS, CLINICAL_EPISODE_COLUMNS):
+            if header not in (EPISODE_COLUMNS, CLINICAL_EPISODE_COLUMNS, OUTCOME_EPISODE_COLUMNS):
                 raise ValueError("invalid episode ground truth header")
-            parameter_columns = header[header.index(PARAMETER_COLUMNS[0]) :]
+            # The columns of the run, the same in every row; the outcome comes after them.
+            parameter_columns = tuple(
+                c for c in header if c in PARAMETER_COLUMNS or c in PROFILES_COLUMNS
+            )
             first = None
             for row in reader:
                 if None in row or any(value is None for value in row.values()):
