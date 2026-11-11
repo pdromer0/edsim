@@ -53,6 +53,12 @@
       "Bash(uv sync --all-packages --extra kafka)",
       "Bash(git branch -D *)"
     ],
+    "ask": [
+      "Edit(/config/**)",
+      "Write(/config/**)",
+      "Edit(/tests/data/**)",
+      "Write(/tests/data/**)"
+    ],
     "deny": [
       "Bash(gh pr merge *)",
       "Bash(git push *--force*)",
@@ -68,6 +74,16 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -84,7 +100,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests.sh",
+            "statusMessage": "N2: tests rápidos con sello (scripts/tests-rapidos.sh); solo las suites afectadas, 2-3 min"
           }
         ]
       }
