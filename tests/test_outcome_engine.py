@@ -22,6 +22,9 @@ from edsim.engine.invariants import check_invariants
 from edsim.engine.scenarios import (
     Scenario,
     abandonment,
+    admission,
+    bed_shift,
+    destinations,
     late_triage,
     level1_waits,
     outcome_draws,
@@ -314,3 +317,130 @@ def test_paciencia_0_con_todo_libre(center):
         *assess(5.0, 15.0, 1),
         *out(15.0),
     ]
+
+
+# --- Destinos, espera de cama y pasillo --------------------------------------------------
+
+
+def bed_wait(t):
+    return [
+        ("bed_assigned", t, {"servicio": "planta"}),
+        ("patient_departed", t, {"destino": "ingreso"}),
+    ]
+
+
+def admitted(t):
+    return [
+        ("disposition_decided", t, {"destino": "ingreso"}),
+        ("bed_requested", t, {"servicio": "planta"}),
+    ]
+
+
+# R1: valoración 5-35; pide cama a las 0:35, de noche: 100 × 1,5 = 150; cama en 185.
+R1_UNTIL_DECISION = [
+    *arrive(0.0),
+    *nurse(0.0, 5.0, 3),
+    *box(5.0, 1),
+    *assess(5.0, 35.0, 1),
+    *admitted(35.0),
+]
+
+
+def test_escenario_c_el_ingresado_espera_la_cama_en_el_pasillo(center):
+    events = run(admission(center))
+    assert trace(events, 0) == [
+        *R1_UNTIL_DECISION,
+        *displaced(60.0, 1, "EP-000002"),
+        *bed_wait(185.0),
+    ]
+    # R2 recibe el box cuando sale R3 (60 + 20 = 80), no cuando se va R1.
+    assert trace(events, 1) == [
+        *arrive(10.0),
+        *nurse(10.0, 15.0, 4),
+        *box(80.0, 1),
+        *assess(80.0, 100.0, 1),
+        *out(100.0),
+    ]
+    # R3: nivel 1 con paciencia 0; desaloja a R1 y no abandona.
+    assert trace(events, 2) == [
+        *arrive(60.0),
+        *door(60.0),
+        *box(60.0, 1),
+        *assess(60.0, 80.0, 1),
+        *out(80.0),
+    ]
+
+
+def test_escenario_c_sin_r3_el_box_queda_bloqueado(center):
+    events = run(admission(center, r3_arrival=None))
+    assert trace(events, 0) == [*R1_UNTIL_DECISION, *bed_wait(185.0)]
+    # R2 recibe el box en 185, cuando R1 sale con su cama: 185 + 20 = 205.
+    assert trace(events, 1) == [
+        *arrive(10.0),
+        *nurse(10.0, 15.0, 4),
+        *box(185.0, 1),
+        *assess(185.0, 205.0, 1),
+        *out(205.0),
+    ]
+
+
+def test_un_nivel_1_en_el_instante_de_la_cama(center):
+    # R3 llega en 185: su llegada (programada en 10) va antes que la cama (en 35), así que
+    # desaloja a R1, que recoge la cama en el pasillo en ese instante; la concesión del
+    # box de R3 (creada en 185) va después. bed_assigned y la salida, seguidos.
+    events = run(admission(center, r3_arrival=185.0))
+    assert trace(events, 0) == [
+        *R1_UNTIL_DECISION,
+        *displaced(185.0, 1, "EP-000002"),
+        *bed_wait(185.0),
+    ]
+    types = [(e.episode_id, e.event_type) for e in events if e.sim_time == 185.0]
+    i = types.index(("EP-000000", "bed_assigned"))
+    assert types[i + 1] == ("EP-000000", "patient_departed")
+    assert types[i + 2] == ("EP-000002", "box_assigned")
+    assert trace(events, 2) == [
+        *arrive(185.0),
+        *door(185.0),
+        *box(185.0, 1),
+        *assess(185.0, 205.0, 1),
+        *out(205.0),
+    ]
+
+
+def test_la_cama_usa_el_turno_del_pedido(center):
+    # Llega a las 7:30 (noche), valoración 455-490 y pide cama a las 8:10 (mañana):
+    # 100 × 0,8 = 80; cama en 490 + 80 = 570.
+    events = run(bed_shift(center))
+    assert trace(events, 0) == [
+        *arrive(450.0),
+        *nurse(450.0, 455.0, 3),
+        *box(455.0, 1),
+        *assess(455.0, 490.0, 1),
+        *admitted(490.0),
+        *bed_wait(570.0),
+    ]
+
+
+def test_traslado_exitus_y_alta_salen_al_decidirse(center):
+    events = run(destinations(center))
+    for i, destino in enumerate(("traslado", "exitus", "alta")):
+        t = float(i)
+        assert trace(events, i) == [
+            *arrive(t),
+            *nurse(t, t + 5, 3),
+            *box(t + 5, i + 1),
+            *assess(t + 5, t + 15, i + 1),
+            *out(t + 15, destino),
+        ]
+
+
+def test_el_del_pasillo_sigue_dentro_en_el_horizonte(center):
+    # Con cama base 1000, de noche 1500: la cama llegaría en 35 + 1500 = 1535 > 1440.
+    base = admission(center)
+    r1 = outcome_draws(3, 5, 30, destination="ingreso", bed_base=1000)
+    scenario = dataclasses.replace(base, patients=((0.0, r1), *base.patients[1:]))
+    result = run_scenario(scenario)
+    truth = GroundTruth(episodes=result.run.episodes, days=())
+    assert result.run.inside == 1
+    assert check_invariants(result.events, scenario.center, ground_truth=truth, inside=1) == []
+    assert trace(result.events, 0) == [*R1_UNTIL_DECISION, *displaced(60.0, 1, "EP-000002")]

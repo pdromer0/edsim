@@ -14,8 +14,10 @@ share the same cases.
   its three places and the tie (``abandonment``, M in the specification), the
   deadline due during the triage (``late_triage``, T), the displacement
   before and after being seen (``unseen_displacement``, X), a level 1 that
-  waits without leaving (``level1_waits``, L) and a patient who leaves no
-  more after being seen (``seen_in_room``, S).
+  waits without leaving (``level1_waits``, L), a patient who leaves no
+  more after being seen (``seen_in_room``, S), the wait for a bed in the box
+  and in the corridor (``admission``, C), the shift of the request
+  (``bed_shift``) and the departures without a wait (``destinations``, D).
 - ``exponential_triage``: the engine's sampler with an exponential triage of
   the same mean as the lognormal. With the same mean and CV 1 instead of 0.57,
   the M/G/1 of the triage becomes an M/M/1: the factor ``(1 + CV²) / 2`` of
@@ -350,6 +352,54 @@ def seen_in_room(center: CenterConfig) -> Scenario:
         [
             (0.0, outcome_draws(4, 20, 10, patience=50, turnaround=60)),  # P, EP-000000
             (70.0, outcome_draws(3, 5, 30)),  # S, EP-000001
+        ],
+    )
+
+
+def admission(center: CenterConfig, *, r3_arrival: float | None = 60.0) -> Scenario:
+    """Scenario C: the wait for a bed in the box and, displaced, in the corridor.
+
+    One nurse, one box and one doctor; minute 0 is 0:00, at night. R1 (level
+    3) is assessed from 5 to 35 and admitted: it asks for a bed at 0:35, night,
+    so it waits 100 × 1.5 = 150, until 185, keeping its box. R2 (level 4)
+    waits for the box from 15. R3 (level 1, patience 0), arrived at
+    ``r3_arrival``, displaces R1, which waits for the bed in the corridor; R2
+    gets the box when R3 leaves, at 80. Without R3 (``None``), R2 gets the box
+    at 185, when R1 departs.
+    """
+    patients = [
+        (0.0, outcome_draws(3, 5, 30, destination="ingreso", bed_base=100)),  # R1
+        (10.0, outcome_draws(4, 5, 20)),  # R2, EP-000001
+    ]
+    if r3_arrival is not None:
+        patients.append((r3_arrival, outcome_draws(1, 5, 20, patience=0)))  # R3
+    return _outcome_scenario(_staffed(center, nurses=1, boxes=1, doctors=1), patients)
+
+
+def bed_shift(center: CenterConfig) -> Scenario:
+    """A patient who arrives at 7:30, at night, and asks for a bed at 8:10, in the morning.
+
+    Its bed waits 100 × 0.8 = 80 minutes, the factor of the shift of the
+    request, not of the arrival.
+    """
+    return _outcome_scenario(
+        _staffed(center, nurses=1, boxes=1, doctors=1),
+        [(450.0, outcome_draws(3, 5, 35, destination="ingreso", bed_base=100))],
+    )
+
+
+def destinations(center: CenterConfig) -> Scenario:
+    """Scenario D: transfer, death and discharge depart in the instant of the decision.
+
+    Three nurses, three boxes and three doctors, so nobody waits: each patient
+    departs 5 + 10 minutes after arriving, at 15, 16 and 17.
+    """
+    return _outcome_scenario(
+        _staffed(center, nurses=3, boxes=3, doctors=3),
+        [
+            (0.0, outcome_draws(3, 5, 10, destination="traslado")),
+            (1.0, outcome_draws(3, 5, 10, destination="exitus")),
+            (2.0, outcome_draws(3, 5, 10, destination="alta")),
         ],
     )
 

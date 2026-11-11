@@ -46,7 +46,12 @@ deadline the patient emits ``patient_left_wbs`` with where it waited and, from
 a box, gives it back. In a tie the patient stays, because the deadline has the
 ``LATE`` priority. Nobody leaves during the triage, but the deadline goes on:
 if it is due during it, the next wait asks only for what comes in that same
-instant. The destination is the one of the outcome.
+instant. The destination is the one of the outcome. An admitted patient asks
+for a bed and waits for it in its box, a ``timeout`` of ``bed_wait`` at the
+instant of the request; displaced by a level 1, it waits for the same
+``timeout`` in the corridor, without a resource, and never asks for a box
+again. With the bed it emits ``bed_assigned`` and ``patient_departed`` in the
+same step, so no event of the instant comes between them.
 """
 
 import enum
@@ -59,7 +64,7 @@ from simpy.events import EventPriority
 from simpy.resources.resource import Preempted
 
 from edsim.engine.clinical import PatientDraws, classified_at_the_door
-from edsim.engine.events import DOOR, NURSE, RESULTS_WAIT, EventLog, episode_id
+from edsim.engine.events import DOOR, NURSE, RESULTS_WAIT, WARD, EventLog, episode_id
 from edsim.engine.resources import (
     TRIAGE_PRIORITY,
     Holder,
@@ -405,7 +410,8 @@ def _patient_with_outcome(
     """SimPy process of one episode with the outcome of milestone 5 (version 4).
 
     The flow of ``patient`` with the deadline of the patience in every wait
-    before the first assessment, and the destination of ``draws.outcome``.
+    before the first assessment, the destination of ``draws.outcome`` and,
+    with ``ingreso``, the wait for a bed in the box or in the corridor.
     """
     outcome = draws.outcome
     me = env.active_process
@@ -414,6 +420,10 @@ def _patient_with_outcome(
 
     def leave(espera: str) -> None:
         emit("patient_left_wbs", env.now, espera=espera)
+        del pools.arrival_of[me]
+
+    def depart(destino: str) -> None:
+        emit("patient_departed", env.now, destino=destino)
         del pools.arrival_of[me]
 
     key = priority_key(draws.level, env.now)
@@ -442,6 +452,7 @@ def _patient_with_outcome(
     holder = Holder(me, arrival_id, draws.level)
     stay = _Stay(Stage.INITIAL, draws.assessment_time)
     leaves = leaves_for_results(draws, wait_outside)
+    bed: simpy.Timeout | None = None  # the wait for the bed, once asked for
     while stay.stage is not Stage.DONE:
         preempt = should_displace(pools.boxes, draws.level)
         waiting = None if stay.seen else deadline
@@ -469,15 +480,36 @@ def _patient_with_outcome(
             elif cause is None:
                 destino = outcome.destination
                 emit("disposition_decided", env.now, destino=destino)
-                emit("patient_departed", env.now, destino=destino)
-                pools.box_numbers.give(box)
-                del pools.arrival_of[me]
-            else:
+                if destino == "ingreso":
+                    # It keeps the box, with its request and key, and uses no doctor.
+                    emit("bed_requested", env.now, servicio=WARD)
+                    bed = env.timeout(outcome.bed_wait(env.now))
+                    try:
+                        yield bed
+                    except simpy.Interrupt as interrupt:
+                        # Displaced by a level 1: the box goes to it and the patient
+                        # waits for the same bed in the corridor, after the with.
+                        cause = _preempted(interrupt, pools)
+                    else:
+                        emit("bed_assigned", env.now, servicio=WARD)
+                        depart(destino)
+                        pools.box_numbers.give(box)
+                        return  # the with releases the box
+                else:
+                    depart(destino)
+                    pools.box_numbers.give(box)
+                    return  # the with releases the box
+            if cause is not RESULTS_ROOM:
                 by = episode_id(pools.arrival_of[cause.by])
                 emit("patient_displaced", env.now, box=box, desalojado_por=by)
                 pools.box_numbers.hand_over(box, to=cause.by)
         if cause is RESULTS_ROOM and not stay.results.triggered:
             yield stay.results
+    # Only an admitted patient displaced while it waited for its bed gets here: in
+    # the corridor, holding nothing. The timeout of the bed is still in the queue.
+    yield bed
+    emit("bed_assigned", env.now, servicio=WARD)
+    depart("ingreso")
 
 
 def _lab(

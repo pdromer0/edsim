@@ -28,7 +28,13 @@ from edsim.engine.center import load_center
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import CATALOG_V3, CATALOGS, SCHEMA_VERSIONS, Event, EventLog, MemorySink
 from edsim.engine.events import to_json as event_json
-from edsim.engine.scenarios import SCENARIO_START
+from edsim.engine.scenarios import (
+    SCENARIO_START,
+    abandonment,
+    admission,
+    run_scenario,
+    seen_in_room,
+)
 from edsim.live.control import MAX_SPEED, PAUSE, RESUME, SPEED, STOP, Command
 from edsim.live.directo import RunEnd, RunInfo, RunStart
 from edsim.live.messages import (
@@ -161,13 +167,16 @@ def log_lines(center: str, clinical: bool) -> list[str]:
 
 
 def v4_lines() -> list[str]:
-    """Un log de la versión 4 con un evento de cada tipo (tarea 5.1)."""
-    log = EventLog("r2026", SCENARIO_START, MemorySink(), schema_version=4)
-    events = []
-    for i, (event_type, payload) in enumerate(SAMPLES_V4.items()):
-        kwargs = {"arrival_id": 137} if CATALOGS[4][event_type].patient else {}
-        events.append(log.emit(event_type, float(i), **kwargs, **payload))
-    return [event_json(e) for e in events]
+    """Los logs de la versión 4 del motor: los escenarios M, C y S de la tarea 5.1.
+
+    Juntos tienen el abandono, la cama, el pasillo y la sala de resultados.
+    """
+    center = load_center(DATA / "centro_ejemplo.toml")
+    return [
+        event_json(e)
+        for scenario in (abandonment(center), admission(center), seen_in_room(center))
+        for e in run_scenario(scenario).events
+    ]
 
 
 @pytest.fixture(scope="module")
