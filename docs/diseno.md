@@ -752,7 +752,7 @@ El coste por tarea es una estimación con las medidas de la tabla «Cuánto cues
 - La app va en serie por el límite de 3 s por página de `AppTest`. Un fallo por tiempo con la máquina cargada se repite en serie antes de investigarlo.
 - `--dist loadgroup` no agrupa con pytest 9.2 ([pytest-xdist #1386](https://github.com/pytest-dev/pytest-xdist/issues/1386)); no se usa.
 
-**Pendiente (fase 2):**
+**Pendiente (P.3, [milestone «P.3 — Tests, fase 2»](https://github.com/pdromer0/edsim/milestone/3)):**
 
 - Hacer configurable el límite de `AppTest` (3 s por defecto), con su test.
 - Revisar la marca `slow` de los 40 tests rápidos de más de 2 s.
@@ -778,7 +778,7 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y la 80, de la tarea de proceso P.2 (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y las 80 a 82, de la tarea de proceso P.2, ya con su ADR (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -848,7 +848,9 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 64 | Etiqueta de cierre `v0.6-hito6`; la `v0.5-hito5` llegará después | La etiqueta nombra el hito, no el orden |
 | 65 | El simulador no va en un contenedor en este hito: corre en WSL2 con `uv` y entra por el listener `EXTERNAL`; Compose levanta solo Kafka y la consola | Ciclo de desarrollo y tests igual que hoy; el contenedor del simulador llega con la API |
 | 66 | `run_id` del directo = `r`, semilla, `_` y hora de arranque (o `--run-id`); el replay conserva el `run_id` y los `event_id` originales | Dos directos con la misma semilla no comparten `event_id`; reemitir la misma ejecución publica los mismos hechos |
-| 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo (candidata; ADR al cerrar la P.2) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
+| 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo ([ADR 0080](decisiones/0080-repositorio-fuente-de-verdad-de-la-documentacion.md)) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
+| 81 | GitHub gestor del trabajo: un issue por tarea, etiquetas, milestones, tablero «EDsim», dependencias nativas que mandan sobre el cuerpo del issue y notas del chat como comentario ([ADR 0081](decisiones/0081-github-como-gestor-del-trabajo.md)) | El estado se actualiza solo, junto al código, y las dependencias se pueden comprobar (tarea P.2) |
+| 82 | El ciclo de cada tarea se escribe una vez en `docs/proceso/tarea.md` y lo ejecutan las skills `/tarea-edsim` y `/sincronizar`, con la N3 y `/code-review` en paralelo ([ADR 0082](decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)) | Un cambio de proceso se toca una vez, no en cada prompt (tarea P.2) |
 
 ### Preguntas resueltas
 
