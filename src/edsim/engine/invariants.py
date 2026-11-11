@@ -18,8 +18,11 @@ the violations it gave before: ``patient_left_wbs`` closes an episode in
 ``conservation`` and ``time`` and frees the box in ``capacity`` and
 ``displacement``; ``transitions`` follows ``TRANSITIONS_V4``, with the
 abandonment before being seen and the wait for a bed in the box or in the
-corridor; and two checks are new, ``abandonment`` and ``outcome``. Their
-comparisons with the ground truth of the outcome come with task 5.3.
+corridor; and two checks are new, ``abandonment`` and ``outcome``. Task 5.3
+compares them with the ground truth of the outcome: each abandonment at its
+deadline (or at the end of its triage), nobody seen after it nor still waiting
+with it passed, the drawn destination and each wait for a bed with the factors
+of the center.
 Task 4.6a adds the results room (ADR candidate 45): ``box_released`` is an
 edge of ``TRANSITIONS`` from the wait for the tests to a room where the
 patient holds no box; it frees the box in the capacity and displacement
@@ -43,8 +46,10 @@ says which staff applies, without asking the configuration.
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 
+from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.center import CenterConfig
 from edsim.engine.events import (
     CLINICAL_SCHEMA_VERSIONS,
@@ -1132,6 +1137,116 @@ def check_results_wait(events: Sequence[Event], context: InvariantContext) -> li
     return out
 
 
+@dataclass(slots=True)
+class _Waiting:
+    """What ``abandonment`` needs of an episode of version 4 to compare it with the truth."""
+
+    arrival: float
+    triage_started: bool = False
+    triage_end: float | None = None
+    seen: Event | None = None  # its first assessment_started of type inicial
+    left: Event | None = None
+    departed: bool = False
+
+
+def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """The abandonment against the patience of the ground truth (task 5.3).
+
+    For each episode of version 4 whose truth has an outcome and whose assigned
+    level is not 1, with deadline = arrival + patience:
+
+    - a ``patient_left_wbs`` happens at max(deadline, end of the triage), within
+      ``TURNAROUND_TOLERANCE``: the deadline, or the end of a triage during
+      which it was due;
+    - its first assessment of type ``inicial`` does not start after the
+      deadline, except at the end of a triage finished after it, when the box
+      and the doctor come in that same instant;
+    - at the end of the log, an episode without a terminal event, not seen and
+      not in its triage, has max(deadline, end of the triage) at the horizon
+      or after (``len(days) × 1440``): before it, the engine should have made
+      it leave. Without the days of the ground truth, this one is not checked.
+
+    The arrival is the ``sim_time`` of ``patient_arrived``, where the engine
+    starts the deadline.
+    """
+    ground_truth = context.ground_truth
+    if ground_truth is None:
+        return []
+    truth = {
+        e.episode_id: e for e in ground_truth.episodes if e.outcome is not None and e.level != 1
+    }
+    if not truth:
+        return []
+    name = "abandonment"
+    out: list[Violation] = []
+    waiting: dict[str, _Waiting] = {}
+    for e in events:
+        episode = e.episode_id
+        if not _v4(e) or episode not in truth:
+            continue
+        if e.event_type == "patient_arrived":
+            waiting[episode] = _Waiting(e.sim_time)
+            continue
+        w = waiting.get(episode)
+        if w is None:
+            continue  # reported by conservation
+        match e.event_type:
+            case "triage_started":
+                w.triage_started = True
+            case "triage_completed":
+                w.triage_end = e.sim_time
+            case "assessment_started" if e.payload["tipo"] == "inicial" and w.seen is None:
+                w.seen = e
+            case "patient_left_wbs":
+                w.left = e
+            case "patient_departed":
+                w.departed = True
+
+    for episode, w in waiting.items():
+        deadline = w.arrival + truth[episode].outcome.patience
+        due = deadline if w.triage_end is None else max(deadline, w.triage_end)
+        if w.left is not None:
+            if abs(w.left.sim_time - due) > TURNAROUND_TOLERANCE:
+                out.append(
+                    _at(
+                        name,
+                        w.left,
+                        f"{episode} left at {w.left.sim_time}, but its deadline (arrival "
+                        f"{w.arrival} + patience) and its triage give {due}",
+                    )
+                )
+        if w.seen is not None and w.seen.sim_time > deadline + TURNAROUND_TOLERANCE:
+            at_triage_end = (
+                w.triage_end is not None
+                and w.triage_end > deadline
+                and abs(w.seen.sim_time - w.triage_end) <= TURNAROUND_TOLERANCE
+            )
+            if not at_triage_end:
+                out.append(
+                    _at(
+                        name,
+                        w.seen,
+                        f"{episode} seen at {w.seen.sim_time}, after its deadline {deadline}",
+                    )
+                )
+        if (
+            ground_truth.days
+            and w.left is None
+            and not w.departed
+            and w.seen is None
+            and (w.triage_end is not None or not w.triage_started)
+            and due < len(ground_truth.days) * MINUTES_PER_DAY
+        ):
+            out.append(
+                Violation(
+                    name,
+                    f"{episode} still waits at the end, unseen, with its deadline due at {due}",
+                    episode_id=episode,
+                )
+            )
+    return out
+
+
 def check_abandonment(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
     """Only an unseen patient leaves, never a level 1, and from where it waits.
 
@@ -1147,12 +1262,12 @@ def check_abandonment(events: Sequence[Event], context: InvariantContext) -> lis
       ``triage_started``, ``medico`` holding a box, ``box`` triaged and
       without a box.
 
-    The instant of the abandonment (arrival plus patience, or the end of the
-    triage if the deadline was due during it) needs the ground truth of the
-    outcome: task 5.3.
+    With the ground truth of the outcome (task 5.3), see
+    ``_abandonment_with_truth``: the instant of each abandonment, that nobody is
+    seen after its deadline and that nobody still waits with it passed.
     """
     name = "abandonment"
-    out: list[Violation] = []
+    out: list[Violation] = _abandonment_with_truth(events, context)
     started: set[str] = set()
     level: dict[str, int] = {}
     in_box: set[str] = set()
@@ -1199,6 +1314,75 @@ def check_abandonment(events: Sequence[Event], context: InvariantContext) -> lis
     return out
 
 
+def _expected_bed_wait(
+    base: float, requested_at: float, start: date, center: CenterConfig
+) -> float:
+    """``base × factor_turno × factor_estacion`` of the instant of the request.
+
+    Computed here on its own, with ``context_indices``, the shifts of
+    ``[turnos]`` and the factors of ``[camas]`` of the center, not with
+    ``BedWaitFactors``, so that an error there shows.
+    """
+    (shift,), _, (season,) = context_indices([requested_at], start, center.shift_starts)
+    return base * center.bed_shift_factors[int(shift)] * center.bed_season_factors[int(season)]
+
+
+def _outcome_with_truth(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """The decision and the wait for a bed against the ground truth (task 5.3).
+
+    For each episode of version 4 whose truth has an outcome:
+
+    - its ``disposition_decided`` has the drawn destination;
+    - with a center with ``[camas]`` and the days of the ground truth (day 0
+      is the date of minute 0), ``bed_assigned`` comes ``bed_base ×
+      factor_turno × factor_estacion`` after ``bed_requested``, with the shift
+      and the season of the instant of the request, within
+      ``TURNAROUND_TOLERANCE``.
+    """
+    ground_truth = context.ground_truth
+    if ground_truth is None:
+        return []
+    truth = {e.episode_id: e for e in ground_truth.episodes if e.outcome is not None}
+    if not truth:
+        return []
+    name = "outcome"
+    out: list[Violation] = []
+    beds = context.center.has_beds and bool(ground_truth.days)
+    requested: dict[str, Event] = {}
+    for e in events:
+        episode = e.episode_id
+        if not _v4(e) or episode not in truth:
+            continue
+        outcome = truth[episode].outcome
+        match e.event_type:
+            case "disposition_decided" if e.payload["destino"] != outcome.destination:
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"{episode} decided {e.payload['destino']!r}, but its drawn "
+                        f"destination is {outcome.destination!r}",
+                    )
+                )
+            case "bed_requested":
+                requested[episode] = e
+            case "bed_assigned" if beds and episode in requested:
+                asked = requested[episode].sim_time
+                expected = _expected_bed_wait(
+                    outcome.bed_base, asked, ground_truth.days[0].date, context.center
+                )
+                if abs((e.sim_time - asked) - expected) > TURNAROUND_TOLERANCE:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"{episode} waited {e.sim_time - asked} for its bed, but its base "
+                            f"{outcome.bed_base} with the factors of {asked} gives {expected}",
+                        )
+                    )
+    return out
+
+
 def check_outcome(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
     """The decision, the bed and the departure come in their order and instant.
 
@@ -1216,11 +1400,12 @@ def check_outcome(events: Sequence[Event], context: InvariantContext) -> list[Vi
       ``bed_assigned``.
 
     That the departure has the destination of the decision is checked by
-    ``transitions``, in every version. The drawn destination and the wait for
-    the bed (base × factors) need the ground truth of the outcome: task 5.3.
+    ``transitions``, in every version. With the ground truth of the outcome
+    (task 5.3), see ``_outcome_with_truth``: the drawn destination and the wait
+    for the bed.
     """
     name = "outcome"
-    out: list[Violation] = []
+    out: list[Violation] = _outcome_with_truth(events, context)
     pending: dict[str, tuple[str, Event]] = {}  # episode → (next type expected, cause)
     last: dict[str, Event] = {}  # episode → its previous event
     requested: set[str] = set()
