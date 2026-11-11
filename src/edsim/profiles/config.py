@@ -111,6 +111,13 @@ ground truth name them."""
 N_TEST_TYPES = len(TEST_TYPES)
 """Types of test: 4."""
 
+DESTINATIONS: tuple[str, ...] = ("alta", "ingreso", "traslado", "exitus")
+"""The four destinations of milestone 5 (H5-5), in the order of the draws of stream 4.
+
+Discharge is the reference of the multinomial logit; the ICU is within the
+admission. ``edsim.engine.events`` uses them as the ``destino`` of version 4.
+"""
+
 TARGET_SUM_TOLERANCE = 0.5
 """Largest distance from 100 of the sum of ``reparto_objetivo``, in points.
 

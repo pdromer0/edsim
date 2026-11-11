@@ -62,7 +62,10 @@ from types import MappingProxyType
 from typing import Protocol, Self, TextIO
 
 from edsim.finite import to_float
-from edsim.profiles.config import REASON_KEYS, TEST_TYPES
+
+# DESTINATIONS lives in the profiles, which cannot import the engine; it is
+# offered here too, as the ``destino`` of version 4.
+from edsim.profiles.config import DESTINATIONS, REASON_KEYS, TEST_TYPES
 
 PROVISIONAL_SCHEMA_VERSION = 1
 """Version of the logs of the provisional model: the catalog without clinical payloads."""
@@ -259,9 +262,6 @@ TEST_RESULTS = ("normal", "alterado")
 RESULTS_WAIT = "resultados"
 """``espera`` of ``box_released``, version 3: the patient leaves the box to wait
 for the results of its tests outside it (ADR candidate 45)."""
-
-DESTINATIONS = ("alta", "ingreso", "traslado", "exitus")
-"""``destino`` of version 4, in the order of the draws of milestone 5 (H5-5)."""
 
 LWBS_WAITS = ("triaje", "box", "medico")
 """``espera`` of ``patient_left_wbs``, version 4: where the patient was waiting.

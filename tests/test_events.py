@@ -1049,6 +1049,13 @@ CATALOG_V4_VALUES = {
 }
 
 
+def test_los_destinos_del_catalogo_son_los_de_los_perfiles():
+    """Los perfiles no pueden importar el motor: DESTINATIONS vive en profiles (tarea 5.2)."""
+    from edsim.profiles import config
+
+    assert DESTINATIONS is config.DESTINATIONS
+
+
 def test_valores_del_catalogo_4_literales():
     assert DESTINATIONS == CATALOG_V4_VALUES["disposition_decided", "destino"]
     assert LWBS_WAITS == CATALOG_V4_VALUES["patient_left_wbs", "espera"]
