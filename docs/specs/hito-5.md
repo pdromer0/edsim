@@ -1110,3 +1110,84 @@ Las aplicó un subagente en un worktree propio, una por subagente y cuatro en pa
   - el bloque a medias entre los dos ficheros (perfiles del hito 5 con un centro del hito 4);
   - `centro_h5_ejemplo.toml` y las huellas.
 - 5.6: el bloque en `config/perfiles.toml` con los derivados de la 5.2 recalculados sobre `config/`.
+
+### Tarea 5.3: El modelo del hito 5 en el motor
+
+**Qué se hizo**
+
+Issue #70, rama `feat/h5-muestreador`, Claude Code, con `@codex review` (tarea crítica): diecisiete commits más el de esta entrada, sin tocar `config/` (sigue siendo el modelo del hito 4) ni `app/`. Las huellas de las versiones 1 a 3 siguen intactas; el modelo del hito 5 tiene las suyas.
+
+- **Una sola función elige el modelo** (nota 3 del chat): `choose_model(center, profiles)` en `engine/clinical_sampler.py` da un `PatientModel` con la versión del catálogo y el número de flujos (provisional 1 y 5, hito 4 3 y 8, hito 5 4 y 10) o un `ModelChoiceError` con la clave que falta y su fichero. La usan `start_ed`, el `ClinicalSampler`, `simulate_run` (antes de crear nada), la CLI (código 2), el directo y la carga ofrecida; las rutas provisionales también, para rechazar un centro con `[camas]`.
+- **El flujo 4 tiene un solo dueño** (nota 4): con el hito 5, el `ClinicalSampler` recibe los hijos 1 a 9, pasa el 4, el 8 y el 9 al `OutcomeSampler` y no crea el generador de la uniforme del hito 4. `BedWaitFactors` sale de la `start_date` de las llegadas y de los `[turnos]` y `[camas]` del centro.
+- **La verdad del desenlace:** `OutcomeDraws.truth` lleva el `Outcome` sorteado entero (con `from_outcome`), y `EpisodeTruth.outcome` lo guarda al final. Los pacientes a mano de los escenarios llevan su `Outcome`, con los sorteos estándar a 0.
+- **Invariantes con la verdad** (pendiente de la 5.1): `abandonment` compara cada abandono con su instante (el plazo, o el fin de un triaje durante el cual venció), que nadie sea visto después de su plazo (salvo la excepción del triaje) y, por el ajuste de Pedro al plan, que nadie siga esperando sin ser visto con ese instante antes del horizonte; `outcome`, el destino sorteado y la espera de cama, base × factores del centro en el instante del pedido. Los escenarios del desenlace llevan un centro con `[camas]` (`with_beds`) y su ground truth con los días (`scenario_days`).
+- **El CSV del ground truth:** con `outcome=True`, las 57 columnas más las 8 de la especificación (65); `destino` con los cuatro valores, también el contrafactual. El lector elige por la cabecera.
+- **`run.json` versión 3** (decisión de Pedro en el plan): la 2 más `schema_version`, que exige `model = "clinico"` y `schema_version = 4`; las ejecuciones provisionales y del hito 4 siguen escribiendo la 2. `RunInfo.catalog_version` da la versión del catálogo de cualquier `run.json`. La verdad guardada se lee con la cabecera de su catálogo.
+- **Emparejamiento:** bloqueo `catalog_version` entre un run del hito 4 y uno del hito 5 (solo con el mismo modelo); `DRAW_EFFECTS` con las claves de `[camas]`; con los mismos perfiles, el desenlace no cambia salvo la espera base, y esta solo con `camas.espera`; con otros perfiles, sus sorteos estándar son los mismos.
+- **CLI:** `motor simular` dice «Modelo del hito 5» y, en lugar del resumen, da los recuentos del desenlace (`outcome_counts`, decisión de Pedro en el plan); `perfiles validar` gana `check_patience` y `check_destinations` con el bloque (hijos 2 y 3 de `child_streams(semilla, 4)`: las cuatro filas de siempre son `==`), y dice que no se comprueban sin él.
+- **`tests/data/centro_h5_ejemplo.toml`:** `centro_sala_ejemplo.toml` con `[camas]` en lugar de `[destino]`, escrito con un script.
+- **Tests:** `test_model_choice.py` (17), `test_outcome_model.py` (60), `test_outcome_runs.py` (27) y casos nuevos en `test_outcome_engine.py`, `test_outcome_draws.py`, `test_outcome_validation.py` (2 `slow`), `test_cli_characterization.py`, `test_cli.py`, `test_launch.py`, `test_offered_work_clinical.py`, `test_center.py`, `test_events.py`, `test_runs.py` y `test_run_comparison.py`.
+
+**Decisiones del diff**
+
+- **La huella del ground truth del hito 4** (decisión de Pedro): `truth_lines`, que pasa a `clinical_factory`, omite solo la clave `outcome` y solo cuando vale `None`; `CLINICAL_TRUTH_FINGERPRINT` no cambia, y un test comprueba que `outcome` es `None` en el hito 4 y en el provisional.
+- **La verdad del desenlace va en `OutcomeDraws.truth`**, no en `ClinicalDraws`: es lo que lee el motor más lo que no usa, y su `__post_init__` exige que coincidan.
+- **El CSV lo decide el modelo, no los episodios** (`outcome=True`): un run del hito 5 sin episodios tiene sus 65 columnas.
+- **El bloqueo `catalog_version` solo con el mismo modelo:** con modelos distintos ya bloquea `model`, y la vista de comparación de la app indexa una etiqueta por bloqueo; así, un provisional frente a un clínico sigue como hoy.
+- **El directo y la carga ofrecida rechazan el hito 5** con un error claro: el directo nunca escribe un log de la versión 4 como versión 3, y la carga del hito 5 tiene boxes bloqueados por la espera de cama que la del hito 4 no ve.
+- **Dos ajustes de la regla del abandono** al escribirla, los dos en la especificación: el plazo vencido *antes* de empezar el triaje no espera a su fin (`0c20622`; con la regla max(plazo, fin del triaje) siempre, un motor que ignorase el plazo esperando enfermera la pasaba), y la tercera regla de Pedro.
+- **La errata de σ en el plan:** ln 3 / 1,2815516 = 0,8572517, no 0,857249; lo vio el test (`05762c4`).
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| `simulate_ed`, 14 días, mejor de 5 en rondas alternas | Hito 4: 3,44 s; hito 5: 4,14 s (× 1,20) |
+| Eventos por paciente, 14 días | Hito 4: 12,53; hito 5: 11,51 (quien se va tiene menos eventos) |
+| `edsim perfiles validar` con el bloque | 66 s de pared: paciencia 29,3 s (219.084 pacientes) y destinos 13,8 s (109.542); pasan las 6 |
+| Tests `slow` nuevos de `perfiles validar` | 125 s en serie (repiten las dos comprobaciones para el `==`) |
+| `scripts/tests-completos.sh` con Docker parado | En verde a la primera: 18:52 de pared, con el núcleo (3.731 tests) en 14:59, la app (287) en 2:36 y los notebooks (5) en 1:10. La 5.2: el núcleo en 9:46 y en 14:13, con el mismo código; sin medir main frente a la rama en la misma sesión, la diferencia no se atribuye |
+
+**Comprobaciones clínicas** (ejemplos del hito 5, 14 días, semilla 2026, ventana desde el día 2):
+
+- **Abandono:** 478 de 3.681 llegadas, el 13,0 %: 456 esperando box y 22 en el box esperando médico; ninguno en el triaje. Por nivel asignado: 0 / 0 / 0,9 / 23,8 / 29,6 %. Muy variable por día (del 0 al 28 %). Las esperas de box de los ejemplos sin calibrar ya eran largas en el hito 4 (nivel 4, mediana de 237 min hasta el médico el día 0, frente a una paciencia mediana de 150): es el punto de partida de la calibración (5.6), no un error del motor.
+- **Boxes bloqueados por ingresados (ley de Little):** L medida = 8,10 boxes de 30; λ = 31,2 pedidos de cama al día y W = 364,9 min en el box esperando cama, λ·W = 7,90 (+2,6 %, del orden del borde de la ventana: W / ventana ≈ 2 %). 10 desalojos en todo el log.
+- **Espera de cama / base por turno del pedido:** 0,8 / 1,0 / 1,5 exactos (mañana, tarde, noche).
+- **El contrafactual:** de los que se fueron, 23 de 478 habrían ingresado (4,8 %), frente al 10,7 % de todas las llegadas; casi todos los que se van son niveles 4 y 5.
+
+**Versiones incorrectas**
+
+Las aplicó el subagente `mutante`, una por worktree y las siete en paralelo, sobre `0c20622`.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V13 | El hito 4 sortea 4 Gumbel del flujo 4 antes de su uniforme | Las tres huellas de `test_clinical_engine.py`, las dos caracterizaciones clínicas de la CLI y directo = batch | Exacta: 5 fallos y los 4 casos de `test_directo_igual_a_batch` en ERROR (falla su fixture común, que comprueba la huella) |
+| V14 | `choose_model` sin los dos errores entre ficheros | 10 casos: los de entre ficheros, la CLI, el servicio, el muestreador del hito 4, el directo y la carga ofrecida | Exacta (10) |
+| V15 | `destino` del CSV desde `admitted` | La ida y vuelta y la huella del CSV de la CLI | Exacta (2) |
+| V23 | Con el hito 5, el `ClinicalSampler` sigue sorteando su uniforme del flujo 4 | Solo el test espía | Exacta (1): el hijo 4 se convierte en generador dos veces; las Gumbel y las huellas, iguales |
+| V24 | `abandonment` sin el fin del triaje | El escenario T (2) y los runs del hito 5 de 3 y 2 días | Exacta (4); en el de 2 días, 2 abandonos al acabar un triaje |
+| V25 | `outcome` compara la espera de cama con la base, sin factores | 5 escenarios con ingreso y los dos runs del hito 5 | Exacta (7); 37 violaciones en el run de la CLI |
+| V26 | El motor ignora el plazo esperando enfermera | 7 tests del escenario M | **Detecta más** (9): también las huellas del log del hito 5 (3 días y CLI). Con la versión incorrecta, los eventos y la verdad son los mismos, pero 146 eventos simultáneos cambian de orden: esperar con plazo crea un `request \| deadline`, un evento de SimPy más, que mueve los desempates de otros pacientes. La predicción miraba los desenlaces, no el orden |
+
+**Revisión**
+
+`/code-review high` dio ocho hallazgos, sin verificar salvo el 3.
+
+| Hallazgo | Destino |
+| --- | --- |
+| «Ver la verdad» tomaba el destino sorteado de `admitted`: un traslado del hito 5 salía como discrepancia | **Corregido** (`f913973`), con test; el plan lo dejaba para la 5.4 |
+| La app da `KeyError` con el bloqueo `catalog_version` (`views/compare.py:204`) | **Explicado:** zona de Codex; solo al comparar en la app un run del hito 4 con uno del hito 5, que hoy solo crea la CLI con `tests/data`. Pendiente de la 5.5, como decía el plan |
+| `--provisional` con un centro con el bloque provisional y `[camas]` moría dentro del motor | **Corregido** (`2ad326d`): las rutas provisionales llaman a `choose_model(center, None)`; código 2 o `RunConfigurationError` antes de escribir nada |
+| Las métricas de un run del hito 5 en la app cuentan como dentro a quien se fue | **Explicado:** son de la 5.4; la CLI ya no las enseña |
+| Las violaciones con la verdad iban delante de las del log | **Corregido** (`06944dc`), con test |
+| `outcome_model` se construye tres veces en `perfiles validar` | **Explicado:** unas décimas de segundo frente a 45 s de sorteo; evitarlo cambiaría la firma de los `check_*` de la 5.2 |
+| `choose_model` se llama varias veces y `N_CLINICAL_STREAMS` / `N_SAMPLER_STREAMS` repiten `PatientModel` | **Corregidas** las constantes (`b03bcb8`); las llamadas repetidas se quedan: garantizan la coherencia de quien construye un `ClinicalSampler` directamente, y cuestan nada |
+| `perfiles validar --pacientes` no limita la paciencia ni los destinos, y la cabecera no lo decía | **Corregido** (`7643e15`): la cabecera da sus pacientes y avisa |
+
+Dos errores los vieron los tests antes de la revisión: el lector del CSV del desenlace tapaba `_outcome` de la tabla de `motor validar` (`bc1be7d`; la N1 de `dbb3fa1` no ejecutó `test_cli.py`), y el hueco de la regla del triaje (`0c20622`), al escribir la predicción de la V26.
+
+**Pendiente**
+
+- 5.4: el resumen completo de `motor simular` con el hito 5 (y el cambio de la huella de su salida que trae); las métricas, los KPI y las curvas de un run del hito 5 (`analyze_run`, `episode_table`); el directo de la versión 4; la carga ofrecida del hito 5 (la especificación no la asigna; se propone aquí).
+- 5.5: la etiqueta de `catalog_version` en `METADATA_LABELS` de la app.
+- 5.6: los bloques en `config/`.
