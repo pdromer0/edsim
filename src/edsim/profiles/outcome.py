@@ -57,7 +57,6 @@ from edsim.profiles.config import (
     OutcomeProfile,
 )
 from edsim.profiles.durations import duration_params, lognormal_mean
-from edsim.profiles.mixing import gumbel_max
 from edsim.profiles.workup import WorkupModel, abnormal_logit, older_bands, workup_model
 
 N_ABNORMAL_COUNTS = N_TEST_TYPES + 1
@@ -153,24 +152,20 @@ def destination_log_odds(
         k: Number of abnormal tests among the ordered ones, 0 to 4.
     """
     pct = np.asarray(admission_pct, dtype=float)
-    older = np.asarray(older, dtype=float)
-    g = np.asarray(g, dtype=float)
-    k = np.asarray(k, dtype=float)
     reference = 100 - pct - outcome.transfer.base - outcome.death.base
-    bases = (pct, outcome.transfer.base, outcome.death.base)
-    shape = np.broadcast_shapes(pct.shape, older.shape, g.shape, k.shape)
-    logs = [np.zeros(shape)]
-    for d, base in zip(outcome.destinations, bases, strict=True):
-        logs.append(
-            np.broadcast_to(
-                np.log(base / reference)
-                + math.log(d.severity_or) * g
-                + math.log(d.older_or) * older
-                + math.log(d.abnormal_or) * k,
-                shape,
-            )
-        )
-    return np.stack(logs, axis=-1)
+    destinations = outcome.destinations
+    # Last axis: admission, transfer, death.
+    base = np.stack(
+        [pct / reference, outcome.transfer.base / reference, outcome.death.base / reference],
+        axis=-1,
+    )
+    logs = (
+        np.log(base)
+        + np.asarray(g, dtype=float)[..., None] * [math.log(d.severity_or) for d in destinations]
+        + np.asarray(older, dtype=float)[..., None] * [math.log(d.older_or) for d in destinations]
+        + np.asarray(k, dtype=float)[..., None] * [math.log(d.abnormal_or) for d in destinations]
+    )
+    return np.concatenate([np.zeros((*logs.shape[:-1], 1)), logs], axis=-1)
 
 
 def destination_probabilities(
@@ -197,8 +192,12 @@ def destination_from_draws(
     the order of ``DESTINATIONS``; discharge has log odds 0. A tie has
     probability 0, and goes to the first.
     """
-    odds = np.exp(destination_log_odds(outcome, admission_pct, float(older), g, k))
-    return DESTINATIONS[gumbel_max(odds, gumbels)]
+    # gumbel_max on the odds, without going through exp and log.
+    logs = destination_log_odds(outcome, admission_pct, float(older), g, k)
+    gumbels = np.asarray(gumbels, dtype=float)
+    if gumbels.shape != (N_DESTINATIONS,):
+        raise ValueError(f"gumbels must have {N_DESTINATIONS} values, got shape {gumbels.shape}")
+    return DESTINATIONS[int(np.argmax(logs + gumbels))]
 
 
 def abnormal_count_distribution(q: ArrayLike) -> NDArray[np.float64]:

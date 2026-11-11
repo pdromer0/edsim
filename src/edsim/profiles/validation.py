@@ -59,6 +59,28 @@ the rare true levels 1 and 5 never pass without testing anything.
   assessment and the reassessment per true level (20), and their median per
   reason (34), which tests the factors k directly.
 
+**The patience** (``check_patience``) and **the destinations**
+(``check_destinations``) of milestone 5 (task 5.2), with the milestone 5 block
+of the profiles. The sampler draws the patients as in ``check_workup``, now
+also with ``OutcomeSampler`` and streams 4, 8 and 9 of ``child_streams(child
+1, 10)``, whose first 8 children are those of ``child_streams(child 1, 8)``.
+They are compared with ``outcome.OutcomeModel`` and the exact quantiles of the
+patience, with Bonferroni and the same guards.
+
+- ``check_patience``, 40 categories: the share of patients with a patience at
+  or below its exact median and p90 per true level and age band. Two years by
+  default: the true level 1 of 15 to 44 years expects 37 patients a year,
+  fewer than ``MIN_GROUP_PATIENTS``.
+- ``check_destinations``, 108 categories: each destination within each fifth
+  of G (20), per number of abnormal tests among the ordered ones (20) and per
+  reason (68). One year by default. The number of abnormal tests is counted
+  from the tests of the year drawn, not taken from the sampler. Transfer
+  (0.75 %) and death (0.11 %) are rare and the power is low: in the most
+  severe fifth, a year detects an admission of 25.5 % that becomes 26.9 %, a
+  death of 0.54 % that becomes 0.78 %. A destination drawn with what the
+  nurse sees, ``G + ε``, moves those shares by less than 0.5 points and is not
+  seen here; ``tests/test_outcome_sampler.py`` sees it, patient by patient.
+
 **All of them at once** (``validate_profiles``, for ``edsim perfiles
 validar``). The mix with its own child of the seed and, with the other child,
 one sample of a year for the triage, the tests and the durations: the three
@@ -88,12 +110,28 @@ from scipy import optimize, stats
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.checks import ValidationResult, check_count
-from edsim.profiles.config import N_BANDS, N_LEVELS, REASON_KEYS, TEST_TYPES, ClinicalProfiles
+from edsim.profiles.config import (
+    DESTINATIONS,
+    N_BANDS,
+    N_DESTINATIONS,
+    N_LEVELS,
+    REASON_KEYS,
+    TEST_TYPES,
+    ClinicalProfiles,
+)
 from edsim.profiles.context import ArrivalContext, all_contexts, context_time, context_weights
 from edsim.profiles.durations import ASSESSMENT, REASSESSMENT, duration_model
 from edsim.profiles.mixing import band_probabilities, probabilities, reason_probabilities
+from edsim.profiles.outcome import (
+    N_ABNORMAL_COUNTS,
+    OutcomeModel,
+    outcome_model,
+    patience_quantile,
+    require_outcome,
+)
 from edsim.profiles.population import age_range
 from edsim.profiles.sampler import (
+    OutcomeSampler,
     PersonReasonSampler,
     SeverityTriageSampler,
     WorkupDurationSampler,
@@ -161,6 +199,31 @@ is 16.9 % above it, with a chance of stopping for lack of patients below
 
 QUANTILES = (("mediana", 0.5), ("p90", 0.9))
 """Quantiles of the duration checks, by name."""
+
+DESTINATION_STREAM, PATIENCE_STREAM, BED_STREAM = 4, 8, 9
+"""Children of ``child_streams(seed, 10)`` for the outcome of milestone 5, as in the engine."""
+
+N_OUTCOME_CHILDREN = 10
+"""Children of the patient seed with the outcome: the 8 of milestone 4 and streams 8 and 9."""
+
+N_PATIENCE_CATEGORIES = N_LEVELS * N_BANDS * len(QUANTILES)
+"""Categories of ``check_patience``: 5 true levels × 4 bands × median and p90 = 40."""
+
+N_DESTINATION_CATEGORIES = N_DESTINATIONS * (
+    N_SEVERITY_GROUPS + N_ABNORMAL_COUNTS + len(REASON_KEYS)
+)
+"""Categories of ``check_destinations``: 4 destinations × (5 + 5 + 17) = 108."""
+
+PATIENCE_YEARS = 2
+"""Years of patients of ``check_patience`` by default.
+
+The guard asks 50 patients per true level and band, and the true level 1 of 15
+to 44 years expects 37 a year with ``tests/data/perfiles_h5_ejemplo.toml``:
+about 148 000 patients, 1.36 years.
+"""
+
+ANY_BED_WAIT = (240.0, 720.0)
+"""``[mediana, p90]`` of the bed that the checks pass to the sampler: they do not look at it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +563,10 @@ class _Year:
     triage: np.ndarray
     assessment: np.ndarray
     reassessment: np.ndarray
+    # With the outcome of milestone 5 only.
+    band: np.ndarray | None = None
+    destination: np.ndarray | None = None  # index into DESTINATIONS
+    patience: np.ndarray | None = None
 
 
 def _draw_year(
@@ -507,8 +574,14 @@ def _draw_year(
     arrival_profile: ArrivalProfile,
     seed: int | np.random.SeedSequence,
     patients: int,
+    outcome: bool = False,
 ) -> _Year:
-    """Patients of a year: contexts by their weight and streams 5, 6, 7, 1, 3 and 2."""
+    """Patients of a year: contexts by their weight and streams 5, 6, 7, 1, 3 and 2.
+
+    With ``outcome``, also streams 4, 8 and 9 of ``child_streams(child 1, 10)``
+    with ``OutcomeSampler``; the first 8 children are the same, so the other
+    draws do not change.
+    """
     start_date = arrival_profile.start_date
     starts = sampled_profiles.shift_band_starts
     context_seed, patient_seed = child_streams(seed, 2)
@@ -517,7 +590,7 @@ def _draw_year(
     drawn = np.random.default_rng(context_seed).choice(len(contexts), size=patients, p=weights)
     arrivals = [_Arrival(context_time(start_date, starts, c)) for c in contexts]
 
-    streams = child_streams(patient_seed, 8)
+    streams = child_streams(patient_seed, N_OUTCOME_CHILDREN if outcome else 8)
     people = PersonReasonSampler(
         sampled_profiles, start_date, [streams[POPULATION_STREAM], streams[REASON_STREAM]]
     )
@@ -527,12 +600,22 @@ def _draw_year(
     workup = WorkupDurationSampler(
         sampled_profiles, [streams[WORKUP_STREAM], streams[DURATION_STREAM]]
     )
-    rows = []
+    outcomes = None
+    if outcome:
+        outcomes = OutcomeSampler(
+            sampled_profiles,
+            ANY_BED_WAIT,
+            [streams[DESTINATION_STREAM], streams[PATIENCE_STREAM], streams[BED_STREAM]],
+        )
+    rows, extra = [], []
     for c in drawn:
         pr = people(arrivals[c])
         st = triage(pr)
         wd = workup(pr, st)
         w, d = wd.workup, wd.durations
+        if outcomes is not None:
+            o = outcomes(pr, st, w)
+            extra.append((pr.person.band, DESTINATIONS.index(o.destination), o.patience))
         r = w.round_turnaround()
         rows.append(
             (
@@ -552,6 +635,14 @@ def _draw_year(
         )
     a = np.array(rows, dtype=float)
     k = N_TESTS
+    e = np.array(extra, dtype=float).reshape(-1, 3)
+    more = {}
+    if outcome:
+        more = {
+            "band": e[:, 0].astype(int),
+            "destination": e[:, 1].astype(int),
+            "patience": e[:, 2],
+        }
     return _Year(
         severity=a[:, 0],
         level=a[:, 3].astype(int),
@@ -565,6 +656,7 @@ def _draw_year(
         triage=a[:, 6 + 3 * k],
         assessment=a[:, 7 + 3 * k],
         reassessment=a[:, 8 + 3 * k],
+        **more,
     )
 
 
@@ -795,6 +887,153 @@ def _durations_result(profiles: ClinicalProfiles, model, year: _Year) -> Validat
 
 
 # --- All the checks at once: edsim perfiles validar ------------------------------------------
+
+
+def _outcome_patients(profiles, arrival_profile, patients, years: int) -> int:
+    if patients is None:
+        return years * year_patients(profiles, arrival_profile)
+    return check_count("patients", patients, 1)
+
+
+def _patience_groups(model: OutcomeModel) -> dict[str, float]:
+    """Exact share of each true level and band, the groups of ``check_patience``."""
+    shares = model.true_level_band_shares()
+    return {
+        f"real_{n + 1}/{_band_name(model.profiles, b)}": float(shares[n, b])
+        for n in range(N_LEVELS)
+        for b in range(N_BANDS)
+    }
+
+
+def check_patience(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    seed: int | np.random.SeedSequence,
+    patients: int | None = None,
+    sampled_profiles: ClinicalProfiles | None = None,
+) -> ValidationResult:
+    """The patience against its exact quantiles: 40 categories with Bonferroni.
+
+    For each true level and age band, the share of the patients with a patience
+    at or below the exact median and p90 of that group (``outcome.patience_quantile``),
+    0.5 and 0.9: named ``paciencia/real_1/banda_15_44/mediana``. The patients
+    are drawn as in ``check_workup`` (module docstring), with the outcome.
+
+    Args:
+        profiles: The profiles that give the hypothesis, with the milestone 5 block.
+        arrival_profile: The arrival profile, for the weight of each context.
+        seed: Master seed of the check.
+        patients: Number of patients; ``PATIENCE_YEARS`` years by default.
+        sampled_profiles: Profiles the patients are drawn with; ``profiles``
+            by default. Only for power tests.
+
+    Raises:
+        ValueError: If the profiles have no milestone 5 block, or a true level
+            and band expects fewer than ``MIN_GROUP_PATIENTS`` patients, such
+            as the true level 1 of 15 to 44 years with a single year.
+    """
+    abandonment = require_outcome(profiles).abandonment
+    patients = _outcome_patients(profiles, arrival_profile, patients, PATIENCE_YEARS)
+    sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
+    model = outcome_model(profiles, arrival_profile)
+    _check_groups(_patience_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients, outcome=True)
+
+    alpha = ALPHA / N_PATIENCE_CATEGORIES
+    tests = []
+    for n in range(1, N_LEVELS + 1):
+        for b in range(N_BANDS):
+            group = (year.true_level == n) & (year.band == b)
+            for name, q in QUANTILES:
+                limit = patience_quantile(abandonment, n, b, q)
+                tests.append(
+                    _proportion(
+                        f"paciencia/real_{n}/{_band_name(profiles, b)}/{name}",
+                        (year.patience[group] <= limit).sum(),
+                        group.sum(),
+                        q,
+                        alpha,
+                    )
+                )
+    return _summary("patience", tests, alpha)
+
+
+def _destination_groups(model: OutcomeModel) -> dict[str, float]:
+    """Exact share of each group of ``check_destinations``."""
+    groups = {f"quintil_{q + 1}": 1 / N_SEVERITY_GROUPS for q in range(N_SEVERITY_GROUPS)}
+    counts = model.abnormal_count_shares()
+    groups |= {f"alteradas_{k}": float(counts[k]) for k in range(N_ABNORMAL_COUNTS)}
+    reasons = model.reason_shares()
+    groups |= {key: float(reasons[i]) for i, key in enumerate(REASON_KEYS)}
+    return groups
+
+
+def check_destinations(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    seed: int | np.random.SeedSequence,
+    patients: int | None = None,
+    sampled_profiles: ClinicalProfiles | None = None,
+) -> ValidationResult:
+    """The destinations of a year against their exact shares: 108 categories with Bonferroni.
+
+    Each destination within each fifth of G (``destino/ingreso/quintil_1``,
+    the least severe first, as ``check_workup``), per number of abnormal
+    tests among the ordered ones (``destino/exitus/alteradas_4``) and per
+    reason (``destino/traslado/parada``). The patients are drawn as in
+    ``check_workup`` (module docstring), with the outcome; the number of
+    abnormal tests is counted from their tests.
+
+    Args:
+        profiles: The profiles that give the hypothesis, with the milestone 5 block.
+        arrival_profile: The arrival profile, for the weight of each context.
+        seed: Master seed of the check.
+        patients: Number of patients; a year by default (``year_patients``).
+        sampled_profiles: Profiles the patients are drawn with; ``profiles``
+            by default. Only for power tests.
+
+    Raises:
+        ValueError: If the profiles have no milestone 5 block, or a group
+            expects fewer than ``MIN_GROUP_PATIENTS`` patients, such as the
+            patients with four abnormal tests (0.22 %) with fewer than 23 171.
+    """
+    require_outcome(profiles)
+    patients = _outcome_patients(profiles, arrival_profile, patients, 1)
+    sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
+    model = outcome_model(profiles, arrival_profile)
+    _check_groups(_destination_groups(model), patients)
+    year = _draw_year(sampled_profiles, arrival_profile, seed, patients, outcome=True)
+    return _destinations_result(model, year)
+
+
+def _destinations_result(model: OutcomeModel, year: _Year) -> ValidationResult:
+    """The 108 categories of ``check_destinations`` from drawn patients."""
+    alpha = ALPHA / N_DESTINATION_CATEGORIES
+    fifth = severity_fifth(model.workup, year.severity)
+    count = (year.ordered & year.abnormal).sum(axis=1)
+    groups = [
+        (f"quintil_{q + 1}", fifth == q + 1, model.by_severity(N_SEVERITY_GROUPS)[::-1][q])
+        for q in range(N_SEVERITY_GROUPS)
+    ]
+    by_count = model.by_abnormal_count()
+    groups += [(f"alteradas_{k}", count == k, by_count[k]) for k in range(N_ABNORMAL_COUNTS)]
+    by_reason = model.by_reason()
+    groups += [(key, year.reason == i, by_reason[i]) for i, key in enumerate(REASON_KEYS)]
+    tests = [
+        _proportion(
+            f"destino/{destination}/{name}",
+            (year.destination[mask] == d).sum(),
+            mask.sum(),
+            exact[d],
+            alpha,
+        )
+        for name, mask, exact in groups
+        for d, destination in enumerate(DESTINATIONS)
+    ]
+    return _summary("destinations", tests, alpha)
+
 
 MAX_MIXING_ERROR = 1e-6
 """Largest accepted chance that ``check_mixing`` stops for lack of patients after drawing.
