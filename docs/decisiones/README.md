@@ -109,5 +109,6 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0080. El repositorio es la fuente de verdad de la documentación](0080-repositorio-fuente-de-verdad-de-la-documentacion.md)
 - [0081. GitHub como gestor del trabajo: issues, milestones, tablero y dependencias nativas](0081-github-como-gestor-del-trabajo.md)
 - [0082. El ciclo de cada tarea se escribe una vez en `tarea.md` y lo ejecutan las skills](0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)
+- [0083. Una sola N3, después de la revisión propia](0083-una-sola-n3-tras-la-revision-propia.md)
 
 El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Por eso falta del 0067 al 0079: son las decisiones del hito 5, reservadas hasta que se cierre.

@@ -1,6 +1,6 @@
 ---
 name: tarea-edsim
-description: Lleva una tarea de EDsim desde su issue de GitHub hasta el pull request, siguiendo docs/proceso/tarea.md (dependencias, plan, rama, commits, N1 a N3, /code-review, PR y tablero).
+description: Lleva una tarea de EDsim desde su issue de GitHub hasta el pull request, siguiendo docs/proceso/tarea.md (dependencias, plan, rama, commits con N1 y N2, /code-review, una sola N3, PR y tablero).
 argument-hint: N [notas efímeras de esta sesión]
 disable-model-invocation: true
 ---
@@ -42,11 +42,14 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 ## Antes del push
 
-1. `docker compose ps`: si Kafka está en marcha, `docker compose down`. Si `docker compose ps` falla porque Docker está parado, cuenta como «no hay Kafka en marcha».
-2. Avisa de que la N3 suele tardar unos 14 minutos y lánzala con `run_in_background`: `scripts/tests-completos.sh`.
-3. A la vez, lanza `/code-review` con la herramienta Skill: skill `code-review`, argumentos `medium main...<rama>`, o `high main...<rama>` si el plan fijó `high`. Pasa siempre el nivel (sin él, reutiliza el último que se tecleó) y el destino (sin él, compara solo con el *upstream* de la rama).
-4. Mientras las dos corren, escribe la entrada del anexo y la descripción del PR en un fichero del *scratchpad*, con la plantilla `.github/pull_request_template.md`, «Closes #N» y la hora de aprobación.
-5. Cada hallazgo de la revisión: se corrige (commit con N1) o se explica, y va a la sección «Revisión propia (/code-review)» del PR con su destino. Si las correcciones tocan algo que la N3 ejecuta, repite la N3; los scripts de los hooks no cuentan y se verifican a mano.
+Primero la revisión y sus correcciones; después, una sola N3 (`tarea.md` §4).
+
+1. Lanza `/code-review`, sin la N3 en marcha, con la herramienta Skill: skill `code-review`, argumentos `medium main...<rama>`, o `high main...<rama>` si el plan fijó `high`. Pasa siempre el nivel (sin él, reutiliza el último que se tecleó) y el destino (sin él, compara solo con el *upstream* de la rama).
+2. Clasifica todos los hallazgos antes de tocar nada: se corrige (un error, o un arreglo de coste pequeño), se explica (se queda como está) o va a «Pendiente» del PR con su tarea de destino.
+3. Las correcciones, cada una en su commit con N1; la N2 la ejecuta el hook Stop.
+4. `docker compose ps`: si Kafka está en marcha, `docker compose down`. Si `docker compose ps` falla porque Docker está parado, cuenta como «no hay Kafka en marcha». Avisa de que la N3 suele tardar unos 14 minutos y lanza una sola con `run_in_background`: `scripts/tests-completos.sh`. Si la tarea toca Kafka, `scripts/tests-integracion.sh` va cuando la N3 termine, no a la vez.
+5. Mientras corre, escribe la entrada del anexo y la descripción del PR en un fichero del *scratchpad*, con la plantilla `.github/pull_request_template.md`, «Closes #N» y la hora de aprobación. El «Qué se hizo» del anexo cita el issue y la rama, no el número del PR, que aún no existe. Cada hallazgo va a la sección «Revisión propia (/code-review)» del PR con su destino.
+6. El push, solo con la N3 en verde. Si falla, corrige con N1 y repítela una vez, no una por corrección; si vuelve a fallar, para y dilo. Sin N3 solo en los casos de `tarea.md` §4, «Cuándo no hay N3»: en el primer push, si toda la rama es documentación, plantillas o una skill y Pedro lo autoriza. La N3 no ejecuta los scripts de los hooks: se verifican a mano, y una rama que los cambia no es «solo documentación».
 
 ## Pull request
 
@@ -57,7 +60,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 ## Ajustes de la revisión
 
-Commits nuevos en la misma rama, con N1, N2 (el hook Stop) y, antes del push, N3. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
+Como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
 
 ## Procedimiento del tablero
 

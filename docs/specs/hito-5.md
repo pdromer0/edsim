@@ -847,7 +847,7 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
 
-Cada tarea sale de su issue de GitHub y sigue el ciclo de [docs/proceso/tarea.md](../proceso/tarea.md): arranque desde el issue y sus comentarios, plan con sus seis apartados (con las predicciones firmes de las versiones incorrectas), un commit por paso lógico con los niveles de tests N1, N2 y N3, revisión adversaria del propio diff, la entrada del anexo de esta especificación en el mismo PR y la fusión, siempre de Pedro. El manual del flujo para personas (tablero, papeles y diagramas) está en [docs/proceso/flujo.md](../proceso/flujo.md).
+Cada tarea sale de su issue de GitHub y sigue el ciclo de [docs/proceso/tarea.md](../proceso/tarea.md): arranque desde el issue y sus comentarios, plan con sus seis apartados (con las predicciones firmes de las versiones incorrectas), un commit por paso lógico con los niveles de tests N1 y N2, la revisión adversaria del propio diff y una sola N3 antes del push, la entrada del anexo de esta especificación en el mismo PR y la fusión, siempre de Pedro. El manual del flujo para personas (tablero, papeles y diagramas) está en [docs/proceso/flujo.md](../proceso/flujo.md).
 
 Lo propio de este hito:
 
@@ -986,7 +986,7 @@ PR #98 (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once
 
 **Qué se hizo**
 
-PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): catorce commits, sin tocar la simulación (`patient.py` y `engine.py`) ni `config/`; del motor solo cambian las reglas del centro y la guarda de dos muestreadores. Las huellas de las versiones 1 a 3 siguen intactas.
+PR #99 (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): catorce commits, sin tocar la simulación (`patient.py` y `engine.py`) ni `config/`; del motor solo cambian las reglas del centro y la guarda de dos muestreadores. Las huellas de las versiones 1 a 3 siguen intactas.
 
 - **Lo aplazado de la 5.1** (nota 1 del chat): la cama como `timeout` del paciente en la pieza 3, `analysis.py` en la 5.4 y las métricas de la 5.1.
 - **`DESTINATIONS` en `profiles/config.py`** (nota 3): `events.py` lo importa de ahí, como `TEST_TYPES` y `REASON_KEYS`.

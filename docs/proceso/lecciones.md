@@ -82,5 +82,6 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Un dato del plan puede perderse al ejecutarlo: la prueba en seco va antes del primer uso real (P.2).
 - Números con el mismo formato se confunden: issues y decisiones necesitan notación distinta (P.2).
 - Lo que vale más allá de una sesión no se pasa como argumento: va al issue (P.2).
+- Una regla que dice que algo se repite tiene que decir cuándo: «si las correcciones tocan código, repite la N3» se leyó como «tras cada corrección» (5.2).
 
-El porqué de las seis últimas está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque).
+El porqué de las seis que van antes de la última está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la última, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md).

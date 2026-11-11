@@ -593,7 +593,7 @@ Los detalles concretos de configuración de Claude Code se comprueban contra su 
 | 5 | Comprobar al final de cada turno | Automático | Hook Stop: tests rápidos con sello (N2), nada en modo plan; ver «Calidad y tests (QA)» |
 | 6 | Commit local | Claude Code | Mensaje estándar: `feat(sim): cola M/M/1 con SimPy` |
 | 7 | Comprobar al hacer commit | Automático | Hooks de pre-commit; si fallan, no hay commit |
-| 8 | Comprobar la tarea completa | Claude Code | scripts/tests-completos.sh (N3) una vez antes de cada push y revisión de sus propias gráficas |
+| 8 | Comprobar la tarea completa | Claude Code | scripts/tests-completos.sh (N3) una sola vez antes de cada push, después de la revisión propia y de sus correcciones, y revisión de sus propias gráficas |
 | 9 | Subir la rama | Claude Code, sin confirmación; Codex, con permiso | `git push` |
 | 10 | Abrir el pull request | Claude Code | `gh pr create` con resumen y checklist |
 | 11 | Ejecutar el CI | Automático | GitHub Actions |
@@ -667,7 +667,7 @@ Cuatro niveles, de lo más barato a lo más completo: **N0** ruff; **N1** los fi
 | Al final de cada turno (hook `Stop` de Claude Code y de Codex) | N2 | `scripts/tests-rapidos.sh`. En modo plan, nada. Sin cambios desde el último verde, o con solo documentación, nada. Si no, la rápida de cada suite afectada, con `-x`: el núcleo con xdist y la app en serie. Codex formatea antes con `ruff format .` | El agente no devuelve el turno con la rápida en rojo |
 | Antes de cada commit | N0 + N1 | pre-commit (nbstripout, `ruff check --fix`, `ruff format`, espacios, YAML, ficheros grandes) y los ficheros de test del área tocada | El paso está limpio y su área pasa |
 | Al probar una versión incorrecta | N1 | Los ficheros donde se predice el fallo y los que deben seguir pasando | El test detecta el error previsto |
-| Antes de cada push | N3 | `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka, también `scripts/tests-integracion.sh` (hito 6) | Lo que se sube pasa todo |
+| Antes de cada push | N3 | Una sola vez, después de la revisión propia (`/code-review`) y de todas sus correcciones. `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka, también `scripts/tests-integracion.sh` (hito 6) | Lo que se sube pasa todo |
 | En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y, desde el hito 6, `tests-kafka` (integración contra el Kafka de `compose.yaml`), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
 | Al fusionar en `main` | CI | Lo mismo sobre `main`, sin cancelar nunca | `main` sigue en verde |
 
@@ -686,7 +686,7 @@ Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
 
 ### Workflow
 
-Una tarea pasa por siete pasos y cada uno tiene su nivel de tests; los dos bucles vuelven a la implementación.
+Una tarea pasa por ocho pasos y cada uno tiene su nivel de tests (en la revisión propia, N1 en cada corrección; la N3 va después); los dos bucles vuelven a la implementación.
 
 ```mermaid
 ---
@@ -696,7 +696,8 @@ flowchart TD
     plan["plan<br/>modo plan: el Stop no ejecuta nada"] --> impl["paso de implementación y commit<br/>N1: tests del área; pre-commit en el commit"]
     impl --> turno["fin de turno<br/>N2: scripts/tests-rapidos.sh, con sello"]
     turno -->|"siguiente paso"| impl
-    turno -->|"tarea completa"| push["push de la rama<br/>N3: scripts/tests-completos.sh, una vez"]
+    turno -->|"tarea completa"| propia["revisión propia<br/>/code-review; correcciones con N1"]
+    propia --> push["push de la rama<br/>N3: scripts/tests-completos.sh, una sola, tras la revisión propia"]
     push --> ci["pull request y CI<br/>tests, tests-app y notebooks, en paralelo"]
     ci --> revision["revisión en el chat<br/>Pedro y el chat recalculan y revisan el PR"]
     revision -->|"ajustes de la revisión o CI en rojo"| impl
@@ -709,7 +710,7 @@ En azul, la fusión en `main`, que solo hace Pedro.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
-Dentro de la implementación, cada paso lógico es un commit con N1, y al final de cada turno el `Stop` ejecuta N2 sobre lo que haya cambiado. N3 se ejecuta una vez por push, no por commit. Una revisión con ajustes o un CI en rojo vuelven a la implementación con commits nuevos en la misma rama, y el ciclo de tests se repite desde N1.
+Dentro de la implementación, cada paso lógico es un commit con N1, y al final de cada turno el `Stop` ejecuta N2 sobre lo que haya cambiado. N3 se ejecuta una sola vez por push, después de la revisión propia y de todas sus correcciones: no por commit ni por corrección ([ADR 0083](decisiones/0083-una-sola-n3-tras-la-revision-propia.md)). Una revisión con ajustes o un CI en rojo vuelven a la implementación con commits nuevos en la misma rama, y el ciclo de tests se repite desde N1.
 
 **Cómo funciona el sello** (`scripts/sello.sh`):
 
@@ -850,7 +851,8 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 66 | `run_id` del directo = `r`, semilla, `_` y hora de arranque (o `--run-id`); el replay conserva el `run_id` y los `event_id` originales | Dos directos con la misma semilla no comparten `event_id`; reemitir la misma ejecución publica los mismos hechos |
 | 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo ([ADR 0080](decisiones/0080-repositorio-fuente-de-verdad-de-la-documentacion.md)) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
 | 81 | GitHub gestor del trabajo: un issue por tarea, etiquetas, milestones, tablero «EDsim», dependencias nativas que mandan sobre el cuerpo del issue y notas del chat como comentario ([ADR 0081](decisiones/0081-github-como-gestor-del-trabajo.md)) | El estado se actualiza solo, junto al código, y las dependencias se pueden comprobar (tarea P.2) |
-| 82 | El ciclo de cada tarea se escribe una vez en `docs/proceso/tarea.md` y lo ejecutan las skills `/tarea-edsim` y `/sincronizar`, con la N3 y `/code-review` en paralelo ([ADR 0082](decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)) | Un cambio de proceso se toca una vez, no en cada prompt (tarea P.2) |
+| 82 | El ciclo de cada tarea se escribe una vez en `docs/proceso/tarea.md` y lo ejecutan las skills `/tarea-edsim` y `/sincronizar`, con la N3 y `/code-review` en paralelo ([ADR 0082](decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md); matizada por la decisión 83) | Un cambio de proceso se toca una vez, no en cada prompt (tarea P.2) |
+| 83 | Antes del push, primero `/code-review`, la clasificación de todos sus hallazgos y las correcciones con N1; después, una sola N3, que se repite una vez si falla, no por corrección; lo mismo en los ajustes de la revisión ([ADR 0083](decisiones/0083-una-sola-n3-tras-la-revision-propia.md)) | La N3 en paralelo con la revisión se pierde casi siempre: en la 5.2, 14 de sus 32 min de N3 (issue #100) |
 
 ### Preguntas resueltas
 

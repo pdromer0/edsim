@@ -12,16 +12,20 @@ Closes #
 
 - [ ] N1: ruff y los tests del área tocada antes de cada commit
 - [ ] N2: rápida con sello (hook Stop) en verde
-- [ ] N3: `scripts/tests-completos.sh` antes del push (con sus tiempos)
+- [ ] N3: `scripts/tests-completos.sh`, una sola, tras la revisión propia y antes del push (con sus tiempos)
 - [ ] `scripts/tests-integracion.sh`, si toca Kafka
 - [ ] Documentación al día en este PR
 
 ## Revisión propia (/code-review)
 
-<!-- Esfuerzo usado y, por cada hallazgo, su destino: corregido (commit) o explicado. -->
+<!-- Esfuerzo usado y, por cada hallazgo, su destino: corregido (commit), explicado o pendiente (con su tarea). -->
 
 | Hallazgo | Qué se hizo |
 | --- | --- |
+
+## Pendiente
+
+<!-- Lo que queda para otra tarea, con su destino (la tarea o el issue). -->
 
 ## Versiones incorrectas
 

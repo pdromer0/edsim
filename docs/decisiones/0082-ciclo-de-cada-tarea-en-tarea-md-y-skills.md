@@ -1,6 +1,6 @@
 # 0082. El ciclo de cada tarea se escribe una vez en `tarea.md` y lo ejecutan las skills
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada; matizada por la [ADR 0083](0083-una-sola-n3-tras-la-revision-propia.md)
 - **Fecha:** 2026-11-11
 
 ## Contexto
@@ -31,3 +31,7 @@ Codex lee el mismo `tarea.md` desde `AGENTS.md`. Los permisos de las skills van 
 - La prueba de humo de la A5 destapó seis hallazgos; los que cambian el ciclo entran en `tarea.md` y en la skill en la A6 (la N3 se repite solo si las correcciones tocan algo que la N3 ejecuta; los scripts de los hooks se verifican a mano; la skill pide el modo plan antes de presentar el plan; `docker compose ps` que falla por Docker parado cuenta como «sin Kafka»).
 - Un push que solo lleva documentación, plantillas o una skill puede ir sin N3 si Pedro lo autoriza, porque el CI lo comprueba igual.
 - Quedan en prueba, en las tareas 5.2 a 5.8, los subagentes para las versiones incorrectas, `@claude` en el PR, Codex desde el issue y la sesión en la nube ([portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba)).
+
+## Nota de actualización (2026-11-11)
+
+La [ADR 0083](0083-una-sola-n3-tras-la-revision-propia.md) matiza esta decisión (issue #100). La N3 y `/code-review` ya no van en paralelo: primero la revisión, la clasificación de todos sus hallazgos y las correcciones con N1; después, una sola N3 antes del push, que se repite una vez si falla y no una por corrección. El resto del ciclo, las dos skills y la excepción de los push sin N3 no cambian.
