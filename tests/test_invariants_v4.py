@@ -300,3 +300,18 @@ def test_quien_abandona_desde_el_box_lo_libera(center):
         box(2, 9.0, 1),
     )
     assert violations(events, center) == []
+
+
+def test_un_log_que_mezcla_versiones_no_rompe_transitions(center):
+    # Revisión propia: un evento de la 3 en un estado que solo tiene la 4 ('left') daba
+    # KeyError. Ahora es una violación de transitions, y schema_version avisa de la mezcla.
+    sink = MemorySink()
+    v4 = EventLog("rmixto", SCENARIO_START, sink, schema_version=OUTCOME_SCHEMA_VERSION)
+    v4.emit("patient_arrived", 0.0, arrival_id=0, medio="propios_medios")
+    v4.emit("patient_registered", 0.0, arrival_id=0, edad=50, sexo="mujer")
+    v4.emit("patient_left_wbs", 1.0, arrival_id=0, espera="triaje")
+    v3 = EventLog("rmixto", SCENARIO_START, sink, schema_version=3)
+    v3.emit("triage_started", 2.0, arrival_id=0, circuito="enfermeria")
+    found = {(v.check, v.message) for v in check_invariants(sink.events, center)}
+    assert ("transitions", "'triage_started' is not valid in state 'left'") in found
+    assert "schema_version" in {check for check, _ in found}

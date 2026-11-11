@@ -189,3 +189,17 @@ def test_la_verdad_del_episodio_aun_no_guarda_el_desenlace(clinical_patient):
     truth = EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), draws)
     assert truth == EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), clinical_patient)
     assert not hasattr(truth, "outcome")
+
+
+def test_el_turno_de_la_cama_es_el_de_shift_at():
+    # factor_at toma el turno de arrival_context con los inicios del centro: el mismo que
+    # shifts.shift_at, minuto a minuto durante un día y con otros inicios.
+    from edsim.engine.shifts import shift_at
+
+    for starts in ((8, 15, 22), (0, 7, 19), (6, 14, 23)):
+        beds = factors(
+            shift_starts=starts, shift_factors=(1.0, 2.0, 4.0), season_factors=(1.0,) * 4
+        )
+        for minute in range(0, 1440):
+            t = minute + 0.5
+            assert beds.factor_at(t) == (1.0, 2.0, 4.0)[shift_at(starts, t)], (starts, t)

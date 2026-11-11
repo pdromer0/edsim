@@ -35,9 +35,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.engine.center import N_LEVELS, N_SHIFTS, CenterConfig, require_provisional
+from edsim.engine.center import (
+    N_LEVELS,
+    N_SHIFTS,
+    CenterConfig,
+    _check_shift_starts,
+    require_provisional,
+)
 from edsim.engine.events import DESTINATIONS
-from edsim.engine.shifts import shift_at
 from edsim.finite import to_float
 from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before 4.4
 from edsim.lognormal import lognormal_params
@@ -123,7 +128,7 @@ class BedWaitFactors:
     """The factors of the wait for a bed by the instant it is requested (H5-6).
 
     One per run, shared by every patient, as ``TurnaroundShifts`` for the tests:
-    the shift is the one of the center (``[turnos]``, with ``shift_at``) and the
+    the shift is the one of the center (``[turnos]``) and the
     season the one of the date (``arrival_context``), both of the instant of
     ``bed_requested``, not of the arrival.
 
@@ -148,19 +153,10 @@ class BedWaitFactors:
         # datetime is a subclass of date: a date-time must not pass as a date.
         if not isinstance(self.start_date, date) or isinstance(self.start_date, datetime):
             raise ValueError(f"start_date must be a date without time, got {self.start_date!r}")
-        starts = self.shift_starts
-        if (
-            isinstance(starts, str)
-            or not isinstance(starts, list | tuple)
-            or len(starts) != N_SHIFTS
-            or any(isinstance(h, bool) or not isinstance(h, int) for h in starts)
-            or not all(0 <= h <= 23 for h in starts)
-            or any(b <= a for a, b in zip(starts, starts[1:], strict=False))
-        ):
-            raise ValueError(
-                f"shift_starts must be {N_SHIFTS} increasing hours in 0-23, got {starts!r}"
-            )
-        object.__setattr__(self, "shift_starts", tuple(starts))
+        # The same rule as turnos.inicio of the center.
+        object.__setattr__(
+            self, "shift_starts", _check_shift_starts("shift_starts", self.shift_starts)
+        )
         object.__setattr__(
             self, "shift_factors", _factors("shift_factors", self.shift_factors, N_SHIFTS)
         )
@@ -169,10 +165,13 @@ class BedWaitFactors:
         )
 
     def factor_at(self, t: float) -> float:
-        """``factor_turno × factor_estacion`` of the instant ``t``, in minutes since minute 0."""
-        shift = shift_at(self.shift_starts, t)
-        season = arrival_context(t, self.start_date, self.shift_starts).season
-        return self.shift_factors[shift] * self.season_factors[season]
+        """``factor_turno × factor_estacion`` of the instant ``t``, in minutes since minute 0.
+
+        One calendar computation: the shift band of ``arrival_context`` with the
+        shift starts of the center is its shift, as ``shifts.shift_at`` gives it.
+        """
+        context = arrival_context(t, self.start_date, self.shift_starts)
+        return self.shift_factors[context.shift_band] * self.season_factors[context.season]
 
 
 @dataclass(frozen=True, slots=True)

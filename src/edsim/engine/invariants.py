@@ -417,7 +417,9 @@ def check_transitions(events: Sequence[Event], context: InvariantContext) -> lis
         current = state.get(episode, "start")
         symbol = _symbol(e)
         table = TRANSITIONS_V4 if _v4(e) else TRANSITIONS
-        following = table[current].get(symbol)
+        # A log that mixes versions (reported by schema_version) may bring an
+        # event of versions 1 to 3 to a state that only version 4 has.
+        following = table.get(current, {}).get(symbol)
         if following is None:
             out.append(_at(name, e, f"{symbol!r} is not valid in state {current!r}"))
             broken.add(episode)
