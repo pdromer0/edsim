@@ -47,7 +47,7 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, arrival_source, iter_arrivals
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler
-from edsim.engine.clinical_sampler import ClinicalSampler, choose_model
+from edsim.engine.clinical_sampler import ClinicalSampler, PatientModel, choose_model
 from edsim.engine.events import (
     EventLog,
     EventSink,
@@ -60,10 +60,10 @@ from edsim.engine.shifts import start_shifts
 from edsim.profiles.config import ClinicalProfiles
 from edsim.seeds import child_streams
 
-N_STREAMS = 5
+N_STREAMS = PatientModel.PROVISIONAL.n_streams
 """Streams of a run: arrivals, then the four of the sampler."""
 
-N_CLINICAL_STREAMS = 8
+N_CLINICAL_STREAMS = PatientModel.MILESTONE_4.n_streams
 """Streams of a run of milestone 4: arrivals, then the seven of the sampler (``PatientModel``)."""
 
 DEFAULT_WARMUP_DAYS = 2

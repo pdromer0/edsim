@@ -69,9 +69,6 @@ from edsim.profiles.sampler import (
 )
 from edsim.profiles.workup import Workup, turnaround_shift_factors
 
-N_SAMPLER_STREAMS = 7
-"""Streams of the ``ClinicalSampler``: 1 to 7 of ``child_streams(seed, 8)``."""
-
 
 class PatientModel(Enum):
     """The model of the patients of a run, chosen by the blocks of its files (H5-2).
@@ -88,6 +85,10 @@ class PatientModel(Enum):
         self.label = label
         self.schema_version = schema_version
         self.n_streams = n_streams
+
+
+N_SAMPLER_STREAMS = PatientModel.MILESTONE_4.n_streams - 1
+"""Streams of the ``ClinicalSampler`` of milestone 4: 1 to 7 of ``child_streams(seed, 8)``."""
 
 
 class ModelChoiceError(ValueError):
