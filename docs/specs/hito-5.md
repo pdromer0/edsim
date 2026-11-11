@@ -505,7 +505,7 @@ Nuevas o ampliadas, en `CHECKS`, solo con logs de la versión 4 salvo que se dig
 | `conservation` | Llegadas = salidas + abandonos + dentro; un solo evento terminal por episodio |
 | `time` | Ningún evento del episodio después de su evento terminal |
 | `capacity` y `displacement` | El box se libera también con un `patient_left_wbs` desde el box y con el desalojo de un ingresado; un ingresado desalojado no vuelve a tener `box_assigned` |
-| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en max(llegada + paciencia, fin del triaje) (tolerancia 1e-8) y nadie es visto después de ese plazo, salvo quien, tras un triaje con el plazo vencido, recibe box y médico en el instante en que lo acaba |
+| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en llegada + paciencia si el plazo vence antes de empezar el triaje, y en max(llegada + paciencia, fin del triaje) si vence durante él (tolerancia 1e-8); nadie es visto después de su plazo, salvo quien, tras un triaje durante el cual venció, recibe box y médico en el instante en que lo acaba; y nadie sigue esperando sin ser visto al final con ese instante antes del horizonte (ajustes de la 5.3) |
 | `outcome` (nueva) | `bed_requested` solo tras una decisión de ingreso y en su instante; `bed_assigned` y la salida en el mismo instante; el destino de la salida es el de la decisión; con el ground truth, la decisión es el destino sorteado; con el ground truth y el centro, la espera de cama es base × factores (tolerancia 1e-8) |
 | `door`, `schema_version`, `clinical`, `results_wait` | Igual que en la versión 3; la 4 entra en las versiones con payloads clínicos y en `results_wait` |
 
@@ -530,7 +530,7 @@ Todo se sortea al llegar, antes de transformar, y se consume aunque no se use: u
 
 ### El contrato con el motor
 
-`PatientDraws` gana `outcome` al final (`None` con los modelos provisional y del hito 4): la paciencia en minutos, el destino y un `bed_wait(t)` que da la espera de cama de un pedido en el instante t con el turno y la estación de ese instante, como `round_turnaround(t)` del hito 4. Con `outcome`, `admitted` deja de usarse; `patient.py` tiene una rama explícita: sin `outcome`, exactamente el código del hito 4.
+`PatientDraws` gana `outcome` al final (`None` con los modelos provisional y del hito 4): la paciencia en minutos, el destino y un `bed_wait(t)` que da la espera de cama de un pedido en el instante t con el turno y la estación de ese instante, como `round_turnaround(t)` del hito 4. Con `outcome`, `admitted` deja de usarse; `patient.py` tiene una rama explícita: sin `outcome`, exactamente el código del hito 4. La 5.3 añade `OutcomeDraws.truth`, el `Outcome` sorteado entero (con lo que no se usa), que pasa a `EpisodeTruth.outcome`; `OutcomeDraws.from_outcome` construye lo que lee el motor desde él. Una sola función elige el modelo por los bloques de los dos ficheros, `choose_model` (`engine/clinical_sampler.py`), que da un `PatientModel` (versión del catálogo y número de flujos) o un `ModelChoiceError` con la clave que falta y su fichero; la usan el motor, el servicio de ejecuciones, la CLI, el directo y la carga ofrecida. Con el hito 5, el flujo 4 tiene un solo dueño: el `ClinicalSampler` no crea el generador de la uniforme del hito 4.
 
 ### `perfiles.toml`: el bloque del hito 5
 
@@ -576,12 +576,13 @@ Un centro lleva `[destino]` (modelos provisional y del hito 4) o `[camas]` (hito
 
 - **`EpisodeTruth`** gana al final la verdad del desenlace (`None` con los modelos anteriores).
 - **CSV del ground truth clínico:** con el hito 5, `destino` toma los cuatro valores sorteados (también el contrafactual de quien se fue) y se añaden al final `z_paciencia`, `paciencia`, `sorteo_destino_alta`, `sorteo_destino_ingreso`, `sorteo_destino_traslado`, `sorteo_destino_exitus`, `z_cama` y `espera_cama_base`. Leerlo da el mismo `EpisodeTruth` con `==`, floats bit a bit. Un CSV de 57 columnas es del hito 4 y se lee como hasta ahora.
-- **`run.json`** registra el modelo del hito 5 (el plan de la 5.3 propone cómo: una versión 3 con el modelo clínico y su versión de catálogo, por ejemplo). Las versiones 1 y 2 se leen como hoy; el emparejamiento no empareja modelos distintos.
+- **`run.json`** registra el modelo del hito 5 con la versión 3 (decidido en el plan de la 5.3): la 2 más la clave `schema_version`, que exige `model = "clinico"` y `schema_version = 4`, una sola forma de escribir cada cosa. Las ejecuciones provisionales y del hito 4 siguen escribiendo la 2, igual que antes. `RunInfo.catalog_version` da la versión del catálogo de cualquier `run.json`: 1 con la versión 1 y con la 2 provisional, 3 con la 2 clínica y 4 con la 3. Las versiones 1 y 2 se leen como hoy; el emparejamiento no empareja un run del hito 4 con uno del hito 5 (bloqueo `catalog_version`, solo cuando el modelo es el mismo).
 - **Ejemplos para los tests:** `tests/data/perfiles_h5_ejemplo.toml` (de la 5.2: `perfiles_ejemplo.toml` sin tocar más el bloque del hito 5, con los derivados) y `tests/data/centro_h5_ejemplo.toml` (con sala, de la 5.3), con sus huellas del log y del ground truth (5.3). Los ficheros de ejemplo de hoy no cambian ni un byte.
 
 ### CLI
 
-- `edsim motor simular` usa `config/`: el modelo del hito 4 hasta la 5.6 y el del hito 5 después; con `--perfiles` y `--centro` del hito 5, el del hito 5. La cabecera dice el modelo. Un bloque a medias es código 2, antes de escribir nada.
+- `edsim motor simular` usa `config/`: el modelo del hito 4 hasta la 5.6 y el del hito 5 después; con `--perfiles` y `--centro` del hito 5, el del hito 5. La cabecera dice el modelo. Un bloque a medias es código 2, antes de escribir nada. Hasta la 5.4, con el hito 5 la salida da los recuentos del desenlace (`outcome_counts`: llegadas, abandonos por sitio, salidas por destino y dentro) en lugar del resumen, cuyas métricas cuentan como dentro a quien se fue, y dice que las métricas con abandono llegan con la 5.4.
+- El directo (`edsim directo lanzar`) y la carga ofrecida rechazan los ficheros del hito 5 con un error claro hasta la 5.4: el directo nunca etiqueta un log de la versión 4 como versión 3.
 - `edsim perfiles validar` gana `check_patience` y `check_destinations`, con el patrón de `check_workup`.
 - `edsim calibracion evaluar` y `sensibilidad` ganan los objetivos y los mandos nuevos (5.6).
 
@@ -786,7 +787,11 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 | V22 | 5.2 | Contar las alteradas de las pruebas no pedidas (nota del chat en el issue #69) | Fallan el unitario de `abnormal_count` y `check_destinations` por número de alteradas |
 | V13 | 5.3 | El modelo del hito 4 consume cuatro Gumbel en el flujo 4 | Fallan las tres huellas clínicas de la versión 3 |
 | V14 | 5.3 | Un bloque a medias se acepta | Falla el test de errores de la elección del modelo |
-| V15 | 5.3 | El destino de quien se fue no se guarda | Falla la ida y vuelta del CSV |
+| V15 | 5.3 | El destino de quien se fue no se guarda | Falla la ida y vuelta del CSV. Escrita como «`destino` desde `admitted`»: la verdad se fija al llegar, antes de que nadie se vaya, así que la forma real de perder el contrafactual es quedarse con alta o ingreso |
+| V23 | 5.3 | Con el hito 5, el `ClinicalSampler` sigue sorteando su uniforme del flujo 4 (nota del chat en el issue #70) | Solo falla el test espía: las Gumbel son las mismas, porque dos generadores del mismo `SeedSequence` son copias |
+| V24 | 5.3 | `abandonment` compara con llegada + paciencia, sin el fin del triaje | Falla el escenario T y los runs del hito 5 con abandonos al acabar un triaje |
+| V25 | 5.3 | `outcome` compara la espera de cama con la base, sin factores | Fallan los escenarios con ingreso y los runs del hito 5 |
+| V26 | 5.3 | El motor ignora el plazo mientras el paciente espera enfermera (ajuste de Pedro al plan) | Falla el escenario M: Q4 se tría tarde y la invariante ve que su plazo era 4 |
 | V16 | 5.4 | Los abandonos se quitan del cumplimiento | Falla el ejemplo de la censura (100 % en vez de 66,7 %) |
 | V17 | 5.4 | Las medias incluyen a los que se van, con su tiempo hasta irse | Falla la media a mano (90 en vez de 60) |
 | V18 | 5.4 | El estado del consumidor sin la marca de pasillo | Falla el log a mano del consumidor |

@@ -470,7 +470,7 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | Aviso de Windows y línea de estado (en `~/.claude`) | P.2, A6 | Probado por Pedro en una sesión nueva: suena al pedir permiso y la línea muestra modelo, rama y % de contexto |
 | Plugin LSP de Python (pyright) | — | Pendiente: `/plugin` es interactivo y no lo lanza el agente |
 | Subagentes para las versiones incorrectas | 5.2 | Probado con cinco versiones incorrectas (cuatro en paralelo), con predicción frente a observado. El worktree parte del `HEAD` local (`worktree.baseRef = "head"`), con su `uv sync --offline --frozen` y `edsim.__file__` comprobado dentro, sin tocar el árbol principal. Claude Code borra los worktrees limpios. Dos avisos: `.claude/agents/` se carga al abrir la sesión (un subagente creado a mitad de sesión no existe hasta la siguiente), y un worktree cuyo subagente deja trabajo en segundo plano sigue bloqueado. Detalle en el anexo de la 5.2 de [hito-5.md](../specs/hito-5.md) |
-| `@claude` en el PR | 5.3 | — |
+| `@claude` en el PR | Pospuesto al cierre del hito 5 | — |
 | El chat lee el PR y el CI | 5.4 | — |
 | Codex desde el issue | 5.5 | — |
 | Sesión en la nube | 5.7 | — |
