@@ -425,8 +425,11 @@ def manchester_compliance(
 
     With the abandonment, the rule of the censoring (``compliance_cases``):
     whoever leaves without being seen with its clock at or above the maximum
-    misses it, and whoever leaves before is censored; more abandonment never
-    improves the compliance (H5-8).
+    misses it, and whoever leaves before is censored (H5-8). Leaving never
+    hides a sure miss, as removing those who leave would. A patient who would
+    have been seen late and leaves before its maximum is censored, though, so
+    the share of those that comply may still go up: censoring is the
+    estimate of what is known, not a bound against abandonment.
 
     Args:
         table: The episodes of the log, from ``episode_table``.
