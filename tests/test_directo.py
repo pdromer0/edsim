@@ -504,7 +504,7 @@ def test_datos_de_la_ejecucion_no_validos_en_run_live():
     [
         ("run_id", ""),
         ("mode", "batch"),
-        ("schema_version", 4),
+        ("schema_version", 5),  # 4 existe desde la tarea 5.1
         ("schema_version", True),
         ("schema_version", "3"),
         ("seed", -1),

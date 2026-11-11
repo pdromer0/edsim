@@ -38,6 +38,10 @@ version, in ``CATALOGS``:
   ordered and waits for the results outside, still inside the department.
   The clinical model writes it, whatever that list holds: one version per
   model, not per configuration.
+- version 4 is version 3 plus the outcome of milestone 5 (task 5.1, H5-7):
+  ``patient_left_wbs`` (the patient leaves without being seen),
+  ``bed_requested`` and ``bed_assigned`` (the wait for a ward bed) and four
+  destinations. The model of milestone 5 writes it.
 
 A log has one version, the one of its ``EventLog``; the invariant
 ``schema_version`` checks it. Nothing hidden from the hospital (the latent
@@ -70,8 +74,16 @@ It replaces ``CLINICAL_SCHEMA_VERSION`` (2), which is gone so that an old use
 fails on import instead of missing the logs of version 3.
 """
 
-CLINICAL_SCHEMA_VERSIONS: frozenset[int] = frozenset({2, 3})
-"""Versions with the clinical payloads: 2 (tasks 4.5a and 4.5b) and 3."""
+OUTCOME_SCHEMA_VERSION = 4
+"""Version the model of milestone 5 writes: version 3 plus the outcome (task 5.1).
+
+``CURRENT_CLINICAL_SCHEMA_VERSION`` keeps its value and its meaning, the
+version of the model of milestone 4: a new meaning under the same name would
+break its readers without a word.
+"""
+
+CLINICAL_SCHEMA_VERSIONS: frozenset[int] = frozenset({2, 3, OUTCOME_SCHEMA_VERSION})
+"""Versions with the clinical payloads: 2 (tasks 4.5a and 4.5b), 3 and 4."""
 
 TIMEZONE = timezone(timedelta(hours=1))
 """Fixed offset of ``event_time``: +01:00 all year (ADR candidate 20)."""
@@ -248,6 +260,19 @@ RESULTS_WAIT = "resultados"
 """``espera`` of ``box_released``, version 3: the patient leaves the box to wait
 for the results of its tests outside it (ADR candidate 45)."""
 
+DESTINATIONS = ("alta", "ingreso", "traslado", "exitus")
+"""``destino`` of version 4, in the order of the draws of milestone 5 (H5-5)."""
+
+LWBS_WAITS = ("triaje", "box", "medico")
+"""``espera`` of ``patient_left_wbs``, version 4: where the patient was waiting.
+
+``triaje`` for a triage nurse, ``box`` for a box (also after a displacement
+before being seen) and ``medico`` in a box, for the first assessment.
+"""
+
+WARD = "planta"
+"""``servicio`` of ``bed_requested`` and ``bed_assigned``, version 4: the only one yet."""
+
 _TIPO = _choice("inicial", "reevaluacion")
 _BOX = _int_range(1)
 _DESTINO = _choice("alta", "ingreso")
@@ -386,23 +411,50 @@ the ``test_ordered`` of the patient, in the same instant; with the results the
 patient asks for a box again with its original priority (``box_assigned``).
 """
 
+_DESTINO_V4 = _choice(*DESTINATIONS)
+_SERVICIO = _choice(WARD)
+
+CATALOG_V4: Mapping[str, EventSpec] = MappingProxyType(
+    {
+        **CATALOG_V3,
+        "disposition_decided": _spec("his", destino=_DESTINO_V4),
+        "patient_departed": _spec("his", destino=_DESTINO_V4),
+        "patient_left_wbs": _spec("his", espera=_choice(*LWBS_WAITS)),
+        "bed_requested": _spec("his", servicio=_SERVICIO),
+        "bed_assigned": _spec("admision", servicio=_SERVICIO),
+    }
+)
+"""Version 4: version 3 plus the outcome of milestone 5 (task 5.1, H5-7).
+
+- ``patient_left_wbs``: the patience runs out before the first assessment;
+  ``espera`` says where the patient was waiting (``LWBS_WAITS``). It closes the
+  episode, without a decision.
+- ``bed_requested``: in the instant of a ``disposition_decided`` with
+  ``ingreso``; the patient keeps its box while it waits for the bed.
+- ``bed_assigned``: when the bed is ready, followed by ``patient_departed`` in
+  the same instant, in the box or, after a displacement, in the corridor.
+- ``destino``: one of ``DESTINATIONS``.
+"""
+
 CATALOGS: Mapping[int, Mapping[str, EventSpec]] = MappingProxyType(
     {
         PROVISIONAL_SCHEMA_VERSION: CATALOG_V1,
         2: CATALOG_V2,
         CURRENT_CLINICAL_SCHEMA_VERSION: CATALOG_V3,
+        OUTCOME_SCHEMA_VERSION: CATALOG_V4,
     }
 )
 """The catalog of each schema version."""
 
 SCHEMA_VERSIONS: frozenset[int] = frozenset(CATALOGS)
-"""The schema versions a log can have: 1, 2 and 3."""
+"""The schema versions a log can have: 1, 2, 3 and 4."""
 
 TERMINAL_EVENTS: Mapping[int, frozenset[str]] = MappingProxyType(
     {
         PROVISIONAL_SCHEMA_VERSION: frozenset({"patient_departed"}),
         2: frozenset({"patient_departed"}),
         CURRENT_CLINICAL_SCHEMA_VERSION: frozenset({"patient_departed"}),
+        OUTCOME_SCHEMA_VERSION: frozenset({"patient_departed", "patient_left_wbs"}),
     }
 )
 """The event types that close an episode, for each schema version.
@@ -410,7 +462,7 @@ TERMINAL_EVENTS: Mapping[int, frozenset[str]] = MappingProxyType(
 An episode is open at an instant if it has events before it and none of these
 (docs/specs/hito-6.md, H6-11): the live mode publishes the warm-up of the open
 episodes as its initial census. In versions 1 to 3 only ``patient_departed``
-closes one; catalog 4 of milestone 5 will add the abandonment.
+closes one; in version 4, also ``patient_left_wbs``.
 """
 
 CATALOG = CATALOG_V1
@@ -721,8 +773,9 @@ class EventLog:
         sink: ``MemorySink``, ``JsonlSink`` or anything with ``write(event)``.
         schema_version: Version of the log, one of ``SCHEMA_VERSIONS``:
             ``PROVISIONAL_SCHEMA_VERSION`` (1) by default, or
-            ``CURRENT_CLINICAL_SCHEMA_VERSION`` (3) for the clinical model;
-            2 is the clinical version of tasks 4.5a and 4.5b.
+            ``CURRENT_CLINICAL_SCHEMA_VERSION`` (3) for the clinical model
+            of milestone 4, ``OUTCOME_SCHEMA_VERSION`` (4) for the one of
+            milestone 5; 2 is the clinical version of tasks 4.5a and 4.5b.
 
     Raises:
         ValueError: If ``run_id`` is not a non-empty string, ``start_date``
