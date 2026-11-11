@@ -1105,3 +1105,37 @@ def test_perfiles_validar_con_los_valores_por_defecto(tmp_path, capsys, monkeypa
     assert "600000" in mixing and "2136" in mixing
     for name in PROFILE_PLOTS:
         assert (tmp_path / name).is_file()
+
+
+class _Stop(Exception):
+    """Para la CLI después de la cabecera, sin validar."""
+
+
+def test_perfiles_validar_del_hito_5_dice_sus_pacientes(monkeypatch, capsys):
+    # Con el bloque, la cabecera dice los pacientes de la paciencia (2 años) y de los
+    # destinos (1 año), que --pacientes no cambia (hallazgo de la revisión propia).
+    monkeypatch.chdir(REPO)
+
+    def stop(*args, **kwargs):
+        raise _Stop
+
+    monkeypatch.setattr("edsim.cli.validate_profiles", stop)
+    with pytest.raises(_Stop):
+        main(
+            [
+                "perfiles",
+                "validar",
+                "--perfiles",
+                "tests/data/perfiles_h5_ejemplo.toml",
+                "--llegadas",
+                "tests/data/llegadas_ejemplo.toml",
+            ]
+        )
+
+    out = capsys.readouterr().out
+    # 109 542 pacientes en un año de llegadas_ejemplo.toml (test_potencia_escrita, 5.2).
+    assert (
+        "219084 pacientes en la paciencia y 109542 en los destinos (2 años y uno;"
+        " --pacientes no los cambia)" in out
+    )
+    assert "paciencia y destinos (bloque del hito 5)" in out

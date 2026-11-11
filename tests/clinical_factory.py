@@ -7,6 +7,8 @@ que lo usa no comparte un error de ``ClinicalDraws.round_turnaround`` (versiones
 incorrectas V7 y V10 de la tarea 4.5a).
 """
 
+import json
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
@@ -211,3 +213,23 @@ def room_log(run_id: str = "clinico", *, c_first: bool = False) -> list:
         leave(who, t + minutes)
         t += minutes
     return sink.events
+
+
+def truth_lines(episodes) -> str:
+    """El EpisodeTruth entero de cada episodio, en el orden de sus campos, una línea JSON.
+
+    La tarea 5.3 añadió al final el campo ``outcome``, que vale ``None`` con los modelos
+    provisional y del hito 4. Se omite solo esa clave y solo cuando vale ``None``: así la
+    representación de un episodio del hito 4 es la de antes, byte a byte, y la huella
+    sigue probando que ningún campo antiguo cambió. Los demás ``None``
+    (``test_turnaround``, ``clinical``) se quedan, porque ya formaban parte de la huella.
+    """
+    lines = []
+    for e in episodes:
+        data = asdict(e)
+        if data["outcome"] is None:
+            del data["outcome"]
+        lines.append(
+            json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"
+        )
+    return "".join(lines)

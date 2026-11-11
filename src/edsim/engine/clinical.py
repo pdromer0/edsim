@@ -49,6 +49,7 @@ from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before
 from edsim.lognormal import lognormal_params
 from edsim.profiles.config import N_SEASONS
 from edsim.profiles.context import arrival_context
+from edsim.profiles.sampler import Outcome
 
 if TYPE_CHECKING:
     from edsim.engine.clinical_sampler import ClinicalDraws
@@ -186,16 +187,21 @@ class OutcomeDraws:
         bed_base: Wait for a bed with factor 1, in minutes; used only if
             the patient is admitted.
         beds: The factors of the run by the instant of the request.
+        truth: Everything the outcome sampler drew for the patient (task 5.3),
+            also what is not used, for the ground truth; ``None`` for the
+            patients written by hand in the scenarios of the engine.
 
     Raises:
         ValueError: If ``patience`` or ``bed_base`` is not a finite number
-            >= 0, or ``destination`` is not one of ``DESTINATIONS``.
+            >= 0, ``destination`` is not one of ``DESTINATIONS``, or ``truth``
+            does not have the same patience, destination and base wait.
     """
 
     patience: float
     destination: str
     bed_base: float
     beds: BedWaitFactors
+    truth: Outcome | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "patience", _finite("patience", self.patience))
@@ -206,6 +212,26 @@ class OutcomeDraws:
             )
         if not isinstance(self.beds, BedWaitFactors):
             raise ValueError(f"beds must be a BedWaitFactors, got {self.beds!r}")
+        if self.truth is not None:
+            if not isinstance(self.truth, Outcome):
+                raise ValueError(f"truth must be an Outcome, got {self.truth!r}")
+            drawn = (self.truth.patience, self.truth.destination, self.truth.bed_base)
+            if (self.patience, self.destination, self.bed_base) != drawn:
+                raise ValueError(
+                    "patience, destination and bed_base must be those of truth: got "
+                    f"{(self.patience, self.destination, self.bed_base)!r}, drawn {drawn!r}"
+                )
+
+    @classmethod
+    def from_outcome(cls, outcome: Outcome, beds: BedWaitFactors) -> "OutcomeDraws":
+        """What the engine reads of what ``OutcomeSampler`` drew, which it keeps as truth."""
+        return cls(
+            patience=outcome.patience,
+            destination=outcome.destination,
+            bed_base=outcome.bed_base,
+            beds=beds,
+            truth=outcome,
+        )
 
     def bed_wait(self, t: float) -> float:
         """Minutes from asking for a bed at ``t`` to getting it.

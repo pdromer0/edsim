@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Literal, Self
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from edsim.engine.events import (
+    CURRENT_CLINICAL_SCHEMA_VERSION,
+    OUTCOME_SCHEMA_VERSION,
+    PROVISIONAL_SCHEMA_VERSION,
+)
 from edsim.runs.identifiers import validate_run_id
 
 _RUN_FILES = (
@@ -35,7 +40,15 @@ _PROFILES_FILE = "perfiles.toml"
 """The copy of the clinical profiles, only in runs of the clinical model."""
 
 FORMAT_VERSION = 2
-"""The version of ``run.json`` that new runs write."""
+"""The version of ``run.json`` that new runs of the provisional and milestone 4 models write."""
+
+OUTCOME_FORMAT_VERSION = 3
+"""The version of ``run.json`` that new runs of the milestone 5 model write (task 5.3).
+
+Version 2 plus ``schema_version``, the version of the catalog of its log (4).
+The model stays ``"clinico``: the milestone 5 model is clinical, with its
+copy of ``perfiles.toml``, and the version says which clinical model it is.
+"""
 
 RUN_MODELS = ("provisional", "clinico")
 """The patient models of a run: the provisional one of milestone 3 or the clinical one."""
@@ -54,7 +67,12 @@ class RunInfo:
     ``"provisional"`` they are ``None``. ``profile_path`` and
     ``profile_fingerprint`` are those of the arrival profile, in both models.
     ``format_version`` is the version of the file it was read from: 1 only
-    with the provisional model.
+    with the provisional model, 3 only with the milestone 5 model.
+
+    ``schema_version`` exists only in version 3 (task 5.3), always 4, the
+    catalog of the milestone 5 model: one way to write each run. In versions 1
+    and 2 it is ``None``, and the version of the catalog follows from the
+    model (``catalog_version``).
     """
 
     format_version: int
@@ -76,6 +94,19 @@ class RunInfo:
     model: RunModel = "provisional"
     clinical_profiles_path: str | None = None
     clinical_profiles_fingerprint: str | None = None
+    schema_version: int | None = None
+
+    @property
+    def catalog_version(self) -> int:
+        """The version of the catalog of the log of the run, for any ``run.json``.
+
+        1 with version 1 and with version 2 of the provisional model, 3 with
+        version 2 of the clinical model (milestone 4) and ``schema_version``
+        (4) with version 3 (milestone 5).
+        """
+        if self.schema_version is not None:
+            return self.schema_version
+        return CURRENT_CLINICAL_SCHEMA_VERSION if self.is_clinical else PROVISIONAL_SCHEMA_VERSION
 
     @property
     def arrivals_per_day(self) -> float:
@@ -83,8 +114,24 @@ class RunInfo:
         return self.window_arrivals / (self.days - self.warmup_days)
 
     def __post_init__(self) -> None:
-        if type(self.format_version) is not int or self.format_version not in (1, 2):
+        if type(self.format_version) is not int or self.format_version not in (1, 2, 3):
             raise ValueError(f"unsupported format_version: {self.format_version!r}")
+        if self.format_version == OUTCOME_FORMAT_VERSION:
+            if self.model != "clinico":
+                raise ValueError("format_version 3 is of the milestone 5 model, model clinico")
+            if (
+                type(self.schema_version) is not int
+                or self.schema_version != OUTCOME_SCHEMA_VERSION
+            ):
+                raise ValueError(
+                    f"format_version 3 needs schema_version {OUTCOME_SCHEMA_VERSION}, "
+                    f"got {self.schema_version!r}"
+                )
+        elif self.schema_version is not None:
+            raise ValueError(
+                f"schema_version exists only in format_version 3, got {self.schema_version!r} "
+                f"with format_version {self.format_version}"
+            )
         if self.model not in RUN_MODELS:
             raise ValueError(f"model must be one of {RUN_MODELS}, got {self.model!r}")
         if self.model == "clinico":
@@ -142,13 +189,15 @@ class RunInfo:
         if not isinstance(data, dict):
             raise ValueError("run.json must contain an object")
         version = data.get("format_version")
-        if type(version) is not int or version not in (1, 2):
+        if type(version) is not int or version not in (1, 2, 3):
             raise ValueError(f"unsupported format_version: {version!r}")
         expected = set(_V1_KEYS)
-        if version == 2:
+        if version >= 2:
             expected.add("model")
             if data.get("model") == "clinico":
                 expected.update(_CLINICAL_FIELDS)
+        if version == OUTCOME_FORMAT_VERSION:
+            expected.add("schema_version")
         if data.keys() != expected:
             missing, extra = sorted(expected - data.keys()), sorted(data.keys() - expected)
             raise ValueError(
@@ -158,17 +207,21 @@ class RunInfo:
         return cls(**data)
 
     def write(self, path: str | Path) -> None:
-        """Write version 2 in a stable UTF-8 representation, without null keys.
+        """Write version 2 or 3 in a stable UTF-8 representation, without null keys.
 
         Raises:
             ValueError: If the metadata is of version 1, which is only read.
         """
-        if self.format_version != FORMAT_VERSION:
-            raise ValueError(f"only format_version {FORMAT_VERSION} is written")
+        if self.format_version not in (FORMAT_VERSION, OUTCOME_FORMAT_VERSION):
+            raise ValueError(
+                f"only format_version {FORMAT_VERSION} and {OUTCOME_FORMAT_VERSION} are written"
+            )
         data = asdict(self)
         if not self.is_clinical:
             for name in _CLINICAL_FIELDS:
                 del data[name]
+        if self.schema_version is None:
+            del data["schema_version"]
         Path(path).write_text(
             json.dumps(data, ensure_ascii=False, allow_nan=False, indent=2) + "\n",
             encoding="utf-8",

@@ -765,12 +765,23 @@ FORBIDDEN = {
     "respuestas",
     "respuesta_base",
     "tiempo_respuesta",
+    # El desenlace del hito 5 (tarea 5.3, decisión 28): la paciencia, los sorteos del
+    # destino y la espera base de cama son ground truth. El destino solo va al log en la
+    # decisión, y quien se fue no tiene (test_outcome_model.py lo comprueba en el log).
+    "paciencia",
+    "z_paciencia",
+    "sorteo_destino_alta",
+    "sorteo_destino_ingreso",
+    "sorteo_destino_traslado",
+    "sorteo_destino_exitus",
+    "z_cama",
+    "espera_cama_base",
 }
 
 
 @pytest.mark.parametrize("version", sorted(SCHEMA_VERSIONS))
 def test_ningun_catalogo_lleva_lo_oculto(version):
-    # G, z, nivel real, calidad, salto, banda y respuestas son ground truth.
+    # G, z, nivel real, calidad, salto, banda, respuestas y el desenlace son ground truth.
     keys = {key for spec in CATALOGS[version].values() for key in spec.payload}
     assert not keys & FORBIDDEN
 

@@ -15,10 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from edsim.engine.analysis import OutcomeCounts, outcome_counts
 from edsim.engine.center import load_center
 from edsim.engine.events import OUTCOME_SCHEMA_VERSION
 from edsim.engine.ground_truth import GroundTruth
-from edsim.engine.invariants import check_invariants
+from edsim.engine.invariants import InvariantContext, check_abandonment, check_invariants
+from edsim.engine.report import format_outcome_counts
 from edsim.engine.scenarios import (
     Scenario,
     abandonment,
@@ -31,6 +33,7 @@ from edsim.engine.scenarios import (
     run_scenario,
     seen_in_room,
     unseen_displacement,
+    with_beds,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -43,11 +46,16 @@ def center():
 
 
 def run(scenario: Scenario) -> list:
-    """El log del escenario, después de comprobar que no viola ninguna invariante."""
+    """El log del escenario, después de comprobar que no viola ninguna invariante.
+
+    Con el ground truth del escenario, con sus días (tarea 5.3): las invariantes comparan
+    también cada abandono con la paciencia, cada destino con el sorteado y cada espera de
+    cama con la base y los factores del centro, que lleva [camas].
+    """
     result = run_scenario(scenario)
-    truth = GroundTruth(episodes=result.run.episodes, days=())
+    assert scenario.center.has_beds and result.ground_truth.days
     violations = check_invariants(
-        result.events, scenario.center, ground_truth=truth, inside=result.run.inside
+        result.events, scenario.center, ground_truth=result.ground_truth, inside=result.run.inside
     )
     assert violations == []
     assert {e.schema_version for e in result.events} == {OUTCOME_SCHEMA_VERSION}
@@ -305,9 +313,13 @@ def test_nadie_se_va_despues_de_ser_visto(center):
 def test_paciencia_0_con_todo_libre(center):
     # Caso límite: la enfermera se concede al pedirla en 0 (empate) y el plazo vence en el
     # triaje; en 5 recibe box y médico en ese instante, así que se queda.
+    # Con la verdad, es la excepción del triaje: visto en 5, después de su plazo (0), en
+    # el instante en que acaba el triaje.
     small = dataclasses.replace(center, boxes=1, triage_nurses=(1, 1, 1), doctors=(1, 1, 1))
     scenario = Scenario(
-        small, ((0.0, outcome_draws(3, 5, 10, patience=0)),), schema_version=OUTCOME_SCHEMA_VERSION
+        with_beds(small),
+        ((0.0, outcome_draws(3, 5, 10, patience=0)),),
+        schema_version=OUTCOME_SCHEMA_VERSION,
     )
     events = run(scenario)
     assert trace(events, 0) == [
@@ -440,7 +452,234 @@ def test_el_del_pasillo_sigue_dentro_en_el_horizonte(center):
     r1 = outcome_draws(3, 5, 30, destination="ingreso", bed_base=1000)
     scenario = dataclasses.replace(base, patients=((0.0, r1), *base.patients[1:]))
     result = run_scenario(scenario)
-    truth = GroundTruth(episodes=result.run.episodes, days=())
     assert result.run.inside == 1
-    assert check_invariants(result.events, scenario.center, ground_truth=truth, inside=1) == []
+    assert (
+        check_invariants(result.events, scenario.center, ground_truth=result.ground_truth, inside=1)
+        == []
+    )
     assert trace(result.events, 0) == [*R1_UNTIL_DECISION, *displaced(60.0, 1, "EP-000002")]
+
+
+# --- Las invariantes con la verdad del desenlace (tarea 5.3) ---------------------------------
+#
+# Cada perturbación cambia un valor de la verdad (o quita un evento del log) y espera
+# exactamente las violaciones que da el cálculo a mano del plan.
+
+
+def perturbed(result, episode: str, **changes) -> GroundTruth:
+    """El ground truth del escenario con el desenlace de ``episode`` cambiado."""
+    episodes = tuple(
+        dataclasses.replace(e, outcome=dataclasses.replace(e.outcome, **changes))
+        if e.episode_id == episode
+        else e
+        for e in result.ground_truth.episodes
+    )
+    return dataclasses.replace(result.ground_truth, episodes=episodes)
+
+
+def violations_of(events, center, truth, check: str) -> list:
+    return [v for v in check_invariants(events, center, ground_truth=truth) if v.check == check]
+
+
+def test_la_paciencia_de_la_verdad_fija_el_instante_del_abandono(center):
+    # Escenario M: Q2 (EP-000001) llega en 1 con paciencia 25 y se va en 26. Con 24 en la
+    # verdad, lo esperado es 1 + 24 = 25 frente a 26: una violación.
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000001", patience=24.0), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 26.0)]
+    assert "left at 26.0" in found[0].message and "give 25.0" in found[0].message
+
+
+def test_nadie_es_visto_despues_de_su_plazo(center):
+    # Q3 (EP-000002) llega en 2 y es visto en 45, el instante de su plazo 2 + 43 (empate:
+    # se queda). Con 42,5 en la verdad, el plazo es 44,5 y lo ven después: una violación.
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000002", patience=42.5), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000002", 45.0)]
+    assert "after its deadline 44.5" in found[0].message
+
+
+def without_left_wbs(events, episode: str) -> list:
+    return [
+        e for e in events if not (e.episode_id == episode and e.event_type == "patient_left_wbs")
+    ]
+
+
+def test_quien_sigue_esperando_con_el_plazo_vencido(center):
+    # El log de M sin el patient_left_wbs de Q4 (EP-000003, llega en 3, paciencia 1): sin
+    # terminal y sin triaje. Su plazo, 3 + 1 = 4, cae antes del horizonte 1 × 1440: una
+    # violación. Con paciencia 1.000.000, el plazo 1.000.003 > 1440: ninguna.
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    events = without_left_wbs(result.events, "EP-000003")
+    context = InvariantContext(scenario.center, ground_truth=result.ground_truth)
+    late = InvariantContext(
+        scenario.center, ground_truth=perturbed(result, "EP-000003", patience=1_000_000.0)
+    )
+
+    found = check_abandonment(events, context)
+    assert [(v.episode_id, v.event_id) for v in found] == [("EP-000003", None)]
+    assert "due at 4.0" in found[0].message
+    assert check_abandonment(events, late) == []
+
+
+def test_sin_los_dias_no_se_mira_quien_sigue_esperando(center):
+    # Sin días no hay horizonte: la tercera regla no se comprueba (las otras dos, sí).
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    events = without_left_wbs(result.events, "EP-000003")
+    no_days = dataclasses.replace(result.ground_truth, days=())
+
+    assert check_abandonment(events, InvariantContext(scenario.center, ground_truth=no_days)) == []
+
+
+def test_el_destino_de_la_decision_es_el_sorteado(center):
+    # Q1 (EP-000000) recibe el alta en 45; con «traslado» en la verdad, una violación.
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events,
+        scenario.center,
+        perturbed(result, "EP-000000", destination="traslado"),
+        "outcome",
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000000", 45.0)]
+    assert "drawn destination is 'traslado'" in found[0].message
+
+
+def test_la_espera_de_cama_es_la_base_por_los_factores_del_centro(center):
+    # Escenario C: R1 (EP-000000) pide cama en 35 (0:35, noche, 1,5) con base 100: espera
+    # 150, cama en 185. Con base 101 en la verdad, lo esperado es 151,5: una violación.
+    scenario = admission(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000000", bed_base=101.0), "outcome"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000000", 185.0)]
+    assert "waited 150.0" in found[0].message and "gives 151.5" in found[0].message
+    # Sin [camas] en el centro, la espera no se compara: no hay factores con los que hacerlo.
+    assert (
+        violations_of(
+            result.events, center, perturbed(result, "EP-000000", bed_base=101.0), "outcome"
+        )
+        == []
+    )
+
+
+# --- Recuentos del desenlace (tarea 5.3), con los escenarios a mano --------------------------
+
+
+def test_recuentos_del_escenario_m(center):
+    # Q4 se va en 3 + 1 = 4 (triaje), Q2 en 1 + 25 = 26 (médico); Q1 alta en 45 y Q3 alta
+    # (empate en 45: se queda). 4 llegadas, 2 abandonos, 2 altas, nadie dentro.
+    counts = outcome_counts(run_scenario(abandonment(center)).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=4, left=(1, 0, 1), departed=(2, 0, 0, 0), inside=0)
+    assert counts.left_total == 2
+
+
+def test_recuentos_del_escenario_c(center):
+    # R1 ingresa (cama en 35 + 100 × 1,5 = 185); R2 y R3, alta.
+    counts = outcome_counts(run_scenario(admission(center)).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=3, left=(0, 0, 0), departed=(2, 1, 0, 0), inside=0)
+
+
+def test_los_recuentos_son_de_los_que_llegan_en_la_ventana(center):
+    # [2, 1440): Q3 (llega en 2, alta) y Q4 (llega en 3, se va en el triaje); Q1 y Q2, fuera.
+    counts = outcome_counts(run_scenario(abandonment(center)).events, 2.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=2, left=(1, 0, 0), departed=(1, 0, 0, 0), inside=0)
+
+
+def test_quien_sigue_en_el_pasillo_cuenta_dentro(center):
+    # Con cama base 1000 (de noche, 1500), R1 sigue esperando cama en el horizonte.
+    base = admission(center)
+    r1 = outcome_draws(3, 5, 30, destination="ingreso", bed_base=1000)
+    scenario = dataclasses.replace(base, patients=((0.0, r1), *base.patients[1:]))
+    counts = outcome_counts(run_scenario(scenario).events, 0.0, 1440.0)
+
+    assert counts == OutcomeCounts(arrivals=3, left=(0, 0, 0), departed=(2, 0, 0, 0), inside=1)
+
+
+def test_recuentos_de_un_log_vacio():
+    assert outcome_counts([], 0.0, 1440.0) == OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0)
+
+
+def test_el_texto_de_los_recuentos(center):
+    # Los del escenario M: 2 de 4 se van, el 50,0 %; sin violaciones.
+    counts = OutcomeCounts(arrivals=4, left=(1, 0, 1), departed=(2, 0, 0, 0), inside=0)
+
+    assert format_outcome_counts(counts, []).splitlines() == [
+        "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
+        "Llegadas: 4",
+        "Se van sin ser vistos: 2 (50.0 %): triaje 1, box 0, médico 1",
+        "Salidas: alta 2, ingreso 0, traslado 0, exitus 0",
+        "Siguen dentro al final: 0",
+        "",
+        "Las métricas con abandono y espera de cama llegan con la tarea 5.4.",
+        "",
+        "Invariantes: 0 violaciones",
+    ]
+    # Sin llegadas, el porcentaje es 0 y no una división por cero.
+    empty = format_outcome_counts(OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0), [])
+    assert "Se van sin ser vistos: 0 (0.0 %)" in empty
+
+
+def test_un_plazo_vencido_antes_del_triaje_no_espera_a_su_fin(center):
+    # Escenario T: T1 (EP-000001) llega en 1 y espera enfermera hasta 55. Con paciencia 50
+    # en la verdad, el plazo 1 + 50 = 51 vence antes de empezar el triaje: debía irse en
+    # 51 desde «triaje», no al acabarlo. Con un box se fue en 62: una violación (con la
+    # regla max(plazo, fin del triaje) daría 62 y no la vería).
+    scenario = late_triage(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000001", patience=50.0), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 62.0)]
+    assert "give 51.0" in found[0].message
+
+
+def test_con_el_plazo_vencido_antes_del_triaje_no_hay_excepcion(center):
+    # Con dos boxes y dos médicos, T1 recibe los dos en 62, al acabar el triaje. Con su
+    # plazo en 61 (paciencia 60) es la excepción y se queda; con 51, venció antes de
+    # empezar el triaje y la excepción no vale: visto después de su plazo, una violación.
+    scenario = late_triage(center, boxes=2, doctors=2)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000001", patience=50.0), "abandonment"
+    )
+
+    assert violations_of(result.events, scenario.center, result.ground_truth, "abandonment") == []
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 62.0)]
+    assert "after its deadline 51.0" in found[0].message
+
+
+def test_las_violaciones_con_la_verdad_van_detras(center):
+    # Dentro de una invariante, primero las del log, en el orden del fichero, y después las
+    # de la verdad. M con la espera de Q4 cambiada a «box» (en 4, del log) y la paciencia
+    # de Q2 en 24 (en 26, de la verdad).
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    events = [
+        dataclasses.replace(e, payload={"espera": "box"})
+        if e.episode_id == "EP-000003" and e.event_type == "patient_left_wbs"
+        else e
+        for e in result.events
+    ]
+    found = violations_of(
+        events, scenario.center, perturbed(result, "EP-000001", patience=24.0), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000003", 4.0), ("EP-000001", 26.0)]

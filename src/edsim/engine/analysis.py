@@ -50,8 +50,9 @@ import numpy as np
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.center import N_LEVELS, CenterConfig
-from edsim.engine.events import DOOR, Event
+from edsim.engine.events import DOOR, LWBS_WAITS, Event
 from edsim.engine.shifts import MINUTES_PER_HOUR, shift_at
+from edsim.profiles.config import DESTINATIONS
 from edsim.queueing.analysis import sample_step, step_time_average
 from edsim.queueing.mm1 import time_in_window
 
@@ -267,6 +268,66 @@ def episode_table(events: Sequence[Event]) -> tuple[EpisodeRecord, ...]:
                 ep.destination = e.payload["destino"]
                 ep.has_box = False
     return tuple(ep.record() for ep in episodes.values())
+
+
+# --- Outcome counts (milestone 5) ---------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeCounts:
+    """How the episodes that arrive in a window end, in a log of version 4 (task 5.3).
+
+    A count, not a metric: the means and the compliance with the abandonment
+    (censoring, H5-8) are task 5.4. Each episode is counted once, by its
+    terminal event, also if it comes after the window.
+
+    Attributes:
+        arrivals: Episodes that arrive in ``[start, end)``.
+        left: Of them, those that leave without being seen, by ``espera``, in
+            the order of ``LWBS_WAITS`` (``triaje``, ``box``, ``medico``).
+        departed: Those that depart, by destination, in the order of
+            ``DESTINATIONS`` (``alta``, ``ingreso``, ``traslado``, ``exitus``).
+        inside: Those still inside at the end of the log.
+    """
+
+    arrivals: int
+    left: tuple[int, ...]
+    departed: tuple[int, ...]
+    inside: int
+
+    @property
+    def left_total(self) -> int:
+        """Patients who left without being seen."""
+        return sum(self.left)
+
+
+def outcome_counts(events: Sequence[Event], start: float, end: float) -> OutcomeCounts:
+    """Count the arrivals of ``[start, end)``, their abandonments and their destinations.
+
+    Args:
+        events: The events of the run, in file order; ``patient_left_wbs``
+            exists only in version 4, so with an older log nobody leaves.
+        start: Start of the window, in minutes.
+        end: End of the window, in minutes.
+    """
+    arrived: set[str] = set()
+    left = dict.fromkeys(LWBS_WAITS, 0)
+    departed = dict.fromkeys(DESTINATIONS, 0)
+    for e in events:
+        match e.event_type:
+            case "patient_arrived" if start <= e.sim_time < end:
+                arrived.add(e.episode_id)
+            case "patient_left_wbs" if e.episode_id in arrived:
+                left[e.payload["espera"]] += 1
+            case "patient_departed" if e.episode_id in arrived:
+                departed[e.payload["destino"]] += 1
+    finished = sum(left.values()) + sum(departed.values())
+    return OutcomeCounts(
+        arrivals=len(arrived),
+        left=tuple(left.values()),
+        departed=tuple(departed.values()),
+        inside=len(arrived) - finished,
+    )
 
 
 # --- Step curves ----------------------------------------------------------------------

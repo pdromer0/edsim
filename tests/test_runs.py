@@ -79,9 +79,11 @@ def test_metadata_roundtrip(info, tmp_path):
     assert loaded == info
     loaded.write(second)
     assert first.read_bytes() == second.read_bytes()
-    # El provisional no escribe las claves nulas de los perfiles clínicos.
+    # El provisional no escribe las claves nulas de los perfiles clínicos, ni la versión
+    # del catálogo, que solo existe en la versión 3 (tarea 5.3).
     expected = dataclasses.asdict(info)
     del expected["clinical_profiles_path"], expected["clinical_profiles_fingerprint"]
+    del expected["schema_version"]
     assert json.loads(first.read_text()) == expected
     assert "arrivals_per_day" not in json.loads(first.read_text())
 
@@ -549,6 +551,7 @@ def test_cli_and_service_share_artifact_format(simulate, tmp_path, monkeypatch):
         "model",
         "clinical_profiles_path",
         "clinical_profiles_fingerprint",
+        "schema_version",
         "run_id",
         "edsim_version",
         "seed",

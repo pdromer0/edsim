@@ -1,5 +1,6 @@
 """Compare persisted runs, checking common random numbers against exact draws."""
 
+import dataclasses
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -42,6 +43,11 @@ DRAW_EFFECTS: Mapping[str, frozenset[DrawField]] = MappingProxyType(
         "duraciones.respuesta_pruebas": frozenset({"test_turnaround"}),
         "pruebas.probabilidad": frozenset({"needs_tests"}),
         "destino.probabilidad_ingreso": frozenset({"admitted"}),
+        # [camas] of the milestone 5 model (task 5.3): the base wait for a bed is in the
+        # truth of the outcome, not in these draws; the factors apply when the bed is asked.
+        "camas.espera": frozenset(),
+        "camas.factor_turno": frozenset(),
+        "camas.factor_estacion": frozenset(),
     }
 )
 """TOML key to draws it can affect; an immutable, exhaustive clinical contract."""
@@ -72,6 +78,7 @@ _PAIRING_FIELDS = (
     "days",
     "warmup_days",
     "model",
+    "catalog_version",
     "clinical_profiles_fingerprint",
 )
 """Fields that must match for the same patients: the model and its profiles last (task 4.5b)."""
@@ -150,15 +157,20 @@ def pairing_blockers(a: RunResults, b: RunResults) -> tuple[MetadataDifference, 
     the clinical model draws other streams. Two clinical runs with profiles of
     different fingerprints are (task 4.8a): the same standard draws with other
     values, the clinical pairing of ``compare_runs``. The profiles block only a
-    provisional run against a clinical one, together with the model. An empty
-    tuple is configuration compatibility, not verified pairing.
+    provisional run against a clinical one, together with the model. A run of
+    milestone 4 and one of milestone 5, both clinical, are not either (task
+    5.3): the version of the catalog (``catalog_version``) blocks them; with
+    different models it is the model that blocks, alone. An empty tuple is
+    configuration compatibility, not verified pairing.
     """
     both_clinical = a.info.is_clinical and b.info.is_clinical
+    same_model = a.info.model == b.info.model
     return tuple(
         MetadataDifference(name, getattr(a.info, name), getattr(b.info, name))
         for name in _PAIRING_FIELDS
         if getattr(a.info, name) != getattr(b.info, name)
         and not (both_clinical and name == "clinical_profiles_fingerprint")
+        and not (not same_model and name == "catalog_version")
     )
 
 
@@ -291,12 +303,15 @@ def _checked_pairing(
                 changed,
                 "con los mismos perfiles, la verdad clínica no puede cambiar",
             )
+        _check_same_outcome(run_ids, a, b, truth_a, truth_b)
         return PairingInfo(pairing.kind, pairing.draw_differences, differences)
     # Other profiles: the same standard draws with other values. The truth keeps the z
-    # of the severity and the 12 draws of the tests; the others follow from the seed.
+    # of the severity, the 12 draws of the tests and, with milestone 5, the 4 Gumbel and
+    # the two normals of the outcome; the others follow from the seed.
     for field, value in (
         ("severity_z", lambda t: t.clinical.triage.z),
         ("workup_draws", lambda t: t.clinical.workup.draws),
+        ("outcome_draws", _outcome_draws),
     ):
         count = sum(value(t) != value(truth_b[key]) for key, t in truth_a.items())
         if count:
@@ -304,6 +319,43 @@ def _checked_pairing(
                 run_ids, field, count, "los sorteos estándar guardados difieren"
             )
     return PairingInfo("clinical_profiles", changes, differences)
+
+
+def _outcome_draws(truth: EpisodeTruth) -> tuple | None:
+    """The standard draws of the outcome (milestone 5), or ``None`` without it."""
+    o = truth.outcome
+    return None if o is None else (o.destination_draws, o.patience_z, o.bed_z)
+
+
+def _check_same_outcome(
+    run_ids: tuple[str, str],
+    a: RunResults,
+    b: RunResults,
+    truth_a: Mapping[str, EpisodeTruth],
+    truth_b: Mapping[str, EpisodeTruth],
+) -> None:
+    """With the same profiles, the outcome of milestone 5 is the same (task 5.3).
+
+    Only its base wait for a bed may change, and only if ``camas.espera`` of
+    the center changes: it is drawn with the center, not with the profiles.
+    """
+
+    def drawn(t: EpisodeTruth) -> object:
+        return None if t.outcome is None else dataclasses.replace(t.outcome, bed_base=0.0)
+
+    changed = sum(drawn(t) != drawn(truth_b[key]) for key, t in truth_a.items())
+    if changed:
+        raise PairingCheckError(
+            run_ids, "outcome", changed, "con los mismos perfiles, el desenlace no puede cambiar"
+        )
+    beds = sum(
+        t.outcome is not None and t.outcome.bed_base != truth_b[key].outcome.bed_base
+        for key, t in truth_a.items()
+    )
+    if beds and "camas.espera" not in {d.key for d in center_diff(a.center, b.center)}:
+        raise PairingCheckError(
+            run_ids, "bed_base", beds, "la espera base de cama solo cambia con camas.espera"
+        )
 
 
 def _template_pairing(

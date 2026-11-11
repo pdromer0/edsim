@@ -18,6 +18,7 @@ from clinical_factory import example_profiles, hand_patient
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.engine.clinical import BedWaitFactors, OutcomeDraws, PatientDraws
 from edsim.engine.ground_truth import EpisodeTruth
+from edsim.profiles.sampler import Outcome
 
 START = date(2026, 1, 5)
 SEASONS = (1.0, 1.2, 0.9, 1.1)
@@ -183,12 +184,55 @@ def test_admitted_coherente_con_el_destino(clinical_patient, destination, admitt
         )
 
 
-def test_la_verdad_del_episodio_aun_no_guarda_el_desenlace(clinical_patient):
-    # La verdad del desenlace es de la tarea 5.3: hasta entonces, EpisodeTruth no cambia.
-    draws = dataclasses.replace(clinical_patient, outcome=outcome())
-    truth = EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), draws)
-    assert truth == EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), clinical_patient)
-    assert not hasattr(truth, "outcome")
+def test_la_verdad_del_episodio_guarda_lo_sorteado_del_desenlace(clinical_patient):
+    # Desde la tarea 5.3, EpisodeTruth.outcome es el Outcome sorteado (OutcomeDraws.truth),
+    # al final y sin tocar los demás campos; un paciente a mano sin él lo deja en None.
+    arrival = ArrivalRecord(0, 0.0)
+    drawn = dataclasses.replace(DRAWN, destination="alta")
+    sampled = dataclasses.replace(
+        clinical_patient, outcome=OutcomeDraws.from_outcome(drawn, factors())
+    )
+    by_hand = dataclasses.replace(clinical_patient, outcome=outcome())
+    before = EpisodeTruth.from_draws(arrival, clinical_patient)
+
+    assert EpisodeTruth.from_draws(arrival, sampled).outcome is drawn
+    assert EpisodeTruth.from_draws(arrival, by_hand).outcome is None
+    assert dataclasses.replace(EpisodeTruth.from_draws(arrival, sampled), outcome=None) == before
+    assert dataclasses.fields(EpisodeTruth)[-1].name == "outcome"
+
+
+DRAWN = Outcome(
+    destination_draws=(0.1, 1.9, 0.5, 0.2),
+    destination="ingreso",
+    patience_z=-0.3,
+    patience=95.5,
+    bed_z=0.4,
+    bed_base=301.25,
+)
+"""Un desenlace sorteado a mano (tarea 5.3): lo que el motor lee sale de aquí."""
+
+
+def test_from_outcome_lee_lo_sorteado_y_lo_guarda_como_verdad():
+    draws = OutcomeDraws.from_outcome(DRAWN, factors())
+
+    assert (draws.patience, draws.destination, draws.bed_base) == (95.5, "ingreso", 301.25)
+    assert draws.truth is DRAWN
+    assert outcome().truth is None  # los pacientes a mano de los escenarios
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"patience": 95.0}, {"destination": "alta"}, {"bed_base": 301.0}],
+)
+def test_la_verdad_tiene_que_coincidir_con_lo_que_lee_el_motor(change):
+    values = {"patience": 95.5, "destination": "ingreso", "bed_base": 301.25} | change
+    with pytest.raises(ValueError, match="must be those of truth"):
+        OutcomeDraws(**values, beds=factors(), truth=DRAWN)
+
+
+def test_la_verdad_es_un_outcome():
+    with pytest.raises(ValueError, match="truth must be an Outcome"):
+        outcome(truth=dataclasses.asdict(DRAWN))
 
 
 def test_el_turno_de_la_cama_es_el_de_shift_at():

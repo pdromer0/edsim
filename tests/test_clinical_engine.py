@@ -6,9 +6,7 @@ están en test_engine.py y test_cli_characterization.py y no cambian.
 
 import dataclasses
 import hashlib
-import json
 from collections import defaultdict
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -17,6 +15,7 @@ from clinical_factory import (
     expected_turnaround,
     hand_patient,
     ordered_of,
+    truth_lines,
 )
 
 from edsim.arrivals.profile import load_profile
@@ -437,14 +436,6 @@ CLINICAL_LOG_FINGERPRINT_V2 = "c1e44ab71806bb6783338e7c359d0bfc4d076cd690017eb27
 CLINICAL_TRUTH_FINGERPRINT = "106179101b404bbb2c19aaef41c2a2c08946b60a055e69e7eeadb5ffdcfcf6a2"
 
 
-def truth_lines(episodes) -> str:
-    """El EpisodeTruth entero de cada episodio, en el orden de sus campos, una línea JSON."""
-    return "".join(
-        json.dumps(asdict(e), ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"
-        for e in episodes
-    )
-
-
 def test_huella_del_log_clinico(center, arrival_profile, profiles, tmp_path):
     path = tmp_path / "eventos.jsonl"
     with JsonlSink(path) as sink:
@@ -474,3 +465,14 @@ def test_huella_del_ground_truth_clinico(clinical):
 
     assert text.count("\n") == len(result.ground_truth.episodes) == 1101
     assert hashlib.sha256(text.encode("utf-8")).hexdigest() == CLINICAL_TRUTH_FINGERPRINT
+
+
+def test_ni_el_hito_4_ni_el_provisional_guardan_desenlace(clinical, center, arrival_profile):
+    # La guarda de truth_lines: la clave que omite vale None en todos los episodios del
+    # hito 4 y del provisional; si no, la huella dejaría de ver un desenlace inesperado.
+    _, result = clinical
+    provisional = simulate_ed(center, arrival_profile, 1, SEED, sink=MemorySink(), warmup_days=0)
+
+    assert result.ground_truth.episodes and provisional.ground_truth.episodes
+    assert all(e.outcome is None for e in result.ground_truth.episodes)
+    assert all(e.outcome is None for e in provisional.ground_truth.episodes)

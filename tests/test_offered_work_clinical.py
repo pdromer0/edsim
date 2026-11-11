@@ -276,3 +276,16 @@ def test_otra_espera_fuera_del_box_da_otra_carga_de_box(center, short):
     np.testing.assert_array_equal(
         with_room.load["enfermeria_triaje"], without.load["enfermeria_triaje"]
     )
+
+
+def test_la_carga_ofrecida_del_hito_5_aun_no_existe():
+    # La espera de cama bloquea el box de los ingresados: la carga del hito 5 no es la del
+    # hito 4, y hasta que se escriba (tarea 5.3, pendiente) es un error claro.
+    data = Path(__file__).parent / "data"
+    center = load_center(data / "centro_h5_ejemplo.toml")
+    profile = load_profile(data / "llegadas_ejemplo.toml")
+
+    with pytest.raises(ValueError, match="offered load of the milestone 5 model"):
+        offered_load(center, profile, profiles=load_profiles(data / "perfiles_h5_ejemplo.toml"))
+    with pytest.raises(ValueError, match=r"missing \[abandono\]"):
+        offered_load(center, profile, profiles=load_profiles(data / "perfiles_ejemplo.toml"))

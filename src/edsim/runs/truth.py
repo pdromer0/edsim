@@ -234,7 +234,12 @@ def compare_episode_truth(
     decision = by_type.get("disposition_decided", ())
     level = triage[-1].payload["nivel"] if triage else None
     destination = decision[-1].payload["destino"] if decision else None
-    drawn_destination = "ingreso" if truth.admitted else "alta"
+    # With milestone 5 the drawn destination is one of four (task 5.3); before, admitted.
+    drawn_destination = (
+        ("ingreso" if truth.admitted else "alta")
+        if truth.outcome is None
+        else truth.outcome.destination
+    )
     band = segments.tests
     return (
         TruthComparison(

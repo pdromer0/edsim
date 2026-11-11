@@ -23,7 +23,7 @@ from edsim.engine.center import (
     validate_center_values,
 )
 from edsim.engine.clinical import ProvisionalSampler
-from edsim.engine.clinical_sampler import N_SAMPLER_STREAMS, ClinicalSampler
+from edsim.engine.clinical_sampler import N_SAMPLER_STREAMS, ClinicalSampler, ModelChoiceError
 from edsim.profiles.config import load_profiles
 from edsim.runs import summarize_center
 from edsim.seeds import child_streams
@@ -178,8 +178,11 @@ def test_el_muestreador_provisional_pide_destino(beds_center):
 
 
 def test_el_muestreador_del_hito_4_pide_destino(beds_center):
+    # Desde la 5.3, el muestreador elige el modelo con choose_model: perfiles del hito 4
+    # con un centro con [camas] es un bloque a medias entre los dos ficheros, y el error
+    # dice qué falta en los perfiles.
     profiles = load_profiles(DATA / "perfiles_ejemplo.toml")
-    with pytest.raises(ValueError, match=NEEDS_DESTINATION):
+    with pytest.raises(ModelChoiceError, match=r"missing \[abandono\].*has \[camas\]"):
         ClinicalSampler(
             profiles, date(2026, 1, 1), beds_center, child_streams(1, N_SAMPLER_STREAMS)
         )

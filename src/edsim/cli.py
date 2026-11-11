@@ -76,9 +76,11 @@ from edsim.calibration.window import (
 )
 from edsim.checks import check_count
 from edsim.engine.center import CenterConfig, load_center
+from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
     format_engine_validation,
+    format_outcome_counts,
     format_run_summary,
     plot_census,
     plot_hourly_census,
@@ -122,8 +124,10 @@ from edsim.profiles.config import load_profiles
 from edsim.profiles.report import FALSE_ALARM, PLOTS, format_profiles_validation
 from edsim.profiles.validation import (
     DEFAULT_MIXING_PATIENTS,
+    PATIENCE_YEARS,
     check_profiles_validation_counts,
     validate_profiles,
+    year_patients,
 )
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
@@ -376,18 +380,30 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
 def _check_provisional_center(
     center: CenterConfig, args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> None:
-    """Stop with a usage error (code 2) if the provisional model gets a center without its block."""
+    """Stop with a usage error (code 2) if the provisional model gets a center without its
+    block, or one with ``[camas]`` instead of ``[destino]`` (``choose_model``)."""
     if not center.has_provisional:
         parser.error(
             f"--centro {args.centro}: el modelo provisional necesita las tablas [triaje], "
             "[duraciones] y [pruebas] del centro, y este no las tiene; su centro es "
             f"{DEFAULT_PROVISIONAL_CENTER}"
         )
+    # A center with [camas] is of milestone 5, even with the provisional tables (task 5.3).
+    try:
+        choose_model(center, None, center_file=args.centro)
+    except ModelChoiceError as error:
+        parser.error(str(error))
 
 
 def _model_line(args: argparse.Namespace) -> str:
     if args.perfiles is None:
         return "Modelo provisional"
+    # motor simular sets the model; the live mode refuses milestone 5 before this line.
+    if getattr(args, "modelo", None) is PatientModel.MILESTONE_5:
+        return (
+            "Modelo del hito 5 (abandono, destinos y espera de cama) · perfiles "
+            f"{args.perfiles} (huella {args.huella_perfiles})"
+        )
     return f"Modelo clínico · perfiles {args.perfiles} (huella {args.huella_perfiles})"
 
 
@@ -410,7 +426,17 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     else:
         if args.perfiles is None:
             args.perfiles = DEFAULT_PROFILES
-        _, args.huella_perfiles = _load_file(args.perfiles, "--perfiles", load_profiles, parser)
+        profiles, args.huella_perfiles = _load_file(
+            args.perfiles, "--perfiles", load_profiles, parser
+        )
+        # The blocks of the two files choose milestone 4 or 5 (decision 68); a block of
+        # milestone 5 in only one of them is code 2, before writing anything.
+        try:
+            args.modelo = choose_model(
+                center, profiles, center_file=args.centro, profiles_file=args.perfiles
+            )
+        except ModelChoiceError as error:
+            parser.error(str(error))
     try:
         check_horizon(args.dias, args.calentamiento)
     except ValueError as error:
@@ -435,7 +461,10 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         )
     except FileExistsError:
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
-    print(format_run_summary(result.analysis, result.violations))
+    if result.outcome_counts is None:
+        print(format_run_summary(result.analysis, result.violations))
+    else:
+        print(format_outcome_counts(result.outcome_counts, result.violations))
     print(
         f"\nLog: {out_dir / EVENTS_FILE}\nCSV: {out_dir / EPISODES_CSV}"
         f"\nCSV: {out_dir / GROUND_TRUTH_DAYS_CSV}"
@@ -490,8 +519,17 @@ def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser
         f" · llegadas {args.llegadas} (huella {huella_llegadas})\n"
         f"{mixing} pacientes por contexto en la mezcla · {year} en la muestra del año"
         f" · semilla {args.semilla}\n\n"
-        "Validando el muestreador: mezcla de motivos, triaje, pruebas y duraciones. Con los"
-        " valores por defecto tarda unos 30 segundos.\n",
+        + (
+            f"{PATIENCE_YEARS * year_patients(profiles, arrival_profile)} pacientes en la"
+            f" paciencia y {year_patients(profiles, arrival_profile)} en los destinos"
+            f" ({PATIENCE_YEARS} años y uno; --pacientes no los cambia)\n\n"
+            "Validando el muestreador: mezcla de motivos, triaje, pruebas, duraciones,"
+            " paciencia y destinos (bloque del hito 5). Con los valores por defecto tarda"
+            " unos 90 segundos.\n"
+            if profiles.outcome is not None
+            else "Validando el muestreador: mezcla de motivos, triaje, pruebas y duraciones."
+            " Con los valores por defecto tarda unos 30 segundos.\n"
+        ),
         flush=True,
     )
     validation = validate_profiles(

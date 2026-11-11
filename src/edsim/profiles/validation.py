@@ -1049,6 +1049,45 @@ CONFIDENCE = 0.95
 CHECK_NAMES = ("mixing", "triage", "workup", "durations")
 """The four checks of ``validate_profiles``, in their order."""
 
+OUTCOME_CHECK_NAMES = ("patience", "destinations")
+"""The two checks of the milestone 5 block (task 5.3), after the four, only with it."""
+
+
+def outcome_detectable_errors(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    patience_patients: int,
+    destination_patients: int,
+) -> "dict[str, DetectableError]":
+    """The reference error of the two checks of the outcome, as ``detectable_errors``.
+
+    The patience: the median of the true level 2 of 15 to 44 years (V9 of task
+    5.2 moves it). The destinations: the admission in the most severe fifth of
+    G, the reference of task 5.2.
+    """
+    model = outcome_model(profiles, arrival_profile)
+    in_group = round(patience_patients * float(model.true_level_band_shares()[1, 0]))
+    in_fifth = round(destination_patients / N_SEVERITY_GROUPS)
+    admission = float(model.by_severity(N_SEVERITY_GROUPS)[0][1])
+    references = {
+        "patience": (
+            f"paciencia/real_2/{_band_name(profiles, 0)}/mediana",
+            0.5,
+            in_group,
+            ALPHA / N_PATIENCE_CATEGORIES,
+        ),
+        "destinations": (
+            f"destino/ingreso/quintil_{N_SEVERITY_GROUPS}",
+            admission,
+            in_fifth,
+            ALPHA / N_DESTINATION_CATEGORIES,
+        ),
+    }
+    return {
+        name: DetectableError(category, p0, detectable_share(p0, n, alpha), n)
+        for name, (category, p0, n, alpha) in references.items()
+    }
+
 
 def _mixing_bands(profiles: ClinicalProfiles, contexts: Sequence[ArrivalContext]):
     """For each context and band: its share and the smallest min(p, 1 - p) of its reasons."""
@@ -1213,7 +1252,8 @@ class CheckOutcome:
     """One row of ``edsim perfiles validar``.
 
     Attributes:
-        name: ``mixing``, ``triage``, ``workup`` or ``durations``.
+        name: ``mixing``, ``triage``, ``workup`` or ``durations``; with the
+            milestone 5 block, also ``patience`` or ``destinations``.
         result: The ``ValidationResult`` of the check, ``==`` to its ``check_*``.
         patients: Patients drawn for it: all the contexts of the mix, or the
             sample of the year (shared by the other three).
@@ -1400,7 +1440,8 @@ class ProfilesValidation:
     """The outcome of ``validate_profiles``: the four rows and the data of the plots.
 
     Attributes:
-        checks: Mix, triage, tests and durations, in that order.
+        checks: Mix, triage, tests and durations, in that order; with the
+            milestone 5 block, then patience and destinations (task 5.3).
         year_patients: Patients of the sample of the year.
         year_seconds: Time of drawing that sample, once.
         figures: The data of the four plots.
@@ -1415,6 +1456,11 @@ class ProfilesValidation:
     def passed(self) -> bool:
         return all(c.passed for c in self.checks)
 
+    @property
+    def has_outcome(self) -> bool:
+        """Whether the profiles had the milestone 5 block, so the two checks of the outcome ran."""
+        return any(c.name in OUTCOME_CHECK_NAMES for c in self.checks)
+
     def check(self, name: str) -> CheckOutcome:
         """The row of one check, by name."""
         (outcome,) = (c for c in self.checks if c.name == name)
@@ -1427,6 +1473,42 @@ def _failures(result: ValidationResult) -> int:
     return sum(not x.passed for x in leaves)
 
 
+def _outcome_checks(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    sampled_profiles: ClinicalProfiles,
+    seeds: tuple[np.random.SeedSequence, np.random.SeedSequence],
+    patients: int | None,
+    timer: Callable[[], float],
+) -> tuple[CheckOutcome, ...]:
+    """The rows of ``check_patience`` and ``check_destinations``, each with its own draw."""
+    patience_n = _outcome_patients(profiles, arrival_profile, patients, PATIENCE_YEARS)
+    destination_n = _outcome_patients(profiles, arrival_profile, patients, 1)
+    detectable = outcome_detectable_errors(profiles, arrival_profile, patience_n, destination_n)
+    out = []
+    for name, check, n, categories, seed in (
+        ("patience", check_patience, patience_n, N_PATIENCE_CATEGORIES, seeds[0]),
+        ("destinations", check_destinations, destination_n, N_DESTINATION_CATEGORIES, seeds[1]),
+    ):
+        begin = timer()
+        result = check(
+            profiles, arrival_profile, seed=seed, patients=n, sampled_profiles=sampled_profiles
+        )
+        out.append(
+            CheckOutcome(
+                name=name,
+                result=result,
+                patients=n,
+                categories=categories,
+                failures=_failures(result),
+                alpha=ALPHA / categories,
+                detectable=detectable[name],
+                seconds=timer() - begin,
+            )
+        )
+    return tuple(out)
+
+
 def validate_profiles(
     profiles: ClinicalProfiles,
     arrival_profile: ArrivalProfile,
@@ -1435,6 +1517,7 @@ def validate_profiles(
     patients: int | None = None,
     contexts: Sequence[ArrivalContext] | None = None,
     sampled_profiles: ClinicalProfiles | None = None,
+    outcome_patients: int | None = None,
     timer: Callable[[], float] = perf_counter,
 ) -> ProfilesValidation:
     """Run the four checks of the sampler, drawing the year once.
@@ -1454,7 +1537,15 @@ def validate_profiles(
         contexts: Contexts of the mix; the 24 by default.
         sampled_profiles: Profiles the patients are drawn with; ``profiles``
             by default. Only for power tests.
+        outcome_patients: Patients of each of the two checks of the outcome;
+            ``None`` for their defaults (``PATIENCE_YEARS`` years and one year).
         timer: Clock of the times, injected in tests.
+
+    With the milestone 5 block in the profiles (task 5.3), two more rows:
+    ``check_patience`` and ``check_destinations``, each with its own draw, with
+    children 2 and 3 of ``child_streams(seed, 4)``; children 0 and 1 are those
+    of ``child_streams(seed, 2)``, so the four rows are ``==`` to those of the
+    profiles without the block. Without it, the two are not run.
 
     Raises:
         ValueError: As ``check_profiles_validation_counts``, before drawing.
@@ -1464,7 +1555,7 @@ def validate_profiles(
         profiles, arrival_profile, patients, contexts
     )
     sampled_profiles = profiles if sampled_profiles is None else sampled_profiles
-    mixing_seed, year_seed = child_streams(seed, 2)
+    mixing_seed, year_seed, patience_seed, destinations_seed = child_streams(seed, 4)
     detectable = detectable_errors(profiles, arrival_profile, mixing_n, year_n, contexts)
 
     start = timer()
@@ -1516,6 +1607,15 @@ def validate_profiles(
         )
         for name, result, n, categories, begin, end in rows
     )
+    if profiles.outcome is not None:
+        checks += _outcome_checks(
+            profiles,
+            arrival_profile,
+            sampled_profiles,
+            (patience_seed, destinations_seed),
+            outcome_patients,
+            timer,
+        )
     return ProfilesValidation(
         checks=checks,
         year_patients=year_n,

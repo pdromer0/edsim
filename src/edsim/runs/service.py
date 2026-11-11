@@ -12,9 +12,11 @@ from time import perf_counter
 from typing import Literal
 
 from edsim.arrivals.profile import load_profile
+from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.report import config_fingerprint
-from edsim.engine.analysis import RunAnalysis, analyze_run
+from edsim.engine.analysis import OutcomeCounts, RunAnalysis, analyze_run, outcome_counts
 from edsim.engine.center import load_center, require_provisional
+from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
@@ -26,7 +28,7 @@ from edsim.engine.report import (
 )
 from edsim.profiles.config import load_profiles
 from edsim.runs.identifiers import validate_run_id
-from edsim.runs.store import FORMAT_VERSION, RunInfo
+from edsim.runs.store import FORMAT_VERSION, OUTCOME_FORMAT_VERSION, RunInfo
 
 
 class RunConfigurationError(ValueError):
@@ -52,11 +54,16 @@ def _load_configuration[T](loader: Callable[[Path], T], original: str | Path, co
 
 @dataclass(frozen=True, slots=True)
 class SimulationResult:
-    """Persisted metadata and the complete analysis of a newly simulated run."""
+    """Persisted metadata and the complete analysis of a newly simulated run.
+
+    ``outcome_counts`` exists only with the milestone 5 model (task 5.3): how
+    the episodes of the window end. Its metrics with abandonment are task 5.4.
+    """
 
     info: RunInfo
     analysis: RunAnalysis
     violations: tuple[Violation, ...]
+    outcome_counts: OutcomeCounts | None = None
 
 
 def _utc_now() -> datetime:
@@ -74,7 +81,8 @@ def _check_destination(path: Path) -> None:
 
 
 def _check_provisional_center(center: str | Path) -> None:
-    """Fail before writing anything if the provisional model gets a center without its block.
+    """Fail before writing anything if the provisional model gets a center without its block,
+    or one with ``[camas]`` instead of ``[destino]`` (``choose_model``).
 
     A center that cannot be read or is not valid is left alone: its error comes
     from the copy, as always, with the same message.
@@ -87,6 +95,30 @@ def _check_provisional_center(center: str | Path) -> None:
         require_provisional(config)
     except ValueError as error:
         raise RunConfigurationError(f"{center}: {error}") from error
+    # A center with [camas] is of milestone 5, even with the provisional tables (task 5.3).
+    try:
+        choose_model(config, None, center_file=str(center))
+    except ModelChoiceError as error:
+        raise RunConfigurationError(str(error)) from error
+
+
+def _check_model(center: str | Path, profiles: str | Path) -> None:
+    """Fail before writing anything if the two files do not choose one clinical model.
+
+    A milestone 5 block in only one of them (``choose_model``) is an error that
+    names the missing key and its file. A file that cannot be read or is not
+    valid is left alone: its error comes from the copy, as always.
+    """
+    try:
+        center_config, clinical_profiles = load_center(center), load_profiles(profiles)
+    except (OSError, ValueError):
+        return
+    try:
+        choose_model(
+            center_config, clinical_profiles, center_file=str(center), profiles_file=str(profiles)
+        )
+    except ModelChoiceError as error:
+        raise RunConfigurationError(str(error)) from error
 
 
 def simulate_run(
@@ -112,10 +144,15 @@ def simulate_run(
     CSV is the clinical one, the invariants are checked with the profiles (the
     turnaround of each round against the shift band of its order) and
     ``run.json`` records the model, the original path and the fingerprint of
-    the copy. Without it, the provisional model, as before, which needs the
-    provisional block of the center (``[triaje]``, ``[duraciones]`` and
-    ``[pruebas]``): without it, ``RunConfigurationError`` before creating any
-    folder. ``profile`` is always the arrival profile.
+    the copy. The blocks of the profiles and of the center choose milestone 4
+    or 5 (``choose_model``); with milestone 5 (task 5.3), the CSV has the
+    outcome columns and ``run.json`` is of version 3, with the version of the
+    catalog; a block of milestone 5 in only one of the two files is a
+    ``RunConfigurationError`` before creating any folder. Without ``profiles``,
+    the provisional model, as before, which needs the provisional block of the
+    center (``[triaje]``, ``[duraciones]`` and ``[pruebas]``): without it,
+    ``RunConfigurationError`` before creating any folder. ``profile`` is always
+    the arrival profile.
 
     Original path strings are retained as provenance in metadata and CSVs.
     The timer covers simulate_ed and its streaming log writes only. All
@@ -145,6 +182,8 @@ def simulate_run(
     _check_destination(destination)
     if profiles is None:
         _check_provisional_center(center)
+    else:
+        _check_model(center, profiles)
     created_at = clock()
     if not isinstance(created_at, datetime) or created_at.utcoffset() is None:
         raise ValueError("clock must return a datetime with timezone")
@@ -164,6 +203,7 @@ def simulate_run(
         center_fingerprint = config_fingerprint(center_copy)
         profile_fingerprint = config_fingerprint(profile_copy)
         clinical_profiles, profiles_parameters = None, None
+        model = PatientModel.PROVISIONAL
         if profiles is not None:
             profiles_copy = temporary / "perfiles.toml"
             _copy_configuration(profiles, profiles_copy)
@@ -171,6 +211,15 @@ def simulate_run(
             profiles_parameters = ProfilesParameters(
                 profiles=str(profiles), profiles_fingerprint=config_fingerprint(profiles_copy)
             )
+            try:
+                model = choose_model(
+                    center_config,
+                    clinical_profiles,
+                    center_file=str(center),
+                    profiles_file=str(profiles),
+                )
+            except ModelChoiceError as error:  # the copies changed after _check_model
+                raise RunConfigurationError(str(error)) from error
         events_path = temporary / "eventos.jsonl"
         with JsonlSink(events_path) as sink:
             start = timer()
@@ -200,6 +249,7 @@ def simulate_run(
             temporary / "ground_truth_episodios.csv",
             parameters,
             profiles_parameters,
+            outcome=model is PatientModel.MILESTONE_5,
         )
         write_ground_truth_days_csv(
             result.ground_truth.days, temporary / "ground_truth_dias.csv", parameters
@@ -215,15 +265,19 @@ def simulate_run(
             )
         )
         analysis = analyze_run(events, center_config, days, warmup_days)
-        model = {}  # the provisional model is the default of RunInfo
+        metadata = {}  # the provisional model is the default of RunInfo
         if profiles_parameters is not None:
-            model = {
+            metadata = {
                 "model": "clinico",
                 "clinical_profiles_path": profiles_parameters.profiles,
                 "clinical_profiles_fingerprint": profiles_parameters.profiles_fingerprint,
             }
+        if model is PatientModel.MILESTONE_5:
+            metadata["schema_version"] = model.schema_version
         info = RunInfo(
-            format_version=FORMAT_VERSION,
+            format_version=(
+                OUTCOME_FORMAT_VERSION if model is PatientModel.MILESTONE_5 else FORMAT_VERSION
+            ),
             run_id=run_id,
             created_at=created_at.isoformat(),
             origin=origin,
@@ -239,12 +293,17 @@ def simulate_run(
             invariant_violations=len(violations),
             window_arrivals=analysis.metrics.arrivals,
             simulation_seconds=simulation_seconds,
-            **model,
+            **metadata,
         )
         info.write(temporary / "run.json")
         _check_destination(destination)
         temporary.rename(destination)
-        return SimulationResult(info=info, analysis=analysis, violations=violations)
+        counts = None
+        if model is PatientModel.MILESTONE_5:
+            counts = outcome_counts(events, warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY)
+        return SimulationResult(
+            info=info, analysis=analysis, violations=violations, outcome_counts=counts
+        )
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)

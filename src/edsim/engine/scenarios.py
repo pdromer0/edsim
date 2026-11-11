@@ -27,11 +27,12 @@ share the same cases.
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 
-from edsim.arrivals.thinning import ArrivalRecord
+from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.arrivals.thinning import ArrivalRecord, DayRecord
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import BedWaitFactors, OutcomeDraws, PatientDraws, ProvisionalSampler
 from edsim.engine.clinical_sampler import ClinicalDraws, ClinicalTruth, TurnaroundShifts
@@ -43,11 +44,12 @@ from edsim.engine.events import (
     EventLog,
     MemorySink,
 )
+from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.validation import SamplerFactory, flat_profile, mg1_center, pollaczek_khinchine
-from edsim.profiles.config import N_SHIFT_BANDS, TEST_TYPES
+from edsim.profiles.config import DESTINATIONS, N_SHIFT_BANDS, TEST_TYPES
 from edsim.profiles.context import ArrivalContext
 from edsim.profiles.population import Person
-from edsim.profiles.sampler import SeverityAndTriage
+from edsim.profiles.sampler import Outcome, SeverityAndTriage
 from edsim.profiles.severity import triage_quality
 from edsim.profiles.workup import Workup
 from edsim.seeds import child_streams
@@ -115,6 +117,29 @@ class ScenarioRun:
 
     events: list[Event]
     run: EngineRun
+    days: tuple[DayRecord, ...] = ()
+
+    @property
+    def ground_truth(self) -> GroundTruth:
+        """The ground truth of the episodes, with the days of the scenario."""
+        return GroundTruth(episodes=self.run.episodes, days=self.days)
+
+
+def scenario_days(scenario: Scenario) -> tuple[DayRecord, ...]:
+    """The days of a scenario from ``SCENARIO_START``: its dates and its arrivals.
+
+    The arrivals are written by hand, not generated: the daily effect is 1 and
+    the expected arrivals and the bound of the thinning, which do not exist, 0.
+    The invariants take day 0 as the date of minute 0 and the number of days as
+    the horizon.
+    """
+    accepted = [0] * scenario.days
+    for t, _ in scenario.patients:
+        accepted[int(t // MINUTES_PER_DAY)] += 1
+    return tuple(
+        DayRecord(d, SCENARIO_START + timedelta(days=d), 1.0, 0.0, 0.0, n, n)
+        for d, n in enumerate(accepted)
+    )
 
 
 def run_scenario(scenario: Scenario, run_id: str = "rescenario") -> ScenarioRun:
@@ -127,7 +152,7 @@ def run_scenario(scenario: Scenario, run_id: str = "rescenario") -> ScenarioRun:
         EventLog(run_id, SCENARIO_START, sink, schema_version=scenario.schema_version),
         scenario.days,
     )
-    return ScenarioRun(sink.events, run)
+    return ScenarioRun(sink.events, run, scenario_days(scenario))
 
 
 THREE_BOXES_PATIENTS: tuple[tuple[float, PatientDraws], ...] = (
@@ -199,6 +224,10 @@ def outcome_draws(
     test (``analitica``) whose results take exactly those minutes, as the
     factors of the shift bands are 1.
 
+    Its outcome has a truth (task 5.3) with the patience, the destination and
+    the base wait chosen here, so the invariants compare the log with them; its
+    standard draws (the Gumbel and the two normals) are 0 and mean nothing.
+
     Args:
         level: Assigned (and true) level, 1 to 5.
         triage: Duration of the triage; not used by a level 1.
@@ -238,7 +267,17 @@ def outcome_draws(
         test_turnaround=None,
         admitted=destination == "ingreso",
         clinical=ClinicalDraws(truth=truth, shifts=_ONE_FACTORS),
-        outcome=OutcomeDraws(patience, destination, bed_base, beds),
+        outcome=OutcomeDraws.from_outcome(
+            Outcome(
+                destination_draws=(0.0,) * len(DESTINATIONS),
+                destination=destination,
+                patience_z=0.0,
+                patience=float(patience),
+                bed_z=0.0,
+                bed_base=float(bed_base),
+            ),
+            beds,
+        ),
     )
 
 
@@ -260,8 +299,38 @@ def _staffed(
     )
 
 
+SCENARIO_BED_WAIT = (240.0, 720.0)
+"""``camas.espera`` of the centers of the scenarios of milestone 5. The engine does not
+read it (each hand-made patient brings its base wait); it is there because a center
+has ``[camas]`` whole."""
+
+
+def with_beds(center: CenterConfig, beds: BedWaitFactors = SCENARIO_BEDS) -> CenterConfig:
+    """``center`` with ``[camas]`` instead of ``[destino]``, with the factors of ``beds``.
+
+    The hand-made patients bring their ``BedWaitFactors``; the center gets the same
+    ones (task 5.3), so the invariant ``outcome`` checks each wait for a bed with the
+    center, as with a simulated run.
+
+    Raises:
+        ValueError: If the shift starts of ``beds`` are not those of the center.
+    """
+    if beds.shift_starts != center.shift_starts:
+        raise ValueError(
+            f"the shifts of the beds {beds.shift_starts} are not those of the center "
+            f"{center.shift_starts}"
+        )
+    return dataclasses.replace(
+        center,
+        admission_probability=None,
+        bed_wait=SCENARIO_BED_WAIT,
+        bed_shift_factors=beds.shift_factors,
+        bed_season_factors=beds.season_factors,
+    )
+
+
 def _outcome_scenario(center: CenterConfig, patients) -> Scenario:
-    return Scenario(center, tuple(patients), schema_version=OUTCOME_SCHEMA_VERSION)
+    return Scenario(with_beds(center), tuple(patients), schema_version=OUTCOME_SCHEMA_VERSION)
 
 
 def abandonment(center: CenterConfig, *, q3_patience: float = 43.0, boxes: int = 2) -> Scenario:
