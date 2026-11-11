@@ -9,15 +9,19 @@ es un error antes de crear nada, y un run del hito 4 y uno del hito 5 no se empa
 import csv
 import dataclasses
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import pytest
 from runs_factory import copy_run
 
+from edsim.engine.events import read_events
 from edsim.runs import (
     PairingCheckError,
     RunStore,
+    compare_episode_truth,
     compare_runs,
+    episode_segments,
     read_center_values,
     read_run_episode_truth,
     read_run_results,
@@ -292,3 +296,32 @@ def test_con_otros_perfiles_los_sorteos_del_desenlace_son_los_mismos(runs, tmp_p
     with pytest.raises(PairingCheckError) as caught:
         compare_runs(a, b, truth_a, altered)
     assert (caught.value.field, caught.value.affected) == ("outcome_draws", 1)
+
+
+# --- Ver la verdad: el destino sorteado (hallazgo de la revisión propia) ----------------------
+
+
+def test_el_destino_sorteado_del_hito_5_es_uno_de_cuatro(runs):
+    # Con el hito 5, el destino sorteado es el del desenlace, no «admitted»: un traslado o
+    # un exitus no es una discrepancia.
+    store, results = runs
+    result = results["hito5"]
+    truth = read_run_episode_truth(store, "hito5")
+    by_episode = defaultdict(list)
+    for event in read_events(store.root / "hito5" / "eventos.jsonl"):
+        if event.episode_id is not None:
+            by_episode[event.episode_id].append(event)
+    statuses = Counter()
+    for episode_id, events in by_episode.items():
+        rows = compare_episode_truth(
+            events,
+            episode_segments(events, result.analysis.curves.horizon),
+            truth[episode_id],
+            profiles=result.profiles,
+            start_date=result.start_date,
+        )
+        (row,) = [r for r in rows if r.field == "destination"]
+        statuses[row.status, row.drawn] += 1
+
+    assert not [key for key in statuses if key[0] == "mismatch"]
+    assert statuses["match", "traslado"] > 0  # guarda: la muestra tiene traslados decididos
