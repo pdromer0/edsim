@@ -1142,7 +1142,7 @@ class _Waiting:
     """What ``abandonment`` needs of an episode of version 4 to compare it with the truth."""
 
     arrival: float
-    triage_started: bool = False
+    triage_start: float | None = None
     triage_end: float | None = None
     seen: Event | None = None  # its first assessment_started of type inicial
     left: Event | None = None
@@ -1155,16 +1155,18 @@ def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) 
     For each episode of version 4 whose truth has an outcome and whose assigned
     level is not 1, with deadline = arrival + patience:
 
-    - a ``patient_left_wbs`` happens at max(deadline, end of the triage), within
-      ``TURNAROUND_TOLERANCE``: the deadline, or the end of a triage during
-      which it was due;
+    - a ``patient_left_wbs`` happens at its due instant, within
+      ``TURNAROUND_TOLERANCE``: the deadline if it is due before the triage
+      starts (it leaves waiting for a nurse), or max(deadline, end of the
+      triage) if not (a deadline due during the triage waits for its end);
     - its first assessment of type ``inicial`` does not start after the
-      deadline, except at the end of a triage finished after it, when the box
-      and the doctor come in that same instant;
-    - at the end of the log, an episode without a terminal event, not seen and
-      not in its triage, has max(deadline, end of the triage) at the horizon
-      or after (``len(days) × 1440``): before it, the engine should have made
-      it leave. Without the days of the ground truth, this one is not checked.
+      deadline, except at the end of a triage during which it was due, when
+      the box and the doctor come in that same instant;
+    - at the end of the log, an episode without a terminal event and not seen
+      has its due instant at the horizon or after (``len(days) × 1440``):
+      before it, the engine should have made it leave. One still in its
+      triage, with the deadline not due before it started, has no due instant
+      yet. Without the days of the ground truth, this one is not checked.
 
     The arrival is the ``sim_time`` of ``patient_arrived``, where the engine
     starts the deadline.
@@ -1192,7 +1194,7 @@ def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) 
             continue  # reported by conservation
         match e.event_type:
             case "triage_started":
-                w.triage_started = True
+                w.triage_start = e.sim_time
             case "triage_completed":
                 w.triage_end = e.sim_time
             case "assessment_started" if e.payload["tipo"] == "inicial" and w.seen is None:
@@ -1204,8 +1206,16 @@ def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) 
 
     for episode, w in waiting.items():
         deadline = w.arrival + truth[episode].outcome.patience
-        due = deadline if w.triage_end is None else max(deadline, w.triage_end)
-        if w.left is not None:
+        # Due before the triage starts: it leaves waiting for the nurse (in a tie the
+        # nurse wins). Due during it: at its end. Still in the triage: not known yet.
+        before_triage = w.triage_start is None or deadline < w.triage_start
+        if before_triage:
+            due = deadline
+        elif w.triage_end is not None:
+            due = max(deadline, w.triage_end)
+        else:
+            due = None
+        if w.left is not None and due is not None:
             if abs(w.left.sim_time - due) > TURNAROUND_TOLERANCE:
                 out.append(
                     _at(
@@ -1217,7 +1227,8 @@ def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) 
                 )
         if w.seen is not None and w.seen.sim_time > deadline + TURNAROUND_TOLERANCE:
             at_triage_end = (
-                w.triage_end is not None
+                not before_triage
+                and w.triage_end is not None
                 and w.triage_end > deadline
                 and abs(w.seen.sim_time - w.triage_end) <= TURNAROUND_TOLERANCE
             )
@@ -1234,7 +1245,7 @@ def _abandonment_with_truth(events: Sequence[Event], context: InvariantContext) 
             and w.left is None
             and not w.departed
             and w.seen is None
-            and (w.triage_end is not None or not w.triage_started)
+            and due is not None
             and due < len(ground_truth.days) * MINUTES_PER_DAY
         ):
             out.append(

@@ -634,3 +634,33 @@ def test_el_texto_de_los_recuentos(center):
     # Sin llegadas, el porcentaje es 0 y no una división por cero.
     empty = format_outcome_counts(OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0), [])
     assert "Se van sin ser vistos: 0 (0.0 %)" in empty
+
+
+def test_un_plazo_vencido_antes_del_triaje_no_espera_a_su_fin(center):
+    # Escenario T: T1 (EP-000001) llega en 1 y espera enfermera hasta 55. Con paciencia 50
+    # en la verdad, el plazo 1 + 50 = 51 vence antes de empezar el triaje: debía irse en
+    # 51 desde «triaje», no al acabarlo. Con un box se fue en 62: una violación (con la
+    # regla max(plazo, fin del triaje) daría 62 y no la vería).
+    scenario = late_triage(center)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000001", patience=50.0), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 62.0)]
+    assert "give 51.0" in found[0].message
+
+
+def test_con_el_plazo_vencido_antes_del_triaje_no_hay_excepcion(center):
+    # Con dos boxes y dos médicos, T1 recibe los dos en 62, al acabar el triaje. Con su
+    # plazo en 61 (paciencia 60) es la excepción y se queda; con 51, venció antes de
+    # empezar el triaje y la excepción no vale: visto después de su plazo, una violación.
+    scenario = late_triage(center, boxes=2, doctors=2)
+    result = run_scenario(scenario)
+    found = violations_of(
+        result.events, scenario.center, perturbed(result, "EP-000001", patience=50.0), "abandonment"
+    )
+
+    assert violations_of(result.events, scenario.center, result.ground_truth, "abandonment") == []
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 62.0)]
+    assert "after its deadline 51.0" in found[0].message
