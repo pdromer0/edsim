@@ -22,7 +22,7 @@ No necesita contexto: se lanza tras `/clear`.
 0. **El PR.** Si los argumentos traen un número, ese es N. Si no, mira la primera línea de `git status`. En `main`, pregunta qué PR sincronizar. En otra rama, N es el PR de esa rama: el paso 2 usa `gh pr view` sin número, y si la rama no tiene PR, para. Anota la rama en la que arrancaste.
 1. **Árbol limpio.** `git status`: si hay cambios o ficheros sin seguimiento, para.
 2. **Fusionado.** `gh pr view N --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,closingIssuesReferences`. Si `state` no es `MERGED` o `mergeCommit` es nulo, para sin tocar nada.
-3. **main al día.** `git switch main && git pull --ff-only`.
+3. **main al día.** `git switch main && git rev-parse HEAD && git pull --ff-only`. Anota el hash previo al pull: es `<main antes>`.
 4. **La fusión está en main.** `git merge-base --is-ancestor <mergeCommit.oid> HEAD`. Si falla, para.
 5. **Borrar la rama local `<headRefName>`.**
    - `git log -1 --format=%H refs/heads/<headRefName>` (con `refs/heads/`, para no confundirla con `origin/<headRefName>` ni con una etiqueta). Si la rama no existe, dilo y sigue con el paso 6.
@@ -30,7 +30,7 @@ No necesita contexto: se lanza tras `/clear`.
    - `git merge-base --is-ancestor <punta local> <headRefOid>`. Si la punta local está contenida en el PR (igual o por detrás, por ejemplo si `@claude` metió commits desde GitHub), `git branch -D <headRefName>`. Es `-D` porque, con la fusión squash, `-d` avisa aunque la rama esté fusionada.
    - Si no está contenida, la rama tiene commits que no entraron: para sin borrar y enséñalos con `git log --oneline <headRefOid>..<headRefName>`.
 6. **Ramas remotas.** `git fetch --prune`.
-7. **Dependencias.** `git diff --name-only <mergeCommit.oid>^ <mergeCommit.oid> -- uv.lock pyproject.toml app/pyproject.toml`. Si sale algún fichero, `uv sync --all-packages --extra kafka`.
+7. **Dependencias.** `git diff --name-only <main antes> HEAD -- uv.lock pyproject.toml app/pyproject.toml`. Si sale algún fichero, `uv sync --all-packages --extra kafka`.
 8. **Issues cerrados.** Para cada issue M de `closingIssuesReferences`: `gh issue view M --json state,projectItems`.
    - Cerrado y en «Hecho»: bien.
    - Cerrado y fuera de «Hecho» (o sin ficha): muévelo a «Hecho» (procedimiento del tablero) y avisa de que el workflow del tablero falló.

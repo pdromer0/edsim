@@ -41,6 +41,7 @@ body:
     id: quien
     attributes:
       label: Quién
+      description: El formulario no pone etiquetas; añade también la de `quien:…`.
       options:
         - Claude Code
         - Codex
@@ -51,8 +52,9 @@ body:
     id: critica
     attributes:
       label: Crítica
+      description: El formulario no pone etiquetas; añade también la de `critica`.
       options:
-        - label: Revisión reforzada con @codex review
+        - label: Revisión reforzada (`/code-review high` y `@codex review`)
   - type: input
     id: depende
     attributes:

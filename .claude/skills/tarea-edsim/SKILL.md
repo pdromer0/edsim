@@ -25,8 +25,11 @@ El primer número es el issue N. El resto son las notas del chat: si precisan al
 3. Especificación: la que enlaza la sección «Enlace a la especificación» del issue.
    - Si es un fichero de más de unos 50 KB (`wc -c`), lanza un subagente Explore que, a partir de `grep -n '^#'`, resuma las secciones enlazadas y dé sus rangos de líneas. Después lee tú esos rangos, sobre todo los que dan valores para el plan.
    - Si es más pequeño, léelo por secciones igualmente.
-   - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2»), las notas del chat son la especificación. Sin notas, pregunta.
-4. Plan con los seis apartados de `tarea.md`, más tres datos al principio: la rama, que la ficha pasará a «En curso» al aprobarlo, y el esfuerzo de `/code-review` (`high` si el issue tiene la etiqueta `critica`; `medium` si no).
+   - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2») o está vacío (`_No response_`), las notas del chat son la especificación. Sin notas, pregunta.
+4. Plan con los seis apartados de `tarea.md`, más tres datos al principio:
+   - la rama, la del issue; si está vacía, propón una con prefijo `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/` o `ci/` (los únicos con push permitido);
+   - que la ficha pasará a «En curso» al aprobarlo;
+   - el esfuerzo de `/code-review`: `high` si el issue tiene la etiqueta `critica`; `medium` si no. Si la casilla «Crítica» del cuerpo está marcada (`- [x]`) y falta la etiqueta, o al revés, avisa del descuadre y usa `high`.
 5. Presenta el plan para su aprobación.
 
 ## Fase 2: con el plan aprobado
@@ -38,9 +41,9 @@ El primer número es el issue N. El resto son las notas del chat: si precisan al
 
 ## Antes del push
 
-1. `docker compose ps`: si Kafka está en marcha, `docker compose stop`.
+1. `docker compose ps`: si Kafka está en marcha, `docker compose down`.
 2. Avisa de que la N3 suele tardar unos 14 minutos y lánzala con `run_in_background`: `scripts/tests-completos.sh`.
-3. A la vez, lanza `/code-review` con la herramienta Skill: skill `code-review`, argumentos `medium main...<rama>`, o `high main...<rama>` si el issue tiene la etiqueta `critica`. Pasa siempre el nivel (sin él, reutiliza el último que se tecleó) y el destino (sin él, compara solo con el *upstream* de la rama).
+3. A la vez, lanza `/code-review` con la herramienta Skill: skill `code-review`, argumentos `medium main...<rama>`, o `high main...<rama>` si el plan fijó `high`. Pasa siempre el nivel (sin él, reutiliza el último que se tecleó) y el destino (sin él, compara solo con el *upstream* de la rama).
 4. Mientras las dos corren, escribe la entrada del anexo y la descripción del PR en un fichero del *scratchpad*, con la plantilla `.github/pull_request_template.md`, «Closes #N» y la hora de aprobación.
 5. Cada hallazgo de la revisión: se corrige (commit con N1) o se explica en el PR. Si las correcciones tocan código o tests, repite la N3.
 
@@ -49,11 +52,11 @@ El primer número es el issue N. El resto son las notas del chat: si precisan al
 1. `git push -u origin <rama>`, en una llamada propia.
 2. `gh pr create --title "…" --body-file <fichero>`, en otra llamada. Anota la hora de apertura en las métricas (`gh pr edit --body-file` si hace falta).
 3. La ficha la lleva a «En revisión» el workflow «Pull request linked to issue» del tablero. Comprueba la columna con `gh issue view N --json projectItems`. Si no está en «En revisión», muévela (procedimiento del tablero) y avisa de que el workflow falló.
-4. Mensaje final: el enlace del PR; si el issue tiene la etiqueta `critica`, recuerda a Pedro que escriba `@codex review` en el PR; y recuérdale que haga `/clear` antes de la siguiente tarea.
+4. Mensaje final: el enlace del PR; si el plan fijó `high` (tarea crítica), recuerda a Pedro que escriba `@codex review` en el PR; y recuérdale que haga `/clear` antes de la siguiente tarea.
 
 ## Ajustes de la revisión
 
-Commits nuevos en la misma rama, con N1 y, antes del push, N3. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
+Commits nuevos en la misma rama, con N1, N2 (el hook Stop) y, antes del push, N3. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
 
 ## Procedimiento del tablero
 

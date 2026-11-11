@@ -40,7 +40,7 @@ El plan lo revisan Pedro y el chat; la implementación empieza cuando Pedro lo a
 
 ## 4. Antes del push
 
-- **N3**: `scripts/tests-completos.sh`, con Docker parado (`docker compose stop` si Kafka está en marcha), en segundo plano mientras se redacta el PR. El push solo va cuando la N3 termina en verde.
+- **N3**: `scripts/tests-completos.sh`, con Docker parado (`docker compose down` si Kafka está en marcha), en segundo plano mientras se redacta el PR. El push solo va cuando la N3 termina en verde.
 - **Revisión adversaria del propio diff.** En Claude Code, `/code-review` sobre `main...<rama>`, con esfuerzo medio en general y alto en las tareas con la etiqueta `critica`. Lo que encuentre se corrige o se explica en el PR.
 - Si las correcciones tocan código o tests, se repite la N3; si solo tocan documentación, no.
 
