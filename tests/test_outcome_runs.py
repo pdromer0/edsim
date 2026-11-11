@@ -325,3 +325,10 @@ def test_el_destino_sorteado_del_hito_5_es_uno_de_cuatro(runs):
 
     assert not [key for key in statuses if key[0] == "mismatch"]
     assert statuses["match", "traslado"] > 0  # guarda: la muestra tiene traslados decididos
+
+
+def test_el_provisional_con_un_centro_con_camas_no_crea_nada(tmp_path):
+    with pytest.raises(RunConfigurationError, match=r"provisional model needs \[destino\]"):
+        simulate(tmp_path, "provisional-camas", CENTER_5)
+
+    assert list(tmp_path.iterdir()) == []

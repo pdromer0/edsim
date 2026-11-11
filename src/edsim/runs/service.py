@@ -81,7 +81,8 @@ def _check_destination(path: Path) -> None:
 
 
 def _check_provisional_center(center: str | Path) -> None:
-    """Fail before writing anything if the provisional model gets a center without its block.
+    """Fail before writing anything if the provisional model gets a center without its block,
+    or one with ``[camas]`` instead of ``[destino]`` (``choose_model``).
 
     A center that cannot be read or is not valid is left alone: its error comes
     from the copy, as always, with the same message.
@@ -94,6 +95,11 @@ def _check_provisional_center(center: str | Path) -> None:
         require_provisional(config)
     except ValueError as error:
         raise RunConfigurationError(f"{center}: {error}") from error
+    # A center with [camas] is of milestone 5, even with the provisional tables (task 5.3).
+    try:
+        choose_model(config, None, center_file=str(center))
+    except ModelChoiceError as error:
+        raise RunConfigurationError(str(error)) from error
 
 
 def _check_model(center: str | Path, profiles: str | Path) -> None:

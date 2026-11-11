@@ -200,3 +200,31 @@ def test_la_cli_da_codigo_2_con_un_bloque_a_medias_en_un_fichero(tmp_path, capsy
 
     error = capsys.readouterr().err
     assert str(path) in error and "destinos" in error
+
+
+def test_el_provisional_con_un_centro_con_camas_da_codigo_2(tmp_path, capsys):
+    # centro_h5_ejemplo.toml tiene el bloque provisional (es el de sala) y [camas]: con
+    # --provisional, código 2 antes de escribir nada, no un error dentro del motor.
+    output = tmp_path / "salida"
+    with pytest.raises(SystemExit) as stop:
+        main(
+            [
+                "motor",
+                "simular",
+                "--provisional",
+                "--centro",
+                str(CENTER_5),
+                "--llegadas",
+                str(DATA / "llegadas_ejemplo.toml"),
+                "--dias",
+                "2",
+                "--calentamiento",
+                "1",
+                "--salida",
+                str(output),
+            ]
+        )
+
+    assert stop.value.code == 2 and not output.exists()
+    error = capsys.readouterr().err
+    assert f"error: {CENTER_5}: the provisional model needs [destino]" in error

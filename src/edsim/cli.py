@@ -378,13 +378,19 @@ def _load_engine_configs(args: argparse.Namespace, parser: argparse.ArgumentPars
 def _check_provisional_center(
     center: CenterConfig, args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> None:
-    """Stop with a usage error (code 2) if the provisional model gets a center without its block."""
+    """Stop with a usage error (code 2) if the provisional model gets a center without its
+    block, or one with ``[camas]`` instead of ``[destino]`` (``choose_model``)."""
     if not center.has_provisional:
         parser.error(
             f"--centro {args.centro}: el modelo provisional necesita las tablas [triaje], "
             "[duraciones] y [pruebas] del centro, y este no las tiene; su centro es "
             f"{DEFAULT_PROVISIONAL_CENTER}"
         )
+    # A center with [camas] is of milestone 5, even with the provisional tables (task 5.3).
+    try:
+        choose_model(center, None, center_file=args.centro)
+    except ModelChoiceError as error:
+        parser.error(str(error))
 
 
 def _model_line(args: argparse.Namespace) -> str:
