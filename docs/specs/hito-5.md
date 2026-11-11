@@ -909,3 +909,70 @@ Consultadas el 9 y el 10 de noviembre de 2026. Las de «para aprender más» est
 ## Anexo: guía de referencia del hito 5
 
 Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión, lecciones y pendientes.
+
+### Tarea 5.1: Motor con pacientes a mano
+
+**Qué se hizo**
+
+PR (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once commits, con las huellas de las versiones 1 a 3 intactas.
+
+- **Especificación:** al ciclo de la P.2 («esta especificación», el «Flujo de git» remite a `docs/proceso/tarea.md`), y los ajustes de la aprobación: el plazo vencido durante el triaje, la cama como `timeout` del propio paciente, los escenarios T, X y X-visto y la V21.
+- **Catálogo v4** (`events.py`): `OUTCOME_SCHEMA_VERSION = 4`, `CATALOG_V4`, `DESTINATIONS`, `LWBS_WAITS`, `WARD`, `TERMINAL_EVENTS[4]` con el abandono y `CLINICAL_SCHEMA_VERSIONS = {2, 3, 4}`; `CURRENT_CLINICAL_SCHEMA_VERSION` sigue en 3. `schemas/eventos-v4.schema.json`, generado.
+- **Sorteos** (`clinical.py`): `BedWaitFactors` (turno de `[turnos]` y estación de la fecha del instante del pedido), `OutcomeDraws` con `bed_wait(t)` y `PatientDraws.outcome`, que exige el modelo clínico y un `admitted` coherente con el destino. `EpisodeTruth` aún no guarda el desenlace (5.3).
+- **Paciente** (`patient.py`): con `outcome`, `_patient_with_outcome`; sin él, el código del hito 4 línea a línea. `Deadline` (prioridad `LATE = 2`) y `_granted` resuelven «el recurso o el plazo» con el empate a favor del recurso.
+- **Invariantes** (`invariants.py`): `TRANSITIONS_V4`, las ampliaciones de `conservation`, `time`, `capacity`, `displacement`, `nobody_jumps_the_queue` y `results_wait`, y dos nuevas, `abandonment` y `outcome`; todo solo con eventos de la versión 4.
+- **Escenarios** (`scenarios.py`): `outcome_draws` y los escenarios M, T, X, L, S, C, el del turno de la cama y D.
+- **Tests:** `test_outcome_engine.py` (17, cada instante a mano), `test_invariants_v4.py` (16, con los tres logs erróneos), `test_outcome_draws.py` (51), el contrato de SimPy (6 nuevos), el catálogo 4 en `test_events.py`, los esquemas y el censo v4.
+
+**Decisiones del diff**
+
+- **El empate, leído en SimPy 4.1.2.** `Environment.schedule` ordena por `(instante, prioridad, orden de creación)`. Una liberación concede la petición en espera con dos o tres eventos `NORMAL` creados en ese instante (el `Release`, la concesión y, con `AnyOf`, la condición). Un `timeout` normal haría depender el empate de quién se creó antes: el plazo de Q3, creado en 2, ganaría al fin de la valoración de Q1, creado en 5. El plazo es un evento propio de prioridad 2, que va después de toda la cascada; el test de contrato muestra los dos resultados.
+- **Un solo plazo por paciente, creado al llegar.** Así, entre dos plazos del mismo instante decide el orden de llegada. Límite conocido: si el abandono de uno libera el recurso del otro, el primero en llegar decide antes (probabilidad 0 con sorteos continuos). El plazo queda en la cola aunque el paciente ya esté visto: `peek()` puede dar un instante sin eventos del log, algo que la 5.4 tiene en cuenta en el directo.
+- **El plazo vencido durante el triaje** (ajuste de la aprobación): `_granted` ve el plazo ya procesado y pide uno nuevo en el instante (`Deadline(0)`), así que el paciente se queda solo si recibe el recurso en ese mismo instante.
+- **La cama, `timeout` del propio paciente** (ajuste de la aprobación): `bed_assigned` y `patient_departed` salen en el mismo paso; tras un desalojo, el mismo `timeout` se espera en el pasillo (fijado en el contrato de SimPy).
+- **Lo visto se lleva en `_Stay.seen`,** que pasa a verdadero con el `assessment_started` inicial; las esperas de después ya no reciben el plazo.
+- **Las invariantes nuevas solo miran eventos v4,** y los mensajes de las versiones 1 a 3 quedan literales. «El destino de la salida es el de la decisión» lo sigue comprobando `transitions` en todas las versiones, y `outcome` no lo repite. El segundo evento terminal lo marca `conservation`, no `time`.
+- **Tests que usaban la 4 como versión desconocida** pasan a la 5 (`test_events.py`, `test_schemas.py`, `test_directo.py`).
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | 17 + 16 + 51 + 6 del contrato, más los del catálogo 4, los esquemas y el censo; cada fichero nuevo, menos de 0,2 s |
+| `scripts/tests-completos.sh` con Docker parado | 16 min 20 s en verde: núcleo 3.466 tests en 12:12, app 287 en 3:03, notebooks 5 en 0:59. La 6.6: 13 min 44 s (núcleo 3.334 en 8:54, app 3:46). La app, que no cambia, sale 43 s más rápida, y una primera N3, en paralelo con la revisión, tardó 13:51 en el núcleo: la diferencia es sobre todo del portátil |
+| `simulate_ed`, 14 días con `config/` (modelo del hito 4), `main` frente a la rama | mejor de 5 en tres rondas alternadas: `main` 1,766, 2,048 y 1,969 s; la rama 1,994, 1,897 y 2,066 s. Se solapan: sin regresión medible del camino del hito 4 |
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Paciencia desde el fin del triaje | M, M-42, M-1box, T, T-médico y X | Exacta (6) |
+| V2 | Abandono tras ser visto | S y X-visto | Exacta (2) |
+| V3 | Quien se va desde el box no lo libera | M, M-42 y T-médico, este por `conservation`; `capacity` no lo ve | Exacta (3) |
+| V4 | En el empate se va (`timeout` normal) | M y M-1box | Exacta (2) |
+| V5 | El ingresado libera el box al decidirse | C y C-sin-R3; `capacity` marca «already taken» | **Detecta más** (4): también C-185 y el pasillo en el horizonte, escritos después del plan; R2 recibe el box en 35 y `capacity` lo marca |
+| V6 | El desalojado vuelve a pedir box | C (R1 recibe el box en 80) | **Detecta más** (3): también C-185 y el pasillo; lo marcan `displacement` y `transitions` |
+| V7 | Factor de turno con la hora de la llegada | Solo el del turno de la cama | Exacta (1) |
+| V8 | `TERMINAL_EVENTS[4]` sin el abandono | Censo v4, eventos terminales, M, M-42, M-1box, T, T-médico y X | **Detecta más** (11): también tres logs a mano de `test_invariants_v4.py`, escritos después del plan |
+| V21 | Con el plazo vencido en el triaje, ya no abandona | T y T-médico | Exacta (2) |
+
+**Revisión**
+
+`/code-review high` (tarea crítica) dio ocho hallazgos, sin verificar, según la receta del esfuerzo alto:
+
+| Hallazgo | Destino |
+| --- | --- |
+| `check_transitions` lanza `KeyError` si un log mezcla versiones y un evento de la 3 llega a un estado que solo tiene la 4 | **Corregido** (`a23e910`), con test de regresión; reproducido antes con un abandono seguido de un `triage_started` de la versión 3 |
+| `BedWaitFactors` repite la validación de los inicios de turno del centro | **Corregido:** usa `_check_shift_starts`. `_finite` se queda, porque `check_number` lanza `OverflowError` con `10**400` |
+| `factor_at` calcula el turno dos veces | **Corregido:** un solo `arrival_context`; un test comprueba, minuto a minuto, que su turno es el de `shift_at` |
+| Dos plazos en el mismo instante, cuando el abandono de uno libera el recurso del otro, se resuelven por orden de creación | **Explicado:** es el límite conocido del plan. Exige dos plazos en el mismo instante exacto en coma flotante, de probabilidad 0 con sorteos continuos. Como el plazo se crea al llegar, decide el orden de llegada |
+| `analysis`, `runs/` y el Replay no saben de la versión 4 | **Explicado:** ningún log v4 les llega hasta la 5.3; es de la 5.4 (pendiente) |
+| Los plazos sin efecto se quedan en la cola hasta vencer y retienen objetos | **Explicado:** decisión del plan; la 5.3 mide eventos y tiempo con la paciencia real y la 5.4 el directo (pendiente) |
+| `_patient_with_outcome` repite el flujo de `patient()` | **Explicado:** es la rama explícita de la especificación, con el código del hito 4 sin tocar; comparten `_in_box`, `_assessment`, `_lab` y `_preempted` |
+| `Deadline` fija `_ok` y `_value`, privados de SimPy | **Explicado:** es lo mismo que hace `Timeout.__init__`; el contrato de `test_simpy_contract.py` lo fija y fallaría con una versión de SimPy que lo cambie |
+
+**Pendiente**
+
+- 5.3: la verdad del desenlace en `EpisodeTruth` y las comparaciones de `abandonment` (abandono en max(llegada + paciencia, fin del triaje)) y `outcome` (destino sorteado, espera = base × factores) con ella.
+- 5.4: `analysis.episode_table`, `runs/` (filtros, métricas, verdad) y el `LiveTracker` con la versión 4; el directo, con los plazos sin evento del log en la cola.
+- 5.8: el catálogo de eventos v4 en `docs/diseno.md`.
