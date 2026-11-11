@@ -41,8 +41,12 @@ ejecutadas=$(grep -oE '^tests-rapidos\.sh: (núcleo|app), (sin sello|[0-9]+ ruta
 if [ -n "$ejecutadas" ]; then
   mensaje="N2 en verde: $ejecutadas"
 else
+  # Solo vale la última línea si es del script; si cambió su redacción o hay ruido de otro
+  # origen, el aviso genérico es mejor que una línea cualquiera.
   ultima=$(tail -n 1 <<<"$salida")
-  mensaje="N2: ${ultima#tests-rapidos.sh: }"
-  [ "$mensaje" = "N2: " ] && mensaje="N2 en verde"
+  case "$ultima" in
+    "tests-rapidos.sh: "*) mensaje="N2: ${ultima#tests-rapidos.sh: }" ;;
+    *) mensaje="N2 en verde" ;;
+  esac
 fi
 jq -n --arg m "$mensaje" '{systemMessage: $m}'

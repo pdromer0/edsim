@@ -18,5 +18,7 @@ hito=$(grep -m1 '^- Hito en curso' AGENTS.md 2>/dev/null) || hito=""
 hito=${hito#- }
 echo "${hito:-Hito en curso: no encontrado}"
 
-git status -sb 2>/dev/null | head -n 15
+# Como mucho 15 líneas; si hay más, se dice cuántas faltan.
+git status -sb 2>/dev/null \
+  | awk 'NR <= 15 { print } END { if (NR > 15) printf "… y %d líneas más\n", NR - 15 }'
 exit 0
