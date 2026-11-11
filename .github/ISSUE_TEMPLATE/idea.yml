@@ -1,0 +1,20 @@
+name: Idea
+description: Propuesta sin decidir, para valorarla más adelante.
+labels: ["tipo:idea"]
+body:
+  - type: textarea
+    id: que
+    attributes:
+      label: Qué
+    validations:
+      required: true
+  - type: textarea
+    id: por-que
+    attributes:
+      label: Por qué
+    validations:
+      required: true
+  - type: textarea
+    id: cuando
+    attributes:
+      label: Cuándo tendría sentido

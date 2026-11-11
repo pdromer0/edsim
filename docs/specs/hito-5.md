@@ -58,6 +58,7 @@ flowchart TD
     pasillo --> cama
     classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
     class se_va,boarding,pasillo,cama destacado
+    %% linkStyle colorea las flechas por su posición (0 es la primera que se declara): si añades o quitas una flecha, revisa los índices.
     linkStyle 4,5,6,8,9,10,11 stroke:#1f6feb,stroke-width:2px
 ```
 

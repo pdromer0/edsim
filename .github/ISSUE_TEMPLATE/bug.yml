@@ -1,0 +1,34 @@
+name: Bug
+description: Algo no funciona como debería.
+labels: ["tipo:bug"]
+body:
+  - type: textarea
+    id: que-pasa
+    attributes:
+      label: Qué pasa
+    validations:
+      required: true
+  - type: textarea
+    id: que-deberia
+    attributes:
+      label: Qué debería pasar
+    validations:
+      required: true
+  - type: textarea
+    id: reproducir
+    attributes:
+      label: Cómo reproducirlo
+      description: Comandos o pasos mínimos.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit o versión
+      placeholder: hash del commit o etiqueta (v0.6-hito6)
+  - type: textarea
+    id: salida
+    attributes:
+      label: Salida
+      description: Error o salida relevante.
+      render: text
