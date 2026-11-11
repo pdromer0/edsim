@@ -986,7 +986,7 @@ PR #98 (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once
 
 **Qué se hizo**
 
-PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): catorce commits, sin tocar la simulación (`patient.py` y `engine.py`) ni `config/`; del motor solo cambian las reglas del centro y la guarda de dos muestreadores. Las huellas de las versiones 1 a 3 siguen intactas.
+PR #99 (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): catorce commits, sin tocar la simulación (`patient.py` y `engine.py`) ni `config/`; del motor solo cambian las reglas del centro y la guarda de dos muestreadores. Las huellas de las versiones 1 a 3 siguen intactas.
 
 - **Lo aplazado de la 5.1** (nota 1 del chat): la cama como `timeout` del paciente en la pieza 3, `analysis.py` en la 5.4 y las métricas de la 5.1.
 - **`DESTINATIONS` en `profiles/config.py`** (nota 3): `events.py` lo importa de ahí, como `TEST_TYPES` y `REASON_KEYS`.
