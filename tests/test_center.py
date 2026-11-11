@@ -398,6 +398,26 @@ def test_los_dos_ejemplos_solo_difieren_en_la_clave(center):
     assert dataclasses.replace(load_center(SALA), results_wait_outside=()) == center
 
 
+H5 = Path(__file__).parent / "data" / "centro_h5_ejemplo.toml"
+
+
+def test_el_centro_del_hito_5_es_el_de_sala_con_camas():
+    # centro_h5_ejemplo.toml (tarea 5.3) es centro_sala_ejemplo.toml con [camas] en lugar
+    # de [destino]: fuera de esas dos tablas, los mismos valores leídos.
+    from edsim.engine.center import read_center_values
+
+    h5, sala = read_center_values(H5), read_center_values(SALA)
+    assert {k: h5.pop(k) for k in [k for k in h5 if k.startswith("camas.")]} == {
+        "camas.espera": [240, 720],
+        "camas.factor_turno": [0.8, 1.0, 1.5],
+    }
+    assert sala.pop("destino.probabilidad_ingreso") == [0.80, 0.45, 0.15, 0.04, 0.01]
+    assert h5 == sala
+    center = load_center(H5)
+    assert center.has_beds and center.admission_probability is None
+    assert center.bed_season_factors == (1.0, 1.0, 1.0, 1.0)
+
+
 def test_una_copia_sin_la_clave_es_el_centro_de_antes(tmp_path, center):
     # Reproducibilidad: la copia de centro.toml de una ejecución anterior a la 4.6a no
     # tiene la clave; sin ella, el centro es el de siempre y nadie espera fuera.
