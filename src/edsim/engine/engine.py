@@ -47,9 +47,8 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.thinning import ArrivalRecord, DayRecord, arrival_source, iter_arrivals
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical import PatientDraws, ProvisionalSampler
-from edsim.engine.clinical_sampler import ClinicalSampler
+from edsim.engine.clinical_sampler import ClinicalSampler, choose_model
 from edsim.engine.events import (
-    CURRENT_CLINICAL_SCHEMA_VERSION,
     EventLog,
     EventSink,
     episode_id,
@@ -65,7 +64,7 @@ N_STREAMS = 5
 """Streams of a run: arrivals, then the four of the sampler."""
 
 N_CLINICAL_STREAMS = 8
-"""Streams of a run with clinical profiles: arrivals, then the seven of the sampler."""
+"""Streams of a run of milestone 4: arrivals, then the seven of the sampler (``PatientModel``)."""
 
 DEFAULT_WARMUP_DAYS = 2
 """Warm-up of a run in full days (docs/specs/hito-3.md: 24-48 h in the design)."""
@@ -425,11 +424,12 @@ def start_ed(
             sampler = ProvisionalSampler(center, streams[1:])
         log = EventLog(run_id, profile.start_date, sink)
     else:
-        streams = child_streams(seed, N_CLINICAL_STREAMS)
+        # The blocks of the two files choose milestone 4 or 5 (decision 68): its streams
+        # and its version of the catalog. Children 0 to 7 are the same in both.
+        model = choose_model(center, profiles)
+        streams = child_streams(seed, model.n_streams)
         sampler = ClinicalSampler(profiles, profile.start_date, center, streams[1:])
-        log = EventLog(
-            run_id, profile.start_date, sink, schema_version=CURRENT_CLINICAL_SCHEMA_VERSION
-        )
+        log = EventLog(run_id, profile.start_date, sink, schema_version=model.schema_version)
     arrivals = iter_arrivals(profile, days, streams[0], on_day=day_records.append)
     engine = start_engine(center, arrivals, sampler, log, days)
     return SteppedED(engine, run_id, warmup_days, day_records)

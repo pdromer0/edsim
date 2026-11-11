@@ -20,6 +20,14 @@ comes out:
    ``probabilidad_ingreso`` of the *assigned* level (the hospital's decision
    uses what the hospital knows).
 
+With the milestone 5 model (task 5.3), chosen by the blocks of the two files
+(``choose_model``), the streams are children 1 to 9 of ``child_streams(seed,
+10)``, and step 4 is the outcome of ``OutcomeSampler`` instead: streams 4 (4
+Gumbel, the destination), 8 (one normal, the patience) and 9 (one normal, the
+wait for a bed). Stream 4 has one owner: the uniform of milestone 4 is not
+drawn. The patient gets ``PatientDraws.outcome`` with what the engine reads
+and, as its truth, everything that was drawn.
+
 The engine reads the same fields of ``PatientDraws`` as with the provisional
 model. The turnaround of the round is not known on arrival: it is the slowest
 of the ordered tests with the factor of the shift band of the order
@@ -40,7 +48,7 @@ import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.engine.center import CenterConfig, require_destination
-from edsim.engine.clinical import PatientDraws
+from edsim.engine.clinical import BedWaitFactors, OutcomeDraws, PatientDraws
 from edsim.engine.events import (
     ARRIVAL_MODES,
     CURRENT_CLINICAL_SCHEMA_VERSION,
@@ -53,6 +61,7 @@ from edsim.profiles.config import N_SHIFT_BANDS, TEST_TYPES, ClinicalProfiles
 from edsim.profiles.context import ArrivalContext, arrival_context
 from edsim.profiles.population import Person
 from edsim.profiles.sampler import (
+    OutcomeSampler,
     PersonReasonSampler,
     SeverityAndTriage,
     SeverityTriageSampler,
@@ -296,20 +305,32 @@ class ClinicalSampler:
     Call it once per arrival, in arrival order. Each call consumes a fixed
     amount of numbers from each stream (see the module docstring).
 
+    The model is the one of the files (``choose_model``). With milestone 4,
+    stream 4 gives the provisional destination, one uniform per patient. With
+    milestone 5, stream 4 belongs only to the ``OutcomeSampler`` (4 Gumbel per
+    patient), with streams 8 (patience) and 9 (wait for a bed): this sampler
+    makes no generator of stream 4, so no draw of the destination is made
+    twice from the same bits (two generators of one ``SeedSequence`` give the
+    same numbers).
+
     Args:
         profiles: The clinical profiles.
         start_date: Date of minute 0 of the arrivals, the arrival profile's
             ``start_date``.
-        center: The center, for ``probabilidad_ingreso`` of the provisional
-            destination.
-        streams: Exactly seven ``numpy.random.SeedSequence``, streams 1 to 7:
-            the engine passes children 1 to 7 of ``child_streams(seed, 8)``.
-            The objects are not modified, so the same ones give the same
-            draws.
+        center: The center: ``probabilidad_ingreso`` of the provisional
+            destination with milestone 4; ``[camas]`` and the shifts of
+            ``[turnos]`` with milestone 5.
+        streams: Streams 1 to ``n_streams - 1`` of the model, as
+            ``numpy.random.SeedSequence``: the engine passes children 1 to 7 of
+            ``child_streams(seed, 8)`` with milestone 4 and 1 to 9 of
+            ``child_streams(seed, 10)`` with milestone 5. The objects are not
+            modified, so the same ones give the same draws.
 
     Raises:
-        ValueError: If ``streams`` is not seven ``SeedSequence``, or the center
-            has no ``[destino]`` (``require_destination``).
+        ModelChoiceError: If the center and the profiles do not choose one
+            clinical model (``choose_model``).
+        ValueError: If ``streams`` is not the number of ``SeedSequence`` of
+            the model.
     """
 
     def __init__(
@@ -319,23 +340,42 @@ class ClinicalSampler:
         center: CenterConfig,
         streams: Sequence[np.random.SeedSequence],
     ) -> None:
-        require_destination(center)
+        self._model = choose_model(center, profiles)
         streams = list(streams)
-        if len(streams) != N_SAMPLER_STREAMS:
+        expected = self._model.n_streams - 1
+        if len(streams) != expected:
             raise ValueError(
-                f"streams must have {N_SAMPLER_STREAMS} SeedSequence, got {len(streams)}"
+                f"streams must have {expected} SeedSequence with the {self._model.label} "
+                f"model, got {len(streams)}"
             )
         for i, stream in enumerate(streams):
             if not isinstance(stream, np.random.SeedSequence):
                 raise ValueError(f"streams[{i}] must be a SeedSequence, got {stream!r}")
         # streams[i] is stream i + 1.
-        triage, durations, tests, destination, population, reason, severity = streams
+        triage, durations, tests, destination, population, reason, severity = streams[:7]
         self._person_reason = PersonReasonSampler(profiles, start_date, [population, reason])
         self._severity_triage = SeverityTriageSampler(profiles, [severity, triage])
         self._workup_durations = WorkupDurationSampler(profiles, [tests, durations])
-        self._destination_rng = np.random.default_rng(destination)
-        self._admission_probability = tuple(center.admission_probability)
         self._shifts = TurnaroundShifts.from_profiles(profiles, start_date)
+        if self._model is PatientModel.MILESTONE_4:
+            require_destination(center)
+            self._destination_rng = np.random.default_rng(destination)
+            self._admission_probability = tuple(center.admission_probability)
+            self._outcome = None
+        else:
+            patience, bed = streams[7:]
+            self._outcome = OutcomeSampler(profiles, center.bed_wait, [destination, patience, bed])
+            self._beds = BedWaitFactors(
+                start_date,
+                center.shift_starts,
+                center.bed_shift_factors,
+                center.bed_season_factors,
+            )
+
+    @property
+    def model(self) -> "PatientModel":
+        """The model of the patients: milestone 4 or milestone 5."""
+        return self._model
 
     @property
     def shifts(self) -> TurnaroundShifts:
@@ -347,9 +387,16 @@ class ClinicalSampler:
         person_reason = self._person_reason(arrival)
         severity_triage = self._severity_triage(person_reason)
         workup_durations = self._workup_durations(person_reason, severity_triage)
-        u = float(self._destination_rng.random())
-
         workup, durations = workup_durations.workup, workup_durations.durations
+        if self._outcome is None:
+            u = float(self._destination_rng.random())
+            admitted = admitted_from_draw(u, severity_triage.level, self._admission_probability)
+            outcome = None
+        else:
+            drawn = self._outcome(person_reason, severity_triage, workup)
+            outcome = OutcomeDraws.from_outcome(drawn, self._beds)
+            admitted = outcome.destination == "ingreso"
+
         truth = ClinicalTruth(
             context=person_reason.context,
             person=person_reason.person,
@@ -364,6 +411,7 @@ class ClinicalSampler:
             reassessment_time=durations.reassessment_time,
             needs_tests=workup.has_round,
             test_turnaround=None,
-            admitted=admitted_from_draw(u, severity_triage.level, self._admission_probability),
+            admitted=admitted,
             clinical=ClinicalDraws(truth=truth, shifts=self._shifts),
+            outcome=outcome,
         )
