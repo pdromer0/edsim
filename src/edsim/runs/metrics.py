@@ -1,6 +1,6 @@
 """Window KPIs, Manchester counts, the three clocks and the pretriage of completed episodes."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,9 +10,11 @@ from edsim.engine.analysis import EpisodeRecord, WindowMetrics, completed_in_win
 from edsim.engine.targets import (
     CLOCKS,
     Compliance,
+    ComplianceCase,
     LevelClocks,
     Pretriage,
     clock_quantiles,
+    compliance_cases,
     manchester_compliance,
     pretriage,
 )
@@ -62,6 +64,10 @@ class LevelCompliance:
 
     Exactly at the maximum complies. Both shares are None without patients;
     share_out counts only days with completed patients of this level.
+
+    With the abandonment (task 5.4, H5-8), ``n`` and ``exceeded`` include
+    whoever left without being seen once its clock reached the maximum (a sure
+    miss), and ``censored`` counts whoever left before it, out of ``n``.
     """
 
     level: int
@@ -70,6 +76,7 @@ class LevelCompliance:
     exceeded: int
     exceeded_share: float | None
     share_out: float | None
+    censored: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,30 +109,26 @@ def window_compliance(
     ``manchester_compliance``; ``door_to_doctor`` gives clock A, as before.
     """
     daily = manchester_compliance(table, first_day, end_day, measure=measure)
-    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
-    return WindowCompliance(daily, _pooled_levels(daily, done))
+    cases = compliance_cases(table, first_day, end_day, daily.max_wait, measure=measure)
+    return WindowCompliance(daily, _pooled_levels(daily, cases))
 
 
 def _pooled_levels(
-    daily: Compliance,
-    done: Sequence[EpisodeRecord],
-    level_of: Mapping[str, int] | None = None,
+    daily: Compliance, cases: Sequence[ComplianceCase]
 ) -> tuple[LevelCompliance, ...]:
-    """Pool the completed patients of each level against its maximum.
+    """Pool the patients of each level against its maximum, with the censoring.
 
-    The level is the episode's own, the assigned one; with ``level_of``, the
-    one it gives to each ``episode_id``, such as the true level.
+    ``cases`` are those of ``compliance_cases`` for the same stretch and clock
+    as ``daily``, with the level that groups them: the assigned one or, with
+    its ``level_of``, such as the true level.
     """
     shares = daily.share_out
     levels = []
     for index, maximum in enumerate(daily.max_wait):
-        patients = [
-            e
-            for e in done
-            if (e.level if level_of is None else level_of[e.episode_id]) == index + 1
-        ]
-        n = len(patients)
-        exceeded = sum(getattr(e, daily.measure) > maximum for e in patients)
+        patients = [c for c in cases if c.level == index + 1]
+        counted = [c for c in patients if c.status != "censored"]
+        n = len(counted)
+        exceeded = sum(c.status == "exceeded" for c in counted)
         levels.append(
             LevelCompliance(
                 index + 1,
@@ -134,6 +137,7 @@ def _pooled_levels(
                 exceeded,
                 exceeded / n if n else None,
                 float(shares[index]) if n else None,
+                len(patients) - n,
             )
         )
     return tuple(levels)

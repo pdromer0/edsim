@@ -14,17 +14,39 @@ means (docs/diseno.md, "Métricas").
 The day of an episode is the day of its arrival, and only the episodes that
 arrive in the stretch and depart count, the same rule as ``window_metrics``
 (``completed_in_window``).
+
+**With the abandonment** (version 4, H5-8, task 5.4), each measure follows the
+rule of its source:
+
+- the waits and the clocks (their means and quantiles) are those of the
+  patients seen by a doctor, the ones that depart;
+- the Manchester compliance counts the sure misses: whoever leaves without
+  being seen once its clock already reached its maximum misses it, and whoever
+  leaves before is censored and does not count (``compliance_cases``). Whoever
+  leaves before its triage has no level and is out of every compliance, with
+  any clock and also with the true level;
+- the pretriage counts the triaged patients, also those who leave after the
+  triage.
+
+Without abandonment (versions 1 to 3) every function gives exactly the values
+of before.
 """
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Literal
 
 import numpy as np
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
-from edsim.engine.analysis import MEASURES, EpisodeRecord, completed_in_window
+from edsim.engine.analysis import (
+    MEASURES,
+    EpisodeRecord,
+    completed_in_window,
+    ended_in_window,
+)
 from edsim.engine.center import N_LEVELS
 from edsim.engine.ground_truth import GroundTruth
 
@@ -66,16 +88,25 @@ def _by_day_and_level(
     first_day: int,
     end_day: int,
     level_of: Mapping[str, int] | None = None,
+    *,
+    triaged: bool = False,
 ) -> list[list[list[float]]]:
     """The values of ``measure``, by day of the stretch and level.
 
     The level is the episode's own, the assigned one; with ``level_of``, the
-    one it gives to each ``episode_id``, such as the true level.
+    one it gives to each ``episode_id``, such as the true level. The episodes
+    are those that depart; with ``triaged``, also those who leave without
+    being seen after their triage (the pretriage counts the triaged, H5-8).
     """
     out: list[list[list[float]]] = [
         [[] for _ in range(N_LEVELS)] for _ in range(first_day, end_day)
     ]
-    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
+    done = (
+        [e for e in ended_in_window(table, start, end) if e.level is not None]
+        if triaged
+        else completed_in_window(table, start, end)
+    )
     for e in done:
         value = getattr(e, measure)
         if value is None:
@@ -89,6 +120,167 @@ def _level_in(level_of: Mapping[str, int], episode_id: str) -> int:
     if episode_id not in level_of:
         raise ValueError(f"{episode_id} is not in the ground truth")
     return level_of[episode_id]
+
+
+# --- Compliance with censoring (task 5.4) ---------------------------------------------
+
+ComplianceStatus = Literal["within", "exceeded", "censored"]
+"""How a patient counts in the Manchester compliance (H5-8)."""
+
+_CLOCK_START = MappingProxyType(
+    {
+        "door_to_doctor": "arrival",
+        "triage_start_to_doctor": "triage_start",
+        "classified_to_doctor": "triage_end",
+    }
+)
+"""Where each clock of ``CLOCKS`` starts, as a field of ``EpisodeRecord``."""
+
+
+@dataclass(frozen=True, slots=True)
+class ComplianceCase:
+    """One patient of the Manchester compliance and how it counts.
+
+    Attributes:
+        episode: The episode.
+        day: Index of its day of arrival in the stretch, from 0.
+        level: The level of its maximum: the assigned one, or the one of
+            ``level_of`` (such as the true level).
+        clock: Its clock: until the doctor if it was seen; until it left, if it
+            left without being seen.
+        status: ``within`` (seen within the maximum, exactly at it complies),
+            ``exceeded`` (seen after it, or left at it or after it) or
+            ``censored`` (left before reaching it: it is not known whether it
+            would have been seen in time, so it does not count).
+    """
+
+    episode: EpisodeRecord
+    day: int
+    level: int
+    clock: float
+    status: ComplianceStatus
+
+
+def _left_clock(e: EpisodeRecord, measure: str) -> float:
+    """The clock ``measure`` of a patient who left without being seen, at its departure.
+
+    From the arrival (A), from the start of the triage (B) or from the
+    classification (C) to ``patient_left_wbs``.
+    """
+    return e.left - getattr(e, _CLOCK_START[measure])
+
+
+def compliance_cases(
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    max_wait: Sequence[float],
+    *,
+    measure: str = "classified_to_doctor",
+    level_of: Mapping[str, int] | None = None,
+) -> list[ComplianceCase]:
+    """The patients of the Manchester compliance in days ``[first_day, end_day)``, classified.
+
+    The patients that arrive in the stretch and end there or later: those who
+    depart (all of them seen by a doctor), with their clock to the doctor, and
+    those who leave without being seen after their triage, with their clock
+    until they leave. A patient who leaves at instant t was not seen at t
+    (with the tie it stays, H5-4), so its clock to the doctor would be more
+    than the one until it left: if that one reached the maximum, it is a sure
+    miss; if not, censored. Whoever leaves before its triage is out: it has no
+    classification, and it counts in the abandonment before the triage.
+    Without abandonment, the patients of ``completed_in_window``, each
+    ``within`` or ``exceeded`` as before.
+
+    Args:
+        table: The episodes of the log, from ``episode_table``.
+        first_day: First day of the stretch.
+        end_day: Day after the last.
+        max_wait: Maximum time of each level, 1 to 5.
+        measure: The clock, a name of ``CLOCKS``.
+        level_of: The level of each ``episode_id`` instead of the assigned one,
+            such as the true level.
+
+    Raises:
+        ValueError: If a seen patient has no ``measure`` or, with ``level_of``,
+            a counted episode is not in it.
+    """
+    start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
+    out = []
+    for e in ended_in_window(table, start, end):
+        if e.departure is None and e.triage_end is None:
+            continue  # left before its triage: no level, no clock C
+        level = e.level if level_of is None else _level_in(level_of, e.episode_id)
+        maximum = max_wait[level - 1]
+        day = math.floor(e.arrival / MINUTES_PER_DAY) - first_day
+        if e.departure is not None:
+            clock = getattr(e, measure)
+            if clock is None:
+                raise ValueError(f"{e.episode_id} departed without a {measure}")
+            status: ComplianceStatus = "within" if clock <= maximum else "exceeded"
+        else:
+            clock = _left_clock(e, measure)
+            status = "exceeded" if clock >= maximum else "censored"
+        out.append(ComplianceCase(e, day, level, clock, status))
+    return out
+
+
+def _check_compliance_args(
+    measure: str, first_day: object, end_day: object, max_wait: Sequence[float], target: float
+) -> tuple[int, int, tuple[float, ...]]:
+    if measure not in CLOCKS:
+        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
+    first_day, end_day = _check_days(first_day, end_day)
+    max_wait = tuple(float(m) for m in max_wait)
+    if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
+        raise ValueError(f"max_wait must be {N_LEVELS} values >= 0, got {max_wait}")
+    if not 0 < target <= 1:
+        raise ValueError(f"target must be in (0, 1], got {target!r}")
+    return first_day, end_day, max_wait
+
+
+def _daily_compliance(
+    cases: Sequence[ComplianceCase],
+    measure: str,
+    first_day: int,
+    end_day: int,
+    max_wait: tuple[float, ...],
+    target: float,
+) -> "Compliance":
+    """Count the cases by day and level into a ``Compliance``.
+
+    ``within`` is the count within over ``n`` (the cases that count), the
+    same float as the mean of the booleans of before.
+    """
+    shape = (end_day - first_day, N_LEVELS)
+    n = np.zeros(shape, dtype=np.int64)
+    n_within = np.zeros(shape, dtype=np.int64)
+    left_late = np.zeros(shape, dtype=np.int64)
+    censored = np.zeros(shape, dtype=np.int64)
+    for c in cases:
+        k = c.level - 1
+        if c.status == "censored":
+            censored[c.day, k] += 1
+            continue
+        n[c.day, k] += 1
+        if c.status == "within":
+            n_within[c.day, k] += 1
+        elif c.episode.departure is None:
+            left_late[c.day, k] += 1
+    with np.errstate(invalid="ignore", divide="ignore"):
+        within = np.where(n > 0, n_within / np.where(n > 0, n, 1), np.nan)
+    out = (n > 0) & ~(within >= target)
+    return Compliance(
+        measure,
+        np.arange(first_day, end_day),
+        n,
+        within,
+        out,
+        max_wait,
+        float(target),
+        left_late,
+        censored,
+    )
 
 
 @dataclass(frozen=True)
@@ -138,13 +330,19 @@ class Compliance:
     Attributes:
         measure: The clock, a name of ``CLOCKS``.
         days: Day of each row, counted from day 0 of the run.
-        n: Episodes of each day and level, shape ``(days, 5)``.
+        n: Episodes of each day and level that count, shape ``(days, 5)``:
+            the seen ones and those who left after their maximum.
         within: Share of them that saw a doctor within the maximum time;
             ``nan`` without episodes.
         out: Whether the day is out of target for the level: ``within`` below
             ``target``. ``False`` without episodes.
         max_wait: The maximum time of each level, in minutes.
         target: The share required.
+        left_late: Of ``n``, those who left without being seen once their clock
+            reached the maximum: sure misses (task 5.4). ``None`` only if built
+            by hand.
+        censored: Those who left before reaching it, not in ``n`` (task 5.4).
+            ``None`` only if built by hand.
     """
 
     measure: str
@@ -154,6 +352,8 @@ class Compliance:
     out: np.ndarray
     max_wait: tuple[float, ...]
     target: float
+    left_late: np.ndarray | None = field(default=None)
+    censored: np.ndarray | None = field(default=None)
 
     @property
     def days_with_patients(self) -> np.ndarray:
@@ -194,6 +394,11 @@ def manchester_compliance(
     target for a level if the share of its patients that comply is below
     ``target``; a day without patients of the level is not counted.
 
+    With the abandonment, the rule of the censoring (``compliance_cases``):
+    whoever leaves without being seen with its clock at or above the maximum
+    misses it, and whoever leaves before is censored; more abandonment never
+    improves the compliance (H5-8).
+
     Args:
         table: The episodes of the log, from ``episode_table``.
         first_day: First day, such as the warm-up days.
@@ -206,28 +411,11 @@ def manchester_compliance(
         ValueError: If the measure, the days, ``max_wait`` or ``target`` are
             not valid.
     """
-    if measure not in CLOCKS:
-        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
-    first_day, end_day = _check_days(first_day, end_day)
-    max_wait = tuple(float(m) for m in max_wait)
-    if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
-        raise ValueError(f"max_wait must be {N_LEVELS} values >= 0, got {max_wait}")
-    if not 0 < target <= 1:
-        raise ValueError(f"target must be in (0, 1], got {target!r}")
-
-    values = _by_day_and_level(table, measure, first_day, end_day)
-    n = np.array([[len(v) for v in day] for day in values], dtype=np.int64)
-    within = np.array(
-        [
-            [np.mean(np.array(v) <= max_wait[k]) if v else np.nan for k, v in enumerate(day)]
-            for day in values
-        ],
-        dtype=float,
+    first_day, end_day, max_wait = _check_compliance_args(
+        measure, first_day, end_day, max_wait, target
     )
-    out = (n > 0) & ~(within >= target)
-    return Compliance(
-        measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
-    )
+    cases = compliance_cases(table, first_day, end_day, max_wait, measure=measure)
+    return _daily_compliance(cases, measure, first_day, end_day, max_wait, target)
 
 
 # --- Compliance by true level (only with the ground truth) ------------------------------
@@ -280,32 +468,20 @@ def true_level_compliance(
         max_wait: Maximum time of each level, 1 to 5.
         target: Share of the patients required, in (0, 1].
 
+    The rule of the censoring is the same (``compliance_cases``): whoever
+    leaves before its triage is out, although its truth has a level.
+
     Raises:
         ValueError: As ``manchester_compliance``, or if an episode has no
             clinical truth or a counted episode is not in the ground truth.
     """
-    if measure not in CLOCKS:
-        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
-    first_day, end_day = _check_days(first_day, end_day)
-    max_wait = tuple(float(m) for m in max_wait)
-    if len(max_wait) != N_LEVELS or any(not m >= 0 for m in max_wait):
-        raise ValueError(f"max_wait must be {N_LEVELS} values >= 0, got {max_wait}")
-    if not 0 < target <= 1:
-        raise ValueError(f"target must be in (0, 1], got {target!r}")
-
-    values = _by_day_and_level(table, measure, first_day, end_day, true_levels(ground_truth))
-    n = np.array([[len(v) for v in day] for day in values], dtype=np.int64)
-    within = np.array(
-        [
-            [np.mean(np.array(v) <= max_wait[k]) if v else np.nan for k, v in enumerate(day)]
-            for day in values
-        ],
-        dtype=float,
+    first_day, end_day, max_wait = _check_compliance_args(
+        measure, first_day, end_day, max_wait, target
     )
-    out = (n > 0) & ~(within >= target)
-    return Compliance(
-        measure, np.arange(first_day, end_day), n, within, out, max_wait, float(target)
+    cases = compliance_cases(
+        table, first_day, end_day, max_wait, measure=measure, level_of=true_levels(ground_truth)
     )
+    return _daily_compliance(cases, measure, first_day, end_day, max_wait, target)
 
 
 @dataclass(frozen=True)
@@ -564,7 +740,9 @@ def pretriage(
 
     The same rule of days as ``manchester_compliance`` (task 3.8): the day of
     an episode is the day of its arrival, and only the episodes that arrive
-    in the stretch and depart count.
+    in the stretch and end there count: those who depart and, with the
+    abandonment (task 5.4), those who leave after their triage, because the
+    pretriage is of the triaged patients (H5-8).
 
     Args:
         table: The episodes of the log, from ``episode_table``.
@@ -583,7 +761,7 @@ def pretriage(
     if not 0 < target <= 1:
         raise ValueError(f"target must be in (0, 1], got {target!r}")
 
-    values = _by_day_and_level(table, "triage_wait", first_day, end_day)
+    values = _by_day_and_level(table, "triage_wait", first_day, end_day, triaged=True)
     shape = (end_day - first_day, len(PRETRIAGE_GROUPS))
     n = np.zeros(shape, dtype=np.int64)
     n_within = np.zeros(shape, dtype=np.int64)

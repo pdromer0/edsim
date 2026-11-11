@@ -13,13 +13,17 @@ from datetime import date
 from types import MappingProxyType
 from typing import Literal
 
-from edsim.arrivals.rate import MINUTES_PER_DAY
-from edsim.engine.analysis import EpisodeRecord, completed_in_window
+from edsim.engine.analysis import EpisodeRecord
 from edsim.engine.clinical_sampler import TurnaroundShifts
 from edsim.engine.events import DOOR, Event, episode_id
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.report import EPISODE_COLUMNS, PARAMETER_COLUMNS
-from edsim.engine.targets import COMPLIANCE_MEASURE, true_level_compliance, true_levels
+from edsim.engine.targets import (
+    COMPLIANCE_MEASURE,
+    compliance_cases,
+    true_level_compliance,
+    true_levels,
+)
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
 from edsim.runs._truth_csv import read_clinical_episodes
 from edsim.runs.episodes import EpisodeSegments
@@ -398,5 +402,12 @@ def true_level_window_compliance(
     """
     ground_truth = GroundTruth(tuple(truth.values()), ())
     daily = true_level_compliance(table, ground_truth, first_day, end_day, measure=measure)
-    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
-    return WindowCompliance(daily, _pooled_levels(daily, done, true_levels(ground_truth)))
+    cases = compliance_cases(
+        table,
+        first_day,
+        end_day,
+        daily.max_wait,
+        measure=measure,
+        level_of=true_levels(ground_truth),
+    )
+    return WindowCompliance(daily, _pooled_levels(daily, cases))
