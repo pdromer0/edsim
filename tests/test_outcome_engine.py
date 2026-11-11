@@ -20,7 +20,6 @@ from edsim.engine.center import load_center
 from edsim.engine.events import OUTCOME_SCHEMA_VERSION
 from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.invariants import InvariantContext, check_abandonment, check_invariants
-from edsim.engine.report import format_outcome_counts
 from edsim.engine.scenarios import (
     Scenario,
     abandonment,
@@ -614,26 +613,6 @@ def test_quien_sigue_en_el_pasillo_cuenta_dentro(center):
 
 def test_recuentos_de_un_log_vacio():
     assert outcome_counts([], 0.0, 1440.0) == OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0)
-
-
-def test_el_texto_de_los_recuentos(center):
-    # Los del escenario M: 2 de 4 se van, el 50,0 %; sin violaciones.
-    counts = OutcomeCounts(arrivals=4, left=(1, 0, 1), departed=(2, 0, 0, 0), inside=0)
-
-    assert format_outcome_counts(counts, []).splitlines() == [
-        "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
-        "Llegadas: 4",
-        "Se van sin ser vistos: 2 (50.0 %): triaje 1, box 0, médico 1",
-        "Salidas: alta 2, ingreso 0, traslado 0, exitus 0",
-        "Siguen dentro al final: 0",
-        "",
-        "Las métricas con abandono y espera de cama llegan con la tarea 5.4.",
-        "",
-        "Invariantes: 0 violaciones",
-    ]
-    # Sin llegadas, el porcentaje es 0 y no una división por cero.
-    empty = format_outcome_counts(OutcomeCounts(0, (0, 0, 0), (0, 0, 0, 0), 0), [])
-    assert "Se van sin ser vistos: 0 (0.0 %)" in empty
 
 
 def test_un_plazo_vencido_antes_del_triaje_no_espera_a_su_fin(center):

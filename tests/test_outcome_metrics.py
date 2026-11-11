@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from v4_logs import HandLog
 
-from edsim.engine.analysis import episode_table, outcome_counts, step_curves
+from edsim.engine.analysis import analyze_run, episode_table, outcome_counts, step_curves
 from edsim.engine.center import load_center
 from edsim.engine.events import WARD
 from edsim.engine.outcome_metrics import (
@@ -32,6 +32,7 @@ from edsim.engine.outcome_metrics import (
     stay_by_destination,
     window_outcome,
 )
+from edsim.engine.report import format_run_summary
 from edsim.engine.scenarios import abandonment, admission, run_scenario
 
 DATA = Path(__file__).parent / "data"
@@ -276,3 +277,43 @@ def test_window_outcome_junta_todo(center):
     assert outcome.destinations.counts["ingreso"] == 1 and outcome.left.left == 0
     with pytest.raises(ValueError, match="window"):
         window_outcome(table, step_curves(events, 1440.0), 0.0, 2000.0)
+
+
+# --- El resumen de la CLI con el hito 5 ----------------------------------------------------
+
+
+def test_el_resumen_del_escenario_m(center):
+    scenario = abandonment(center)
+    events = run_scenario(scenario).events
+    analysis = analyze_run(events, scenario.center, 1, 0)
+    outcome = window_outcome(analysis.table, analysis.curves, 0.0, 1440.0)
+    lines = format_run_summary(analysis, [], outcome).splitlines()
+    # De 4 se van 2 (Q4 antes del triaje, Q2 desde el box); Q2, nivel 4, se va con C = 26 − 6
+    # = 20 < 120: censurado.
+    assert lines[0] == (
+        "Pacientes en todo el log: 4 llegados, 2 salidos, 2 se van sin ser vistos,"
+        " 0 dentro al final"
+    )
+    assert (
+        "Se van sin ser vistos: 2 de 4 (50.0 %): antes del triaje 1 (25.0 %), después 1"
+        " (25.0 %); triaje 1, box 0, médico 1"
+    ) in lines
+    assert (
+        "Cumplimiento con C: 0 se van después de su máximo (incumplen) y 1 antes (censurados)"
+        in lines
+    )
+    assert (
+        "Espera de cama, en minutos: 0 pedidos, 0 con cama, 0 esperando al final;"
+        " mediana —, p90 — (≥: cota con los que siguen esperando)"
+    ) in lines
+
+
+def test_sin_desenlace_no_hay_seccion_y_los_que_se_van_no_cuentan_dentro(center):
+    scenario = abandonment(center)
+    analysis = analyze_run(run_scenario(scenario).events, scenario.center, 1, 0)
+    text = format_run_summary(analysis, [])
+    assert "Desenlace" not in text
+    assert text.splitlines()[0] == (
+        "Pacientes en todo el log: 4 llegados, 2 salidos, 2 se van sin ser vistos,"
+        " 0 dentro al final"
+    )
