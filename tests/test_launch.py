@@ -20,6 +20,7 @@ from test_directo import SCRIPT, filtered_batch
 
 from edsim.arrivals.profile import load_profile
 from edsim.engine.center import load_center
+from edsim.engine.clinical_sampler import ModelChoiceError
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import EventLog, MemorySink, read_events, to_json
 from edsim.live.clock import FakeClock
@@ -280,3 +281,33 @@ def test_el_replay_publica_las_lineas_filtradas(saved):
     assert end.published == len(expected)
     assert live.run_start.info.start_date == REPLAY_DATE
     assert math.isclose(end.sim_time, 2880)
+
+
+# --- El hito 5 (tarea 5.3): el directo de la versión 4 es de la 5.4 -------------------------
+
+
+def test_el_directo_rechaza_los_ficheros_del_hito_5(models):
+    # Nunca los etiqueta como versión 3: hasta la 5.4, un error claro.
+    with pytest.raises(ValueError, match="live mode of the milestone 5 model .* task 5.4"):
+        prepare_live(
+            load_center(DATA / "centro_h5_ejemplo.toml"),
+            models["llegadas"],
+            2,
+            2026,
+            warmup_days=1,
+            run_id="rh5",
+            profiles=load_profiles(DATA / "perfiles_h5_ejemplo.toml"),
+        )
+
+
+def test_el_directo_rechaza_un_bloque_a_medias(models):
+    with pytest.raises(ModelChoiceError, match=r"missing \[abandono\]"):
+        prepare_live(
+            load_center(DATA / "centro_h5_ejemplo.toml"),
+            models["llegadas"],
+            2,
+            2026,
+            warmup_days=1,
+            run_id="rmedias",
+            profiles=models["perfiles"],
+        )

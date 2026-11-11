@@ -24,10 +24,9 @@ from pathlib import Path
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.center import CenterConfig
+from edsim.engine.clinical_sampler import PatientModel, choose_model
 from edsim.engine.engine import check_horizon, start_ed
 from edsim.engine.events import (
-    CURRENT_CLINICAL_SCHEMA_VERSION,
-    PROVISIONAL_SCHEMA_VERSION,
     TIMEZONE,
     Event,
     MemorySink,
@@ -113,8 +112,9 @@ def prepare_live(
         seed: Seed of the run, an integer >= 0.
         warmup_days: Full days of warm-up before ``W``.
         run_id: Identifier of the run.
-        profiles: The clinical profiles (catalog 3); ``None`` for the provisional model
-            (catalog 1).
+        profiles: The clinical profiles of milestone 4 (catalog 3); ``None`` for the
+            provisional model (catalog 1). The model is the one the files choose
+            (``choose_model``); milestone 5 is refused until task 5.4.
         anchor_wall: If given, the run is anchored to the calendar (H6-12): it starts
             ``warmup_days`` before that day at 00:00 and warms up until that moment, in
             ``+01:00``. Otherwise it starts on the date of the profile and ``W`` is
@@ -122,7 +122,8 @@ def prepare_live(
 
     Raises:
         ValueError: If ``days`` and ``warmup_days`` are not valid, ``W`` is not before the
-            horizon, or the engine or the identity of the run refuse a value.
+            horizon, the files choose the milestone 5 model or no model
+            (``ModelChoiceError``), or the engine or the identity of the run refuse a value.
     """
     days, warmup_days = check_horizon(days, warmup_days)
     if anchor_wall is not None:
@@ -134,12 +135,19 @@ def prepare_live(
     # Unreachable after check_horizon (W < (warm-up + 1) days <= days), kept as a guard.
     if not start < horizon:
         raise ValueError(f"the live stream starts at {start} min, not before the horizon {horizon}")
+    # The blocks of the files choose the model and its catalog (task 5.3). The live mode
+    # of milestone 5 (catalog 4: the deadlines in the queue, the tracker) is task 5.4: until
+    # then its files are refused, never written as version 3.
+    model = choose_model(center, profiles)
+    if model is PatientModel.MILESTONE_5:
+        raise ValueError(
+            "the live mode of the milestone 5 model (abandonment, destinations and wait for "
+            "a bed) comes with task 5.4; use the files of milestone 4"
+        )
     info = RunInfo(
         run_id=run_id,
         mode=LIVE,
-        schema_version=(
-            PROVISIONAL_SCHEMA_VERSION if profiles is None else CURRENT_CLINICAL_SCHEMA_VERSION
-        ),
+        schema_version=model.schema_version,
         seed=seed,
         start_date=profile.start_date,
         anchored=anchor_wall is not None,

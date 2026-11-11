@@ -16,7 +16,12 @@ from edsim.arrivals.thinning import ArrivalRecord
 from edsim.checks import check_count
 from edsim.engine.center import CenterConfig, require_provisional
 from edsim.engine.clinical import PatientDraws, triage_duration
-from edsim.engine.clinical_sampler import N_SAMPLER_STREAMS, ClinicalSampler
+from edsim.engine.clinical_sampler import (
+    N_SAMPLER_STREAMS,
+    ClinicalSampler,
+    PatientModel,
+    choose_model,
+)
 from edsim.engine.shifts import shift_at
 from edsim.engine.validation import _held_intervals, draws_sample, offered_load_by_pool
 from edsim.profiles.config import N_DAY_TYPES, N_SEASONS, ClinicalProfiles
@@ -115,6 +120,10 @@ def offered_load(
     sample_size = check_count("sample_size", sample_size, 1)
     sample_seed = check_count("sample_seed", sample_seed, 0)
     if profiles is not None:
+        if choose_model(center, profiles) is PatientModel.MILESTONE_5:
+            # The wait for a bed blocks the box of the admitted patients: the load of
+            # milestone 5 is not that of milestone 4, and it is not written yet (task 5.3).
+            raise ValueError("the offered load of the milestone 5 model is not implemented yet")
         load, prior_days = _clinical_load(center, profile, days, sample_size, sample_seed, profiles)
         return OfferedLoad(profile.start_date, days, prior_days, load)
     require_provisional(center)
