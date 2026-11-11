@@ -39,6 +39,18 @@ and the true level, never what the nurse sees:
 The ``ClinicalSampler`` of the engine (``edsim.engine.clinical_sampler``,
 task 4.5a) joins the three parts with the provisional destination.
 
+``OutcomeSampler`` is the outcome of milestone 5 (task 5.2): from the person,
+the reason, the severity and the tests it draws the patience, the destination
+and the base wait for a bed, with three streams and a fixed consumption:
+
+- stream 4 (destination): 4 Gumbel draws, one per destination in the order of
+  ``DESTINATIONS``; the destination is the Gumbel-max of its odds, with the
+  true severity G and the abnormal tests among the ordered ones;
+- stream 8 (patience): 1 normal, with the true level and the age band;
+- stream 9 (wait for a bed): 1 normal, whether the patient is admitted or not.
+
+The engine of task 5.3 turns its ``Outcome`` into ``engine.clinical.OutcomeDraws``.
+
 The module does not import the engine nor SimPy: ``ArrivalRecord`` is only a
 type hint, and the sampler reads nothing but ``arrival.time``.
 """
@@ -51,12 +63,18 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
-from edsim.profiles.config import REASON_KEYS, ClinicalProfiles
+from edsim.profiles.config import N_DESTINATIONS, REASON_KEYS, ClinicalProfiles, _check_median_p90
 from edsim.profiles.context import ArrivalContext, all_contexts, arrival_context
 from edsim.profiles.durations import PatientDurations, draw_durations_standard, durations_from_draws
 from edsim.profiles.mixing import band_weights, gumbel_max, reason_weight_table
+from edsim.profiles.outcome import (
+    bed_wait_from_draw,
+    destination_from_draws,
+    patience_from_draw,
+    require_outcome,
+)
 from edsim.profiles.population import Person, draw_person_standard, person_from_draws
 from edsim.profiles.severity import severity_from_draw, triage_from_draws, triage_quality
 from edsim.profiles.workup import Workup, draw_workup_standard, older_bands, workup_from_draws
@@ -87,10 +105,12 @@ class PersonAndReason:
     reason: str
 
 
-def _check_streams(streams: Sequence[np.random.SeedSequence]) -> list[np.random.SeedSequence]:
+def _check_streams(
+    streams: Sequence[np.random.SeedSequence], n: int = N_STREAMS
+) -> list[np.random.SeedSequence]:
     streams = list(streams)
-    if len(streams) != N_STREAMS:
-        raise ValueError(f"streams must have {N_STREAMS} SeedSequence, got {len(streams)}")
+    if len(streams) != n:
+        raise ValueError(f"streams must have {n} SeedSequence, got {len(streams)}")
     for i, stream in enumerate(streams):
         if not isinstance(stream, np.random.SeedSequence):
             raise ValueError(f"streams[{i}] must be a SeedSequence, got {stream!r}")
@@ -292,3 +312,146 @@ class WorkupDurationSampler:
             self._profiles, reason, severity_and_triage.true_level, duration_draws
         )
         return WorkupAndDurations(workup=workup, durations=durations)
+
+
+N_OUTCOME_STREAMS = 3
+"""Streams of ``OutcomeSampler``: destination (4), patience (8) and wait for a bed (9)."""
+
+
+def draw_outcome_standard(
+    destination_rng: np.random.Generator,
+    patience_rng: np.random.Generator,
+    bed_rng: np.random.Generator,
+) -> tuple[NDArray[np.float64], float, float]:
+    """The standard draws of one patient: 4 Gumbel (stream 4), 1 normal (8) and 1 normal (9)."""
+    gumbels = destination_rng.gumbel(size=N_DESTINATIONS)
+    return gumbels, float(patience_rng.standard_normal()), float(bed_rng.standard_normal())
+
+
+def abnormal_count(workup: Workup) -> int:
+    """Number of abnormal tests among the ordered ones, 0 to 4.
+
+    The result of a type that is not ordered is drawn too (decision 34), but
+    nobody sees it: it does not count.
+    """
+    return sum(o and a for o, a in zip(workup.ordered, workup.abnormal, strict=True))
+
+
+@dataclass(frozen=True, slots=True)
+class Outcome:
+    """What streams 4, 8 and 9 give for one patient (task 5.2).
+
+    Attributes:
+        destination_draws: The 4 standard Gumbel draws, in the order of
+            ``DESTINATIONS``.
+        destination: The destination, one of ``DESTINATIONS``; drawn always,
+            also for a patient who will leave without being seen.
+        patience_z: The standard normal draw of the patience.
+        patience: Minutes from the arrival the patient waits before leaving.
+        bed_z: The standard normal draw of the wait for a bed.
+        bed_base: The wait for a bed with factor 1, in minutes; drawn always,
+            used only if the patient is admitted.
+    """
+
+    destination_draws: tuple[float, ...]
+    destination: str
+    patience_z: float
+    patience: float
+    bed_z: float
+    bed_base: float
+
+
+def outcome_from_draws(
+    profiles: ClinicalProfiles,
+    bed_wait: tuple[float, float],
+    person_and_reason: PersonAndReason,
+    severity_and_triage: SeverityAndTriage,
+    workup: Workup,
+    draws: tuple[ArrayLike, float, float],
+) -> Outcome:
+    """The outcome that the standard draws give to a patient.
+
+    The destination uses the true severity G, the band (older or not), the
+    reason and the abnormal tests among the ordered ones; the patience, the
+    true level and the band. Neither uses what the nurse sees.
+
+    Args:
+        profiles: The profiles, with the milestone 5 block.
+        bed_wait: ``[mediana, p90]`` of the wait for a bed (``camas.espera``).
+        person_and_reason: The person and the reason of the patient.
+        severity_and_triage: Its severity and triage.
+        workup: Its tests.
+        draws: The 4 Gumbel draws and the two normals of ``draw_outcome_standard``.
+    """
+    outcome = require_outcome(profiles)
+    gumbels, patience_z, bed_z = draws
+    band = person_and_reason.person.band
+    destination = destination_from_draws(
+        outcome,
+        profiles.reason(person_and_reason.reason).admission_pct,
+        older_bands(profiles.population)[band],
+        severity_and_triage.severity,
+        abnormal_count(workup),
+        gumbels,
+    )
+    return Outcome(
+        destination_draws=tuple(float(g) for g in gumbels),
+        destination=destination,
+        patience_z=float(patience_z),
+        patience=patience_from_draw(
+            outcome.abandonment, severity_and_triage.true_level, band, patience_z
+        ),
+        bed_z=float(bed_z),
+        bed_base=bed_wait_from_draw(bed_wait, bed_z),
+    )
+
+
+class OutcomeSampler:
+    """Patience, destination and base wait for a bed of each patient, on arrival.
+
+    Call it once per patient, in arrival order, with its ``PersonAndReason``,
+    ``SeverityAndTriage`` and ``Workup``. Each call consumes 4 Gumbel draws
+    from stream 4, 1 normal from stream 8 and 1 from stream 9, whatever comes
+    out: the draws are all made before they are transformed.
+
+    Args:
+        profiles: The profiles, with the milestone 5 block.
+        bed_wait: ``[mediana, p90]`` of the wait for a bed, from ``[camas]`` of
+            the center, as two numbers: the sampler does not read the center.
+        streams: Exactly three ``numpy.random.SeedSequence``: destination,
+            patience and wait for a bed. The engine will pass children 4, 8
+            and 9 of ``child_streams(seed, 10)``, in that order. The objects
+            are not modified.
+
+    Raises:
+        ValueError: If the profiles have no milestone 5 block, ``bed_wait`` is
+            not a valid ``[mediana, p90]`` or ``streams`` is not three
+            ``SeedSequence``.
+    """
+
+    def __init__(
+        self,
+        profiles: ClinicalProfiles,
+        bed_wait: tuple[float, float],
+        streams: Sequence[np.random.SeedSequence],
+    ) -> None:
+        require_outcome(profiles)
+        self._bed_wait = _check_median_p90("camas.espera", bed_wait)
+        streams = _check_streams(streams, N_OUTCOME_STREAMS)
+        self._destination_rng, self._patience_rng, self._bed_rng = (
+            np.random.default_rng(s) for s in streams
+        )
+        self._profiles = profiles
+
+    def __call__(
+        self,
+        person_and_reason: PersonAndReason,
+        severity_and_triage: SeverityAndTriage,
+        workup: Workup,
+    ) -> Outcome:
+        """Outcome of the next patient."""
+        # Fixed consumption per patient: draw everything before transforming it.
+        draws = draw_outcome_standard(self._destination_rng, self._patience_rng, self._bed_rng)
+        return outcome_from_draws(
+            self._profiles, self._bed_wait, person_and_reason, severity_and_triage, workup, draws
+        )
