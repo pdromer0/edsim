@@ -17,6 +17,7 @@ this one). ``arrivals.validation`` still exposes it under the same name.
 import math
 from dataclasses import dataclass
 
+from edsim.finite import to_float
 from edsim.stats import Summary
 
 
@@ -64,9 +65,11 @@ def check_number(key: str, value: object) -> float:
     # bool is a subclass of int in Python: `true` must not pass as 1.
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{key} must be a number, got {value!r}")
-    if not math.isfinite(value):
+    # to_float turns an int too large for a float, such as 10**400, into None:
+    # math.isfinite would raise OverflowError instead of answering.
+    if (number := to_float(value)) is None or not math.isfinite(number):
         raise ValueError(f"{key} must be a finite number, got {value!r}")
-    return float(value)
+    return number
 
 
 def check_integer(key: str, value: object) -> int:

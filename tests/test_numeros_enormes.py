@@ -13,6 +13,7 @@ from fake_kafka import FakeConsumer
 from test_directo import INFO
 from test_messages import INVALID_ORDERS
 
+from edsim.checks import check_number
 from edsim.engine.events import EventLog, JsonlSink, MemorySink, event_time, read_events
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.census import census, live_events, open_episodes
@@ -44,6 +45,8 @@ def run(start=120, horizon=180):
 
 
 CHECKS = {
+    # checks.check_number: los valores de los TOML (llegadas, centro y perfiles; tarea 5.2)
+    "check_number": lambda x: check_number("perfiles.paciencia[0][0]", x),
     # events._check_sim_time
     "event_time": lambda x: event_time(SCENARIO_START, x),
     "emit": emit,
