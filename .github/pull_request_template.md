@@ -16,6 +16,13 @@ Closes #
 - [ ] `scripts/tests-integracion.sh`, si toca Kafka
 - [ ] Documentación al día en este PR
 
+## Revisión propia (/code-review)
+
+<!-- Esfuerzo usado y, por cada hallazgo, su destino: corregido (commit) o explicado. -->
+
+| Hallazgo | Qué se hizo |
+| --- | --- |
+
 ## Versiones incorrectas
 
 <!-- Cada una: predicción firme frente a lo observado. -->
