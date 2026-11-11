@@ -415,7 +415,7 @@ El detalle está en [`flujo.md`](flujo.md) (con diagramas) y en [`tarea.md`](tar
 | N3 | Antes de cada push | `scripts/tests-completos.sh`: lint, la completa, la app y los notebooks; desde la P.2, en segundo plano mientras se redacta el PR; desde el #100, una sola vez, después de la revisión propia y de sus correcciones ([ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md)) [implantado] |
 | CI | En cada push y en `main` | Un job por capa, en serie |
 
-**Excepción:** un push que solo lleva plantillas o documentación puede ir sin N3 si la persona lo autoriza, porque el CI lo comprueba igual. Automatizarlo dentro del job es un pendiente de la P.3.
+**Excepciones:** un push en el que toda la rama es documentación, plantillas o una skill puede ir sin N3 si la persona lo autoriza, porque el CI lo comprueba igual. Una ronda de ajustes cuyas correcciones solo tocan documentación o scripts de los hooks tampoco la repite: la última N3 en verde sigue valiendo para todo lo que la N3 ejecuta. Automatizarlo dentro del job es un pendiente de la P.3.
 
 **Lecciones que se llevan a cualquier proyecto:**
 - La mayor ganancia de tiempo está en no ejecutar lo que no hace falta, no en paralelizar.

@@ -49,7 +49,7 @@ Primero la revisión y sus correcciones; después, una sola N3 (`tarea.md` §4).
 3. Las correcciones, cada una en su commit con N1; la N2 la ejecuta el hook Stop.
 4. `docker compose ps`: si Kafka está en marcha, `docker compose down`. Si `docker compose ps` falla porque Docker está parado, cuenta como «no hay Kafka en marcha». Avisa de que la N3 suele tardar unos 14 minutos y lanza una sola con `run_in_background`: `scripts/tests-completos.sh`. Si la tarea toca Kafka, `scripts/tests-integracion.sh` va cuando la N3 termine, no a la vez.
 5. Mientras corre, escribe la entrada del anexo y la descripción del PR en un fichero del *scratchpad*, con la plantilla `.github/pull_request_template.md`, «Closes #N» y la hora de aprobación. El «Qué se hizo» del anexo cita el issue y la rama, no el número del PR, que aún no existe. Cada hallazgo va a la sección «Revisión propia (/code-review)» del PR con su destino.
-6. El push, solo con la N3 en verde. Si falla, corrige con N1 y repítela una vez, no una por corrección; si vuelve a fallar, para y dilo. Sin N3 solo si toda la rama es documentación, plantillas o una skill y Pedro lo autoriza; los scripts de los hooks no cuentan y se verifican a mano.
+6. El push, solo con la N3 en verde. Si falla, corrige con N1 y repítela una vez, no una por corrección; si vuelve a fallar, para y dilo. Sin N3 solo en los casos de `tarea.md` §4, «Cuándo no hay N3»: en el primer push, si toda la rama es documentación, plantillas o una skill y Pedro lo autoriza. La N3 no ejecuta los scripts de los hooks: se verifican a mano, y una rama que los cambia no es «solo documentación».
 
 ## Pull request
 
@@ -60,7 +60,7 @@ Primero la revisión y sus correcciones; después, una sola N3 (`tarea.md` §4).
 
 ## Ajustes de la revisión
 
-Como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si la ronda solo toca documentación o scripts de los hooks, no hay N3. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
+Como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
 
 ## Procedimiento del tablero
 

@@ -49,7 +49,12 @@ Primero la revisión y sus correcciones; después, **una sola N3** ([ADR 0083](.
 4. **Una sola N3**: `scripts/tests-completos.sh`, con Docker parado (`docker compose down` si Kafka está en marcha), en segundo plano mientras se escriben la entrada del anexo y el PR. En las tareas que tocan Kafka, `scripts/tests-integracion.sh` va después de la N3, no a la vez: levanta el Kafka de `compose.yaml`, y la N3 se mide con Docker parado.
 5. **El push, con la N3 en verde.** Si la N3 falla, se corrige con N1 y se repite una vez, no una por corrección. Si vuelve a fallar, el agente para y lo dice.
 
-La N3 se ejecuta aunque las correcciones solo toquen documentación: es la primera sobre el código de la rama. Solo se libra un push que solo lleva documentación, plantillas o una skill, si Pedro lo autoriza, porque el CI lo comprueba igual ([ADR 0082](../decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)). Los scripts de los hooks (`.claude/hooks/`, `.codex/`) no cuentan: la N3 no los ejecuta y se verifican a mano, anotando la comprobación en el PR.
+Cuándo no hay N3:
+
+- **En el primer push**, solo si toda la rama es documentación, plantillas o una skill, y con la autorización de Pedro, porque el CI lo comprueba igual ([ADR 0082](../decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)). Que las correcciones de la revisión solo toquen documentación no basta: esta es la primera N3 sobre el código de la rama.
+- **En una ronda de ajustes** (§7), si sus correcciones solo tocan documentación o scripts de los hooks: la última N3 en verde sigue valiendo para todo lo que la N3 ejecuta.
+
+La N3 no ejecuta los scripts de los hooks (`.claude/hooks/`, `.codex/`): se verifican a mano, anotando la comprobación en el PR. Una rama que los cambia no es «solo documentación».
 
 ## 5. Documentación en el mismo PR
 
@@ -67,7 +72,7 @@ La N3 se ejecuta aunque las correcciones solo toquen documentación: es la prime
 
 ## 7. Ajustes de la revisión
 
-- Las mismas reglas que antes del push: primero se clasifican todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (y la N2 en el Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para lo que ejecuta.
+- Las mismas reglas que antes del push: primero se clasifican todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (y la N2 en el Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta (§4, «Cuándo no hay N3»).
 - La sección «Ajustes de la revisión» del PR, al día.
 - La entrada del anexo, al día.
 
