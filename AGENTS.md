@@ -23,7 +23,8 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
     cada commit;
   - al final de cada turno, el hook Stop ejecuta la rápida con sello (`scripts/tests-rapidos.sh`),
     solo de las suites que afectan los cambios desde su último verde;
-  - antes de cada push, `scripts/tests-completos.sh` una vez.
+  - antes de cada push, `scripts/tests-completos.sh` una sola vez, después de la revisión propia
+    y de sus correcciones ([tarea.md](docs/proceso/tarea.md#4-antes-del-push)).
 
   Una versión incorrecta se comprueba con los ficheros donde se predice el fallo y con los que
   deben seguir pasando. Cada valor esperado calculado a mano lleva su cálculo escrito en el plan,
