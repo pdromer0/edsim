@@ -184,12 +184,21 @@ def test_admitted_coherente_con_el_destino(clinical_patient, destination, admitt
         )
 
 
-def test_la_verdad_del_episodio_aun_no_guarda_el_desenlace(clinical_patient):
-    # La verdad del desenlace es de la tarea 5.3: hasta entonces, EpisodeTruth no cambia.
-    draws = dataclasses.replace(clinical_patient, outcome=outcome())
-    truth = EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), draws)
-    assert truth == EpisodeTruth.from_draws(ArrivalRecord(0, 0.0), clinical_patient)
-    assert not hasattr(truth, "outcome")
+def test_la_verdad_del_episodio_guarda_lo_sorteado_del_desenlace(clinical_patient):
+    # Desde la tarea 5.3, EpisodeTruth.outcome es el Outcome sorteado (OutcomeDraws.truth),
+    # al final y sin tocar los demás campos; un paciente a mano sin él lo deja en None.
+    arrival = ArrivalRecord(0, 0.0)
+    drawn = dataclasses.replace(DRAWN, destination="alta")
+    sampled = dataclasses.replace(
+        clinical_patient, outcome=OutcomeDraws.from_outcome(drawn, factors())
+    )
+    by_hand = dataclasses.replace(clinical_patient, outcome=outcome())
+    before = EpisodeTruth.from_draws(arrival, clinical_patient)
+
+    assert EpisodeTruth.from_draws(arrival, sampled).outcome is drawn
+    assert EpisodeTruth.from_draws(arrival, by_hand).outcome is None
+    assert dataclasses.replace(EpisodeTruth.from_draws(arrival, sampled), outcome=None) == before
+    assert dataclasses.fields(EpisodeTruth)[-1].name == "outcome"
 
 
 DRAWN = Outcome(

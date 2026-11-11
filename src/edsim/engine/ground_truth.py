@@ -9,7 +9,8 @@ In milestone 3 the triage has no error, so the level and the destination of an
 episode are also in the log. With the clinical model of milestone 4, an episode
 also has its clinical truth (``ClinicalTruth``): the latent severity, the true
 level and the quality of the triage, the age band and the turnarounds are only
-here, never in the log.
+here, never in the log. With the model of milestone 5, also its outcome: what
+the patient would have done or got, also if it never came to it (H5-10).
 """
 
 from dataclasses import dataclass, fields
@@ -19,8 +20,10 @@ from edsim.arrivals.thinning import ArrivalRecord, DayRecord
 from edsim.engine.clinical import PatientDraws
 from edsim.engine.clinical_sampler import ClinicalTruth
 from edsim.engine.events import episode_id
+from edsim.profiles.sampler import Outcome
 
-# The outcome of milestone 5 is not in the ground truth yet: task 5.3 adds it.
+# The clinical truth and the outcome are kept as what the samplers drew, not as the
+# draws the engine reads.
 _DRAW_FIELDS = tuple(f.name for f in fields(PatientDraws) if f.name not in ("clinical", "outcome"))
 
 
@@ -47,6 +50,12 @@ class EpisodeTruth:
         admitted: Whether the patient is admitted; otherwise discharged.
         clinical: The clinical truth of the episode, or ``None`` with the
             provisional model.
+        outcome: Everything the outcome sampler drew for the episode (task
+            5.3, H5-10): the patience, the four Gumbel draws and the
+            destination, also the counterfactual one of a patient who left,
+            and the base wait for a bed, also of a patient not admitted.
+            ``None`` with the provisional and milestone 4 models, and with the
+            patients written by hand in the scenarios of the engine.
     """
 
     episode_id: str
@@ -60,6 +69,7 @@ class EpisodeTruth:
     test_turnaround: float | None
     admitted: bool
     clinical: ClinicalTruth | None = None
+    outcome: Outcome | None = None
 
     @classmethod
     def from_draws(cls, arrival: ArrivalRecord, draws: PatientDraws) -> Self:
@@ -70,6 +80,7 @@ class EpisodeTruth:
             arrival_time=arrival.time,
             **{name: getattr(draws, name) for name in _DRAW_FIELDS},
             clinical=None if draws.clinical is None else draws.clinical.truth,
+            outcome=None if draws.outcome is None else draws.outcome.truth,
         )
 
 

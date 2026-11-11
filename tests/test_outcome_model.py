@@ -7,18 +7,21 @@ esperados salen de generadores propios del test, no del muestreador.
 """
 
 import dataclasses
+import hashlib
 import math
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pytest
+from clinical_factory import PLAIN, leaves, truth_lines
 
 from edsim.arrivals.profile import load_profile
 from edsim.arrivals.thinning import iter_arrivals
 from edsim.engine.center import load_center
 from edsim.engine.clinical_sampler import ClinicalSampler, PatientModel
 from edsim.engine.engine import simulate_ed
-from edsim.engine.events import OUTCOME_SCHEMA_VERSION, MemorySink
+from edsim.engine.events import OUTCOME_SCHEMA_VERSION, JsonlSink, MemorySink
 from edsim.engine.invariants import check_invariants
 from edsim.profiles.config import load_profiles
 from edsim.seeds import child_streams
@@ -214,3 +217,99 @@ def test_el_motor_escribe_la_version_4_sin_violaciones(center, profiles, simulat
         events, center, ground_truth=result.ground_truth, inside=result.inside, profiles=profiles
     )
     assert violations == []
+
+
+# --- Huellas, determinismo y números comunes --------------------------------------------------
+
+# Huellas SHA-256 del modelo del hito 5 con los ejemplos del hito 5 (perfiles_h5_ejemplo,
+# centro_h5_ejemplo y llegadas_ejemplo), semilla 2026 y 3 días: el log (eventos.jsonl) y
+# el ground truth con truth_lines (clinical_factory). Generadas en la tarea 5.3, al añadir
+# la verdad del desenlace; se regeneran solo con un cambio a propósito de los muestreadores,
+# del motor del hito 5 o de EpisodeTruth, explicado en el commit, nunca para que un test pase.
+H5_LOG_FINGERPRINT = "4e7312ce385d4d55133a141c64589316df94610a017904cbd2f8246c5a8d0e5a"
+H5_TRUTH_FINGERPRINT = "609955d49c1baafbb68324dc0ae42243fa0e60283382ecb4ff476c5e61d1da8b"
+
+
+def run_to_file(center, arrival_profile, profiles, path):
+    with JsonlSink(path) as sink:
+        return simulate_ed(center, arrival_profile, DAYS, SEED, sink=sink, profiles=profiles)
+
+
+def test_huellas_del_log_y_de_la_verdad_del_hito_5(center, arrival_profile, profiles, tmp_path):
+    path = tmp_path / "eventos.jsonl"
+    result = run_to_file(center, arrival_profile, profiles, path)
+    text = truth_lines(result.ground_truth.episodes)
+
+    assert len(result.ground_truth.episodes) == 1101
+    assert all(e.outcome is not None for e in result.ground_truth.episodes)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == H5_LOG_FINGERPRINT
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == H5_TRUTH_FINGERPRINT
+
+
+def test_dos_ejecuciones_con_la_misma_semilla_son_iguales(
+    center, arrival_profile, profiles, tmp_path
+):
+    a = run_to_file(center, arrival_profile, profiles, tmp_path / "a.jsonl")
+    b = run_to_file(center, arrival_profile, profiles, tmp_path / "b.jsonl")
+
+    assert (tmp_path / "a.jsonl").read_bytes() == (tmp_path / "b.jsonl").read_bytes()
+    assert a.ground_truth == b.ground_truth
+
+
+def test_lo_clinico_es_el_del_hito_4_bit_a_bit(arrival_profile, simulated):
+    # Los hijos 0 a 7 son los mismos con 8 y con 10 flujos (decisión 43): las llegadas y
+    # la verdad clínica de cada paciente son las del hito 4 con los perfiles de ejemplo
+    # sin el bloque. Solo cambia el destino (el flujo 4).
+    _, h5 = simulated
+    h4 = simulate_ed(
+        load_center(DATA / "centro_sala_ejemplo.toml"),
+        arrival_profile,
+        DAYS,
+        SEED,
+        sink=MemorySink(),
+        profiles=load_profiles(DATA / "perfiles_ejemplo.toml"),
+    )
+    pairs = list(zip(h4.ground_truth.episodes, h5.ground_truth.episodes, strict=True))
+
+    assert h4.ground_truth.days == h5.ground_truth.days
+    for a, b in pairs:
+        assert (a.episode_id, a.arrival_time, a.clinical) == (
+            b.episode_id,
+            b.arrival_time,
+            b.clinical,
+        )
+        assert (a.level, a.triage_time, a.assessment_time, a.reassessment_time, a.needs_tests) == (
+            b.level,
+            b.triage_time,
+            b.assessment_time,
+            b.reassessment_time,
+            b.needs_tests,
+        )
+    assert any(a.admitted != b.admitted for a, b in pairs)  # el destino sí cambia
+
+
+def test_con_otra_plantilla_ningun_sorteo_cambia(center, arrival_profile, profiles, simulated):
+    # La plantilla y los boxes cambian el flujo, nunca lo sorteado: la misma verdad entera,
+    # también la del desenlace.
+    _, base = simulated
+    other = dataclasses.replace(center, boxes=40, doctors=(14, 14, 9), triage_nurses=(4, 4, 3))
+    result = simulate_ed(other, arrival_profile, DAYS, SEED, sink=MemorySink(), profiles=profiles)
+
+    assert result.ground_truth == base.ground_truth
+
+
+def test_la_verdad_del_desenlace_solo_tiene_tipos_de_python(simulated):
+    # El gemelo del hito 5 de test_la_verdad_solo_tiene_tipos_de_python: type(x), no
+    # isinstance, porque un np.float64 en el desenlace pasaría por float.
+    _, result = simulated
+    outcome_leaves = set()
+    for truth in result.ground_truth.episodes:
+        for path, value in leaves(asdict(truth)):
+            assert type(value) in PLAIN, (truth.episode_id, path, type(value))
+            if path[0] == "outcome":
+                outcome_leaves.add(path[1:])
+
+    # Guarda: el recorrido llega a las 4 Gumbel y a los dos z del desenlace.
+    assert {("destination_draws", i) for i in range(4)} | {("patience_z",), ("bed_z",)} <= (
+        outcome_leaves
+    )

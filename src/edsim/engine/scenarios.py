@@ -44,10 +44,10 @@ from edsim.engine.events import (
     MemorySink,
 )
 from edsim.engine.validation import SamplerFactory, flat_profile, mg1_center, pollaczek_khinchine
-from edsim.profiles.config import N_SHIFT_BANDS, TEST_TYPES
+from edsim.profiles.config import DESTINATIONS, N_SHIFT_BANDS, TEST_TYPES
 from edsim.profiles.context import ArrivalContext
 from edsim.profiles.population import Person
-from edsim.profiles.sampler import SeverityAndTriage
+from edsim.profiles.sampler import Outcome, SeverityAndTriage
 from edsim.profiles.severity import triage_quality
 from edsim.profiles.workup import Workup
 from edsim.seeds import child_streams
@@ -199,6 +199,10 @@ def outcome_draws(
     test (``analitica``) whose results take exactly those minutes, as the
     factors of the shift bands are 1.
 
+    Its outcome has a truth (task 5.3) with the patience, the destination and
+    the base wait chosen here, so the invariants compare the log with them; its
+    standard draws (the Gumbel and the two normals) are 0 and mean nothing.
+
     Args:
         level: Assigned (and true) level, 1 to 5.
         triage: Duration of the triage; not used by a level 1.
@@ -238,7 +242,17 @@ def outcome_draws(
         test_turnaround=None,
         admitted=destination == "ingreso",
         clinical=ClinicalDraws(truth=truth, shifts=_ONE_FACTORS),
-        outcome=OutcomeDraws(patience, destination, bed_base, beds),
+        outcome=OutcomeDraws.from_outcome(
+            Outcome(
+                destination_draws=(0.0,) * len(DESTINATIONS),
+                destination=destination,
+                patience_z=0.0,
+                patience=float(patience),
+                bed_z=0.0,
+                bed_base=float(bed_base),
+            ),
+            beds,
+        ),
     )
 
 
