@@ -124,8 +124,10 @@ from edsim.profiles.config import load_profiles
 from edsim.profiles.report import FALSE_ALARM, PLOTS, format_profiles_validation
 from edsim.profiles.validation import (
     DEFAULT_MIXING_PATIENTS,
+    PATIENCE_YEARS,
     check_profiles_validation_counts,
     validate_profiles,
+    year_patients,
 )
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
@@ -518,6 +520,9 @@ def _validate_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser
         f"{mixing} pacientes por contexto en la mezcla · {year} en la muestra del año"
         f" · semilla {args.semilla}\n\n"
         + (
+            f"{PATIENCE_YEARS * year_patients(profiles, arrival_profile)} pacientes en la"
+            f" paciencia y {year_patients(profiles, arrival_profile)} en los destinos"
+            f" ({PATIENCE_YEARS} años y uno; --pacientes no los cambia)\n\n"
             "Validando el muestreador: mezcla de motivos, triaje, pruebas, duraciones,"
             " paciencia y destinos (bloque del hito 5). Con los valores por defecto tarda"
             " unos 90 segundos.\n"
