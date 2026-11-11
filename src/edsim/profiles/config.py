@@ -45,6 +45,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
+from types import MappingProxyType
 
 from edsim.checks import check_integer, check_list, check_number
 
@@ -111,6 +112,49 @@ ground truth name them."""
 N_TEST_TYPES = len(TEST_TYPES)
 """Types of test: 4."""
 
+DESTINATIONS: tuple[str, ...] = ("alta", "ingreso", "traslado", "exitus")
+"""The four destinations of milestone 5 (H5-5), in the order of the draws of stream 4.
+
+Discharge is the reference of the multinomial logit; the ICU is within the
+admission. ``edsim.engine.events`` uses them as the ``destino`` of version 4.
+"""
+
+N_DESTINATIONS = len(DESTINATIONS)
+"""Destinations: 4."""
+
+ADMISSION_CATALOG: Mapping[str, str] = MappingProxyType(
+    {
+        "traumatismo": "bajo",
+        "dolor_abdominal": "medio",
+        "fiebre": "medio",
+        "disnea": "alto",
+        "malestar": "medio",
+        "dolor_toracico": "medio",
+        "neurologico": "medio",
+        "sincope": "medio",
+        "urologico": "bajo",
+        "cutaneo": "bajo",
+        "orl": "muy_bajo",
+        "digestivo": "medio",
+        "psiquiatrico": "bajo",
+        "palpitaciones": "medio",
+        "intoxicacion": "medio",
+        "parada": "muy_alto",
+        "otros": "bajo",
+    }
+)
+"""The column «Ingreso» of the catalog of docs/diseno.md, per reason key.
+
+Only its order is data (task 5.2): it gives the starting percentages of the
+derivation of ``ingreso``, ``ADMISSION_START_PCT``, which a common factor on
+their odds moves to the admission target of a year.
+"""
+
+ADMISSION_START_PCT: Mapping[str, float] = MappingProxyType(
+    {"muy_bajo": 1.0, "bajo": 2.0, "medio": 5.0, "alto": 10.0, "muy_alto": 25.0}
+)
+"""Starting percentage of admission of each level of the catalog (docs/specs/hito-5.md)."""
+
 TARGET_SUM_TOLERANCE = 0.5
 """Largest distance from 100 of the sum of ``reparto_objetivo``, in points.
 
@@ -163,6 +207,23 @@ _POPULATION_REQUIRED = {
 _POPULATION_OPTIONAL = {"franja": "band_shift_factors", "dia": "band_day_factors"}
 
 _SECTIONS = ("contexto", "poblacion", "motivos", "triaje", "duraciones", "pruebas")
+
+OUTCOME_SECTIONS = ("abandono", "destinos")
+"""Tables of the milestone 5 block, with ``ingreso`` in every reason: all or nothing."""
+
+REASON_ADMISSION_KEY = "ingreso"
+"""Key of the base percentage of admission in each ``[motivos.<clave>]`` (milestone 5)."""
+
+# Keys of [abandono]: TOML key → field.
+_ABANDONMENT_REQUIRED = {"paciencia": "patience"}
+_ABANDONMENT_OPTIONAL = {"paciencia_edad": "age_factors"}
+
+# Keys of ingreso, traslado and exitus in [destinos]: TOML key → field. ``base``
+# is required in traslado and exitus and unknown in ingreso, whose base is per reason.
+_ODDS_REQUIRED = {"objetivo": "target", "or_gravedad": "severity_or"}
+_ODDS_OPTIONAL = {"or_mayor": "older_or", "or_alterada": "abnormal_or"}
+_BASE_KEY = "base"
+_OUTCOME_DESTINATIONS = DESTINATIONS[1:]
 
 
 def _check_hours(key: str, values: object) -> tuple[int, ...]:
@@ -432,6 +493,133 @@ class DiagnosticTest:
 
 
 @dataclass(frozen=True, slots=True)
+class Abandonment:
+    """The patience of the patients, from ``[abandono]`` (decision 70, H5-4).
+
+    The patience is a lognormal per true level, given by ``[mediana, p90]`` in
+    minutes and counted from the arrival; the age band multiplies the median
+    (and the p90: σ does not change) by its factor (see
+    ``edsim.profiles.outcome``).
+
+    Attributes:
+        patience: ``[mediana, p90]`` for true levels 1 to 5 (``paciencia``).
+        age_factors: Factor on the median per age band (``paciencia_edad``);
+            1 if absent.
+    """
+
+    patience: tuple[tuple[float, float], ...]
+    age_factors: tuple[float, ...] = (1.0,) * N_BANDS
+
+    def __post_init__(self) -> None:
+        key = "abandono.paciencia"
+        object.__setattr__(
+            self,
+            "patience",
+            tuple(
+                _check_median_p90(f"{key}[{i}]", pair)
+                for i, pair in enumerate(check_list(key, self.patience, N_LEVELS))
+            ),
+        )
+        object.__setattr__(
+            self,
+            "age_factors",
+            _check_factors("abandono.paciencia_edad", self.age_factors, N_BANDS),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationOdds:
+    """One destination other than discharge, from ``[destinos]`` (decision 71, H5-5).
+
+    The odds of the destination against discharge are ``p_d / p_alta *
+    severity_or**G * older_or**older * abnormal_or**k``, with ``p_d`` its base
+    percentage for an adult under 65 with G = 0 and no abnormal tests (see
+    ``edsim.profiles.outcome``).
+
+    Attributes:
+        key: The destination: ``ingreso``, ``traslado`` or ``exitus``.
+        target: Percentage of a year of the arrival profile (``objetivo``),
+            over every arrival with its drawn destination; in (0, 100). The
+            bases are derived from it once and written.
+        severity_or: Odds ratio per unit of G (``or_gravedad``); positive.
+        older_or: Odds ratio for a patient of 65 or more (``or_mayor``); 1 if
+            absent.
+        abnormal_or: Odds ratio per abnormal test among the ordered ones
+            (``or_alterada``); 1 if absent.
+        base: Base percentage (``base``), derived and written; in (0, 100).
+            Only traslado and exitus: the base of the admission is per reason
+            (``motivos.<clave>.ingreso``), so it is ``None`` for ingreso.
+    """
+
+    key: str
+    target: float
+    severity_or: float
+    older_or: float = 1.0
+    abnormal_or: float = 1.0
+    base: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.key not in _OUTCOME_DESTINATIONS:
+            raise ValueError(
+                f"the key of a destination must be one of {_OUTCOME_DESTINATIONS}, got {self.key!r}"
+            )
+        prefix = f"destinos.{self.key}"
+        set_ = object.__setattr__
+        set_(self, "target", _check_open_percentage(f"{prefix}.objetivo", self.target))
+        set_(self, "severity_or", _check_positive(f"{prefix}.or_gravedad", self.severity_or))
+        set_(self, "older_or", _check_positive(f"{prefix}.or_mayor", self.older_or))
+        set_(self, "abnormal_or", _check_positive(f"{prefix}.or_alterada", self.abnormal_or))
+        if self.key == "ingreso":
+            if self.base is not None:
+                raise ValueError(
+                    f"unknown keys: {prefix}.base (the base of the admission is "
+                    "motivos.<clave>.ingreso)"
+                )
+        elif self.base is None:
+            raise ValueError(f"missing keys: {prefix}.base")
+        else:
+            set_(self, "base", _check_open_percentage(f"{prefix}.base", self.base))
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeProfile:
+    """The milestone 5 block of the profiles, without the ``ingreso`` of each reason.
+
+    Attributes:
+        abandonment: The patience (``[abandono]``).
+        admission: ``destinos.ingreso``.
+        transfer: ``destinos.traslado``.
+        death: ``destinos.exitus``.
+    """
+
+    abandonment: Abandonment
+    admission: DestinationOdds
+    transfer: DestinationOdds
+    death: DestinationOdds
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.abandonment, Abandonment):
+            raise ValueError(f"abandonment must be an Abandonment, got {self.abandonment!r}")
+        for field, key in zip(
+            ("admission", "transfer", "death"), _OUTCOME_DESTINATIONS, strict=True
+        ):
+            value = getattr(self, field)
+            if not isinstance(value, DestinationOdds) or value.key != key:
+                raise ValueError(f"{field} must be the DestinationOdds of {key}, got {value!r}")
+        targets = [d.target for d in self.destinations]
+        if sum(targets) >= 100:
+            raise ValueError(
+                "destinos.ingreso.objetivo + destinos.traslado.objetivo + destinos.exitus.objetivo"
+                f" must be below 100, the rest is discharge: got {' + '.join(map(repr, targets))}"
+            )
+
+    @property
+    def destinations(self) -> tuple[DestinationOdds, ...]:
+        """Admission, transfer and death, in the order of ``DESTINATIONS`` after discharge."""
+        return (self.admission, self.transfer, self.death)
+
+
+@dataclass(frozen=True, slots=True)
 class ReasonProfile:
     """One reason for consultation, from its ``[motivos.<clave>]`` table.
 
@@ -457,6 +645,9 @@ class ReasonProfile:
             (``estacion``).
         duration_factor: Factor on the median of the assessment and the
             reassessment of its patients (``duracion``); positive, 1 if absent.
+        admission_pct: Base percentage of admission of an adult under 65 with
+            G = 0 and no abnormal tests (``ingreso``, milestone 5), derived and
+            written; in (0, 100). ``None`` without the milestone 5 block.
     """
 
     key: str
@@ -469,6 +660,7 @@ class ReasonProfile:
     day_factors: tuple[float, ...] = (1.0,) * N_DAY_TYPES
     season_factors: tuple[float, ...] = (1.0,) * N_SEASONS
     duration_factor: float = 1.0
+    admission_pct: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, str) or not self.key:
@@ -496,6 +688,12 @@ class ReasonProfile:
         object.__setattr__(
             self, "duration_factor", _check_positive(f"{prefix}.duracion", self.duration_factor)
         )
+        if self.admission_pct is not None:
+            object.__setattr__(
+                self,
+                "admission_pct",
+                _check_open_percentage(f"{prefix}.ingreso", self.admission_pct),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -615,6 +813,10 @@ class ClinicalProfiles:
             (``[duraciones]``).
         diagnostic_tests: The 4 types of test (``[pruebas.<tipo>]``), in the
             order of ``TEST_TYPES``, whatever their order in the file.
+        outcome: The milestone 5 block (``[abandono]`` and ``[destinos]``), or
+            ``None`` without it. It comes with the ``ingreso`` of every reason,
+            all or nothing (decision 68, H5-2), and in every reason ``ingreso``
+            plus the bases of transfer and death stays below 100.
     """
 
     shift_band_starts: tuple[int, ...]
@@ -623,6 +825,7 @@ class ClinicalProfiles:
     triage: TriageProfile
     durations: DurationProfile
     diagnostic_tests: tuple[DiagnosticTest, ...]
+    outcome: OutcomeProfile | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -636,6 +839,7 @@ class ClinicalProfiles:
         if not isinstance(self.durations, DurationProfile):
             raise ValueError(f"durations must be a DurationProfile, got {self.durations!r}")
         object.__setattr__(self, "diagnostic_tests", _check_tests(self.diagnostic_tests))
+        _check_outcome_block(self.outcome, self.reasons)
 
     @property
     def reason_keys(self) -> tuple[str, ...]:
@@ -663,6 +867,33 @@ class ClinicalProfiles:
             if r.key == key:
                 return r
         raise KeyError(key)
+
+
+def _block_message(missing: Iterable[str]) -> str:
+    return f"the milestone 5 block comes whole or not at all: missing keys: {', '.join(missing)}"
+
+
+def _check_outcome_block(outcome: object, reasons: tuple[ReasonProfile, ...]) -> None:
+    """The milestone 5 block, all or nothing, and below 100 in every reason."""
+    if outcome is not None and not isinstance(outcome, OutcomeProfile):
+        raise ValueError(f"outcome must be an OutcomeProfile, got {outcome!r}")
+    without = [
+        f"motivos.{r.key}.{REASON_ADMISSION_KEY}" for r in reasons if r.admission_pct is None
+    ]
+    if outcome is None:
+        if len(without) < len(reasons):
+            raise ValueError(_block_message(OUTCOME_SECTIONS))
+        return
+    if without:
+        raise ValueError(_block_message(without))
+    others = outcome.transfer.base + outcome.death.base
+    for r in reasons:
+        if r.admission_pct + others >= 100:
+            raise ValueError(
+                f"motivos.{r.key}.ingreso + destinos.traslado.base + destinos.exitus.base "
+                f"must be below 100, got {r.admission_pct!r} + {outcome.transfer.base!r} + "
+                f"{outcome.death.base!r}"
+            )
 
 
 def _missing_and_unknown(
@@ -694,7 +925,7 @@ def _check_table(name: str, value: object) -> dict:
 
 def _structure(data: dict) -> list[str]:
     """Every missing or unknown key of the file, reported together."""
-    missing, unknown = _missing_and_unknown("", data, _SECTIONS)
+    missing, unknown = _missing_and_unknown("", data, _SECTIONS, OUTCOME_SECTIONS)
 
     def add(found: tuple[list[str], list[str]]) -> None:
         missing.extend(found[0])
@@ -724,7 +955,7 @@ def _structure(data: dict) -> list[str]:
                         f"motivos.{key}",
                         table,
                         _REASON_REQUIRED,
-                        (*_REASON_FACTORS, *_REASON_OPTIONAL),
+                        (*_REASON_FACTORS, *_REASON_OPTIONAL, REASON_ADMISSION_KEY),
                     )
                 )
                 if "gravedad" in table:
@@ -765,7 +996,49 @@ def _structure(data: dict) -> list[str]:
                             sub, _check_table(sub, table["alterado"]), _ABNORMAL_KEYS
                         )
                     )
-    return _problems(missing, unknown)
+    if "abandono" in data:
+        add(
+            _missing_and_unknown(
+                "abandono",
+                _check_table("abandono", data["abandono"]),
+                _ABANDONMENT_REQUIRED,
+                _ABANDONMENT_OPTIONAL,
+            )
+        )
+    if "destinos" in data:
+        destinations = _check_table("destinos", data["destinos"])
+        add(_missing_and_unknown("destinos", destinations, _OUTCOME_DESTINATIONS))
+        for key in _OUTCOME_DESTINATIONS:
+            if key in destinations:
+                prefix = f"destinos.{key}"
+                required = [*_ODDS_REQUIRED, *(() if key == "ingreso" else (_BASE_KEY,))]
+                add(
+                    _missing_and_unknown(
+                        prefix, _check_table(prefix, destinations[key]), required, _ODDS_OPTIONAL
+                    )
+                )
+    problems = _problems(missing, unknown)
+    block = _block_missing(data)
+    if block:
+        problems.append(_block_message(block))
+    return problems
+
+
+def _block_missing(data: dict) -> list[str]:
+    """Missing parts of a milestone 5 block that has some part; empty if whole or absent."""
+    reasons = data.get("motivos")
+    reasons = reasons if isinstance(reasons, dict) else {}
+    with_admission = {
+        key
+        for key in REASON_KEYS
+        if isinstance(reasons.get(key), dict) and REASON_ADMISSION_KEY in reasons[key]
+    }
+    sections = [s for s in OUTCOME_SECTIONS if s in data]
+    if not sections and not with_admission:
+        return []
+    return [s for s in OUTCOME_SECTIONS if s not in data] + [
+        f"motivos.{key}.{REASON_ADMISSION_KEY}" for key in REASON_KEYS if key not in with_admission
+    ]
 
 
 def load_profiles(path: str | Path) -> ClinicalProfiles:
@@ -842,13 +1115,42 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
                     if toml_key in table
                 },
                 **({"duration_factor": table["duracion"]} if "duracion" in table else {}),
+                **(
+                    {"admission_pct": table[REASON_ADMISSION_KEY]}
+                    if REASON_ADMISSION_KEY in table
+                    else {}
+                ),
             )
         except ValueError as error:
             if str(error).startswith(str(path)):
                 raise
             raise ValueError(f"{path}: {error}") from None
 
-    return ClinicalProfiles(
+    def outcome() -> OutcomeProfile | None:
+        if "abandono" not in data:
+            return None
+        table = data["abandono"]
+        try:
+            abandonment = Abandonment(
+                **{field: table[k] for k, field in _ABANDONMENT_REQUIRED.items()},
+                **{field: table[k] for k, field in _ABANDONMENT_OPTIONAL.items() if k in table},
+            )
+            odds = []
+            for key in _OUTCOME_DESTINATIONS:
+                t = data["destinos"][key]
+                odds.append(
+                    DestinationOdds(
+                        key=key,
+                        **{field: t[k] for k, field in _ODDS_REQUIRED.items()},
+                        **{field: t[k] for k, field in _ODDS_OPTIONAL.items() if k in t},
+                        **({"base": t[_BASE_KEY]} if _BASE_KEY in t else {}),
+                    )
+                )
+            return OutcomeProfile(abandonment, *odds)
+        except ValueError as error:
+            raise ValueError(f"{path}: {error}") from None
+
+    values = dict(
         shift_band_starts=data["contexto"]["franjas"],
         population=Population(
             **{field: population[key] for key, field in _POPULATION_REQUIRED.items()},
@@ -864,4 +1166,10 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
             **{field: data["duraciones"][k] for k, field in _DURATION_KEYS.items()}
         ),
         diagnostic_tests=tuple(diagnostic_test(key) for key in TEST_TYPES),
+        outcome=outcome(),
     )
+    try:
+        return ClinicalProfiles(**values)
+    except ValueError as error:
+        # The checks across tables, such as the milestone 5 block, with the path.
+        raise ValueError(f"{path}: {error}") from None

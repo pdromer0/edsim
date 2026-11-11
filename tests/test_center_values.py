@@ -104,7 +104,8 @@ def test_loader_keeps_grouped_structure_messages(tmp_path):
     with pytest.raises(ValueError) as caught:
         load_center(path)
     assert str(caught.value) == (
-        f"{path}: missing keys: destino, recursos.boxes, "
+        f"{path}: missing keys: destino (provisional and milestone 4 models) or camas "
+        "(milestone 5 model), recursos.boxes, "
         "recursos.enfermeria_triaje, recursos.medicos, turnos; "
         "unknown keys: recursos.boxs"
     )
@@ -167,7 +168,8 @@ def test_literal_root_key_does_not_supply_a_missing_table(tmp_path):
     with pytest.raises(ValueError) as caught:
         load_center(path)
     assert str(caught.value) == (
-        f"{path}: missing keys: destino; unknown keys: destino.probabilidad_ingreso"
+        f"{path}: missing keys: destino (provisional and milestone 4 models) or camas "
+        "(milestone 5 model); unknown keys: destino.probabilidad_ingreso"
     )
 
 

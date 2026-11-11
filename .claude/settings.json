@@ -1,6 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "outputStyle": "Explanatory",
+  "worktree": {
+    "baseRef": "head"
+  },
   "permissions": {
     "defaultMode": "plan",
     "allow": [
@@ -51,7 +54,9 @@
       "Bash(docker compose ps*)",
       "Bash(docker compose logs *)",
       "Bash(uv sync --all-packages --extra kafka)",
-      "Bash(git branch -D *)"
+      "Bash(git branch -D *)",
+      "Bash(uv sync --offline --frozen --all-packages)",
+      "Bash(uv run python -c 'import edsim; print(edsim.__file__)')"
     ],
     "ask": [
       "Edit(/config/**)",

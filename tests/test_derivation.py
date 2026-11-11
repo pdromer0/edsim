@@ -28,8 +28,9 @@ FILES = pytest.mark.parametrize(
     [
         (ROOT / "tests/data/perfiles_ejemplo.toml", ROOT / "tests/data/llegadas_ejemplo.toml"),
         (ROOT / "config/perfiles.toml", ROOT / "config/llegadas.toml"),
+        (ROOT / "tests/data/perfiles_h5_ejemplo.toml", ROOT / "tests/data/llegadas_ejemplo.toml"),
     ],
-    ids=["ejemplo", "real"],
+    ids=["ejemplo", "real", "h5"],
 )
 PARADA = REASON_KEYS.index("parada")
 
@@ -41,7 +42,11 @@ def real():
 
 @FILES
 def test_la_cascada_reproduce_lo_escrito(profiles_path, arrivals_path):
-    """Pesos, ruido, sesgo y umbrales escritos son la cascada redondeada a 3 decimales."""
+    """Pesos, ruido, sesgo y umbrales escritos son la cascada redondeada a 3 decimales.
+
+    Con el bloque del hito 5, también los 17 ingreso y las bases del traslado y el exitus,
+    con 4 cifras significativas (tarea 5.2).
+    """
     profiles = load_profiles(profiles_path)
     derived = derive_written_values(profiles, load_profile(arrivals_path))
 
@@ -49,6 +54,15 @@ def test_la_cascada_reproduce_lo_escrito(profiles_path, arrivals_path):
     assert list(derived.base_weights) == list(REASON_KEYS)
     assert (derived.noise, derived.bias) == (profiles.triage.noise, profiles.triage.bias)
     assert derived.thresholds == profiles.triage.thresholds
+    if profiles.outcome is None:
+        assert derived.destinations is None
+    else:
+        bases = derived.destinations
+        assert dict(bases.admission) == {r.key: r.admission_pct for r in profiles.reasons}
+        assert (bases.transfer, bases.death) == (
+            profiles.outcome.transfer.base,
+            profiles.outcome.death.base,
+        )
 
 
 def test_la_cascada_no_depende_de_lo_ya_derivado(real):

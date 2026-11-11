@@ -14,3 +14,7 @@ resultados/
 
 # Sellos de los tests rápidos (scripts/tests-rapidos.sh): estado local, no se versionan
 .cache/edsim/
+
+# Worktrees de Claude Code (subagente mutante): nunca se versionan, y ruff no revisa
+# su código mutado si alguno se queda en disco
+.claude/worktrees/
