@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from functools import partial
 
 import simpy
+from simpy.events import EventPriority
 from simpy.resources.resource import Preempted
 
 from edsim.engine.clinical import PatientDraws, classified_at_the_door
@@ -55,6 +56,38 @@ from edsim.engine.resources import (
 )
 
 Emit = Callable[..., object]
+
+LATE = EventPriority(2)
+"""Priority of a deadline: after every ``URGENT`` (0) and ``NORMAL`` (1) event of its instant.
+
+SimPy orders the events of one instant by priority and then by creation
+(``Environment.schedule`` pushes ``(time, priority, eid, event)``). A release
+grants the next request in a chain of ``NORMAL`` events created during the
+instant, so a deadline of priority 2 is processed only when that chain is over.
+"""
+
+
+class Deadline(simpy.Event):
+    """An event that SimPy processes ``delay`` minutes from now, with ``LATE`` priority.
+
+    The same as a ``simpy.Timeout`` but for the priority: it is triggered from
+    its creation (``triggered`` is true at once) and only ``processed`` says
+    that its instant has come. The patience of a patient is one (docs/specs/
+    hito-5.md, "Reglas del abandono"): if a resource is granted in the instant
+    the deadline is due, the grant comes first and the patient stays.
+
+    Raises:
+        ValueError: If ``delay`` is negative.
+    """
+
+    def __init__(self, env: simpy.Environment, delay: float) -> None:
+        if delay < 0:
+            raise ValueError(f"negative delay {delay!r}")
+        super().__init__(env)
+        # As simpy.Timeout does in its __init__: the value is set on creation.
+        self._ok = True
+        self._value = None
+        env.schedule(self, LATE, delay)
 
 
 def _extra(draws: PatientDraws, event_type: str) -> dict[str, object]:
