@@ -13,13 +13,17 @@ comprueban también lo que la tabla saca del log. Los valores, del plan de la 5.
 A3): los pacientes llegan en 0 y se clasifican de 0 a 5, y el reloj C cuenta desde el 5.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from clinical_factory import hand_truth
 from v4_logs import HandLog
 
-from edsim.engine.analysis import episode_table
+from edsim.engine.analysis import analyze_run, episode_table
+from edsim.engine.center import load_center
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
+from edsim.engine.report import format_run_summary
 from edsim.engine.targets import (
     compliance_cases,
     manchester_compliance,
@@ -194,3 +198,18 @@ def test_el_pretriaje_cuenta_a_quien_se_va_despues_del_triaje():
     level_4 = p.groups.index(4)
     assert p.n[0, level_4] == 3
     assert np.array_equal(p.n_within[0], p.n[0])  # pretriaje 0: todos dentro
+
+
+# --- El resumen de la CLI ---------------------------------------------------------------
+
+
+def test_un_nivel_sin_atendidos_y_con_un_incumplimiento_seguro(tmp_path):
+    # Un único paciente de nivel 4: se clasifica de 0 a 5 y se va en 200 esperando box
+    # (C = 195 ≥ 120). Nadie del nivel ve al médico, pero su cumplimiento existe: 0 % y el
+    # día fuera, no «—».
+    log = HandLog().staff(0.0, "enfermeria_triaje", 0, 1).staff(0.0, "medicos", 0, 1)
+    log.arrive(1, 0.0).triage(1, 0.0, 5.0, 4).leave(1, 200.0, "box")
+    center = load_center(Path(__file__).parent / "data" / "centro_h5_ejemplo.toml")
+    analysis = analyze_run(log.events(), center, 1, 0)
+    line = next(x for x in format_run_summary(analysis, []).splitlines() if x.startswith("nivel 4"))
+    assert line.split()[2:] == ["0", "—", "—", "—", "120", "0.0", "%", "1", "de", "1"]

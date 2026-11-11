@@ -55,6 +55,7 @@ from edsim.engine.targets import (
     PRETRIAGE_LONG_WAIT,
     PRETRIAGE_MAX_WAIT,
     PRETRIAGE_TARGET,
+    Compliance,
     clock_quantiles,
     manchester_compliance,
     pretriage,
@@ -268,10 +269,11 @@ def _share(value: float) -> str:
     return f"{100 * value:.1f} %"
 
 
-def _clock_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
+def _clock_lines(
+    table: Sequence, first_day: int, end_day: int, compliance: Compliance
+) -> list[str]:
     """Median / p90 of the three clocks by level, with the Manchester compliance (C)."""
     clocks = clock_quantiles(table, first_day, end_day)
-    compliance = manchester_compliance(table, first_day, end_day)
     lines = [
         "Relojes hasta el médico por nivel, en minutos (mediana / p90)",
         "A desde la llegada, B desde el inicio del triaje, C desde la clasificación",
@@ -287,7 +289,9 @@ def _clock_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
             "—" if c.median[name] is None else f"{c.median[name]:.1f} / {c.p90[name]:.1f}"
             for name in CLOCKS
         ]
-        if c.level == 1 or not c.n:
+        # With the abandonment, a level may count in the compliance (who left after its
+        # maximum) without anybody seen: its cells follow the compliance, not the clocks.
+        if c.level == 1 or not compliance.n[:, k].sum():
             within = out = "—"
         else:
             within = _share(compliance.pooled_within[k])
@@ -388,10 +392,11 @@ def format_run_summary(
     lines.append(_level_row("total", m.overall))
 
     first_day, end_day = int(m.start // MINUTES_PER_DAY), int(m.end // MINUTES_PER_DAY)
-    lines += ["", *_clock_lines(table, first_day, end_day)]
+    compliance = manchester_compliance(table, first_day, end_day)
+    lines += ["", *_clock_lines(table, first_day, end_day, compliance)]
     lines += ["", *_pretriage_lines(table, first_day, end_day)]
     if outcome is not None:
-        lines += ["", *_outcome_lines(outcome, table, first_day, end_day)]
+        lines += ["", *_outcome_lines(outcome, compliance)]
 
     lines += [
         "",
@@ -436,7 +441,7 @@ def _over(o: OverThreshold, label: str) -> str:
     return f"{label} {o.over} de {o.known} ({_maybe_share(o.share)}{unknown})"
 
 
-def _outcome_lines(outcome: WindowOutcome, table: Sequence, first_day: int, end_day: int) -> list:
+def _outcome_lines(outcome: WindowOutcome, compliance: Compliance) -> list:
     """The section of the outcome of milestone 5 (task 5.4): abandonment, censored
     compliance, destinations, wait for a bed, stay by destination and boxes blocked."""
     left, destinations, bed, stay = (
@@ -445,7 +450,6 @@ def _outcome_lines(outcome: WindowOutcome, table: Sequence, first_day: int, end_
         outcome.bed_wait,
         outcome.stay,
     )
-    compliance = manchester_compliance(table, first_day, end_day)
     sites = ", ".join(f"{_WAIT_LABELS[w]} {n}" for w, n in left.by_wait.items())
     lines = [
         "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
