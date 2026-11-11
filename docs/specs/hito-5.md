@@ -2,7 +2,7 @@
 
 > **Estado:** en curso. Especificación aprobada el 10 de noviembre de 2026; el original está en este repositorio.
 
-Al terminar el hito 5, cada paciente de EDsim termina como en un hospital de verdad: puede irse sin ser visto si su espera supera su paciencia, sale con uno de cuatro destinos (alta, ingreso, traslado o exitus) que dependen de su gravedad real, su edad, su motivo y sus pruebas, y si ingresa espera la cama dentro de su box, que queda bloqueado. Es una pestaña didáctica, con el formato de la del hito 6: cada pieza explica para qué sirve, cómo funciona, cómo se usa en EDsim y cómo aprender más. Las decisiones son candidatas (H5-n) y su número definitivo será 66 + n (H5-1 = 67, H5-13 = 79); la tarea de cierre escribe sus ADR 0067 a 0079. La sesión conceptual fue el 9 y el 10 de noviembre de 2026, y la implementación empieza con la etiqueta `v0.6-hito6`.
+Al terminar el hito 5, cada paciente de EDsim termina como en un hospital de verdad: puede irse sin ser visto si su espera supera su paciencia, sale con uno de cuatro destinos (alta, ingreso, traslado o exitus) que dependen de su gravedad real, su edad, su motivo y sus pruebas, y si ingresa espera la cama dentro de su box, que queda bloqueado. Es una especificación didáctica, con el formato de la del hito 6: cada pieza explica para qué sirve, cómo funciona, cómo se usa en EDsim y cómo aprender más. Las decisiones son candidatas (H5-n) y su número definitivo será 66 + n (H5-1 = 67, H5-13 = 79); la tarea de cierre escribe sus ADR 0067 a 0079. La sesión conceptual fue el 9 y el 10 de noviembre de 2026, y la implementación empieza con la etiqueta `v0.6-hito6`.
 
 ## Objetivo y alcance
 
@@ -123,7 +123,7 @@ Con n el nivel real, f\_b el factor de su banda de edad (vale 1 si no se escribe
 
 No se va durante el triaje ni durante una valoración. El nivel 1 asignado nunca abandona: se clasifica en la puerta y va directo al box. Irse después de ver al médico es un alta voluntaria, de la v2.
 
-**El reloj de la paciencia empieza en la llegada**, no en el triaje, porque la gente cuenta desde que cruza la puerta. En SimPy, cada espera pasa a ser «el recurso o la paciencia, lo que llegue antes»: una petición y un `timeout` hasta llegada + paciencia, unidos con `|` (un evento de condición). **Empate:** si la paciencia vence en el mismo instante en que le conceden el recurso, el paciente se queda. Es una regla nuestra, no del orden interno de SimPy, y el plan de la 5.1 comprueba en el código de SimPy 4.1.2 cómo garantizarla.
+**El reloj de la paciencia empieza en la llegada**, no en el triaje, porque la gente cuenta desde que cruza la puerta. En SimPy, cada espera pasa a ser «el recurso o la paciencia, lo que llegue antes»: una petición y un `timeout` hasta llegada + paciencia, unidos con `|` (un evento de condición). **Empate:** si la paciencia vence en el mismo instante en que le conceden el recurso, el paciente se queda. Es una regla nuestra, no del orden interno de SimPy, y la 5.1 la garantiza con un plazo que SimPy procesa al final de su instante, después de cualquier concesión de ese instante (ver «Reglas del abandono»).
 
 **Lo que se observa no es la paciencia.** Los estudios dan cuánto esperaron los que se fueron: una mediana de 70 min en Florencia y de 103 min en Ontario, el doble de lo que esperaron los que se quedaron (51 min). Pero solo se van los que tenían poca paciencia: la de todos es mayor. Por eso la paciencia no se copia de un estudio, sino que se calibra para que salga el porcentaje de abandono observado (pieza 5).
 
@@ -196,7 +196,7 @@ Los odds ratios multiplican odds, no suman puntos. Por eso subir el ingreso baja
 ### Para aprender más
 
 - Agresti, *An Introduction to Categorical Data Analysis*, el capítulo de modelos logit para respuestas multinomiales: la parametrización con categoría de referencia de esta pieza.
-- El truco de Gumbel-max: la pieza de motivos de la pestaña del hito 4 y el notebook 04.
+- El truco de Gumbel-max: la sección [«Motivos de consulta»](hito-4.md#motivos-de-consulta) de la especificación del hito 4 y el notebook 04.
 - Ejercicio propuesto: con el notebook 05, ajustar una regresión logística de ingreso con lo que ve el hospital (nivel asignado, edad, motivo, pruebas) y comparar sus coeficientes con los odds ratios verdaderos del TOML.
 
 ## Pieza 3 — La espera de cama y los boxes bloqueados
@@ -357,7 +357,7 @@ Si los boxes pasan a ser el cuello de botella por la espera de cama, siguen fijo
 
 ### Para aprender más
 
-- La sección «Calibración» de la pestaña del hito 4 y el [registro de calibración](https://github.com/pdromer0/edsim/blob/main/docs/calibracion/registro.md): las reglas contra el sobreajuste y la identificabilidad.
+- La sección [«Calibración»](hito-4.md#calibración) de la especificación del hito 4 y el [registro de calibración](https://github.com/pdromer0/edsim/blob/main/docs/calibracion/registro.md): las reglas contra el sobreajuste y la identificabilidad.
 - Ejercicio propuesto: dibujar el abandono frente al factor de paciencia con dos plantillas de médicos; las dos curvas muestran el acoplamiento.
 
 ## Pieza 6 — Versiones de un modelo
@@ -400,7 +400,7 @@ Un bloque a medias (`[abandono]` sin `[destinos]`, `ingreso` en algunos motivos 
 
 ### Para aprender más
 
-- La pieza 4 de la pestaña del hito 6 (contratos y versiones del catálogo), con la compatibilidad hacia atrás y hacia delante.
+- La [pieza 4](hito-6.md#pieza-4--contratos-json-schema-y-versiones-del-catálogo) de la especificación del hito 6 (contratos y versiones del catálogo), con la compatibilidad hacia atrás y hacia delante.
 - *Designing Data-Intensive Applications*, el capítulo de codificación y evolución.
 - Ejercicio propuesto: validar una línea de un log de la versión 4 contra el esquema de la versión 3 y leer el error.
 
@@ -446,7 +446,7 @@ El ground truth guarda todo lo que se sorteó para cada paciente, también lo qu
 ### Para aprender más
 
 - Inferencia causal con resultados potenciales: Hernán y Robins, *Causal Inference: What If* (libro gratuito en la web de Harvard), capítulo 1. El contrafactual de esta pieza es exactamente un «resultado potencial» que en datos reales nunca se observa.
-- El caso de uso «Inferencia causal con respuesta conocida» de la pestaña de diseño.
+- El caso de uso «Inferencia causal con respuesta conocida» de los [casos de uso](../diseno.md#casos-de-uso) del diseño.
 - Ejercicio propuesto: con el notebook 05, comparar el porcentaje de ingreso de los que se quedaron con el de los que se fueron (con su destino contrafactual), por nivel asignado.
 
 ## Especificación: catálogo v4 y máquina de estados
@@ -479,20 +479,21 @@ Como hoy, un evento que libera un box se emite antes de devolverlo: quien lo rec
 ### Reglas del abandono (H5-3, H5-4)
 
 - **Visto** = tiene un `assessment_started` de tipo `inicial`. Antes, el paciente puede irse; después, nunca, aunque luego espere en la sala de resultados, en un desalojo o en la espera de cama.
-- **Plazo:** llegada + paciencia, en minutos de simulación. Cada espera de enfermera, de box o de médico antes de ser visto es «el recurso o el plazo, lo que llegue antes». Al vencer el plazo se cancela la petición (o se libera, si ya estaba concedida en ese instante) y se emite `patient_left_wbs` con el sitio:
+- **Plazo:** llegada + paciencia, en minutos de simulación. Cada espera de enfermera, de box o de médico antes de ser visto es «el recurso o el plazo, lo que llegue antes». Al vencer el plazo se cancela la petición pendiente y se emite `patient_left_wbs` con el sitio; si el paciente se va desde un box (sitio `medico`), libera ese box, el que ya tenía. Por el empate, nunca se va con una petición recién concedida. Los sitios:
   - `triaje`: sin `triage_started`;
   - `box`: triado y sin box, también tras un desalojo antes de ser visto;
   - `medico`: en un box, esperando la valoración inicial.
-- **Empate:** si el plazo vence en el mismo instante en que se le concede el recurso, se queda.
+- **Empate:** si el plazo vence en el mismo instante en que se le concede el recurso, se queda. En SimPy 4.1.2 el orden de los eventos de un instante es la prioridad y después el orden de creación (`Environment.schedule`), así que un `timeout` normal haría depender el empate de quién se creó antes; el plazo es un evento de prioridad propia, posterior a la normal, que se procesa después de todo lo demás de su instante.
+- **Plazo vencido durante el triaje** (ajuste de la 5.1, decisión 70): nadie abandona en el triaje, pero el plazo sigue corriendo. Si vence durante él, al acabar el triaje el paciente se va en ese mismo instante, con el sitio de la espera en que esté (`box`, o `medico` si recibe box pero no médico), salvo que reciba box y médico en ese instante. El abandono ocurre así en max(llegada + paciencia, fin del triaje).
 - **Nunca abandona** el nivel 1 asignado (puerta y box con desalojo) ni nadie durante el triaje o una valoración.
 - La reserva de capacidad por turnos (`shifts.py`) no cambia: un abandono solo quita una petición de la cola.
 
 ### Reglas de la espera de cama (H5-6, H5-7)
 
-- Con la decisión de ingreso, el paciente pide cama y un proceso aparte, como `_lab`, espera `base × factor_turno(t) × factor_estacion`, con t el instante de `bed_requested`, el turno de `[turnos]` del centro en t y la estación de la fecha de t.
+- Con la decisión de ingreso, el paciente pide cama y espera un `timeout` propio de `base × factor_turno(t) × factor_estacion`, con t el instante de `bed_requested`, el turno de `[turnos]` del centro en t y la estación de la fecha de t.
 - Mientras espera, el paciente conserva su box y su petición con su clave de siempre, `priority_key(nivel, llegada)`, y no usa médico.
 - **Desalojo:** si un nivel 1 lo desaloja (la regla de `should_displace` no cambia), emite `patient_displaced`, el box pasa al nivel 1 y el paciente espera en el pasillo, sin recurso y sin volver a pedir box. Un ingresado de nivel 1 nunca es desalojado.
-- Al acabar la espera: `bed_assigned` y `patient_departed` con destino `ingreso`, esté en el box o en el pasillo.
+- Al acabar la espera: `bed_assigned` y `patient_departed` con destino `ingreso`, esté en el box o en el pasillo. Los emite el paciente en el mismo paso de SimPy (ajuste de la 5.1, en lugar de un proceso aparte como `_lab`): entre los dos no se cuela ningún evento, ni el desalojo de un nivel 1 que llegue en el instante exacto de la cama. El `timeout` de la cama sigue en la cola durante el desalojo, y el paciente lo vuelve a esperar en el pasillo.
 
 ### Invariantes
 
@@ -504,7 +505,7 @@ Nuevas o ampliadas, en `CHECKS`, solo con logs de la versión 4 salvo que se dig
 | `conservation` | Llegadas = salidas + abandonos + dentro; un solo evento terminal por episodio |
 | `time` | Ningún evento del episodio después de su evento terminal |
 | `capacity` y `displacement` | El box se libera también con un `patient_left_wbs` desde el box y con el desalojo de un ingresado; un ingresado desalojado no vuelve a tener `box_assigned` |
-| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en llegada + paciencia (tolerancia 1e-8) y nadie es visto después de ese plazo |
+| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en max(llegada + paciencia, fin del triaje) (tolerancia 1e-8) y nadie es visto después de ese plazo, salvo quien, tras un triaje con el plazo vencido, recibe box y médico en el instante en que lo acaba |
 | `outcome` (nueva) | `bed_requested` solo tras una decisión de ingreso y en su instante; `bed_assigned` y la salida en el mismo instante; el destino de la salida es el de la decisión; con el ground truth, la decisión es el destino sorteado; con el ground truth y el centro, la espera de cama es base × factores (tolerancia 1e-8) |
 | `door`, `schema_version`, `clinical`, `results_wait` | Igual que en la versión 3; la 4 entra en las versiones con payloads clínicos y en `results_wait` |
 
@@ -722,6 +723,10 @@ La validación del hito tiene tres capas: escenarios del motor a mano, con pacie
 
 Variante: con la paciencia de Q3 en 42, se va en 44 con `espera: "medico"`. Variante del sitio `box`: con un solo box, Q2 se va esperando box en 26.
 
+**Escenario T: el plazo vence durante el triaje** (ajuste de la 5.1). Una enfermera y un médico. T0 llega en 0 (nivel 3), triaje 0–55, box 1 en 55 y valoración 55–115. T1 llega en 1 (nivel 5, paciencia 60, plazo 61), espera enfermera hasta 55 y se tria de 55 a 62: el plazo vence en 61, durante el triaje. Con un box, en 62 emite `patient_left_wbs` con `espera: "box"`. Con dos boxes, recibe el box 2 en 62 y, sin médico, emite `patient_left_wbs` con `espera: "medico"` en 62 y libera el box 2. Con dos boxes y dos médicos, recibe los dos en 62 y se queda.
+
+**Escenario X: desalojo antes de ser visto** (ajuste de la 5.1). Una enfermera, dos boxes y un médico; triaje de 5. X1 llega en 0 (nivel 3): box 1 en 5 y valoración 5–45. X2 llega en 1 (nivel 4, paciencia 30, plazo 31): triaje 5–10, box 2 en 10 y espera médico. X3 llega en 20 (nivel 1) y desaloja a X2 del box 2; X2, sin ser vista, espera box y en 31 emite `patient_left_wbs` con `espera: "box"`, sin box que liberar. X3 valora 45–55. Variante X-visto: con dos médicos, X2 (paciencia 15, valoración 30) es vista en 10; X3 la interrumpe en 20 y valora 20–30; X2 recibe el box 2 en 30, reanuda la valoración 30–50 y no abandona, aunque su plazo venció en 16.
+
 **Escenario C: la espera de cama y el pasillo.** Una enfermera, un box y un médico; el minuto 0 son las 0:00 (noche, factor 1,5 con `factor_turno = [0.8, 1.0, 1.5]`).
 
 | Paciente | Llega | Nivel | Qué pasa |
@@ -771,6 +776,7 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 | V6 | 5.1 | El ingresado desalojado vuelve a pedir box | Falla el escenario C (R1 recibe box en 80, antes que R2) |
 | V7 | 5.1 | El factor de turno con la hora de la llegada | Falla la variante del turno (150 en vez de 80) |
 | V8 | 5.1 | `TERMINAL_EVENTS[4]` sin `patient_left_wbs` | Falla el censo a mano (EP-000004 dentro) |
+| V21 | 5.1 | Con el plazo vencido en el triaje, ya no abandona | Fallan el escenario T (T1 recibe box y médico en 115) y su variante del médico |
 | V9 | 5.2 | Paciencia por nivel asignado | Falla `check_patience` por nivel real |
 | V10 | 5.2 | Destino con G + ε en lugar de G | Falla `check_destinations` por quintiles de G |
 | V11 | 5.2 | Alteradas como «alguna» (0 o 1) en lugar de su número | Falla la fila «G = 1, 2 alteradas»: 22,18 % en vez de 29,94 % |
@@ -792,14 +798,14 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 
 ## Decisiones del hito
 
-Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y el 10 de noviembre de 2026, cada una con la recomendación de Claude. Su número definitivo es 66 + n; la tarea 5.8 escribe sus ADR 0067 a 0079 con lo que cambió al implementarlas y las añade al registro de la pestaña de diseño.
+Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y el 10 de noviembre de 2026, cada una con la recomendación de Claude. Su número definitivo es 66 + n; la tarea 5.8 escribe sus ADR 0067 a 0079 con lo que cambió al implementarlas y las añade al [registro de decisiones](../diseno.md#registro-de-decisiones-y-preguntas-abiertas) de `docs/diseno.md`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
 | 67 (H5-1) | El ruido de triaje que crece con la saturación va a la v2, junto al re-triaje | La evidencia es mixta y no da un coeficiente: no se calibraría, se decidiría; cambia cuándo se fija el nivel; el hito se queda con los dos bucles que tienen dato |
 | 68 (H5-2) | Bloque del hito 5 de todo o nada en `perfiles.toml` y `centro.toml`; sin él, el modelo clínico del hito 4 byte a byte (versión 3); con él, el del hito 5 (versión 4); un bloque a medias es un error | Lo antiguo se lee con su significado: las huellas, las ejecuciones guardadas y las variantes siguen valiendo; es la regla de `espera_resultados_fuera` y del bloque provisional |
 | 69 (H5-3) | Abandono solo antes del primer médico, desde tres sitios (`espera`: triaje, box, médico), con el box liberado; el nivel 1 asignado nunca abandona; el alta voluntaria va a la v2 | SEMES mide las fugas antes y después del triaje; con los médicos de cuello de botella, la cola está dentro del box; irse después de ser visto es mucho más raro |
-| 70 (H5-4) | Paciencia lognormal `[mediana, p90]` por nivel real, con un factor opcional por banda de edad, sorteada en el flujo 8 y contada desde la llegada; en el empate, el paciente se queda | Los que se van son los leves y los jóvenes; el nivel real existe antes del triaje; la forma de todas las duraciones de EDsim; números comunes |
+| 70 (H5-4) | Paciencia lognormal `[mediana, p90]` por nivel real, con un factor opcional por banda de edad, sorteada en el flujo 8 y contada desde la llegada; en el empate, el paciente se queda; con el plazo vencido durante el triaje, se va al acabarlo salvo que reciba box y médico en ese instante (ajuste de la 5.1) | Los que se van son los leves y los jóvenes; el nivel real existe antes del triaje; la forma de todas las duraciones de EDsim; números comunes |
 | 71 (H5-5) | Cuatro destinos (alta, ingreso, traslado, exitus; la UCI dentro del ingreso), con una logística multinomial sobre G, mayor, el motivo (en el ingreso) y el número de pruebas alteradas, sorteada con Gumbel-max en el flujo 4; parámetros en `perfiles.toml` y `[destino]` fuera de `config/centro.toml` | El médico atiende la gravedad real; el resultado de las pruebas por fin tiene efecto; la UCI necesitaría camas propias sin datos (v2) |
 | 72 (H5-6) | Espera de cama lognormal `[mediana, p90]` por un factor del turno del pedido (y uno opcional de estación), en `[camas]` de `centro.toml`, con su z en el flujo 9 | Boarding simple y calibrable; el patrón de la respuesta de las pruebas; las camas finitas pedirían semanas de calentamiento (v2) |
 | 73 (H5-7) | Catálogo versión 4: `patient_left_wbs`, `bed_requested`, `bed_assigned` y cuatro destinos; `TERMINAL_EVENTS[4]` con el abandono; traslado sin espera; un ingresado desalojado espera la cama en el pasillo | Un evento por hecho; el censo del directo funciona sin tocarlo; un atendido no compite por un box con quien no lo está |
@@ -816,14 +822,14 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 | Tarea | Contenido | Quién | Rama | `@codex review` |
 | --- | --- | --- | --- | --- |
-| 5.1 | Primer commit: exportación de esta pestaña a `docs/specs/hito-5.md` y «Hito en curso» de `AGENTS.md`. Motor: catálogo v4 y su esquema, `TERMINAL_EVENTS[4]`, `PatientDraws.outcome`, abandono en tres sitios con el empate, cuatro destinos, espera de cama en el box y en el pasillo, invariantes nuevas; escenarios M y C y el censo v4, todo con pacientes a mano, sin perfiles. Huellas de las versiones 1 a 3 intactas | Claude Code | `feat/h5-motor` | Sí (motor) |
+| 5.1 | Motor: catálogo v4 y su esquema, `TERMINAL_EVENTS[4]`, `PatientDraws.outcome`, abandono en tres sitios con el empate, cuatro destinos, espera de cama en el box y en el pasillo, invariantes nuevas; escenarios M y C y el censo v4, todo con pacientes a mano, sin perfiles. Huellas de las versiones 1 a 3 intactas | Claude Code | `feat/h5-motor` | Sí (motor) |
 | 5.2 | `perfiles.toml` (`[abandono]`, `[destinos]`, `ingreso` por motivo) y `centro.toml` (`[camas]`, `[destino]` opcional) con sus reglas; `profiles/outcome.py` exacto; derivados escritos en la cascada; `OutcomeSampler`; `check_patience` y `check_destinations`; valores orientativos del destino. Sin el motor | Claude Code | `feat/h5-perfiles` | No |
 | 5.3 | El modelo del hito 5 en el motor, elegido por los bloques; `child_streams(seed, 10)`; ground truth del desenlace, CSV y `run.json`; CLI (`motor simular`, `perfiles validar`); `tests/data` del hito 5 con sus huellas; las invariantes con el ground truth. `config/` sin los bloques | Claude Code | `feat/h5-muestreador` | Sí (motor y formatos) |
 | 5.4 | Núcleo de la app en `runs/`: métricas con censura, indicadores nuevos, filtros, `_location` con «esperando cama» y pasillo, «ver la verdad». Directo: «directo = batch» v4, consumidor y `LiveTracker`. `scripts/tests-integracion.sh` antes del push | Claude Code | `feat/h5-app-nucleo` | No |
 | 5.5 | Páginas de la app (H5-12) y pendientes pequeños del hito 4, probadas con ejecuciones de `tests/data` del hito 5; manual y ayudas «¿Qué estoy viendo?»; etiqueta `app-v0.3.0` | Codex | `feat/app-h5-paginas` | No |
 | 5.6 | Calibración (H5-9): objetivos nuevos, mandos de paciencia y espera de cama, medición de la plantilla, cumplidor y registro; escribe los bloques en `config/`, así que el modelo por defecto pasa a ser el del hito 5; semana del 19 al 25 de enero | Claude Code | `feat/h5-calibracion` | Sí (cambia el modelo por defecto) |
 | 5.7 | Notebook `05_cierre_del_flujo.ipynb`: abandono frente a saturación, destinos frente a G, boxes bloqueados y ley de Little, la semana de enero antes y después, el contrafactual y Kaplan–Meier de la paciencia; modo rápido para el CI | Claude Code | `feat/h5-notebook` | No |
-| 5.8 | Cierre: ADR 0067 a 0079, diario `docs/diario/hito-5.md` con «Reflexiones de Pedro» vacía, exportación de esta pestaña, ajustes de la pestaña de diseño (catálogo de eventos, objetivos, hoja de ruta, registro de decisiones) con el visto bueno de Pedro, README y `AGENTS.md`. Pedro crea `v0.5-hito5` | Claude Code | `docs/h5-cierre` | No |
+| 5.8 | Cierre: ADR 0067 a 0079, diario `docs/diario/hito-5.md` con «Reflexiones de Pedro» vacía, ajustes de `docs/diseno.md` (catálogo de eventos, objetivos, hoja de ruta, registro de decisiones) con el visto bueno de Pedro, README y `AGENTS.md`. Pedro crea `v0.5-hito5` | Claude Code | `docs/h5-cierre` | No |
 
 **Por qué este orden.** Primero el motor con pacientes a mano (5.1), donde está la lógica difícil y los escenarios con cada instante calculado; después lo exacto de los perfiles, sin el motor (5.2); después se juntan (5.3), como en el hito 4 (4.2 a 4.4 antes de la 4.5a). La app va antes de la calibración porque la calibración cambia el modelo por defecto, y ese cambio espera a que la app lo soporte (decisión 44): si no, durante la 5.5 los tests de la app correrían contra un modelo que la app aún no sabe mostrar. Partir el modelo y la calibración en PR distintos deja cada uno revisable (lección del hito 4).
 
@@ -836,21 +842,15 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 ## Flujo de git y reparto entre agentes
 
-El flujo es el de los hitos 4 y 6. El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
+El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
 
-En cada tarea:
+Cada tarea sale de su issue de GitHub y sigue el ciclo de [docs/proceso/tarea.md](../proceso/tarea.md): arranque desde el issue y sus comentarios, plan con sus seis apartados (con las predicciones firmes de las versiones incorrectas), un commit por paso lógico con los niveles de tests N1, N2 y N3, revisión adversaria del propio diff, la entrada del anexo de esta especificación en el mismo PR y la fusión, siempre de Pedro. El manual del flujo para personas (tablero, papeles y diagramas) está en [docs/proceso/flujo.md](../proceso/flujo.md).
 
-1. El chat prepara los conceptos y el prompt; Pedro exporta esta pestaña si ha cambiado y la deja sin commitear en `docs/specs/hito-5.md` (primer commit, limpio: 100644, sin la línea de firma, sin realineados).
-2. El agente parte de `main` actualizado (`git switch main && git pull && uv sync --all-packages --extra kafka && git switch -c <rama>`) y arranca en modo `plan`. El plan empieza por «Contexto» y trae las predicciones firmes de las versiones incorrectas.
-3. El chat revisa el plan recalculando las cifras; Pedro aprueba con «Yes, and use auto mode».
-4. Un commit por paso lógico (prefijos `feat`, `test`, `refactor`, `docs`, `chore`; mensajes en español), con ruff y los tests del área tocada en verde antes de cada uno (N1); el hook `Stop` ejecuta la rápida con sello (N2). Antes de cada push, `scripts/tests-completos.sh` (N3) sin contenedores, con sus tiempos en el PR, y, en la 5.4, `scripts/tests-integracion.sh`.
-5. `git push -u origin <rama>` y `gh pr create`, con «Ajustes de la aprobación», medidas, versiones incorrectas (predicción frente a observado) y comprobaciones clínicas.
-6. Pedro escribe `@codex review` en la 5.1, la 5.3 y la 5.6; el chat revisa el PR y los comentarios; Pedro comprueba el CI (`tests`, `notebooks`, `tests-app` y `tests-kafka`) y fusiona con *squash and merge*.
-7. «Cierra, documenta y prepara la siguiente»: sincronizar esta pestaña con `docs/specs/hito-5.md`, escribir el anexo de la tarea y actualizar el traspaso y la nota del hito.
+Lo propio de este hito:
 
-Permisos: los de Claude Code no cambian (los del hito 6 bastan). Siguen denegados `gh pr merge`, el push forzado y el push a `main`.
-
-**Coordinación.** La sesión del hito 5 escribe en esta pestaña, en `claude/hito-5-preparacion.md` y en el traspaso al cerrar cada tarea, releyendo el traspaso antes de escribirlo; los cambios en otras pestañas (diseño, app), con el visto bueno de Pedro.
+- `@codex review` en la 5.1, la 5.3 y la 5.6 (H5-13), las tareas con la etiqueta `critica`.
+- En la 5.4, `scripts/tests-integracion.sh` antes del push, además de la N3.
+- Esta especificación se cambia en el repositorio, en el mismo PR que el código que la cambia; el documento online es un archivo y no se edita.
 
 ## Criterios de aceptación
 
@@ -870,7 +870,7 @@ El hito 5 está cerrado cuando se cumplen todos:
 
 ## Para versiones posteriores
 
-Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo lleva a la hoja de ruta de la pestaña de diseño.
+Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo lleva a la [hoja de ruta](../diseno.md#hoja-de-ruta) de `docs/diseno.md`.
 
 | Qué | Adónde | Nota |
 | --- | --- | --- |
@@ -904,8 +904,75 @@ Consultadas el 9 y el 10 de noviembre de 2026. Las de «para aprender más» est
 | Espera de cama | [*Revista Clínica Española* 2024](https://revclinesp.es/es-congresos-45-congreso-sociedad-espanola-medicina-168-sesion-gestion-clinica-g--8190-influencia-del-tiempo-de-estancia-99510-pdf), [Carballo et al., *Emergencias* 2026](https://revistaemergencias.org/wp-content/uploads/2026/06/5345_ORIGINAL_Carballo_V3.pdf), [TFM del Royo Villanova, 2013](https://zaguan.unizar.es/record/13094/files/TAZ-TFM-2013-1178.pdf) y [Jornadas AES, Valencia 2023](https://www.aes.es/jornadas/docs/presentaciones/OC68_URG-EM_OC_68.pdf) | 22,8 h de estancia de los ingresados en un terciario; 4.064 de 8.439 mayores de 75 años más de 24 h; 5 h 57 min de demora en un comarcal; 68,9 % de más de 6 h y estancia en planta de 6,82 días en Valencia |
 | Triaje y saturación (H5-1) | [Chen et al.](https://nta.web.unc.edu/wp-content/uploads/sites/14577/2021/08/Wanyi-census.pdf) y [revisión en JOHM](https://johm.ubb.ac.id/index.php/home/article/view/16) | Evidencia mixta, sin coeficiente |
 
-**Cálculos propios de esta pestaña.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
+**Cálculos propios de esta especificación.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
 
 ## Anexo: guía de referencia del hito 5
 
 Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión, lecciones y pendientes.
+
+### Tarea 5.1: Motor con pacientes a mano
+
+**Qué se hizo**
+
+PR (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once commits, con las huellas de las versiones 1 a 3 intactas.
+
+- **Especificación:** al ciclo de la P.2 («esta especificación», el «Flujo de git» remite a `docs/proceso/tarea.md`), y los ajustes de la aprobación: el plazo vencido durante el triaje, la cama como `timeout` del propio paciente, los escenarios T, X y X-visto y la V21.
+- **Catálogo v4** (`events.py`): `OUTCOME_SCHEMA_VERSION = 4`, `CATALOG_V4`, `DESTINATIONS`, `LWBS_WAITS`, `WARD`, `TERMINAL_EVENTS[4]` con el abandono y `CLINICAL_SCHEMA_VERSIONS = {2, 3, 4}`; `CURRENT_CLINICAL_SCHEMA_VERSION` sigue en 3. `schemas/eventos-v4.schema.json`, generado.
+- **Sorteos** (`clinical.py`): `BedWaitFactors` (turno de `[turnos]` y estación de la fecha del instante del pedido), `OutcomeDraws` con `bed_wait(t)` y `PatientDraws.outcome`, que exige el modelo clínico y un `admitted` coherente con el destino. `EpisodeTruth` aún no guarda el desenlace (5.3).
+- **Paciente** (`patient.py`): con `outcome`, `_patient_with_outcome`; sin él, el código del hito 4 línea a línea. `Deadline` (prioridad `LATE = 2`) y `_granted` resuelven «el recurso o el plazo» con el empate a favor del recurso.
+- **Invariantes** (`invariants.py`): `TRANSITIONS_V4`, las ampliaciones de `conservation`, `time`, `capacity`, `displacement`, `nobody_jumps_the_queue` y `results_wait`, y dos nuevas, `abandonment` y `outcome`; todo solo con eventos de la versión 4.
+- **Escenarios** (`scenarios.py`): `outcome_draws` y los escenarios M, T, X, L, S, C, el del turno de la cama y D.
+- **Tests:** `test_outcome_engine.py` (17, cada instante a mano), `test_invariants_v4.py` (16, con los tres logs erróneos), `test_outcome_draws.py` (51), el contrato de SimPy (6 nuevos), el catálogo 4 en `test_events.py`, los esquemas y el censo v4.
+
+**Decisiones del diff**
+
+- **El empate, leído en SimPy 4.1.2.** `Environment.schedule` ordena por `(instante, prioridad, orden de creación)`. Una liberación concede la petición en espera con dos o tres eventos `NORMAL` creados en ese instante (el `Release`, la concesión y, con `AnyOf`, la condición). Un `timeout` normal haría depender el empate de quién se creó antes: el plazo de Q3, creado en 2, ganaría al fin de la valoración de Q1, creado en 5. El plazo es un evento propio de prioridad 2, que va después de toda la cascada; el test de contrato muestra los dos resultados.
+- **Un solo plazo por paciente, creado al llegar.** Así, entre dos plazos del mismo instante decide el orden de llegada. Límite conocido: si el abandono de uno libera el recurso del otro, el primero en llegar decide antes (probabilidad 0 con sorteos continuos). El plazo queda en la cola aunque el paciente ya esté visto: `peek()` puede dar un instante sin eventos del log, algo que la 5.4 tiene en cuenta en el directo.
+- **El plazo vencido durante el triaje** (ajuste de la aprobación): `_granted` ve el plazo ya procesado y pide uno nuevo en el instante (`Deadline(0)`), así que el paciente se queda solo si recibe el recurso en ese mismo instante.
+- **La cama, `timeout` del propio paciente** (ajuste de la aprobación): `bed_assigned` y `patient_departed` salen en el mismo paso; tras un desalojo, el mismo `timeout` se espera en el pasillo (fijado en el contrato de SimPy).
+- **Lo visto se lleva en `_Stay.seen`,** que pasa a verdadero con el `assessment_started` inicial; las esperas de después ya no reciben el plazo.
+- **Las invariantes nuevas solo miran eventos v4,** y los mensajes de las versiones 1 a 3 quedan literales. «El destino de la salida es el de la decisión» lo sigue comprobando `transitions` en todas las versiones, y `outcome` no lo repite. El segundo evento terminal lo marca `conservation`, no `time`.
+- **Tests que usaban la 4 como versión desconocida** pasan a la 5 (`test_events.py`, `test_schemas.py`, `test_directo.py`).
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | 17 + 16 + 51 + 6 del contrato, más los del catálogo 4, los esquemas y el censo; cada fichero nuevo, menos de 0,2 s |
+| `scripts/tests-completos.sh` con Docker parado | 16 min 20 s en verde: núcleo 3.466 tests en 12:12, app 287 en 3:03, notebooks 5 en 0:59. La 6.6: 13 min 44 s (núcleo 3.334 en 8:54, app 3:46). La app, que no cambia, sale 43 s más rápida, y una primera N3, en paralelo con la revisión, tardó 13:51 en el núcleo: la diferencia es sobre todo del portátil |
+| `simulate_ed`, 14 días con `config/` (modelo del hito 4), `main` frente a la rama | mejor de 5 en tres rondas alternadas: `main` 1,766, 2,048 y 1,969 s; la rama 1,994, 1,897 y 2,066 s. Se solapan: sin regresión medible del camino del hito 4 |
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Paciencia desde el fin del triaje | M, M-42, M-1box, T, T-médico y X | Exacta (6) |
+| V2 | Abandono tras ser visto | S y X-visto | Exacta (2) |
+| V3 | Quien se va desde el box no lo libera | M, M-42 y T-médico, este por `conservation`; `capacity` no lo ve | Exacta (3) |
+| V4 | En el empate se va (`timeout` normal) | M y M-1box | Exacta (2) |
+| V5 | El ingresado libera el box al decidirse | C y C-sin-R3; `capacity` marca «already taken» | **Detecta más** (4): también C-185 y el pasillo en el horizonte, escritos después del plan; R2 recibe el box en 35 y `capacity` lo marca |
+| V6 | El desalojado vuelve a pedir box | C (R1 recibe el box en 80) | **Detecta más** (3): también C-185 y el pasillo; lo marcan `displacement` y `transitions` |
+| V7 | Factor de turno con la hora de la llegada | Solo el del turno de la cama | Exacta (1) |
+| V8 | `TERMINAL_EVENTS[4]` sin el abandono | Censo v4, eventos terminales, M, M-42, M-1box, T, T-médico y X | **Detecta más** (11): también tres logs a mano de `test_invariants_v4.py`, escritos después del plan |
+| V21 | Con el plazo vencido en el triaje, ya no abandona | T y T-médico | Exacta (2) |
+
+**Revisión**
+
+`/code-review high` (tarea crítica) dio ocho hallazgos, sin verificar, según la receta del esfuerzo alto:
+
+| Hallazgo | Destino |
+| --- | --- |
+| `check_transitions` lanza `KeyError` si un log mezcla versiones y un evento de la 3 llega a un estado que solo tiene la 4 | **Corregido** (`a23e910`), con test de regresión; reproducido antes con un abandono seguido de un `triage_started` de la versión 3 |
+| `BedWaitFactors` repite la validación de los inicios de turno del centro | **Corregido:** usa `_check_shift_starts`. `_finite` se queda, porque `check_number` lanza `OverflowError` con `10**400` |
+| `factor_at` calcula el turno dos veces | **Corregido:** un solo `arrival_context`; un test comprueba, minuto a minuto, que su turno es el de `shift_at` |
+| Dos plazos en el mismo instante, cuando el abandono de uno libera el recurso del otro, se resuelven por orden de creación | **Explicado:** es el límite conocido del plan. Exige dos plazos en el mismo instante exacto en coma flotante, de probabilidad 0 con sorteos continuos. Como el plazo se crea al llegar, decide el orden de llegada |
+| `analysis`, `runs/` y el Replay no saben de la versión 4 | **Explicado:** ningún log v4 les llega hasta la 5.3; es de la 5.4 (pendiente) |
+| Los plazos sin efecto se quedan en la cola hasta vencer y retienen objetos | **Explicado:** decisión del plan; la 5.3 mide eventos y tiempo con la paciencia real y la 5.4 el directo (pendiente) |
+| `_patient_with_outcome` repite el flujo de `patient()` | **Explicado:** es la rama explícita de la especificación, con el código del hito 4 sin tocar; comparten `_in_box`, `_assessment`, `_lab` y `_preempted` |
+| `Deadline` fija `_ok` y `_value`, privados de SimPy | **Explicado:** es lo mismo que hace `Timeout.__init__`; el contrato de `test_simpy_contract.py` lo fija y fallaría con una versión de SimPy que lo cambie |
+
+**Pendiente**
+
+- 5.3: la verdad del desenlace en `EpisodeTruth` y las comparaciones de `abandonment` (abandono en max(llegada + paciencia, fin del triaje)) y `outcome` (destino sorteado, espera = base × factores) con ella.
+- 5.4: `analysis.episode_table`, `runs/` (filtros, métricas, verdad) y el `LiveTracker` con la versión 4; el directo, con los plazos sin evento del log en la cola.
+- 5.8: el catálogo de eventos v4 en `docs/diseno.md`.

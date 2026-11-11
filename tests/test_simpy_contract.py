@@ -18,6 +18,13 @@ versión nueva cambia algo, fallan aquí y no, de forma confusa, en el motor.
   release() solo quita una concedida, y la plaza pasa al siguiente al procesarse el
   Release. release() de una petición que espera no hace nada: hay que cancelarla.
 - Con la misma prioridad para todos, PriorityResource concede en el orden de Resource.
+- Hito 5 (tarea 5.1): en un instante, los eventos van por prioridad y después por orden
+  de creación (simpy/core.py, Environment.schedule). Un Timeout recibe su orden al
+  crearse, así que un plazo creado antes gana a una liberación del mismo instante; el
+  plazo del paciente (Deadline, prioridad LATE = 2) va después de toda la cascada NORMAL
+  de liberación, concesión y AnyOf. Un Timeout o un Deadline están triggered desde que se
+  crean: su vencimiento se ve con processed. Un Timeout pendiente se puede volver a
+  esperar después de un Interrupt.
 """
 
 from collections.abc import Generator
@@ -25,6 +32,8 @@ from collections.abc import Generator
 import pytest
 import simpy
 from simpy.resources.resource import Preempted
+
+from edsim.engine.patient import LATE, Deadline
 
 Priority = tuple[int, float]
 
@@ -485,3 +494,106 @@ def test_la_reserva_adelanta_a_quien_pidio_antes():
     reservation = resource.request(priority=(0, 0.0), preempt=False)
 
     assert resource.queue == [reservation, *early]
+
+
+# --- El plazo del paciente (hito 5) --------------------------------------------------
+
+
+def wait_with_deadline(
+    env: simpy.Environment, resource: simpy.Resource, deadline: simpy.Event, marks: list
+) -> Generator[simpy.Event]:
+    """Pide el recurso y espera «el recurso o el plazo»; anota si lo recibió."""
+    with resource.request() as request:
+        yield request | deadline
+        marks.append((env.now, request.triggered, deadline.processed))
+
+
+def hold_until(
+    env: simpy.Environment, resource: simpy.Resource, until: float
+) -> Generator[simpy.Event]:
+    with resource.request() as request:
+        yield request
+        yield env.timeout(until - env.now)
+
+
+def tie(deadline_factory) -> list:
+    """Un recurso que se libera en 10 y un plazo que vence en 10, creado antes que la
+    liberación (el orden de creación decide entre eventos de la misma prioridad)."""
+    env = simpy.Environment()
+    resource = simpy.Resource(env, capacity=1)
+    marks: list = []
+    deadline = deadline_factory(env, 10)  # creado en 0, antes que nada
+    env.process(hold_until(env, resource, 10))
+    env.process(wait_with_deadline(env, resource, deadline, marks))
+    env.run()
+    return marks
+
+
+def test_con_un_timeout_normal_el_empate_lo_gana_el_plazo():
+    # La trampa que evita LATE: el plazo, creado antes, se procesa antes que la liberación.
+    assert tie(lambda env, d: env.timeout(d)) == [(10, False, True)]
+
+
+def test_con_un_deadline_el_empate_lo_gana_el_recurso():
+    # Liberación, concesión y AnyOf son NORMAL y se crean en el instante 10; el Deadline,
+    # de prioridad 2, va después aunque se creó antes.
+    assert tie(lambda env, d: Deadline(env, d)) == [(10, True, False)]
+
+
+def test_deadline_va_despues_de_lo_normal_creado_en_su_instante():
+    env = simpy.Environment()
+    order: list = []
+    deadline = Deadline(env, 5)
+    deadline.callbacks.append(lambda _: order.append("plazo"))
+
+    def chain() -> Generator[simpy.Event]:
+        yield env.timeout(5)
+        order.append("normal")
+        yield env.timeout(0)  # creado en 5, después del plazo
+        order.append("normal creado en 5")
+
+    env.process(chain())
+    env.run()
+    assert order == ["normal", "normal creado en 5", "plazo"]
+    assert LATE == 2
+
+
+@pytest.mark.parametrize("factory", [simpy.Environment.timeout, Deadline])
+def test_triggered_desde_su_creacion_y_processed_al_vencer(factory):
+    env = simpy.Environment()
+    event = factory(env, 5)
+    assert (event.triggered, event.processed) == (True, False)
+    env.run(until=4)
+    assert event.processed is False
+    env.run(until=6)
+    assert event.processed is True
+
+
+def test_deadline_con_retardo_negativo_falla():
+    with pytest.raises(ValueError, match="negative delay"):
+        Deadline(simpy.Environment(), -1)
+
+
+def test_un_timeout_pendiente_se_vuelve_a_esperar_tras_un_interrupt():
+    # La cama del ingresado: el desalojo interrumpe la espera, pero el Timeout sigue en la
+    # cola, y el paciente lo espera otra vez en el pasillo.
+    env = simpy.Environment()
+    marks: list = []
+
+    def patient() -> Generator[simpy.Event]:
+        bed = env.timeout(10)
+        try:
+            yield bed
+        except simpy.Interrupt:
+            marks.append(("interrumpido", env.now, bed.processed))
+            yield bed
+        marks.append(("cama", env.now))
+
+    def displacer(process: simpy.Process) -> Generator[simpy.Event]:
+        yield env.timeout(3)
+        process.interrupt("desalojo")
+
+    process = env.process(patient())
+    env.process(displacer(process))
+    env.run()
+    assert marks == [("interrumpido", 3, False), ("cama", 10)]

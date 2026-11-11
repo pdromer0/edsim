@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 from test_directo import run_hand, write_v2_log
-from test_events import SAMPLES, SAMPLES_V2
+from test_events import SAMPLES, SAMPLES_V2, SAMPLES_V4
 from test_messages import FOREIGN_ORDERS, INVALID_ORDERS, RUN, VALID_ORDERS
 
 from edsim.arrivals.profile import load_profile
@@ -28,7 +28,13 @@ from edsim.engine.center import load_center
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import CATALOG_V3, CATALOGS, SCHEMA_VERSIONS, Event, EventLog, MemorySink
 from edsim.engine.events import to_json as event_json
-from edsim.engine.scenarios import SCENARIO_START
+from edsim.engine.scenarios import (
+    SCENARIO_START,
+    abandonment,
+    admission,
+    run_scenario,
+    seen_in_room,
+)
 from edsim.live.control import MAX_SPEED, PAUSE, RESUME, SPEED, STOP, Command
 from edsim.live.directo import RunEnd, RunInfo, RunStart
 from edsim.live.messages import (
@@ -75,10 +81,10 @@ def test_escritos_iguales_a_los_generados(version):
     assert COMMAND in json.loads(written)["$comment"]
 
 
-def test_la_carpeta_schemas_tiene_exactamente_los_cinco():
+def test_la_carpeta_schemas_tiene_exactamente_los_seis():
     expected = {schema_filename(v) for v in VERSIONS} | {RUNS_SCHEMA.name, CONTROL_SCHEMA.name}
     assert {p.name for p in SCHEMAS.iterdir()} == expected
-    assert len(expected) == 5
+    assert len(expected) == 6
 
 
 @pytest.mark.parametrize("name", sorted(p.name for p in SCHEMAS.glob("*.json")))
@@ -160,14 +166,29 @@ def log_lines(center: str, clinical: bool) -> list[str]:
     return [event_json(e) for e in sink.events]
 
 
+def v4_lines() -> list[str]:
+    """Los logs de la versión 4 del motor: los escenarios M, C y S de la tarea 5.1.
+
+    Juntos tienen el abandono, la cama, el pasillo y la sala de resultados.
+    """
+    center = load_center(DATA / "centro_ejemplo.toml")
+    return [
+        event_json(e)
+        for scenario in (abandonment(center), admission(center), seen_in_room(center))
+        for e in run_scenario(scenario).events
+    ]
+
+
 @pytest.fixture(scope="module")
 def logs(tmp_path_factory):
-    """Los tres logs de «directo = batch» de la 6.3: provisional, versión 2 y clínico con sala."""
+    """Los tres logs de «directo = batch» de la 6.3 (provisional, versión 2 y clínico con
+    sala) y uno de la versión 4."""
     v2 = write_v2_log(tmp_path_factory.mktemp("v2") / "eventos.jsonl")
     return {
         1: log_lines("centro_ejemplo.toml", clinical=False),
         2: v2.read_text(encoding="utf-8").splitlines(),
         3: log_lines("centro_sala_ejemplo.toml", clinical=True),
+        4: v4_lines(),
     }
 
 
@@ -184,8 +205,10 @@ def test_cada_linea_de_cada_log_valida(logs, version):
     types = {json.loads(line)["event_type"] for line in lines}
     assert {json.loads(line)["schema_version"] for line in lines} == {version}
     assert len(types) >= 12
-    if version == 3:
+    if version >= 3:
         assert "box_released" in types
+    if version == 4:
+        assert {"patient_left_wbs", "bed_requested", "bed_assigned"} <= types
 
 
 # --- Event y el esquema dicen lo mismo -------------------------------------------------
@@ -197,6 +220,8 @@ def sample(version: int, event_type: str) -> dict:
     """Un evento válido del tipo, como lo lee un consumidor: el resultado de json.loads."""
     if event_type == "box_released":
         payload = {"box": 7, "espera": "resultados"}
+    elif version == 4:
+        payload = SAMPLES_V4[event_type]
     else:
         payload = (SAMPLES if version == 1 else SAMPLES_V2)[event_type]
     log = EventLog("r2026", SCENARIO_START, MemorySink(), schema_version=version)
@@ -227,7 +252,7 @@ def with_payload(version: int, event_type: str, /, **fields) -> dict:
 
 
 VALID = [(f"valido-v{v}-{t}", v, sample(v, t), None) for v in VERSIONS for t in CATALOGS[v]]
-"""Cada tipo de cada versión: 13 + 13 + 14 = 40 eventos válidos."""
+"""Cada tipo de cada versión: 13 + 13 + 14 + 17 = 57 eventos válidos."""
 
 INVALID = [
     # Sobre: campos de más y de menos, y no objetos.
@@ -242,7 +267,12 @@ INVALID = [
     # Tipo de evento y versión.
     ("tipo-desconocido", 3, changed(3, "test_ordered", event_type="patient_teleported"), None),
     ("box-released-en-v2", 2, changed(3, "box_released", schema_version=2), None),
-    ("version-desconocida", 3, changed(3, "test_ordered", schema_version=4), None),
+    ("version-desconocida", 3, changed(3, "test_ordered", schema_version=5), None),
+    ("left-wbs-en-v3", 3, changed(4, "patient_left_wbs", schema_version=3), None),
+    ("traslado-en-v3", 3, with_payload(3, "patient_departed", destino="traslado"), None),
+    ("servicio-uci", 4, with_payload(4, "bed_requested", servicio="uci"), None),
+    ("espera-desconocida", 4, with_payload(4, "patient_left_wbs", espera="pasillo"), None),
+    ("bed-assigned-de-his", 4, changed(4, "bed_assigned", source_system="his"), None),
     ("version-booleana", 1, changed(1, "test_ordered", schema_version=True), None),
     ("version-de-otra-rama", 3, changed(2, "test_ordered"), None),
     ("source-system-cambiado", 3, changed(3, "triage_completed", source_system="his"), None),
@@ -335,7 +365,7 @@ def test_cada_diferencia_de_la_lista_ocurre():
     # casos con una diferencia que no esté en la lista (los demás deben coincidir).
     used = {c[3] for c in CASES} - {None}
     assert used == set(KNOWN_DIFFERENCES)
-    assert len(VALID) == 40
+    assert len(VALID) == 57
     assert len(INVALID) > 40
 
 

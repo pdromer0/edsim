@@ -20,7 +20,8 @@ from edsim.engine.clinical import PatientDraws
 from edsim.engine.clinical_sampler import ClinicalTruth
 from edsim.engine.events import episode_id
 
-_DRAW_FIELDS = tuple(f.name for f in fields(PatientDraws) if f.name != "clinical")
+# The outcome of milestone 5 is not in the ground truth yet: task 5.3 adds it.
+_DRAW_FIELDS = tuple(f.name for f in fields(PatientDraws) if f.name not in ("clinical", "outcome"))
 
 
 @dataclass(frozen=True, slots=True)

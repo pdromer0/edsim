@@ -12,6 +12,14 @@ still alive in SimPy). Comparing with them is what makes conservation a real
 check: counting arrivals, departures and patients inside from the log alone
 would be true by construction.
 
+Task 5.1 adds the outcome of milestone 5, only for events of version 4
+(``OUTCOME_SCHEMA_VERSION``), so that a log of versions 1 to 3 gives exactly
+the violations it gave before: ``patient_left_wbs`` closes an episode in
+``conservation`` and ``time`` and frees the box in ``capacity`` and
+``displacement``; ``transitions`` follows ``TRANSITIONS_V4``, with the
+abandonment before being seen and the wait for a bed in the box or in the
+corridor; and two checks are new, ``abandonment`` and ``outcome``. Their
+comparisons with the ground truth of the outcome come with task 5.3.
 Task 4.6a adds the results room (ADR candidate 45): ``box_released`` is an
 edge of ``TRANSITIONS`` from the wait for the tests to a room where the
 patient holds no box; it frees the box in the capacity and displacement
@@ -42,11 +50,22 @@ from edsim.engine.events import (
     CLINICAL_SCHEMA_VERSIONS,
     CURRENT_CLINICAL_SCHEMA_VERSION,
     DOOR,
+    OUTCOME_SCHEMA_VERSION,
+    TERMINAL_EVENTS,
     Event,
 )
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
 from edsim.profiles.context import context_indices
+
+_RESULTS_ROOM_VERSIONS = frozenset({CURRENT_CLINICAL_SCHEMA_VERSION, OUTCOME_SCHEMA_VERSION})
+"""Versions whose model has the results room: 3 (milestone 4) and 4 (milestone 5)."""
+
+
+def _v4(e: Event) -> bool:
+    """Whether an event is of version 4, the one of the outcome of milestone 5."""
+    return e.schema_version == OUTCOME_SCHEMA_VERSION
+
 
 TURNAROUND_TOLERANCE = 1e-8
 """Minutes between the observed and the expected turnaround of a round.
@@ -109,6 +128,9 @@ def check_conservation(events: Sequence[Event], context: InvariantContext) -> li
 
     - The census (arrivals minus departures) is never negative.
     - No episode arrives or departs twice, nor departs without arriving.
+      "Departs" is any terminal event of the version of the event
+      (``TERMINAL_EVENTS``): ``patient_departed`` and, in version 4, also
+      ``patient_left_wbs``. An episode has one terminal event.
     - With a ground truth: each of its episodes has exactly one
       ``patient_arrived``, and the log has no arrival outside it.
     - With ``inside``: the patients inside at the end according to the log
@@ -117,7 +139,7 @@ def check_conservation(events: Sequence[Event], context: InvariantContext) -> li
     name = "conservation"
     out: list[Violation] = []
     arrived: set[str] = set()
-    departed: set[str] = set()
+    closed: dict[str, str] = {}  # episode → its first terminal event
     arrivals: Counter[str] = Counter()
     census = 0
 
@@ -128,12 +150,15 @@ def check_conservation(events: Sequence[Event], context: InvariantContext) -> li
             arrived.add(e.episode_id)
             arrivals[e.episode_id] += 1
             census += 1
-        elif e.event_type == "patient_departed":
+        elif e.event_type in TERMINAL_EVENTS[e.schema_version]:
             if e.episode_id not in arrived:
-                out.append(_at(name, e, "patient_departed without patient_arrived"))
-            if e.episode_id in departed:
-                out.append(_at(name, e, f"repeated patient_departed of {e.episode_id}"))
-            departed.add(e.episode_id)
+                out.append(_at(name, e, f"{e.event_type} without patient_arrived"))
+            first = closed.get(e.episode_id)
+            if first == e.event_type:
+                out.append(_at(name, e, f"repeated {e.event_type} of {e.episode_id}"))
+            elif first is not None:
+                out.append(_at(name, e, f"{e.event_type} of {e.episode_id} after its {first}"))
+            closed.setdefault(e.episode_id, e.event_type)
             census -= 1
             if census < 0:
                 out.append(_at(name, e, f"negative census: {census}"))
@@ -160,7 +185,7 @@ def check_conservation(events: Sequence[Event], context: InvariantContext) -> li
             )
 
     if context.inside is not None:
-        inside = len(arrived - departed)
+        inside = len(arrived - closed.keys())
         if inside != context.inside:
             out.append(
                 Violation(
@@ -178,11 +203,16 @@ def check_time(events: Sequence[Event], context: InvariantContext) -> list[Viola
     - ``sim_time`` never decreases in file order.
     - The first event of each episode is its ``patient_arrived``, and no event
       of the episode has a ``sim_time`` before it.
+    - Version 4: no event of the episode comes after its terminal event
+      (``TERMINAL_EVENTS``), reported once per episode. A second terminal
+      event is reported by ``conservation``.
     """
     name = "time"
     out: list[Violation] = []
     previous: float | None = None
     arrival: dict[str, float] = {}
+    closed: dict[str, str] = {}  # version 4: episode → its terminal event
+    reported: set[str] = set()
 
     for e in events:
         if previous is not None and e.sim_time < previous:
@@ -205,6 +235,22 @@ def check_time(events: Sequence[Event], context: InvariantContext) -> list[Viola
                     f"{arrival[e.episode_id]!r}",
                 )
             )
+
+        if not _v4(e):
+            continue
+        terminal = e.event_type in TERMINAL_EVENTS[e.schema_version]
+        if e.episode_id in closed:
+            if not terminal and e.episode_id not in reported:
+                reported.add(e.episode_id)
+                out.append(
+                    _at(
+                        name,
+                        e,
+                        f"{e.event_type} of {e.episode_id} after its {closed[e.episode_id]}",
+                    )
+                )
+        elif terminal:
+            closed[e.episode_id] = e.event_type
     return out
 
 
@@ -289,16 +335,70 @@ and a prefix of a valid path is valid.
 """
 
 
+_DECISIONS_V4: Mapping[Symbol, str] = MappingProxyType(
+    {
+        ("disposition_decided", "alta"): "decided",
+        ("disposition_decided", "ingreso"): "admission_decided",
+        ("disposition_decided", "traslado"): "decided",
+        ("disposition_decided", "exitus"): "decided",
+    }
+)
+
+TRANSITIONS_V4: Mapping[str, Mapping[Symbol, str]] = MappingProxyType(
+    {
+        **TRANSITIONS,
+        # Waiting for a triage nurse: the patient may leave.
+        "registered": {"triage_started": "in_triage", "patient_left_wbs": "left"},
+        # Triaged, waiting for a box: the patient may leave.
+        "triaged": {"box_assigned": "in_box", "patient_left_wbs": "left"},
+        # In the box without being seen, waiting for the first doctor: it may
+        # leave, and a displacement takes it back to a wait where it still may.
+        "in_box": {
+            ("assessment_started", "inicial"): "assessing",
+            "patient_displaced": "waiting_box_unseen",
+            "patient_left_wbs": "left",
+        },
+        "waiting_box_unseen": {"box_assigned": "in_box", "patient_left_wbs": "left"},
+        # Seen (its first assessment started and was cut): it never leaves.
+        "waiting_box_initial": {"box_assigned": "in_box_seen"},
+        "in_box_seen": {
+            ("assessment_started", "inicial"): "assessing",
+            "patient_displaced": "waiting_box_initial",
+        },
+        "assessed": {"test_ordered": "awaiting_tests", **_DECISIONS_V4},
+        "reassessed": dict(_DECISIONS_V4),
+        # Admitted: it asks for a bed in the instant of the decision and waits
+        # for it in its box or, displaced by a level 1, in the corridor.
+        "admission_decided": {"bed_requested": "waiting_bed"},
+        "waiting_bed": {"bed_assigned": "bed_ready", "patient_displaced": "corridor"},
+        "corridor": {"bed_assigned": "bed_ready"},
+        "bed_ready": {"patient_departed": "departed"},
+        "left": {},
+    }
+)
+"""State machine of an episode of version 4 (task 5.1): ``TRANSITIONS`` plus the outcome.
+
+The waits before being seen (``registered``, ``triaged``, ``in_box`` and
+``waiting_box_unseen``) may end in ``patient_left_wbs``; once the first
+assessment has started, the states are others (``in_box_seen``,
+``waiting_box_initial``) without it. The decision goes by its destination:
+discharge, transfer and death depart at once; admission asks for a bed and
+departs only with ``bed_assigned``, without another box after a displacement.
+"""
+
+
 def _symbol(e: Event) -> Symbol:
     if e.event_type == "assessment_started":
         return (e.event_type, e.payload["tipo"])
     if e.event_type == "assessment_ended":
         return (e.event_type, e.payload["tipo"], e.payload["interrumpida"])
+    if e.event_type == "disposition_decided" and _v4(e):
+        return (e.event_type, e.payload["destino"])
     return e.event_type
 
 
 def check_transitions(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
-    """The events of each episode follow ``TRANSITIONS``.
+    """The events of each episode follow ``TRANSITIONS``, or ``TRANSITIONS_V4`` in version 4.
 
     After the first invalid event of an episode, the rest of the episode is not
     checked: one error gives one violation, not a cascade. The ``destino`` of
@@ -316,7 +416,10 @@ def check_transitions(events: Sequence[Event], context: InvariantContext) -> lis
             continue
         current = state.get(episode, "start")
         symbol = _symbol(e)
-        following = TRANSITIONS[current].get(symbol)
+        table = TRANSITIONS_V4 if _v4(e) else TRANSITIONS
+        # A log that mixes versions (reported by schema_version) may bring an
+        # event of versions 1 to 3 to a state that only version 4 has.
+        following = table.get(current, {}).get(symbol)
         if following is None:
             out.append(_at(name, e, f"{symbol!r} is not valid in state {current!r}"))
             broken.add(episode)
@@ -355,7 +458,8 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
     - Boxes: every ``box_assigned`` gives a number in 1..``boxes`` that is
       free, to an episode without a box; the box is freed by the episode's
       ``patient_departed``, ``patient_displaced`` or ``box_released``, whose
-      ``box`` must be the episode's. Assessments happen in the episode's box.
+      ``box`` must be the episode's, and, in version 4, by its
+      ``patient_left_wbs`` from the box. Assessments happen in the episode's box.
       A patient in the results room holds no box.
     - Doctors (``assessment_started`` to ``assessment_ended``) and triage
       nurses (``triage_started`` to ``triage_completed``), with the staff in
@@ -476,7 +580,7 @@ def check_capacity(events: Sequence[Event], context: InvariantContext) -> list[V
                     )
                 if box is not None and occupant.get(box) == episode:
                     del occupant[box]
-            case "patient_departed":
+            case "patient_departed" | "patient_left_wbs":
                 box = box_of.pop(episode, None)
                 if box is not None and occupant.get(box) == episode:
                     del occupant[box]
@@ -518,6 +622,10 @@ def check_nobody_jumps_the_queue(
       ``box_assigned`` or ``test_resulted`` to ``assessment_started`` or
       ``patient_displaced``.
 
+    In version 4, a patient who leaves (``patient_left_wbs``) stops waiting,
+    and an admitted patient displaced from its box waits for its bed in the
+    corridor, not for a box.
+
     A wait that began in the same instant does not count: SimPy may have
     granted the resource before the other request was made, even if the
     events of the instant come in another order in the file.
@@ -530,6 +638,7 @@ def check_nobody_jumps_the_queue(
     has_box: set[str] = set()
     in_room: set[str] = set()  # waiting for the results outside the box
     to_assess: set[str] = set()  # an assessment is next in the box
+    admitted: set[str] = set()  # version 4: asked for a bed
 
     def check(e: Event, resource: str) -> None:
         mine = keys.get(e.episode_id)
@@ -595,12 +704,21 @@ def check_nobody_jumps_the_queue(
             case "patient_displaced":
                 has_box.discard(episode)
                 waiting["doctor"].pop(episode, None)
-                waiting["box"][episode] = e.sim_time
+                if episode not in admitted:
+                    waiting["box"][episode] = e.sim_time
             case "box_released":
                 has_box.discard(episode)
                 in_room.add(episode)
             case "patient_departed":
                 has_box.discard(episode)
+            case "patient_left_wbs":
+                waiting_triage.pop(episode, None)
+                waiting["box"].pop(episode, None)
+                waiting["doctor"].pop(episode, None)
+                has_box.discard(episode)
+                to_assess.discard(episode)
+            case "bed_requested":
+                admitted.add(episode)
     return out
 
 
@@ -611,6 +729,9 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
       displaced patient is of a higher level and its ``box`` is the one it
       held; the next ``box_assigned`` of the level 1 is that box, in the same
       instant.
+    - Version 4: an admitted patient displaced while it waits for its bed
+      (after ``bed_requested``) waits in the corridor and never gets a box
+      again.
     - At the end of every instant, a level 1 waiting for a box finds every
       box taken, and by levels 1. It is checked when the instant is over
       because a displacement takes several events of one instant
@@ -625,6 +746,8 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
     owed: dict[str, tuple[int, float]] = {}  # level 1 → box and instant it took
     level1_waiting: set[str] = set()
     reported: set[str] = set()
+    admitted: set[str] = set()  # version 4: asked for a bed
+    corridor: set[str] = set()  # version 4: displaced while waiting for the bed
 
     def level(episode: str) -> int | None:
         key = keys.get(episode)
@@ -665,6 +788,15 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
                 level1_waiting.add(episode)
             case "box_assigned":
                 box = e.payload["box"]
+                if episode in corridor:
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            f"{episode} was displaced while waiting for its bed and got "
+                            f"box {box} again",
+                        )
+                    )
                 level1_waiting.discard(episode)
                 reported.discard(episode)
                 if episode in owed:
@@ -699,7 +831,11 @@ def check_displacement(events: Sequence[Event], context: InvariantContext) -> li
                 if held is not None and occupant.get(held) == episode:
                     del occupant[held]
                 owed[by] = (e.payload["box"], e.sim_time)
-            case "patient_departed" | "box_released":
+                if episode in admitted:
+                    corridor.add(episode)
+            case "bed_requested":
+                admitted.add(episode)
+            case "patient_departed" | "box_released" | "patient_left_wbs":
                 held = box_of.pop(episode, None)
                 if held is not None and occupant.get(held) == episode:
                     del occupant[held]
@@ -825,7 +961,7 @@ def _expected_turnaround(
 def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
     """The clinical payloads of a clinical log are the ones of its patients.
 
-    Only for a log with events of a clinical version, 2 or 3
+    Only for a log with events of a clinical version, 2, 3 or 4
     (``CLINICAL_SCHEMA_VERSIONS``):
 
     - From the log alone: the types of ``resultados`` of each
@@ -926,7 +1062,7 @@ def check_clinical(events: Sequence[Event], context: InvariantContext) -> list[V
 def check_results_wait(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
     """Exactly the levels of ``espera_resultados_fuera`` leave the box for the results.
 
-    Only for the events of a log of version 3 (``CURRENT_CLINICAL_SCHEMA_VERSION``),
+    Only for the events of a log of version 3 (``CURRENT_CLINICAL_SCHEMA_VERSION``) or 4,
     with the levels of the center of the context and the *assigned* level of
     each episode (its ``triage_completed``):
 
@@ -948,7 +1084,7 @@ def check_results_wait(events: Sequence[Event], context: InvariantContext) -> li
 
     for e in events:
         episode = e.episode_id
-        if e.schema_version != CURRENT_CLINICAL_SCHEMA_VERSION or episode is None:
+        if e.schema_version not in _RESULTS_ROOM_VERSIONS or episode is None:
             continue
         order = ordered.pop(episode, None)
         if e.event_type == "box_released":
@@ -996,6 +1132,148 @@ def check_results_wait(events: Sequence[Event], context: InvariantContext) -> li
     return out
 
 
+def check_abandonment(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """Only an unseen patient leaves, never a level 1, and from where it waits.
+
+    Only for the events of version 4 (docs/specs/hito-5.md, H5-3). For each
+    ``patient_left_wbs``, one violation at most, the first that applies:
+
+    - not after being seen, that is, after an ``assessment_started`` of type
+      ``inicial`` of the episode;
+    - not of an assigned level 1 (its ``triage_completed``);
+    - not during the triage (a ``triage_started`` without its
+      ``triage_completed``);
+    - its ``espera`` is where the patient waits: ``triaje`` before its
+      ``triage_started``, ``medico`` holding a box, ``box`` triaged and
+      without a box.
+
+    The instant of the abandonment (arrival plus patience, or the end of the
+    triage if the deadline was due during it) needs the ground truth of the
+    outcome: task 5.3.
+    """
+    name = "abandonment"
+    out: list[Violation] = []
+    started: set[str] = set()
+    level: dict[str, int] = {}
+    in_box: set[str] = set()
+    seen: set[str] = set()
+
+    for e in events:
+        episode = e.episode_id
+        if not _v4(e) or episode is None:
+            continue
+        match e.event_type:
+            case "triage_started":
+                started.add(episode)
+            case "triage_completed":
+                level[episode] = e.payload["nivel"]
+            case "box_assigned":
+                in_box.add(episode)
+            case "patient_displaced" | "box_released":
+                in_box.discard(episode)
+            case "assessment_started" if e.payload["tipo"] == "inicial":
+                seen.add(episode)
+            case "patient_left_wbs":
+                if episode in seen:
+                    out.append(_at(name, e, f"{episode} left after being seen"))
+                elif level.get(episode) == 1:
+                    out.append(_at(name, e, f"{episode} of level 1 left; a level 1 never leaves"))
+                elif episode in started and episode not in level:
+                    out.append(_at(name, e, f"{episode} left during its triage"))
+                else:
+                    if episode not in started:
+                        where = "triaje"
+                    elif episode in in_box:
+                        where = "medico"
+                    else:
+                        where = "box"
+                    if e.payload["espera"] != where:
+                        out.append(
+                            _at(
+                                name,
+                                e,
+                                f"patient_left_wbs with espera {e.payload['espera']!r}, "
+                                f"but {episode} was waiting for {where!r}",
+                            )
+                        )
+    return out
+
+
+def check_outcome(events: Sequence[Event], context: InvariantContext) -> list[Violation]:
+    """The decision, the bed and the departure come in their order and instant.
+
+    Only for the events of version 4 (docs/specs/hito-5.md, H5-5 to H5-7):
+
+    - a ``disposition_decided`` with ``ingreso`` is followed, as the next event
+      of the episode and in its instant, by ``bed_requested``; with another
+      destination, by ``patient_departed``;
+    - a ``bed_requested`` comes right after a ``disposition_decided`` with
+      ``ingreso`` of the episode, in its instant;
+    - a ``bed_assigned`` comes after a ``bed_requested`` of the episode and is
+      followed, as the next event of the episode and in its instant, by
+      ``patient_departed``;
+    - a ``patient_departed`` with ``ingreso`` comes right after its
+      ``bed_assigned``.
+
+    That the departure has the destination of the decision is checked by
+    ``transitions``, in every version. The drawn destination and the wait for
+    the bed (base × factors) need the ground truth of the outcome: task 5.3.
+    """
+    name = "outcome"
+    out: list[Violation] = []
+    pending: dict[str, tuple[str, Event]] = {}  # episode → (next type expected, cause)
+    last: dict[str, Event] = {}  # episode → its previous event
+    requested: set[str] = set()
+
+    def right_after(e: Event, event_type: str, destino: str | None = None) -> bool:
+        before = last.get(e.episode_id)
+        return (
+            before is not None
+            and before.event_type == event_type
+            and before.sim_time == e.sim_time
+            and (destino is None or before.payload["destino"] == destino)
+        )
+
+    def missing(cause: Event, expected: str) -> Violation:
+        return _at(name, cause, f"{cause.event_type} not followed in its instant by {expected}")
+
+    for e in events:
+        episode = e.episode_id
+        if not _v4(e) or episode is None:
+            continue
+        need = pending.pop(episode, None)
+        if need is not None and (e.event_type != need[0] or e.sim_time != need[1].sim_time):
+            out.append(missing(need[1], need[0]))
+        match e.event_type:
+            case "disposition_decided":
+                admitted = e.payload["destino"] == "ingreso"
+                pending[episode] = ("bed_requested" if admitted else "patient_departed", e)
+            case "bed_requested":
+                requested.add(episode)
+                if not right_after(e, "disposition_decided", "ingreso"):
+                    out.append(
+                        _at(
+                            name,
+                            e,
+                            "bed_requested not right after a disposition_decided with "
+                            "destino 'ingreso'",
+                        )
+                    )
+            case "bed_assigned":
+                if episode not in requested:
+                    out.append(_at(name, e, f"bed_assigned of {episode} without bed_requested"))
+                pending[episode] = ("patient_departed", e)
+            case "patient_departed" if e.payload["destino"] == "ingreso":
+                if not right_after(e, "bed_assigned"):
+                    out.append(
+                        _at(name, e, "patient_departed with 'ingreso' not right after bed_assigned")
+                    )
+        last[episode] = e
+    for expected, cause in pending.values():
+        out.append(missing(cause, expected))
+    return out
+
+
 CHECKS: Mapping[str, Check] = MappingProxyType(
     {
         "conservation": check_conservation,
@@ -1008,6 +1286,8 @@ CHECKS: Mapping[str, Check] = MappingProxyType(
         "schema_version": check_schema_version,
         "clinical": check_clinical,
         "results_wait": check_results_wait,
+        "abandonment": check_abandonment,
+        "outcome": check_outcome,
     }
 )
 """The invariants, by name, in the order ``check_invariants`` runs them."""

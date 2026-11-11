@@ -142,6 +142,8 @@ def test_comprobaciones_registradas():
         "schema_version",
         "clinical",
         "results_wait",
+        "abandonment",
+        "outcome",
     ]
 
 
@@ -151,8 +153,11 @@ def test_ground_truth_desde_los_sorteos():
     assert episode.episode_id == "EP-000137"
     assert episode.arrival_id == 137
     assert episode.arrival_time == 739.02
+    # El desenlace del hito 5 (outcome) aún no está en la verdad: lo añade la tarea 5.3.
+    assert DRAWS.outcome is None
     for field in dataclasses.fields(PatientDraws):
-        assert getattr(episode, field.name) == getattr(DRAWS, field.name)
+        if field.name != "outcome":
+            assert getattr(episode, field.name) == getattr(DRAWS, field.name)
 
 
 def test_violacion_apunta_al_evento(center):

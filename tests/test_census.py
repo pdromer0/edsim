@@ -82,6 +82,60 @@ def test_censo_a_mano(version):
     assert got == [e for e in events if e in got]  # en el orden original
 
 
+def hand_log_v4() -> list:
+    """El log a mano de la 6.2 en la versión 4 (tarea 5.1), en orden de tiempo, más dos episodios.
+
+    EP-000004 llega en 70 y se va sin ser visto en 110; EP-000005 llega en 80, se decide
+    su ingreso y pide cama en 100 y la recibe en 150. Como el de la 6.2, no es un
+    recorrido completo: solo lleva lo que el censo mira.
+    """
+    sink = MemorySink()
+    log = EventLog("rcenso", SCENARIO_START, sink, schema_version=4)
+    arrived = {"medio": "propios_medios"}
+    registered = {"edad": 40, "sexo": "mujer"}
+    log.emit("staffing_changed", 0.0, recurso="enfermeria_triaje", anterior=0, nueva=2)
+    log.emit("staffing_changed", 0.0, recurso="medicos", anterior=0, nueva=3)
+    for arrival_id, t in ((1, 10.0), (2, 50.0), (3, 60.0), (4, 70.0), (5, 80.0)):
+        log.emit("patient_arrived", t, arrival_id=arrival_id, **arrived)
+        log.emit("patient_registered", t, arrival_id=arrival_id, **registered)
+    log.emit("patient_departed", 100.0, arrival_id=1, destino="alta")
+    log.emit("disposition_decided", 100.0, arrival_id=5, destino="ingreso")
+    log.emit("bed_requested", 100.0, arrival_id=5, servicio="planta")
+    log.emit("patient_left_wbs", 110.0, arrival_id=4, espera="triaje")
+    log.emit("patient_departed", 120.0, arrival_id=3, destino="ingreso")
+    log.emit("bed_assigned", 150.0, arrival_id=5, servicio="planta")
+    log.emit("patient_departed", 150.0, arrival_id=5, destino="ingreso")
+    return sink.events
+
+
+def test_censo_a_mano_version_4():
+    # W = 120: EP-000002 sigue dentro, EP-000003 sale justo en W (no antes) y EP-000005
+    # espera cama hasta 150. EP-000004 se fue en 110 < 120: el abandono lo cierra.
+    events = hand_log_v4()
+    assert open_episodes(events, W_HAND) == {"EP-000002", "EP-000003", "EP-000005"}
+
+    got = census(events, W_HAND)
+    assert [(e.event_type, e.episode_id, e.sim_time) for e in got] == [
+        ("staffing_changed", None, 0.0),
+        ("staffing_changed", None, 0.0),
+        ("patient_arrived", "EP-000002", 50.0),
+        ("patient_registered", "EP-000002", 50.0),
+        ("patient_arrived", "EP-000003", 60.0),
+        ("patient_registered", "EP-000003", 60.0),
+        ("patient_arrived", "EP-000005", 80.0),
+        ("patient_registered", "EP-000005", 80.0),
+        ("disposition_decided", "EP-000005", 100.0),
+        ("bed_requested", "EP-000005", 100.0),
+    ]
+    assert all(e.episode_id != "EP-000004" for e in got)
+    live = live_events(events, W_HAND)
+    assert [(e.event_type, e.episode_id, e.sim_time) for e in live] == [
+        ("patient_departed", "EP-000003", 120.0),
+        ("bed_assigned", "EP-000005", 150.0),
+        ("patient_departed", "EP-000005", 150.0),
+    ]
+
+
 def test_censo_de_un_log_vacio():
     assert open_episodes([], W_HAND) == frozenset()
     assert census([], W_HAND) == []
