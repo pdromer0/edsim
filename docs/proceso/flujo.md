@@ -1,6 +1,6 @@
 # Flujo de trabajo de EDsim
 
-Este manual es para personas: cómo pasa una tarea del issue a la fusión, quién mueve cada ficha del tablero y dónde vive cada cosa. Los pasos detallados que sigue el agente están en [tarea.md](tarea.md).
+Este manual es para personas: cómo pasa una tarea del issue a la fusión, quién mueve cada ficha del tablero y dónde vive cada cosa. Los pasos detallados que sigue el agente están en [tarea.md](tarea.md). Para llevar este método a otro proyecto, véase [portabilidad.md](portabilidad.md).
 
 El trabajo vive en GitHub: los [issues](https://github.com/pdromer0/edsim/issues) (uno por tarea, con la plantilla «Tarea»), los milestones (uno por hito o tarea de proceso) y el tablero [«EDsim»](https://github.com/users/pdromer0/projects/1), con las columnas Backlog, Próximo, En curso, En revisión y Hecho.
 
