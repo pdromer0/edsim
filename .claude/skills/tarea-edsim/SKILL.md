@@ -20,6 +20,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 ## Fase 1: en modo plan (solo lectura)
 
+0. El modo inicial es `plan` (`.claude/settings.json`), así que normalmente ya estás en él. Si la sesión se cambió a otro modo, pide a Pedro que lo active (Shift+Tab) y no presentes el plan hasta que lo haga: `ExitPlanMode` necesita el fichero de plan, y sin él el plan se presenta como texto y hace falta una segunda ronda.
 1. `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si no existe o está cerrado, para.
 2. Dependencias. Cada nodo de `blockedBy` trae su `state`: si alguno es `OPEN`, para y di cuáles, con su título. No crees el plan ni toques git o el tablero. Compara los números de `blockedBy` con los `#n` de la sección «Depende de» del cuerpo: si no coinciden, avisa del descuadre, pero decide por `blockedBy`.
 3. Especificación: la que enlaza la sección «Enlace a la especificación» del issue.
@@ -41,11 +42,11 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 ## Antes del push
 
-1. `docker compose ps`: si Kafka está en marcha, `docker compose down`.
+1. `docker compose ps`: si Kafka está en marcha, `docker compose down`. Si `docker compose ps` falla porque Docker está parado, cuenta como «no hay Kafka en marcha».
 2. Avisa de que la N3 suele tardar unos 14 minutos y lánzala con `run_in_background`: `scripts/tests-completos.sh`.
 3. A la vez, lanza `/code-review` con la herramienta Skill: skill `code-review`, argumentos `medium main...<rama>`, o `high main...<rama>` si el plan fijó `high`. Pasa siempre el nivel (sin él, reutiliza el último que se tecleó) y el destino (sin él, compara solo con el *upstream* de la rama).
 4. Mientras las dos corren, escribe la entrada del anexo y la descripción del PR en un fichero del *scratchpad*, con la plantilla `.github/pull_request_template.md`, «Closes #N» y la hora de aprobación.
-5. Cada hallazgo de la revisión: se corrige (commit con N1) o se explica en el PR. Si las correcciones tocan código o tests, repite la N3.
+5. Cada hallazgo de la revisión: se corrige (commit con N1) o se explica, y va a la sección «Revisión propia (/code-review)» del PR con su destino. Si las correcciones tocan algo que la N3 ejecuta, repite la N3; los scripts de los hooks no cuentan y se verifican a mano.
 
 ## Pull request
 

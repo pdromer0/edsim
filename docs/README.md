@@ -1,6 +1,6 @@
 # Documentación de EDsim
 
-Desde el 10 de noviembre de 2026, este repositorio es la fuente de verdad de la documentación de EDsim: diseño, especificaciones, anexos, decisiones y diario (decisión candidata 80, tarea de proceso P.2). El documento online donde nacieron el diseño y las especificaciones queda como archivo: no se actualiza, y sus pestañas solo se consultan por los diagramas originales.
+Desde el 10 de noviembre de 2026, este repositorio es la fuente de verdad de la documentación de EDsim: diseño, especificaciones, anexos, decisiones y diario ([ADR 0080](decisiones/0080-repositorio-fuente-de-verdad-de-la-documentacion.md), tarea de proceso P.2). El documento online donde nacieron el diseño y las especificaciones queda como archivo: no se actualiza, y sus pestañas solo se consultan por los diagramas originales.
 
 - Todo cambio de documentación entra por pull request, como el código.
 - La documentación de una tarea (su anexo, sus decisiones, su entrada del diario) va en el mismo PR que su código.

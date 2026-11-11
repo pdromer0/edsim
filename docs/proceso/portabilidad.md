@@ -245,15 +245,15 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **Reglas `ask` sobre la configuración calibrada y los datos de referencia** [implantado]: en modo auto siguen preguntando (la documentación dice que una regla `ask` explícita fuerza el aviso y se evalúa antes que el clasificador). Se escriben para `Edit` y para `Write`. La barra inicial (`/config/**`) ancla la ruta a la raíz del proyecto; sin ella, una regla `ask` casa con un directorio de ese nombre a cualquier profundidad. Si en la prueba en vivo alguna de las cuatro combinaciones no preguntara, se pasa a la forma sin barra. **Límite:** solo cubren las herramientas `Edit` y `Write`; un `sed -i` o una redirección desde Bash sobre esos ficheros no las activa. Es una barandilla de comportamiento, como las reglas `deny`.
 - **Hook `SessionStart`** [implantado]: su salida entra en el contexto en cada apertura, reanudación, `/clear` y compactación. Rama, última etiqueta (`git describe --tags --abbrev=0`, «ninguna» si no hay), línea «Hito en curso» de `AGENTS.md` y `git status -sb`. Solo `git` y `grep` locales, siempre código 0 y en milisegundos.
 - **El `Stop` avisa de que empieza** [implantado] con `statusMessage` (el texto del spinner), y en verde termina con un `systemMessage` corto: las suites que ejecutó, o por qué ninguna. El JSON se construye con `jq -n --arg`, nunca con `printf`, porque la salida de los tests puede llevar comillas.
-- **En el equipo de la persona** (`~/.claude/settings.json`; no va al repositorio) [implantado]:
-  - **Aviso de Windows** cuando Claude Code espera: hook `Notification` con matcher `permission_prompt|idle_prompt` que llama a `powershell.exe` desde WSL. Con `[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800` basta: la pausa evita que el proceso termine antes de sonar.
+- **En el equipo de la persona** (`~/.claude/settings.json`; no va al repositorio). El aviso y la línea de estado los comprobó Pedro en una sesión nueva el 11 de noviembre de 2026:
+  - **Aviso de Windows** [probado] cuando Claude Code espera: hook `Notification` con matcher `permission_prompt|idle_prompt` que llama a `powershell.exe` desde WSL. Con `[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800` basta: la pausa evita que el proceso termine antes de sonar.
 
     ```json
     "hooks": { "Notification": [ { "matcher": "permission_prompt|idle_prompt", "hooks": [ { "type": "command",
       "command": "powershell.exe -NoProfile -Command \"[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800\"" } ] } ] }
     ```
 
-  - **Línea de estado:** un `~/.claude/statusline.sh` con `jq` que recibe el JSON de la sesión por stdin y muestra modelo (`model.display_name`), rama (`git branch --show-current`, que el JSON no trae) y porcentaje de contexto (`context_window.used_percentage`). Se activa con `"statusLine": { "type": "command", "command": "~/.claude/statusline.sh" }` en los ajustes.
+  - **Línea de estado** [probado]: un `~/.claude/statusline.sh` con `jq` que recibe el JSON de la sesión por stdin y muestra modelo (`model.display_name`), rama (`git branch --show-current`, que el JSON no trae) y porcentaje de contexto (`context_window.used_percentage`). Se activa con `"statusLine": { "type": "command", "command": "~/.claude/statusline.sh" }` en los ajustes.
 
     ```bash
     #!/usr/bin/env bash
@@ -265,7 +265,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
     printf '[%s] %s | %s%% contexto\n' "$modelo" "${rama:-sin rama}" "$pct"
     ```
 
-  - **Plugin LSP de Python (pyright):** primero el binario (`uv tool install pyright`) y después el plugin, buscado en `/plugin`.
+  - **Plugin LSP de Python (pyright)** [pendiente]: primero el binario (`uv tool install pyright`) y después el plugin, buscado en `/plugin`.
   - **Remote Control** (`claude --rc`): seguir una sesión desde otro dispositivo. Solo se documenta.
 
 ### Codex [probado]
@@ -466,7 +466,9 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | Migración de la documentación al repositorio | P.2, A1 | Probado: diff normalizado limpio, original archivado |
 | Instrucciones coherentes y `/doctor prompt-audit` | P.2, A2 | Probado: segundo audit limpio |
 | GitHub como gestor (issues, tablero, dependencias) | P.2, A3 | Implantado: 32 issues; falta su uso en una tarea |
-| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | A5, `/tarea-edsim`: probada de punta a punta. Seis hallazgos en [p2.md](p2.md); los de más peso: la tarea sin fichero de especificación (arreglado), cómo presentar el plan fuera del modo plan y si los scripts de los hooks cuentan para repetir la N3. `/sincronizar` ya funcionó con el PR #95. Falta 5.1 |
+| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | A5, `/tarea-edsim`: probada de punta a punta. Seis hallazgos en [p2.md](p2.md); los de más peso: la tarea sin fichero de especificación (arreglado), cómo presentar el plan fuera del modo plan y si los scripts de los hooks cuentan para repetir la N3 (los dos, resueltos en la A6). `/sincronizar` ya funcionó con los PR #95 y #96. Falta 5.1 |
+| Aviso de Windows y línea de estado (en `~/.claude`) | P.2, A6 | Probado por Pedro en una sesión nueva: suena al pedir permiso y la línea muestra modelo, rama y % de contexto |
+| Plugin LSP de Python (pyright) | — | Pendiente: `/plugin` es interactivo y no lo lanza el agente |
 | Subagentes para las versiones incorrectas | 5.2 | — |
 | `@claude` en el PR | 5.3 | — |
 | El chat lee el PR y el CI | 5.4 | — |
