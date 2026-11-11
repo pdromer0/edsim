@@ -71,9 +71,17 @@ def test_each_pairing_blocker(comparison_runs, field, value):
 
 
 def test_draw_effects_are_exhaustive_and_immutable():
-    # Las doce claves del centro: el de la sala de ejemplo las tiene todas (config/centro.toml
-    # no tiene el bloque provisional desde la tarea 4.9).
-    assert DRAW_EFFECTS.keys() == read_center_values("tests/data/centro_sala_ejemplo.toml").keys()
+    # Las trece claves del centro de los hitos 3 y 4: el de la sala de ejemplo las tiene
+    # todas (config/centro.toml no tiene el bloque provisional desde la tarea 4.9). Más las
+    # tres de [camas] del hito 5 (tarea 5.3), que no cambian ninguno de estos sorteos: la
+    # espera base de cama está en la verdad del desenlace.
+    beds = {"camas.espera", "camas.factor_turno", "camas.factor_estacion"}
+    assert DRAW_EFFECTS.keys() == (
+        read_center_values("tests/data/centro_sala_ejemplo.toml").keys() | beds
+    )
+    assert read_center_values("tests/data/centro_h5_ejemplo.toml").keys() < DRAW_EFFECTS.keys()
+    for key in beds:
+        assert not DRAW_EFFECTS[key]
     assert DRAW_EFFECTS["triaje.reparto_niveles"] == {"level", "needs_tests", "admitted"}
     for key in (
         "turnos.inicio",

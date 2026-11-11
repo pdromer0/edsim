@@ -13,10 +13,12 @@ from types import MappingProxyType
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.thinning import DayRecord
+from edsim.engine.events import OUTCOME_SCHEMA_VERSION
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.report import (
     CLINICAL_EPISODE_COLUMNS,
     DAY_COLUMNS,
+    OUTCOME_EPISODE_COLUMNS,
     PARAMETER_COLUMNS,
     episode_from_row,
 )
@@ -99,9 +101,13 @@ def read_clinical_episodes(
 ) -> Mapping[str, EpisodeTruth]:
     """The clinical episodes CSV of a run, by episode, read-only.
 
+    The header is the one of the catalog of the run (``RunInfo.catalog_version``):
+    the 57 columns of ``CLINICAL_EPISODE_COLUMNS`` with milestone 4 (version 3)
+    and the 65 of ``OUTCOME_EPISODE_COLUMNS`` with milestone 5 (version 4).
+
     Raises:
-        ValueError: With ``path:line``, if the header is not
-            ``CLINICAL_EPISODE_COLUMNS``, a row is invalid (``episode_from_row``),
+        ValueError: With ``path:line``, if the header is not the one of the
+            catalog of the run, a row is invalid (``episode_from_row``),
             its parameters, profiles path or profiles fingerprint differ from
             run.json, or an episode is repeated.
     """
@@ -114,7 +120,12 @@ def read_clinical_episodes(
         episodes[truth.episode_id] = truth
         return truth
 
-    read_rows(store, run_id, EPISODES_FILE, CLINICAL_EPISODE_COLUMNS, parse)
+    header = (
+        OUTCOME_EPISODE_COLUMNS
+        if info.catalog_version == OUTCOME_SCHEMA_VERSION
+        else CLINICAL_EPISODE_COLUMNS
+    )
+    read_rows(store, run_id, EPISODES_FILE, header, parse)
     return MappingProxyType(episodes)
 
 
