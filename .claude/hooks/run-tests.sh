@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stop hook: al terminar cada turno de Claude, los tests rápidos con sello
 # (scripts/tests-rapidos.sh), que solo ejecutan las suites afectadas por los cambios.
-# Si fallan, sale con código 2 y Claude recibe el final de la salida por stderr.
+# Si fallan, sale con código 2 y Claude recibe el final de la salida por stderr. Si pasan,
+# imprime un JSON con un systemMessage corto (qué suites se ejecutaron, o por qué ninguna).
 set -u
 
 # Sin jq no podemos leer la entrada: avisar sin bloquear. El código 1 es un error que no
@@ -30,4 +31,18 @@ if ! salida=$(scripts/tests-rapidos.sh 2>&1); then
   printf '%s\n' "$salida" | tail -n 50 >&2
   exit 2
 fi
-printf '%s\n' "$salida" | tail -n 1
+
+# En verde, un aviso corto para el usuario (systemMessage), sin la cola de la salida.
+# Las suites que se ejecutan las anuncia el script («tests-rapidos.sh: núcleo, 2 rutas
+# cambiadas (…)» o «…: app, sin sello»). Si no se ejecutó ninguna, vale su última línea
+# («tests-rapidos.sh: sin cambios desde el último verde»).
+ejecutadas=$(grep -oE '^tests-rapidos\.sh: (núcleo|app), (sin sello|[0-9]+ rutas?)' <<<"$salida" \
+  | sed -E 's/^tests-rapidos\.sh: (núcleo|app),.*/\1/' | paste -sd, - | sed 's/,/, /')
+if [ -n "$ejecutadas" ]; then
+  mensaje="N2 en verde: $ejecutadas"
+else
+  ultima=$(tail -n 1 <<<"$salida")
+  mensaje="N2: ${ultima#tests-rapidos.sh: }"
+  [ "$mensaje" = "N2: " ] && mensaje="N2 en verde"
+fi
+jq -n --arg m "$mensaje" '{systemMessage: $m}'
