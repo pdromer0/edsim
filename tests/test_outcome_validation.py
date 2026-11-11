@@ -57,11 +57,12 @@ def test_potencia_escrita(profiles, arrivals, model):
     assert year == 109_542
     alpha = 0.01 / N_DESTINATION_CATEGORIES
     # El quintil más grave, con un año: el ingreso del 25,5 % se detecta si pasa al 26,9 %,
-    # y el exitus del 0,54 %, si pasa al 0,78 % (el docstring del módulo).
+    # y el exitus del 0,54 %, si pasa al 0,78 % (el docstring del módulo). Con 0,2692 ± 5e-5,
+    # el valor exacto, 0,269153, quedaba a 3,5e-6 del borde: lo destapó la versión V12.
     most_severe = model.by_severity()[0]
     assert most_severe[[1, 3]] == pytest.approx((0.2551, 0.0054), abs=5e-5)
-    assert detectable_share(most_severe[1], year // 5, alpha) == pytest.approx(0.2692, abs=5e-5)
-    assert detectable_share(most_severe[3], year // 5, alpha) == pytest.approx(0.0078, abs=5e-5)
+    assert detectable_share(most_severe[1], year // 5, alpha) == pytest.approx(0.26915, abs=5e-6)
+    assert detectable_share(most_severe[3], year // 5, alpha) == pytest.approx(0.007843, abs=5e-7)
     # V9 (la paciencia con el nivel asignado), en el nivel real 2 de 15 a 44 años: el
     # 57,19 % bajo la mediana en vez del 50 % (el prototipo del plan). Con dos años, la
     # potencia de esa sola categoría es mayor que 0,9999.
