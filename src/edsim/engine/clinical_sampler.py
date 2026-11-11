@@ -38,7 +38,7 @@ from datetime import date
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.engine.center import N_LEVELS, CenterConfig
+from edsim.engine.center import CenterConfig, require_destination
 from edsim.engine.clinical import PatientDraws
 from edsim.engine.events import ARRIVAL_MODES, SEXES, TEST_RESULTS
 from edsim.profiles.config import N_SHIFT_BANDS, TEST_TYPES, ClinicalProfiles
@@ -230,7 +230,8 @@ class ClinicalSampler:
             draws.
 
     Raises:
-        ValueError: If ``streams`` is not seven ``SeedSequence``.
+        ValueError: If ``streams`` is not seven ``SeedSequence``, or the center
+            has no ``[destino]`` (``require_destination``).
     """
 
     def __init__(
@@ -240,6 +241,7 @@ class ClinicalSampler:
         center: CenterConfig,
         streams: Sequence[np.random.SeedSequence],
     ) -> None:
+        require_destination(center)
         streams = list(streams)
         if len(streams) != N_SAMPLER_STREAMS:
             raise ValueError(
@@ -255,7 +257,6 @@ class ClinicalSampler:
         self._workup_durations = WorkupDurationSampler(profiles, [tests, durations])
         self._destination_rng = np.random.default_rng(destination)
         self._admission_probability = tuple(center.admission_probability)
-        assert len(self._admission_probability) == N_LEVELS
         self._shifts = TurnaroundShifts.from_profiles(profiles, start_date)
 
     @property

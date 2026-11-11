@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from edsim.arrivals.profile import ArrivalProfile
-from edsim.engine.center import center_from_values, require_provisional
+from edsim.engine.center import center_from_values, require_destination, require_provisional
 from edsim.engine.clinical import lognormal_params
 from edsim.profiles.config import REASON_KEYS, TEST_TYPES, ClinicalProfiles
 from edsim.profiles.durations import physician_load
@@ -51,6 +51,7 @@ def summarize_center(values: Mapping[str, object]) -> CenterSummary:
     """
     center = center_from_values(values)
     require_provisional(center)
+    require_destination(center)
     durations = []
     for key, parameters in (
         ("duraciones.triaje", center.triage_time),

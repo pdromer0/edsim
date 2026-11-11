@@ -28,6 +28,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from edsim.checks import check_integer, check_list, check_number
+from edsim.profiles.config import N_SEASONS
 
 N_SHIFTS = 3
 """Shifts per day: morning, afternoon and night."""
@@ -49,8 +50,34 @@ _KEYS = {
     "duraciones.respuesta_pruebas": "test_turnaround",
     "pruebas.probabilidad": "test_probability",
     "destino.probabilidad_ingreso": "admission_probability",
+    "camas.espera": "bed_wait",
+    "camas.factor_turno": "bed_shift_factors",
+    "camas.factor_estacion": "bed_season_factors",
 }
 _SECTIONS = {key.split(".")[0] for key in _KEYS}
+
+DESTINATION_KEY = "destino.probabilidad_ingreso"
+"""The only key of ``[destino]``: the provisional and milestone 4 models need it."""
+
+BED_TABLE = "camas"
+"""The table of the wait for a bed, of the milestone 5 model (task 5.2)."""
+
+_BED_KEYS = tuple(key for key in _KEYS if key.split(".")[0] == BED_TABLE)
+_BED_FIELDS = tuple(_KEYS[key] for key in _BED_KEYS)
+_BED_OPTIONAL = {"camas.factor_estacion": (1.0,) * N_SEASONS}
+"""Keys of ``[camas]`` that may be missing, with the value they mean then."""
+
+MISSING_DESTINATION = (
+    "missing keys: destino.probabilidad_ingreso (provisional and milestone 4 models) "
+    "or camas.espera and camas.factor_turno (milestone 5 model)"
+)
+BOTH_DESTINATION_AND_BEDS = (
+    "a center has [destino] (provisional and milestone 4 models) or [camas] "
+    "(milestone 5 model), not both"
+)
+_MISSING_DESTINATION_TABLES = (
+    "destino (provisional and milestone 4 models) or camas (milestone 5 model)"
+)
 
 # Keys that may be missing, with the value they mean then. Only one: a center
 # written before task 4.6a (such as the copy kept in a saved run) has no
@@ -155,6 +182,25 @@ def _check_probabilities(key: str, values: object) -> tuple[float, ...]:
     return tuple(probabilities)
 
 
+def _check_factors(key: str, values: object, n: int) -> tuple[float, ...]:
+    """``n`` finite, strictly positive factors."""
+    factors = [check_number(f"{key}[{i}]", x) for i, x in enumerate(check_list(key, values, n))]
+    for i, x in enumerate(factors):
+        if x <= 0:
+            raise ValueError(f"{key}[{i}] must be positive, got {values[i]!r}")
+    return tuple(factors)
+
+
+def _check_shift_factors(key: str, values: object) -> tuple[float, ...]:
+    """One factor per shift: morning, afternoon and night."""
+    return _check_factors(key, values, N_SHIFTS)
+
+
+def _check_season_factors(key: str, values: object) -> tuple[float, ...]:
+    """One factor per season: winter, spring, summer and autumn."""
+    return _check_factors(key, values, N_SEASONS)
+
+
 _VALIDATORS = dict(
     zip(
         _KEYS,
@@ -171,6 +217,9 @@ _VALIDATORS = dict(
             _check_duration,
             _check_probabilities,
             _check_probabilities,
+            _check_duration,
+            _check_shift_factors,
+            _check_season_factors,
         ),
         strict=True,
     )
@@ -213,16 +262,38 @@ def _has_provisional_block(values: Mapping[str, object]) -> bool:
     A table is there if it brings a key, known or unknown, or if it is
     malformed (not a table). An empty table brings no key and counts as missing.
     """
-    return any(
-        key in PROVISIONAL_TABLES or key.split(".")[0] in PROVISIONAL_TABLES for key in values
-    )
+    return _has_tables(values, PROVISIONAL_TABLES)
+
+
+def _has_tables(values: Mapping[str, object], tables: tuple[str, ...]) -> bool:
+    """Whether any of ``tables`` brings a key, known or unknown, or is malformed."""
+    return any(key in tables or key.split(".")[0] in tables for key in values)
+
+
+def _destination_conflict(values: Mapping[str, object]) -> str | None:
+    """The error of [destino] and [camas]: exactly one of the two, never both (task 5.2).
+
+    ``None`` if the center has one of them. Without either, the missing key
+    is ``destino.probabilidad_ingreso``, with a message that names both tables.
+    """
+    has_destination = _has_tables(values, ("destino",))
+    has_beds = _has_tables(values, (BED_TABLE,))
+    if has_destination and has_beds:
+        return BOTH_DESTINATION_AND_BEDS
+    if not has_destination and not has_beds:
+        return MISSING_DESTINATION
+    return None
 
 
 def _structure_errors(values: Mapping[str, object]) -> tuple[list[str], list[str], list[str]]:
     malformed = sorted(_SECTIONS & values.keys())
-    optional = _OPTIONAL.keys()
+    optional = _OPTIONAL.keys() | _BED_OPTIONAL.keys()
     if not _has_provisional_block(values):
         optional = optional | set(_PROVISIONAL_KEYS)
+    if _has_tables(values, (BED_TABLE,)):
+        optional = optional | {DESTINATION_KEY}
+    else:
+        optional = optional | set(_BED_KEYS)
     missing = [key for key in _KEYS if key not in values and key not in optional]
     unknown = sorted(values.keys() - _KEYS.keys() - _SECTIONS)
     return malformed, missing, unknown
@@ -249,6 +320,10 @@ def validate_center_values(values: Mapping[str, object]) -> dict[str, str]:
                 validator(key, values[key])
             except ValueError as error:
                 errors[key] = str(error)
+    conflict = _destination_conflict(values)
+    if conflict is not None and "destino" not in malformed:
+        # Under the key the app edits, so that it shows next to its field.
+        errors[DESTINATION_KEY] = conflict
     errors.update((key, f"unknown keys: {key}") for key in unknown)
     return errors
 
@@ -310,7 +385,18 @@ class CenterConfig:
         test_probability: Probability of ordering tests, per level
             (``pruebas.probabilidad``).
         admission_probability: Probability of admission, per level
-            (``destino.probabilidad_ingreso``); the rest are discharged.
+            (``destino.probabilidad_ingreso``); the rest are discharged. The
+            provisional and milestone 4 models need it; ``None`` in a center
+            of milestone 5, which has ``[camas]`` instead (task 5.2). A center
+            has one of the two, never both.
+        bed_wait: ``(median, p90)`` of the wait for a bed of the admitted
+            patients, in their box, with factor 1, in minutes
+            (``camas.espera``; H5-6). This and the next two fields are
+            ``[camas]``: ``None`` without it.
+        bed_shift_factors: Factor of the wait by the shift of the request:
+            morning, afternoon, night (``camas.factor_turno``).
+        bed_season_factors: Factor by the season of the request: winter,
+            spring, summer, autumn (``camas.factor_estacion``); 1 if missing.
     """
 
     shift_starts: tuple[int, ...]
@@ -324,9 +410,29 @@ class CenterConfig:
     reassessment_time: tuple[float, float] | None
     test_turnaround: tuple[float, float] | None
     test_probability: tuple[float, ...] | None
-    admission_probability: tuple[float, ...]
+    admission_probability: tuple[float, ...] | None
+    bed_wait: tuple[float, float] | None = None
+    bed_shift_factors: tuple[float, ...] | None = None
+    bed_season_factors: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
+        has_beds = any(getattr(self, field) is not None for field in _BED_FIELDS)
+        if has_beds and self.admission_probability is not None:
+            raise ValueError(BOTH_DESTINATION_AND_BEDS)
+        if not has_beds and self.admission_probability is None:
+            raise ValueError(MISSING_DESTINATION)
+        if has_beds:
+            if self.bed_season_factors is None:
+                object.__setattr__(
+                    self, "bed_season_factors", _BED_OPTIONAL["camas.factor_estacion"]
+                )
+            lacking = [
+                key
+                for key, field in zip(_BED_KEYS, _BED_FIELDS, strict=True)
+                if getattr(self, field) is None
+            ]
+            if lacking:
+                raise ValueError(f"missing keys: {', '.join(lacking)}")
         missing = [
             key
             for key, field in zip(_PROVISIONAL_KEYS, _PROVISIONAL_FIELDS, strict=True)
@@ -340,12 +446,35 @@ class CenterConfig:
         for key, field in _KEYS.items():
             if missing and key in _PROVISIONAL_KEYS:
                 continue
+            if getattr(self, field) is None and (key == DESTINATION_KEY or key in _BED_KEYS):
+                continue  # the table this center does not have
             object.__setattr__(self, field, _VALIDATORS[key](key, getattr(self, field)))
+
+    @property
+    def has_beds(self) -> bool:
+        """Whether the center has ``[camas]`` (milestone 5 model) instead of ``[destino]``."""
+        return self.bed_wait is not None
 
     @property
     def has_provisional(self) -> bool:
         """Whether the center has the provisional block, which the provisional model needs."""
         return self.level_shares is not None
+
+
+def require_destination(center: CenterConfig) -> None:
+    """Fail early if the provisional or milestone 4 model gets a center without ``[destino]``.
+
+    Both draw the destination with ``destino.probabilidad_ingreso`` of the
+    assigned level. A center of milestone 5 has ``[camas]`` instead (task 5.2).
+
+    Raises:
+        ValueError: If ``center`` has no ``[destino]``; the message names it.
+    """
+    if center.admission_probability is None:
+        raise ValueError(
+            "the provisional and milestone 4 models need [destino] of the center "
+            "(destino.probabilidad_ingreso); this one has [camas], of the milestone 5 model"
+        )
 
 
 def require_provisional(center: CenterConfig) -> None:
@@ -393,7 +522,20 @@ def load_center(path: str | Path) -> CenterConfig:
 
     # Preserve the loader's historical grouped diagnostics; field validation
     # still reports every missing full key for an editor.
-    missing = sorted({key if key.split(".")[0] in data else key.split(".")[0] for key in missing})
+    conflict = _destination_conflict(values)
+    labels = {}
+    if conflict == MISSING_DESTINATION:
+        # Neither [destino] nor [camas]: say which one each model needs.
+        labels = {
+            "destino": _MISSING_DESTINATION_TABLES,
+            DESTINATION_KEY: _MISSING_DESTINATION_TABLES,
+        }
+    missing = sorted(
+        {
+            labels.get(name, name)
+            for name in (key if key.split(".")[0] in data else key.split(".")[0] for key in missing)
+        }
+    )
     root_labels = {json.dumps(key, ensure_ascii=False): key for key in data if "." in key}
     unknown = sorted({root_labels.get(key, key) for key in unknown})
     if missing or unknown:
@@ -403,6 +545,8 @@ def load_center(path: str | Path) -> CenterConfig:
         if unknown:
             problems.append(f"unknown keys: {', '.join(unknown)}")
         raise ValueError(f"{path}: {'; '.join(problems)}")
+    if conflict is not None:
+        raise ValueError(f"{path}: {conflict}")
 
     errors = validate_center_values(values)
     if errors:

@@ -40,6 +40,7 @@ from edsim.engine.center import (
     N_SHIFTS,
     CenterConfig,
     _check_shift_starts,
+    require_destination,
     require_provisional,
 )
 from edsim.engine.events import DESTINATIONS
@@ -308,12 +309,13 @@ class ProvisionalSampler:
             objects are not modified, so the same ones give the same draws.
 
     Raises:
-        ValueError: If the center has no provisional block, or ``streams`` is
-            not four ``SeedSequence``.
+        ValueError: If the center has no provisional block or no ``[destino]``,
+            or ``streams`` is not four ``SeedSequence``.
     """
 
     def __init__(self, center: CenterConfig, streams: Sequence[np.random.SeedSequence]) -> None:
         require_provisional(center)
+        require_destination(center)
         streams = list(streams)
         if len(streams) != N_STREAMS:
             raise ValueError(f"streams must have {N_STREAMS} SeedSequence, got {len(streams)}")
