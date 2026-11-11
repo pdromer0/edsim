@@ -686,7 +686,7 @@ Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
 
 ### Workflow
 
-Una tarea pasa por ocho pasos y cada uno tiene su nivel de tests (la revisión propia, ninguno: va antes de la N3); los dos bucles vuelven a la implementación.
+Una tarea pasa por ocho pasos y cada uno tiene su nivel de tests (en la revisión propia, N1 en cada corrección; la N3 va después); los dos bucles vuelven a la implementación.
 
 ```mermaid
 ---

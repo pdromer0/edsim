@@ -32,4 +32,5 @@ Lo mismo en «Ajustes de la revisión» (Codex y el chat): todas las correccione
 - Si la revisión no encuentra nada que corregir, se pierden sus minutos: la N3 empieza más tarde que en paralelo.
 - Si encuentra algo, se ahorra al menos una N3, unos 14 minutos, y la N3 que queda prueba y mide el árbol que sube.
 - Una regla de repetición dice ahora cuándo: una vez por ronda, no por corrección ([lecciones](../proceso/lecciones.md#proceso-y-agentes)).
-- Cambian `tarea.md` (§4 y §7), la skill `/tarea-edsim`, [flujo.md](../proceso/flujo.md), [portabilidad.md](../proceso/portabilidad.md), la sección «Workflow» del [diseño](../diseno.md#workflow), `AGENTS.md` y la plantilla del PR.
+- Cambian `tarea.md` (§4 y §7), la skill `/tarea-edsim`, [flujo.md](../proceso/flujo.md), [portabilidad.md](../proceso/portabilidad.md), la sección «Workflow» del [diseño](../diseno.md#workflow), `AGENTS.md` y la plantilla del PR (con una sección «Pendiente»). La lección va a [lecciones.md](../proceso/lecciones.md) y la entrada, al [diario de proceso](../diario/proceso.md).
+- En el mismo issue, pero aparte de esta decisión: `tarea.md` §5 y la skill dicen que el «Qué se hizo» del anexo cita el issue y la rama, no el número del PR, porque la entrada se escribe antes de abrirlo.
