@@ -2,7 +2,7 @@
 
 > **Estado:** en curso. Especificación aprobada el 10 de noviembre de 2026; el original está en este repositorio.
 
-Al terminar el hito 5, cada paciente de EDsim termina como en un hospital de verdad: puede irse sin ser visto si su espera supera su paciencia, sale con uno de cuatro destinos (alta, ingreso, traslado o exitus) que dependen de su gravedad real, su edad, su motivo y sus pruebas, y si ingresa espera la cama dentro de su box, que queda bloqueado. Es una pestaña didáctica, con el formato de la del hito 6: cada pieza explica para qué sirve, cómo funciona, cómo se usa en EDsim y cómo aprender más. Las decisiones son candidatas (H5-n) y su número definitivo será 66 + n (H5-1 = 67, H5-13 = 79); la tarea de cierre escribe sus ADR 0067 a 0079. La sesión conceptual fue el 9 y el 10 de noviembre de 2026, y la implementación empieza con la etiqueta `v0.6-hito6`.
+Al terminar el hito 5, cada paciente de EDsim termina como en un hospital de verdad: puede irse sin ser visto si su espera supera su paciencia, sale con uno de cuatro destinos (alta, ingreso, traslado o exitus) que dependen de su gravedad real, su edad, su motivo y sus pruebas, y si ingresa espera la cama dentro de su box, que queda bloqueado. Es una especificación didáctica, con el formato de la del hito 6: cada pieza explica para qué sirve, cómo funciona, cómo se usa en EDsim y cómo aprender más. Las decisiones son candidatas (H5-n) y su número definitivo será 66 + n (H5-1 = 67, H5-13 = 79); la tarea de cierre escribe sus ADR 0067 a 0079. La sesión conceptual fue el 9 y el 10 de noviembre de 2026, y la implementación empieza con la etiqueta `v0.6-hito6`.
 
 ## Objetivo y alcance
 
@@ -196,7 +196,7 @@ Los odds ratios multiplican odds, no suman puntos. Por eso subir el ingreso baja
 ### Para aprender más
 
 - Agresti, *An Introduction to Categorical Data Analysis*, el capítulo de modelos logit para respuestas multinomiales: la parametrización con categoría de referencia de esta pieza.
-- El truco de Gumbel-max: la pieza de motivos de la pestaña del hito 4 y el notebook 04.
+- El truco de Gumbel-max: la sección [«Motivos de consulta»](hito-4.md#motivos-de-consulta) de la especificación del hito 4 y el notebook 04.
 - Ejercicio propuesto: con el notebook 05, ajustar una regresión logística de ingreso con lo que ve el hospital (nivel asignado, edad, motivo, pruebas) y comparar sus coeficientes con los odds ratios verdaderos del TOML.
 
 ## Pieza 3 — La espera de cama y los boxes bloqueados
@@ -357,7 +357,7 @@ Si los boxes pasan a ser el cuello de botella por la espera de cama, siguen fijo
 
 ### Para aprender más
 
-- La sección «Calibración» de la pestaña del hito 4 y el [registro de calibración](https://github.com/pdromer0/edsim/blob/main/docs/calibracion/registro.md): las reglas contra el sobreajuste y la identificabilidad.
+- La sección [«Calibración»](hito-4.md#calibración) de la especificación del hito 4 y el [registro de calibración](https://github.com/pdromer0/edsim/blob/main/docs/calibracion/registro.md): las reglas contra el sobreajuste y la identificabilidad.
 - Ejercicio propuesto: dibujar el abandono frente al factor de paciencia con dos plantillas de médicos; las dos curvas muestran el acoplamiento.
 
 ## Pieza 6 — Versiones de un modelo
@@ -400,7 +400,7 @@ Un bloque a medias (`[abandono]` sin `[destinos]`, `ingreso` en algunos motivos 
 
 ### Para aprender más
 
-- La pieza 4 de la pestaña del hito 6 (contratos y versiones del catálogo), con la compatibilidad hacia atrás y hacia delante.
+- La [pieza 4](hito-6.md#pieza-4--contratos-json-schema-y-versiones-del-catálogo) de la especificación del hito 6 (contratos y versiones del catálogo), con la compatibilidad hacia atrás y hacia delante.
 - *Designing Data-Intensive Applications*, el capítulo de codificación y evolución.
 - Ejercicio propuesto: validar una línea de un log de la versión 4 contra el esquema de la versión 3 y leer el error.
 
@@ -446,7 +446,7 @@ El ground truth guarda todo lo que se sorteó para cada paciente, también lo qu
 ### Para aprender más
 
 - Inferencia causal con resultados potenciales: Hernán y Robins, *Causal Inference: What If* (libro gratuito en la web de Harvard), capítulo 1. El contrafactual de esta pieza es exactamente un «resultado potencial» que en datos reales nunca se observa.
-- El caso de uso «Inferencia causal con respuesta conocida» de la pestaña de diseño.
+- El caso de uso «Inferencia causal con respuesta conocida» de los [casos de uso](../diseno.md#casos-de-uso) del diseño.
 - Ejercicio propuesto: con el notebook 05, comparar el porcentaje de ingreso de los que se quedaron con el de los que se fueron (con su destino contrafactual), por nivel asignado.
 
 ## Especificación: catálogo v4 y máquina de estados
@@ -792,7 +792,7 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 
 ## Decisiones del hito
 
-Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y el 10 de noviembre de 2026, cada una con la recomendación de Claude. Su número definitivo es 66 + n; la tarea 5.8 escribe sus ADR 0067 a 0079 con lo que cambió al implementarlas y las añade al registro de la pestaña de diseño.
+Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y el 10 de noviembre de 2026, cada una con la recomendación de Claude. Su número definitivo es 66 + n; la tarea 5.8 escribe sus ADR 0067 a 0079 con lo que cambió al implementarlas y las añade al [registro de decisiones](../diseno.md#registro-de-decisiones-y-preguntas-abiertas) de `docs/diseno.md`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -816,14 +816,14 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 | Tarea | Contenido | Quién | Rama | `@codex review` |
 | --- | --- | --- | --- | --- |
-| 5.1 | Primer commit: exportación de esta pestaña a `docs/specs/hito-5.md` y «Hito en curso» de `AGENTS.md`. Motor: catálogo v4 y su esquema, `TERMINAL_EVENTS[4]`, `PatientDraws.outcome`, abandono en tres sitios con el empate, cuatro destinos, espera de cama en el box y en el pasillo, invariantes nuevas; escenarios M y C y el censo v4, todo con pacientes a mano, sin perfiles. Huellas de las versiones 1 a 3 intactas | Claude Code | `feat/h5-motor` | Sí (motor) |
+| 5.1 | Motor: catálogo v4 y su esquema, `TERMINAL_EVENTS[4]`, `PatientDraws.outcome`, abandono en tres sitios con el empate, cuatro destinos, espera de cama en el box y en el pasillo, invariantes nuevas; escenarios M y C y el censo v4, todo con pacientes a mano, sin perfiles. Huellas de las versiones 1 a 3 intactas | Claude Code | `feat/h5-motor` | Sí (motor) |
 | 5.2 | `perfiles.toml` (`[abandono]`, `[destinos]`, `ingreso` por motivo) y `centro.toml` (`[camas]`, `[destino]` opcional) con sus reglas; `profiles/outcome.py` exacto; derivados escritos en la cascada; `OutcomeSampler`; `check_patience` y `check_destinations`; valores orientativos del destino. Sin el motor | Claude Code | `feat/h5-perfiles` | No |
 | 5.3 | El modelo del hito 5 en el motor, elegido por los bloques; `child_streams(seed, 10)`; ground truth del desenlace, CSV y `run.json`; CLI (`motor simular`, `perfiles validar`); `tests/data` del hito 5 con sus huellas; las invariantes con el ground truth. `config/` sin los bloques | Claude Code | `feat/h5-muestreador` | Sí (motor y formatos) |
 | 5.4 | Núcleo de la app en `runs/`: métricas con censura, indicadores nuevos, filtros, `_location` con «esperando cama» y pasillo, «ver la verdad». Directo: «directo = batch» v4, consumidor y `LiveTracker`. `scripts/tests-integracion.sh` antes del push | Claude Code | `feat/h5-app-nucleo` | No |
 | 5.5 | Páginas de la app (H5-12) y pendientes pequeños del hito 4, probadas con ejecuciones de `tests/data` del hito 5; manual y ayudas «¿Qué estoy viendo?»; etiqueta `app-v0.3.0` | Codex | `feat/app-h5-paginas` | No |
 | 5.6 | Calibración (H5-9): objetivos nuevos, mandos de paciencia y espera de cama, medición de la plantilla, cumplidor y registro; escribe los bloques en `config/`, así que el modelo por defecto pasa a ser el del hito 5; semana del 19 al 25 de enero | Claude Code | `feat/h5-calibracion` | Sí (cambia el modelo por defecto) |
 | 5.7 | Notebook `05_cierre_del_flujo.ipynb`: abandono frente a saturación, destinos frente a G, boxes bloqueados y ley de Little, la semana de enero antes y después, el contrafactual y Kaplan–Meier de la paciencia; modo rápido para el CI | Claude Code | `feat/h5-notebook` | No |
-| 5.8 | Cierre: ADR 0067 a 0079, diario `docs/diario/hito-5.md` con «Reflexiones de Pedro» vacía, exportación de esta pestaña, ajustes de la pestaña de diseño (catálogo de eventos, objetivos, hoja de ruta, registro de decisiones) con el visto bueno de Pedro, README y `AGENTS.md`. Pedro crea `v0.5-hito5` | Claude Code | `docs/h5-cierre` | No |
+| 5.8 | Cierre: ADR 0067 a 0079, diario `docs/diario/hito-5.md` con «Reflexiones de Pedro» vacía, ajustes de `docs/diseno.md` (catálogo de eventos, objetivos, hoja de ruta, registro de decisiones) con el visto bueno de Pedro, README y `AGENTS.md`. Pedro crea `v0.5-hito5` | Claude Code | `docs/h5-cierre` | No |
 
 **Por qué este orden.** Primero el motor con pacientes a mano (5.1), donde está la lógica difícil y los escenarios con cada instante calculado; después lo exacto de los perfiles, sin el motor (5.2); después se juntan (5.3), como en el hito 4 (4.2 a 4.4 antes de la 4.5a). La app va antes de la calibración porque la calibración cambia el modelo por defecto, y ese cambio espera a que la app lo soporte (decisión 44): si no, durante la 5.5 los tests de la app correrían contra un modelo que la app aún no sabe mostrar. Partir el modelo y la calibración en PR distintos deja cada uno revisable (lección del hito 4).
 
@@ -836,21 +836,15 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 ## Flujo de git y reparto entre agentes
 
-El flujo es el de los hitos 4 y 6. El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
+El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
 
-En cada tarea:
+Cada tarea sale de su issue de GitHub y sigue el ciclo de [docs/proceso/tarea.md](../proceso/tarea.md): arranque desde el issue y sus comentarios, plan con sus seis apartados (con las predicciones firmes de las versiones incorrectas), un commit por paso lógico con los niveles de tests N1, N2 y N3, revisión adversaria del propio diff, la entrada del anexo de esta especificación en el mismo PR y la fusión, siempre de Pedro. El manual del flujo para personas (tablero, papeles y diagramas) está en [docs/proceso/flujo.md](../proceso/flujo.md).
 
-1. El chat prepara los conceptos y el prompt; Pedro exporta esta pestaña si ha cambiado y la deja sin commitear en `docs/specs/hito-5.md` (primer commit, limpio: 100644, sin la línea de firma, sin realineados).
-2. El agente parte de `main` actualizado (`git switch main && git pull && uv sync --all-packages --extra kafka && git switch -c <rama>`) y arranca en modo `plan`. El plan empieza por «Contexto» y trae las predicciones firmes de las versiones incorrectas.
-3. El chat revisa el plan recalculando las cifras; Pedro aprueba con «Yes, and use auto mode».
-4. Un commit por paso lógico (prefijos `feat`, `test`, `refactor`, `docs`, `chore`; mensajes en español), con ruff y los tests del área tocada en verde antes de cada uno (N1); el hook `Stop` ejecuta la rápida con sello (N2). Antes de cada push, `scripts/tests-completos.sh` (N3) sin contenedores, con sus tiempos en el PR, y, en la 5.4, `scripts/tests-integracion.sh`.
-5. `git push -u origin <rama>` y `gh pr create`, con «Ajustes de la aprobación», medidas, versiones incorrectas (predicción frente a observado) y comprobaciones clínicas.
-6. Pedro escribe `@codex review` en la 5.1, la 5.3 y la 5.6; el chat revisa el PR y los comentarios; Pedro comprueba el CI (`tests`, `notebooks`, `tests-app` y `tests-kafka`) y fusiona con *squash and merge*.
-7. «Cierra, documenta y prepara la siguiente»: sincronizar esta pestaña con `docs/specs/hito-5.md`, escribir el anexo de la tarea y actualizar el traspaso y la nota del hito.
+Lo propio de este hito:
 
-Permisos: los de Claude Code no cambian (los del hito 6 bastan). Siguen denegados `gh pr merge`, el push forzado y el push a `main`.
-
-**Coordinación.** La sesión del hito 5 escribe en esta pestaña, en `claude/hito-5-preparacion.md` y en el traspaso al cerrar cada tarea, releyendo el traspaso antes de escribirlo; los cambios en otras pestañas (diseño, app), con el visto bueno de Pedro.
+- `@codex review` en la 5.1, la 5.3 y la 5.6 (H5-13), las tareas con la etiqueta `critica`.
+- En la 5.4, `scripts/tests-integracion.sh` antes del push, además de la N3.
+- Esta especificación se cambia en el repositorio, en el mismo PR que el código que la cambia; el documento online es un archivo y no se edita.
 
 ## Criterios de aceptación
 
@@ -870,7 +864,7 @@ El hito 5 está cerrado cuando se cumplen todos:
 
 ## Para versiones posteriores
 
-Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo lleva a la hoja de ruta de la pestaña de diseño.
+Lo que este hito aplaza a propósito, con su destino. La tarea de cierre lo lleva a la [hoja de ruta](../diseno.md#hoja-de-ruta) de `docs/diseno.md`.
 
 | Qué | Adónde | Nota |
 | --- | --- | --- |
@@ -904,7 +898,7 @@ Consultadas el 9 y el 10 de noviembre de 2026. Las de «para aprender más» est
 | Espera de cama | [*Revista Clínica Española* 2024](https://revclinesp.es/es-congresos-45-congreso-sociedad-espanola-medicina-168-sesion-gestion-clinica-g--8190-influencia-del-tiempo-de-estancia-99510-pdf), [Carballo et al., *Emergencias* 2026](https://revistaemergencias.org/wp-content/uploads/2026/06/5345_ORIGINAL_Carballo_V3.pdf), [TFM del Royo Villanova, 2013](https://zaguan.unizar.es/record/13094/files/TAZ-TFM-2013-1178.pdf) y [Jornadas AES, Valencia 2023](https://www.aes.es/jornadas/docs/presentaciones/OC68_URG-EM_OC_68.pdf) | 22,8 h de estancia de los ingresados en un terciario; 4.064 de 8.439 mayores de 75 años más de 24 h; 5 h 57 min de demora en un comarcal; 68,9 % de más de 6 h y estancia en planta de 6,82 días en Valencia |
 | Triaje y saturación (H5-1) | [Chen et al.](https://nta.web.unc.edu/wp-content/uploads/sites/14577/2021/08/Wanyi-census.pdf) y [revisión en JOHM](https://johm.ubb.ac.id/index.php/home/article/view/16) | Evidencia mixta, sin coeficiente |
 
-**Cálculos propios de esta pestaña.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
+**Cálculos propios de esta especificación.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
 
 ## Anexo: guía de referencia del hito 5
 
