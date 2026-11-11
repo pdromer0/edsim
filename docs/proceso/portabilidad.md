@@ -253,8 +253,8 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 
 ### Skills [implantado]
 
-- **`/tarea-<proyecto> N [notas del chat]`**: lleva una tarea del issue al PR, siguiendo `docs/proceso/tarea.md`. Sus fases:
-  - **en modo plan, solo lee:** el issue, sus dependencias, las secciones enlazadas de la especificación y el plan;
+- **`/tarea-<proyecto> N [notas efímeras]`**: lleva una tarea del issue al PR, siguiendo `docs/proceso/tarea.md`. Las notas duraderas van como comentario «Notas del chat» del issue. Sus fases:
+  - **en modo plan, solo lee:** el issue con sus comentarios, sus dependencias, las secciones enlazadas de la especificación y el plan;
   - **con el plan aprobado:** crea la rama, mueve la ficha, implementa y lanza la N3 en segundo plano;
   - **antes del push:** `/code-review` con su nivel y su destino (`main...<rama>`);
   - **al final:** abre el PR con la plantilla y comprueba que la ficha está en «En revisión».

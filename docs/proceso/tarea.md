@@ -6,11 +6,12 @@ Los niveles de tests N1, N2 y N3 son los de la sección «Workflow» de [docs/di
 
 ## 1. Arranque
 
-- Lee el issue: `gh issue view N --json number,title,state,body,labels,milestone,blockedBy`. Si está cerrado, para.
+- Lee el issue con sus comentarios: `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si está cerrado, para.
 - Dependencias: **manda la nativa** (`blockedBy`, la relación «blocked by» de GitHub). Si algún issue que la bloquea sigue abierto, para y dilo. La sección «Depende de» del cuerpo guarda el motivo; si las dos no coinciden, avisa del descuadre, pero decide por la nativa.
 - Con el árbol limpio, `git switch main && git pull --ff-only` y crea la rama que indica el issue. Si ya existe (un PR que junta varias tareas), cambia a ella. Si el agente arranca en modo plan, que no deja escribir, la rama se crea al aprobar el plan, como primer paso de la implementación.
 - Lee solo las secciones de la especificación que enlaza el issue, y por secciones: primero los encabezados (`grep -n '^#' fichero`) y después los rangos de líneas que interesan. Ver «Cómo leer las especificaciones grandes» en [docs/README.md](../README.md).
-- Si las notas del chat precisan algo del issue, mandan las notas.
+- Las notas del chat van como comentario «Notas del chat» del issue; el argumento de la skill queda para lo efímero de esa sesión. Si un comentario o el argumento precisan algo del cuerpo, mandan ellos; entre dos comentarios que se contradicen, el más reciente.
+- Si la tarea no tiene fichero de especificación (el enlace no es un fichero o está vacío), la especificación son el cuerpo y los comentarios del issue. Si no basta, se pregunta.
 
 ## 2. Plan
 
