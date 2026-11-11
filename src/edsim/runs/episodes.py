@@ -18,6 +18,8 @@ class EpisodeSegment:
 
     ``results_room`` marks the time out of the box between two box stays: the
     wait for the results in the results room and the wait for a box after them.
+    ``hallway`` marks the wait for a bed in the hallway, after a displacement
+    (version 4, task 5.4).
     """
 
     state: EpisodeState
@@ -25,6 +27,7 @@ class EpisodeSegment:
     end: float
     box: int | None
     results_room: bool = False
+    hallway: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +64,8 @@ def episode_segments(events: Sequence[Event], horizon: float) -> EpisodeSegments
     Horizon and interval endpoints are simulation minutes. The input must start
     with this episode's arrival, contain no other episode, be time ordered and
     end no later than the finite horizon. Invalid inputs raise ValueError.
-    Completed episodes end on departure; unfinished ones end at the horizon.
+    Completed episodes end on departure or, in version 4, on leaving without
+    being seen; unfinished ones end at the horizon.
     A grant preempted before process resumption emits nothing and changes no
     observed location. Test results outside a box never end the box wait.
     """
@@ -85,12 +89,15 @@ def episode_segments(events: Sequence[Event], horizon: float) -> EpisodeSegments
     def extend(end: float) -> None:
         if end <= previous:
             return
-        current = EpisodeSegment(state.location(), previous, end, state.box, state.results_room)
+        current = EpisodeSegment(
+            state.location(), previous, end, state.box, state.results_room, state.hallway
+        )
         last = segments[-1] if segments else None
-        if last and (last.state, last.box, last.results_room) == (
+        if last and (last.state, last.box, last.results_room, last.hallway) == (
             current.state,
             current.box,
             current.results_room,
+            current.hallway,
         ):
             segments[-1] = replace(segments[-1], end=end)
         else:
@@ -109,9 +116,9 @@ def episode_segments(events: Sequence[Event], horizon: float) -> EpisodeSegments
                     Displacement(now, event.payload["box"], event.payload["desalojado_por"])
                 )
         previous = now
-        if state.departed:
+        if state.closed:
             break
-    if not state.departed:
+    if not state.closed:
         extend(float(horizon))
     tests = (
         None

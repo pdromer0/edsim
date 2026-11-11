@@ -128,14 +128,15 @@ def test_ocupacion_a_mano_en_cuatro_instantes(t, expected, still_open, room):
 
 
 def test_cada_ubicacion_aparece_en_la_tabla():
-    # Guarda: los cuatro instantes cubren las siete ubicaciones de LocationState.
+    # Guarda: los cuatro instantes cubren las siete ubicaciones de la versión 3. La octava,
+    # waiting_bed (tarea 5.4), es de la versión 4 y la cubre el log a mano de esa versión.
     tracker = LiveTracker()
     for event in occupancy_log():
         tracker.write(event)
     seen = {
         p for t in (12, 22, 50, 80) for p, n in tracker.occupancy_at(t).by_location.items() if n
     }
-    assert seen == set(LOCATIONS)
+    assert seen == set(LOCATIONS) - {"waiting_bed"}
 
 
 def test_estado_final_y_abiertos():

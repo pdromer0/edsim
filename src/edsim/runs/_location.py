@@ -13,6 +13,7 @@ EpisodeState = Literal[
     "assessment",
     "waiting_tests",
     "reassessment",
+    "waiting_bed",
 ]
 
 
@@ -23,6 +24,12 @@ class LocationState:
     ``in_results_room`` is set by ``box_released`` (task 4.6a: the patient left
     its box to wait for its results outside) and cleared by the next
     ``box_assigned``.
+
+    With version 4 (task 5.4, H5-11): ``bed_requested`` is set by
+    ``bed_requested`` (the state is ``waiting_bed`` from then on), ``hallway``
+    by a displacement while waiting for a bed (the patient waits in the
+    hallway, without a box), and ``left`` by ``patient_left_wbs``, the closing
+    of an abandonment, told apart from ``departed``.
     """
 
     triage_started: bool = False
@@ -32,6 +39,9 @@ class LocationState:
     tests_pending: bool = False
     departed: bool = False
     in_results_room: bool = False
+    bed_requested: bool = False
+    hallway: bool = False
+    left: bool = False
 
     def apply(self, event: Event) -> "LocationState":
         """Return the next flags without changing this state or the event."""
@@ -53,10 +63,19 @@ class LocationState:
             case "test_resulted":
                 return replace(self, tests_pending=False)
             case "patient_displaced":
-                return replace(self, box=None)
+                return replace(self, box=None, hallway=self.bed_requested)
             case "patient_departed":
-                return replace(self, departed=True, box=None)
+                return replace(self, departed=True, box=None, hallway=False)
+            case "bed_requested":
+                return replace(self, bed_requested=True)
+            case "patient_left_wbs":
+                return replace(self, left=True, box=None)
         return self
+
+    @property
+    def closed(self) -> bool:
+        """Whether the episode ended: departed or, in version 4, left without being seen."""
+        return self.departed or self.left
 
     @property
     def results_room(self) -> bool:
@@ -76,11 +95,17 @@ class LocationState:
         (``waiting_tests`` with ``box`` None); once its results are in, it
         waits for a box like anyone else. The room is told apart by
         ``results_room``, not by a state of its own (task 4.8a).
+
+        An admitted patient waits for its bed (``waiting_bed``) in its box or,
+        after a displacement, in the hallway, told apart by ``hallway`` (H5-11),
+        as the results room.
         """
         if not self.triage_started:
             return "waiting_triage"
         if not self.triaged:
             return "triage"
+        if self.bed_requested:
+            return "waiting_bed"
         if self.box is None:
             if self.in_results_room and self.tests_pending:
                 return "waiting_tests"

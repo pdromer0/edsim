@@ -6,8 +6,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
-from edsim.engine.analysis import CURVES
+from edsim.engine.analysis import CURVES, OUTCOME_CURVES
 from edsim.engine.events import Event, from_json
+from edsim.profiles.config import DESTINATIONS
 from edsim.runs._location import LocationState
 from edsim.runs.episodes import EpisodeState
 from edsim.runs.results import RunReadError, RunResults, read_run_header
@@ -20,7 +21,8 @@ class ReplayPatient:
 
     ``results_room`` is True while the patient is out of its box between two
     box stays (task 4.8a): in the results room, waiting for its results or for
-    a box again.
+    a box again. ``hallway`` is True while an admitted patient waits for its
+    bed in the hallway, after a displacement (task 5.4, H5-11).
     """
 
     episode_id: str
@@ -31,6 +33,7 @@ class ReplayPatient:
     box: int | None
     tests_pending: bool = False
     results_room: bool = False
+    hallway: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,22 @@ class ReplayDeparture:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplayAbandonment:
+    """One patient who left without being seen in the trailing hour (task 5.4).
+
+    ``wait`` is where it waited (``espera``: ``triaje``, ``box`` or ``medico``);
+    ``level`` is None if it left before its triage.
+    """
+
+    episode_id: str
+    patient_id: str
+    arrival: float
+    level: int | None
+    time: float
+    wait: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReplayDisplacement:
     """Who lost a box, when, and to which episode."""
 
@@ -57,7 +76,12 @@ class ReplayDisplacement:
 
 @dataclass(frozen=True, slots=True)
 class ReplayState:
-    """State after all events <= time; recent means (time - 60, time]."""
+    """State after all events <= time; recent means (time - 60, time].
+
+    ``departures_by_destination`` has the four destinations of version 4, 0 in
+    the older logs; ``abandonments`` are the recent ones, closed apart from the
+    departures (task 5.4, H5-11).
+    """
 
     time: float
     patients: tuple[ReplayPatient, ...]
@@ -66,6 +90,7 @@ class ReplayState:
     displacements: tuple[ReplayDisplacement, ...]
     last_events: tuple[Event, ...]
     departures_by_destination: Mapping[str, int]
+    abandonments: tuple[ReplayAbandonment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +106,8 @@ class ReplayCounts:
     nurses_staff: int
     doctors_staff: int
     boxes: int
+    boxes_waiting_bed: int = 0
+    hallway: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +128,7 @@ class _Patient:
             self.location.box,
             self.location.tests_pending,
             self.location.results_room,
+            self.location.hallway,
         )
 
 
@@ -114,6 +142,7 @@ class _Checkpoint:
     last_events: tuple[Event, ...]
     offset: int
     line: int
+    abandonments: tuple[ReplayAbandonment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +168,7 @@ class _Accumulator:
         self.departures = deque(checkpoint.departures)
         self.displacements = deque(checkpoint.displacements)
         self.last_events = deque(checkpoint.last_events, maxlen=15)
+        self.abandonments = deque(checkpoint.abandonments)
 
     def apply(self, event: Event) -> None:
         self.last_events.append(event)
@@ -176,6 +206,18 @@ class _Accumulator:
                 )
             )
             del self.patients[episode]
+        elif kind == "patient_left_wbs":
+            self.abandonments.append(
+                ReplayAbandonment(
+                    episode,
+                    patient.patient_id,
+                    patient.arrival,
+                    patient.level,
+                    event.sim_time,
+                    event.payload["espera"],
+                )
+            )
+            del self.patients[episode]
         else:
             self.patients[episode] = patient
 
@@ -184,6 +226,8 @@ class _Accumulator:
             self.departures.popleft()
         while self.displacements and self.displacements[0].time <= time - 60:
             self.displacements.popleft()
+        while self.abandonments and self.abandonments[0].time <= time - 60:
+            self.abandonments.popleft()
         return _Checkpoint(
             time,
             tuple(self.patients.values()),
@@ -193,6 +237,7 @@ class _Accumulator:
             tuple(self.last_events),
             offset,
             line,
+            tuple(self.abandonments),
         )
 
 
@@ -209,9 +254,8 @@ def _view(checkpoint: _Checkpoint) -> ReplayState:
         departures,
         checkpoint.displacements,
         checkpoint.last_events,
-        MappingProxyType(
-            {d: sum(p.destination == d for p in departures) for d in ("alta", "ingreso")}
-        ),
+        MappingProxyType({d: sum(p.destination == d for p in departures) for d in DESTINATIONS}),
+        checkpoint.abandonments,
     )
 
 
@@ -317,5 +361,6 @@ def replay_counts(result: RunResults, t: float) -> ReplayCounts:
     curves = result.analysis.curves
     _check_time(t, curves.horizon)
     return ReplayCounts(
-        **{name: curves.value(name, t) for name in CURVES}, boxes=result.center.boxes
+        **{name: curves.value(name, t) for name in CURVES + OUTCOME_CURVES},
+        boxes=result.center.boxes,
     )

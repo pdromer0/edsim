@@ -20,6 +20,7 @@ from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
+from edsim.engine.outcome_metrics import WindowOutcome, window_outcome
 from edsim.engine.report import (
     ProfilesParameters,
     RunParameters,
@@ -56,14 +57,16 @@ def _load_configuration[T](loader: Callable[[Path], T], original: str | Path, co
 class SimulationResult:
     """Persisted metadata and the complete analysis of a newly simulated run.
 
-    ``outcome_counts`` exists only with the milestone 5 model (task 5.3): how
-    the episodes of the window end. Its metrics with abandonment are task 5.4.
+    ``outcome_counts`` and ``outcome`` exist only with the milestone 5 model:
+    how the episodes of the window end (task 5.3) and the indicators of the
+    abandonment, the destinations and the wait for a bed (task 5.4).
     """
 
     info: RunInfo
     analysis: RunAnalysis
     violations: tuple[Violation, ...]
     outcome_counts: OutcomeCounts | None = None
+    outcome: WindowOutcome | None = None
 
 
 def _utc_now() -> datetime:
@@ -298,11 +301,17 @@ def simulate_run(
         info.write(temporary / "run.json")
         _check_destination(destination)
         temporary.rename(destination)
-        counts = None
+        counts = outcome = None
         if model is PatientModel.MILESTONE_5:
-            counts = outcome_counts(events, warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY)
+            start, end = warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY
+            counts = outcome_counts(events, start, end)
+            outcome = window_outcome(analysis.table, analysis.curves, start, end)
         return SimulationResult(
-            info=info, analysis=analysis, violations=violations, outcome_counts=counts
+            info=info,
+            analysis=analysis,
+            violations=violations,
+            outcome_counts=counts,
+            outcome=outcome,
         )
     finally:
         if temporary.exists():

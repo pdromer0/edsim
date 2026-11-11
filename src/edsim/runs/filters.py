@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from edsim.engine.analysis import EpisodeRecord
-from edsim.engine.events import ARRIVAL_MODES, SEXES
-from edsim.profiles.config import N_BANDS, REASON_KEYS, TEST_TYPES
+from edsim.engine.events import ARRIVAL_MODES, LWBS_WAITS, SEXES
+from edsim.profiles.config import DESTINATIONS, N_BANDS, REASON_KEYS, TEST_TYPES
 from edsim.runs.episodes import ObservedProfile
 
 EpisodePeriod = Literal["warmup", "window", "unfinished"]
@@ -21,10 +21,15 @@ class EpisodeFilters:
     the age band (0 to 3, the bands of its profiles), ``sex`` and
     ``arrival_mode`` with the words of the log, a ``reason`` key and a ``test``
     type that the episode had ordered.
+
+    With version 4 (task 5.4), ``destination`` takes the four destinations, and
+    the last four filters are of the outcome: ``left`` (left without being
+    seen), ``left_from`` (where it waited when it left), ``bed`` (asked for a
+    bed) and ``hallway`` (waited for it in the hallway).
     """
 
     level: int | None = None
-    destination: Literal["alta", "ingreso"] | None = None
+    destination: Literal["alta", "ingreso", "traslado", "exitus"] | None = None
     displaced: bool | None = None
     arrival_day: int | None = None
     period: EpisodePeriod | None = None
@@ -35,6 +40,10 @@ class EpisodeFilters:
     arrival_mode: Literal["ambulancia", "propios_medios"] | None = None
     reason: str | None = None
     test: str | None = None
+    left: bool | None = None
+    left_from: Literal["triaje", "box", "medico"] | None = None
+    bed: bool | None = None
+    hallway: bool | None = None
 
     @property
     def uses_profile(self) -> bool:
@@ -47,10 +56,14 @@ class EpisodeFilters:
     def __post_init__(self) -> None:
         if self.level is not None and (type(self.level) is not int or not 1 <= self.level <= 5):
             raise ValueError("level must be 1 to 5 or None")
-        if self.destination not in (None, "alta", "ingreso"):
+        if self.destination not in (None, *DESTINATIONS):
             raise ValueError("unknown destination")
-        if self.displaced is not None and type(self.displaced) is not bool:
-            raise ValueError("displaced must be a bool or None")
+        for name in ("displaced", "left", "bed", "hallway"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not bool:
+                raise ValueError(f"{name} must be a bool or None")
+        if self.left_from not in (None, *LWBS_WAITS):
+            raise ValueError("unknown left_from")
         if self.arrival_day is not None and (
             type(self.arrival_day) is not int or self.arrival_day < 0
         ):
@@ -78,15 +91,20 @@ class EpisodeFilters:
 
 
 def episode_period(episode: EpisodeRecord, warmup_end: float) -> EpisodePeriod:
-    """Classify unfinished episodes first, then arrivals relative to warm-up."""
-    if episode.departure is None:
+    """Classify unfinished episodes first, then arrivals relative to warm-up.
+
+    An episode is finished when it departs or, in version 4, leaves without
+    being seen.
+    """
+    if episode.end is None:
         return "unfinished"
     return "warmup" if episode.arrival < warmup_end else "window"
 
 
 def episode_observed_time(episode: EpisodeRecord, horizon: float) -> float:
-    """Observed stay in minutes; a lower bound when departure is unknown."""
-    return (horizon if episode.departure is None else episode.departure) - episode.arrival
+    """Observed time inside in minutes, until the departure or the abandonment;
+    a lower bound when the episode is still inside at the horizon."""
+    return (horizon if episode.end is None else episode.end) - episode.arrival
 
 
 def filter_episodes(
@@ -100,7 +118,9 @@ def filter_episodes(
     """Keep arrival order and use lower bounds for unknown stay/door-to-doctor.
 
     Exactly on a threshold does not pass. A known door-to-doctor value is final
-    even when the patient has not departed. Arrival days start at zero.
+    even when the patient has not departed. Arrival days start at zero. Whoever
+    left without being seen has as lower bound of its door-to-doctor its time
+    until it left, not until the horizon.
 
     The profile filters need ``observed``, the observable profiles of the run
     (``RunResults.observed``); an episode whose value is not in the log yet
@@ -126,6 +146,14 @@ def filter_episodes(
             return False
         if filters.displaced is not None and (episode.displacements > 0) != filters.displaced:
             return False
+        if filters.left is not None and (episode.left is not None) != filters.left:
+            return False
+        if filters.left_from is not None and episode.left_from != filters.left_from:
+            return False
+        if filters.bed is not None and (episode.bed_requested is not None) != filters.bed:
+            return False
+        if filters.hallway is not None and episode.hallway != filters.hallway:
+            return False
         if (
             filters.arrival_day is not None
             and math.floor(episode.arrival / 1440) != filters.arrival_day
@@ -142,7 +170,7 @@ def filter_episodes(
             return False
         door = episode.door_to_doctor
         if door is None:
-            door = horizon - episode.arrival
+            door = (horizon if episode.left is None else episode.left) - episode.arrival
         return filters.door_to_doctor_gt is None or door > filters.door_to_doctor_gt
 
     return tuple(episode for episode in table if passes(episode))
