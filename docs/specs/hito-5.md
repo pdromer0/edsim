@@ -123,7 +123,7 @@ Con n el nivel real, f\_b el factor de su banda de edad (vale 1 si no se escribe
 
 No se va durante el triaje ni durante una valoración. El nivel 1 asignado nunca abandona: se clasifica en la puerta y va directo al box. Irse después de ver al médico es un alta voluntaria, de la v2.
 
-**El reloj de la paciencia empieza en la llegada**, no en el triaje, porque la gente cuenta desde que cruza la puerta. En SimPy, cada espera pasa a ser «el recurso o la paciencia, lo que llegue antes»: una petición y un `timeout` hasta llegada + paciencia, unidos con `|` (un evento de condición). **Empate:** si la paciencia vence en el mismo instante en que le conceden el recurso, el paciente se queda. Es una regla nuestra, no del orden interno de SimPy, y el plan de la 5.1 comprueba en el código de SimPy 4.1.2 cómo garantizarla.
+**El reloj de la paciencia empieza en la llegada**, no en el triaje, porque la gente cuenta desde que cruza la puerta. En SimPy, cada espera pasa a ser «el recurso o la paciencia, lo que llegue antes»: una petición y un `timeout` hasta llegada + paciencia, unidos con `|` (un evento de condición). **Empate:** si la paciencia vence en el mismo instante en que le conceden el recurso, el paciente se queda. Es una regla nuestra, no del orden interno de SimPy, y la 5.1 la garantiza con un plazo que SimPy procesa al final de su instante, después de cualquier concesión de ese instante (ver «Reglas del abandono»).
 
 **Lo que se observa no es la paciencia.** Los estudios dan cuánto esperaron los que se fueron: una mediana de 70 min en Florencia y de 103 min en Ontario, el doble de lo que esperaron los que se quedaron (51 min). Pero solo se van los que tenían poca paciencia: la de todos es mayor. Por eso la paciencia no se copia de un estudio, sino que se calibra para que salga el porcentaje de abandono observado (pieza 5).
 
@@ -479,20 +479,21 @@ Como hoy, un evento que libera un box se emite antes de devolverlo: quien lo rec
 ### Reglas del abandono (H5-3, H5-4)
 
 - **Visto** = tiene un `assessment_started` de tipo `inicial`. Antes, el paciente puede irse; después, nunca, aunque luego espere en la sala de resultados, en un desalojo o en la espera de cama.
-- **Plazo:** llegada + paciencia, en minutos de simulación. Cada espera de enfermera, de box o de médico antes de ser visto es «el recurso o el plazo, lo que llegue antes». Al vencer el plazo se cancela la petición (o se libera, si ya estaba concedida en ese instante) y se emite `patient_left_wbs` con el sitio:
+- **Plazo:** llegada + paciencia, en minutos de simulación. Cada espera de enfermera, de box o de médico antes de ser visto es «el recurso o el plazo, lo que llegue antes». Al vencer el plazo se cancela la petición pendiente y se emite `patient_left_wbs` con el sitio; si el paciente se va desde un box (sitio `medico`), libera ese box, el que ya tenía. Por el empate, nunca se va con una petición recién concedida. Los sitios:
   - `triaje`: sin `triage_started`;
   - `box`: triado y sin box, también tras un desalojo antes de ser visto;
   - `medico`: en un box, esperando la valoración inicial.
-- **Empate:** si el plazo vence en el mismo instante en que se le concede el recurso, se queda.
+- **Empate:** si el plazo vence en el mismo instante en que se le concede el recurso, se queda. En SimPy 4.1.2 el orden de los eventos de un instante es la prioridad y después el orden de creación (`Environment.schedule`), así que un `timeout` normal haría depender el empate de quién se creó antes; el plazo es un evento de prioridad propia, posterior a la normal, que se procesa después de todo lo demás de su instante.
+- **Plazo vencido durante el triaje** (ajuste de la 5.1, decisión 70): nadie abandona en el triaje, pero el plazo sigue corriendo. Si vence durante él, al acabar el triaje el paciente se va en ese mismo instante, con el sitio de la espera en que esté (`box`, o `medico` si recibe box pero no médico), salvo que reciba box y médico en ese instante. El abandono ocurre así en max(llegada + paciencia, fin del triaje).
 - **Nunca abandona** el nivel 1 asignado (puerta y box con desalojo) ni nadie durante el triaje o una valoración.
 - La reserva de capacidad por turnos (`shifts.py`) no cambia: un abandono solo quita una petición de la cola.
 
 ### Reglas de la espera de cama (H5-6, H5-7)
 
-- Con la decisión de ingreso, el paciente pide cama y un proceso aparte, como `_lab`, espera `base × factor_turno(t) × factor_estacion`, con t el instante de `bed_requested`, el turno de `[turnos]` del centro en t y la estación de la fecha de t.
+- Con la decisión de ingreso, el paciente pide cama y espera un `timeout` propio de `base × factor_turno(t) × factor_estacion`, con t el instante de `bed_requested`, el turno de `[turnos]` del centro en t y la estación de la fecha de t.
 - Mientras espera, el paciente conserva su box y su petición con su clave de siempre, `priority_key(nivel, llegada)`, y no usa médico.
 - **Desalojo:** si un nivel 1 lo desaloja (la regla de `should_displace` no cambia), emite `patient_displaced`, el box pasa al nivel 1 y el paciente espera en el pasillo, sin recurso y sin volver a pedir box. Un ingresado de nivel 1 nunca es desalojado.
-- Al acabar la espera: `bed_assigned` y `patient_departed` con destino `ingreso`, esté en el box o en el pasillo.
+- Al acabar la espera: `bed_assigned` y `patient_departed` con destino `ingreso`, esté en el box o en el pasillo. Los emite el paciente en el mismo paso de SimPy (ajuste de la 5.1, en lugar de un proceso aparte como `_lab`): entre los dos no se cuela ningún evento, ni el desalojo de un nivel 1 que llegue en el instante exacto de la cama. El `timeout` de la cama sigue en la cola durante el desalojo, y el paciente lo vuelve a esperar en el pasillo.
 
 ### Invariantes
 
@@ -504,7 +505,7 @@ Nuevas o ampliadas, en `CHECKS`, solo con logs de la versión 4 salvo que se dig
 | `conservation` | Llegadas = salidas + abandonos + dentro; un solo evento terminal por episodio |
 | `time` | Ningún evento del episodio después de su evento terminal |
 | `capacity` y `displacement` | El box se libera también con un `patient_left_wbs` desde el box y con el desalojo de un ingresado; un ingresado desalojado no vuelve a tener `box_assigned` |
-| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en llegada + paciencia (tolerancia 1e-8) y nadie es visto después de ese plazo |
+| `abandonment` (nueva) | Ningún `patient_left_wbs` después de ser visto ni de un nivel 1 asignado; la `espera` coincide con el estado; con el ground truth, el abandono ocurre en max(llegada + paciencia, fin del triaje) (tolerancia 1e-8) y nadie es visto después de ese plazo, salvo quien, tras un triaje con el plazo vencido, recibe box y médico en el instante en que lo acaba |
 | `outcome` (nueva) | `bed_requested` solo tras una decisión de ingreso y en su instante; `bed_assigned` y la salida en el mismo instante; el destino de la salida es el de la decisión; con el ground truth, la decisión es el destino sorteado; con el ground truth y el centro, la espera de cama es base × factores (tolerancia 1e-8) |
 | `door`, `schema_version`, `clinical`, `results_wait` | Igual que en la versión 3; la 4 entra en las versiones con payloads clínicos y en `results_wait` |
 
@@ -722,6 +723,10 @@ La validación del hito tiene tres capas: escenarios del motor a mano, con pacie
 
 Variante: con la paciencia de Q3 en 42, se va en 44 con `espera: "medico"`. Variante del sitio `box`: con un solo box, Q2 se va esperando box en 26.
 
+**Escenario T: el plazo vence durante el triaje** (ajuste de la 5.1). Una enfermera y un médico. T0 llega en 0 (nivel 3), triaje 0–55, box 1 en 55 y valoración 55–115. T1 llega en 1 (nivel 5, paciencia 60, plazo 61), espera enfermera hasta 55 y se tria de 55 a 62: el plazo vence en 61, durante el triaje. Con un box, en 62 emite `patient_left_wbs` con `espera: "box"`. Con dos boxes, recibe el box 2 en 62 y, sin médico, emite `patient_left_wbs` con `espera: "medico"` en 62 y libera el box 2. Con dos boxes y dos médicos, recibe los dos en 62 y se queda.
+
+**Escenario X: desalojo antes de ser visto** (ajuste de la 5.1). Una enfermera, dos boxes y un médico; triaje de 5. X1 llega en 0 (nivel 3): box 1 en 5 y valoración 5–45. X2 llega en 1 (nivel 4, paciencia 30, plazo 31): triaje 5–10, box 2 en 10 y espera médico. X3 llega en 20 (nivel 1) y desaloja a X2 del box 2; X2, sin ser vista, espera box y en 31 emite `patient_left_wbs` con `espera: "box"`, sin box que liberar. X3 valora 45–55. Variante X-visto: con dos médicos, X2 (paciencia 15, valoración 30) es vista en 10; X3 la interrumpe en 20 y valora 20–30; X2 recibe el box 2 en 30, reanuda la valoración 30–50 y no abandona, aunque su plazo venció en 16.
+
 **Escenario C: la espera de cama y el pasillo.** Una enfermera, un box y un médico; el minuto 0 son las 0:00 (noche, factor 1,5 con `factor_turno = [0.8, 1.0, 1.5]`).
 
 | Paciente | Llega | Nivel | Qué pasa |
@@ -771,6 +776,7 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 | V6 | 5.1 | El ingresado desalojado vuelve a pedir box | Falla el escenario C (R1 recibe box en 80, antes que R2) |
 | V7 | 5.1 | El factor de turno con la hora de la llegada | Falla la variante del turno (150 en vez de 80) |
 | V8 | 5.1 | `TERMINAL_EVENTS[4]` sin `patient_left_wbs` | Falla el censo a mano (EP-000004 dentro) |
+| V21 | 5.1 | Con el plazo vencido en el triaje, ya no abandona | Fallan el escenario T (T1 recibe box y médico en 115) y su variante del médico |
 | V9 | 5.2 | Paciencia por nivel asignado | Falla `check_patience` por nivel real |
 | V10 | 5.2 | Destino con G + ε en lugar de G | Falla `check_destinations` por quintiles de G |
 | V11 | 5.2 | Alteradas como «alguna» (0 o 1) en lugar de su número | Falla la fila «G = 1, 2 alteradas»: 22,18 % en vez de 29,94 % |
@@ -799,7 +805,7 @@ Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y 
 | 67 (H5-1) | El ruido de triaje que crece con la saturación va a la v2, junto al re-triaje | La evidencia es mixta y no da un coeficiente: no se calibraría, se decidiría; cambia cuándo se fija el nivel; el hito se queda con los dos bucles que tienen dato |
 | 68 (H5-2) | Bloque del hito 5 de todo o nada en `perfiles.toml` y `centro.toml`; sin él, el modelo clínico del hito 4 byte a byte (versión 3); con él, el del hito 5 (versión 4); un bloque a medias es un error | Lo antiguo se lee con su significado: las huellas, las ejecuciones guardadas y las variantes siguen valiendo; es la regla de `espera_resultados_fuera` y del bloque provisional |
 | 69 (H5-3) | Abandono solo antes del primer médico, desde tres sitios (`espera`: triaje, box, médico), con el box liberado; el nivel 1 asignado nunca abandona; el alta voluntaria va a la v2 | SEMES mide las fugas antes y después del triaje; con los médicos de cuello de botella, la cola está dentro del box; irse después de ser visto es mucho más raro |
-| 70 (H5-4) | Paciencia lognormal `[mediana, p90]` por nivel real, con un factor opcional por banda de edad, sorteada en el flujo 8 y contada desde la llegada; en el empate, el paciente se queda | Los que se van son los leves y los jóvenes; el nivel real existe antes del triaje; la forma de todas las duraciones de EDsim; números comunes |
+| 70 (H5-4) | Paciencia lognormal `[mediana, p90]` por nivel real, con un factor opcional por banda de edad, sorteada en el flujo 8 y contada desde la llegada; en el empate, el paciente se queda; con el plazo vencido durante el triaje, se va al acabarlo salvo que reciba box y médico en ese instante (ajuste de la 5.1) | Los que se van son los leves y los jóvenes; el nivel real existe antes del triaje; la forma de todas las duraciones de EDsim; números comunes |
 | 71 (H5-5) | Cuatro destinos (alta, ingreso, traslado, exitus; la UCI dentro del ingreso), con una logística multinomial sobre G, mayor, el motivo (en el ingreso) y el número de pruebas alteradas, sorteada con Gumbel-max en el flujo 4; parámetros en `perfiles.toml` y `[destino]` fuera de `config/centro.toml` | El médico atiende la gravedad real; el resultado de las pruebas por fin tiene efecto; la UCI necesitaría camas propias sin datos (v2) |
 | 72 (H5-6) | Espera de cama lognormal `[mediana, p90]` por un factor del turno del pedido (y uno opcional de estación), en `[camas]` de `centro.toml`, con su z en el flujo 9 | Boarding simple y calibrable; el patrón de la respuesta de las pruebas; las camas finitas pedirían semanas de calentamiento (v2) |
 | 73 (H5-7) | Catálogo versión 4: `patient_left_wbs`, `bed_requested`, `bed_assigned` y cuatro destinos; `TERMINAL_EVENTS[4]` con el abandono; traslado sin espera; un ingresado desalojado espera la cama en el pasillo | Un evento por hecho; el censo del directo funciona sin tocarlo; un atendido no compite por un box con quien no lo está |
