@@ -664,3 +664,22 @@ def test_con_el_plazo_vencido_antes_del_triaje_no_hay_excepcion(center):
     assert violations_of(result.events, scenario.center, result.ground_truth, "abandonment") == []
     assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000001", 62.0)]
     assert "after its deadline 51.0" in found[0].message
+
+
+def test_las_violaciones_con_la_verdad_van_detras(center):
+    # Dentro de una invariante, primero las del log, en el orden del fichero, y después las
+    # de la verdad. M con la espera de Q4 cambiada a «box» (en 4, del log) y la paciencia
+    # de Q2 en 24 (en 26, de la verdad).
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    events = [
+        dataclasses.replace(e, payload={"espera": "box"})
+        if e.episode_id == "EP-000003" and e.event_type == "patient_left_wbs"
+        else e
+        for e in result.events
+    ]
+    found = violations_of(
+        events, scenario.center, perturbed(result, "EP-000001", patience=24.0), "abandonment"
+    )
+
+    assert [(v.episode_id, v.sim_time) for v in found] == [("EP-000003", 4.0), ("EP-000001", 26.0)]

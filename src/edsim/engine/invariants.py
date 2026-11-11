@@ -1278,7 +1278,7 @@ def check_abandonment(events: Sequence[Event], context: InvariantContext) -> lis
     seen after its deadline and that nobody still waits with it passed.
     """
     name = "abandonment"
-    out: list[Violation] = _abandonment_with_truth(events, context)
+    out: list[Violation] = []
     started: set[str] = set()
     level: dict[str, int] = {}
     in_box: set[str] = set()
@@ -1322,7 +1322,8 @@ def check_abandonment(events: Sequence[Event], context: InvariantContext) -> lis
                                 f"but {episode} was waiting for {where!r}",
                             )
                         )
-    return out
+    # The comparisons with the truth after those of the log, in file order (task 5.3).
+    return out + _abandonment_with_truth(events, context)
 
 
 def _expected_bed_wait(
@@ -1416,7 +1417,7 @@ def check_outcome(events: Sequence[Event], context: InvariantContext) -> list[Vi
     for the bed.
     """
     name = "outcome"
-    out: list[Violation] = _outcome_with_truth(events, context)
+    out: list[Violation] = []
     pending: dict[str, tuple[str, Event]] = {}  # episode → (next type expected, cause)
     last: dict[str, Event] = {}  # episode → its previous event
     requested: set[str] = set()
@@ -1467,7 +1468,7 @@ def check_outcome(events: Sequence[Event], context: InvariantContext) -> list[Vi
         last[episode] = e
     for expected, cause in pending.values():
         out.append(missing(cause, expected))
-    return out
+    return out + _outcome_with_truth(events, context)
 
 
 CHECKS: Mapping[str, Check] = MappingProxyType(
