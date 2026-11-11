@@ -462,22 +462,21 @@ def stay_by_destination(
     _check_window(start, end, horizon)
     arrived = _arrived(table, start, end)
     inside = [e for e in arrived if e.end is None]
-    by_destination = {}
-    for destination in DESTINATIONS:
-        stays = [e.stay for e in arrived if e.destination == destination]
-        bounds = (
-            [horizon - e.arrival for e in inside if e.bed_requested is not None]
-            if destination == ADMISSION
-            else []
-        )
-        by_destination[destination] = _stay_summary(stays, bounds)
-    admitted = [e.stay for e in arrived if e.destination == ADMISSION]
-    admitted_bounds = [horizon - e.arrival for e in inside if e.bed_requested is not None]
+    # Only the admitted can be inside with a destination: waiting for their bed.
+    censored = {
+        d: [horizon - e.arrival for e in inside if e.bed_requested is not None]
+        if d == ADMISSION
+        else []
+        for d in DESTINATIONS
+    }
+    stays = {d: [e.stay for e in arrived if e.destination == d] for d in DESTINATIONS}
     return StayByDestination(
-        by_destination=MappingProxyType(by_destination),
+        by_destination=MappingProxyType(
+            {d: _stay_summary(stays[d], censored[d]) for d in DESTINATIONS}
+        ),
         left=_stay_summary([e.time_to_leave for e in arrived if e.left is not None], []),
         inside_without_destination=sum(e.bed_requested is None for e in inside),
-        admitted_over=over_threshold(admitted, admitted_bounds, ADMITTED_LONG_STAY),
+        admitted_over=over_threshold(stays[ADMISSION], censored[ADMISSION], ADMITTED_LONG_STAY),
     )
 
 
