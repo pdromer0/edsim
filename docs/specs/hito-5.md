@@ -986,7 +986,7 @@ PR #98 (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once
 
 **Qué se hizo**
 
-PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): doce commits, sin tocar el motor ni `config/`, y con las huellas de las versiones 1 a 3 intactas.
+PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): catorce commits, sin tocar la simulación (`patient.py` y `engine.py`) ni `config/`; del motor solo cambian las reglas del centro y la guarda de dos muestreadores. Las huellas de las versiones 1 a 3 siguen intactas.
 
 - **Lo aplazado de la 5.1** (nota 1 del chat): la cama como `timeout` del paciente en la pieza 3, `analysis.py` en la 5.4 y las métricas de la 5.1.
 - **`DESTINATIONS` en `profiles/config.py`** (nota 3): `events.py` lo importa de ahí, como `TEST_TYPES` y `REASON_KEYS`.
@@ -1032,7 +1032,7 @@ PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): doce 
 | `check_patience`, 2 años (219.084 pacientes) | 41,5 s |
 | `check_destinations`, 1 año (109.542) | 18,3 s |
 | Sorteo de 10.000 pacientes, sin y con el desenlace | 1,38 s y 1,84 s |
-| `scripts/tests-completos.sh` con Docker parado | (pendiente) |
+| `scripts/tests-completos.sh` con Docker parado | Dos veces en verde. La primera (antes de los ajustes de la revisión): 14:00 de pared, con el núcleo (3.595 tests) en 9:46, la app (287) en 3:00 y los notebooks (5) en 1:05. La segunda (con los ajustes): 18:03, con el núcleo (3.598) en 14:13, la app en 2:53 y los notebooks en 0:51. La 5.1: el núcleo en 12:12. El núcleo gana los dos tests `slow` de las comprobaciones (41,5 + 18,3 s en serie); la diferencia entre las dos N3, con el mismo código salvo los ajustes, es del portátil |
 
 **Comprobaciones clínicas** (exactas, con `perfiles_h5_ejemplo` y `llegadas_ejemplo`):
 
@@ -1081,7 +1081,20 @@ Las aplicó un subagente en un worktree propio, una por subagente y cuatro en pa
 
 **Revisión**
 
-(pendiente: `/code-review medium`)
+`/code-review medium` dio diez hallazgos, sin verificar, como pide la receta del esfuerzo medio.
+
+| Hallazgo | Destino |
+| --- | --- |
+| `DRAW_EFFECTS` no tiene las claves de `[camas]`: emparejar dos ejecuciones con centros que difieren en ellas daría `KeyError` | **Explicado:** ninguna ejecución usa todavía un centro con `[camas]`, porque los dos muestreadores lo rechazan con `require_destination`. `test_run_comparison.py:76` fija las claves de un centro del hito 4. Pendiente de la 5.3, con el modelo del hito 5 |
+| `severity_mean_for` hace el paso 4 de la cascada, que no lee, en cada candidato | **Corregido** (`c83bdc3`): `derive_written_values(destinations=False)`, con test |
+| `destination_bases_for` recalcula los nodos y la Poisson-binomial en cada evaluación | **Explicado:** la derivación entera tarda 0,2 s; separar la parte fija complicaría `OutcomeModel` sin ganar nada visible |
+| `_destinations_result` calcula la tabla por quintiles cinco veces | **Corregido** (`c83bdc3`) |
+| `center._check_factors` repite el de `profiles.config` | **Explicado:** `center.py` tiene sus propios validadores con sus mensajes, como `_check_duration` frente a `_check_median_p90`, que ya estaban duplicados desde el hito 4. Unificarlos cambiaría mensajes que fijan tests de la app y del centro |
+| `OutcomeSampler` valida `camas.espera` con el `_check_median_p90` privado de los perfiles, con otro texto que el centro | **Explicado:** el muestreador vive en `profiles/` y usa su validador; el centro ya la ha validado al cargarse. Es la misma duplicación anterior |
+| `by_assigned_level` copia la fórmula de `triage_matrix`, y `joint` rehace lo que ya da `WorkupModel._abnormal` | **Corregido** (`c83bdc3`): `severity.assigned_level_probabilities`, compartida por los dos; `joint` usa `_abnormal` |
+| Nada comprueba que los tres objetivos sumen menos de 100 | **Corregido** (`c83bdc3`): error al construir `OutcomeProfile`, con sus claves y con test |
+| Si una iteración llega a una suma de 100, `shares` devuelve una meseta sin gradiente | **Explicado:** con objetivos que suman menos de 100 (ahora es una regla), la solución queda lejos de ese borde: la suma mayor es 31,43. Si el método se atasca, `RuntimeError` lo dice |
+| `load_profiles` comprueba el bloque del hito 5 dos veces | **Corregido** (`c83bdc3`): una sola, al construir `ClinicalProfiles`, con la ruta en el error |
 
 **Pendiente**
 
