@@ -18,7 +18,7 @@ from edsim.engine.analysis import OutcomeCounts, RunAnalysis, analyze_run, outco
 from edsim.engine.center import load_center, require_provisional
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
-from edsim.engine.events import JsonlSink, read_events
+from edsim.engine.events import OUTCOME_SCHEMA_VERSION, JsonlSink, read_events
 from edsim.engine.invariants import Violation, check_invariants
 from edsim.engine.outcome_metrics import WindowOutcome, window_outcome
 from edsim.engine.report import (
@@ -302,7 +302,8 @@ def simulate_run(
         _check_destination(destination)
         temporary.rename(destination)
         counts = outcome = None
-        if model is PatientModel.MILESTONE_5:
+        # The same criterion as read_run_results: the catalog of the log of the run.
+        if info.catalog_version == OUTCOME_SCHEMA_VERSION:
             start, end = warmup_days * MINUTES_PER_DAY, days * MINUTES_PER_DAY
             counts = outcome_counts(events, start, end)
             outcome = window_outcome(analysis.table, analysis.curves, start, end)
