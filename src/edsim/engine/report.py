@@ -769,7 +769,7 @@ def _clinical_truth(row: Mapping[str, str], level: int, needs_tests: bool) -> Cl
     )
 
 
-def _outcome(row: Mapping[str, str]) -> Outcome:
+def _outcome_from_row(row: Mapping[str, str]) -> Outcome:
     return Outcome(
         destination_draws=tuple(_real(row, f"sorteo_destino_{d}") for d in DESTINATIONS),
         destination=_token(row, "destino", DESTINATIONS),
@@ -802,7 +802,7 @@ def episode_from_row(row: Mapping[str, str]) -> EpisodeTruth:
     level = _integer(row, "nivel", 1, N_LEVELS)
     needs_tests = _boolean(row, "pruebas")
     clinical = "franja" in row
-    outcome = _outcome(row) if clinical and "z_paciencia" in row else None
+    outcome = _outcome_from_row(row) if clinical and "z_paciencia" in row else None
     if clinical:
         if row["respuesta_pruebas"] != "":
             raise ValueError("respuesta_pruebas must be empty with the clinical model")
