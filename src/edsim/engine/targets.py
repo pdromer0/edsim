@@ -202,9 +202,13 @@ def compliance_cases(
             such as the true level.
 
     Raises:
-        ValueError: If a seen patient has no ``measure`` or, with ``level_of``,
-            a counted episode is not in it.
+        ValueError: If the measure, the days or ``max_wait`` are not valid, a
+            seen patient has no ``measure`` or, with ``level_of``, a counted
+            episode is not in it.
     """
+    first_day, end_day, max_wait = _check_compliance_args(
+        measure, first_day, end_day, max_wait, COMPLIANCE_TARGET
+    )
     start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
     out = []
     for e in ended_in_window(table, start, end):
@@ -237,6 +241,31 @@ def _check_compliance_args(
     if not 0 < target <= 1:
         raise ValueError(f"target must be in (0, 1], got {target!r}")
     return first_day, end_day, max_wait
+
+
+def compliance_from_cases(
+    cases: Sequence[ComplianceCase],
+    first_day: int,
+    end_day: int,
+    *,
+    measure: str = COMPLIANCE_MEASURE,
+    max_wait: Sequence[float] = MANCHESTER_MAX_WAIT,
+    target: float = COMPLIANCE_TARGET,
+) -> "Compliance":
+    """The daily compliance of the cases of ``compliance_cases``, already classified.
+
+    For whoever needs both the cases and the days, such as ``window_compliance``,
+    without classifying the table twice; ``manchester_compliance`` is this on
+    the cases of a table. The arguments must be those of the cases.
+
+    Raises:
+        ValueError: If the measure, the days, ``max_wait`` or ``target`` are
+            not valid.
+    """
+    first_day, end_day, max_wait = _check_compliance_args(
+        measure, first_day, end_day, max_wait, target
+    )
+    return _daily_compliance(cases, measure, first_day, end_day, max_wait, target)
 
 
 def _daily_compliance(

@@ -23,8 +23,9 @@ from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.report import EPISODE_COLUMNS, PARAMETER_COLUMNS
 from edsim.engine.targets import (
     COMPLIANCE_MEASURE,
+    MANCHESTER_MAX_WAIT,
     compliance_cases,
-    true_level_compliance,
+    compliance_from_cases,
     true_levels,
 )
 from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
@@ -481,15 +482,15 @@ def true_level_window_compliance(
             with a counted episode missing from it.
     """
     ground_truth = GroundTruth(tuple(truth.values()), ())
-    daily = true_level_compliance(table, ground_truth, first_day, end_day, measure=measure)
     cases = compliance_cases(
         table,
         first_day,
         end_day,
-        daily.max_wait,
+        MANCHESTER_MAX_WAIT,
         measure=measure,
         level_of=true_levels(ground_truth),
     )
+    daily = compliance_from_cases(cases, first_day, end_day, measure=measure)
     return WindowCompliance(daily, _pooled_levels(daily, cases))
 
 

@@ -26,6 +26,7 @@ from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
 from edsim.engine.report import format_run_summary
 from edsim.engine.targets import (
     compliance_cases,
+    compliance_from_cases,
     manchester_compliance,
     pretriage,
     true_level_compliance,
@@ -213,3 +214,12 @@ def test_un_nivel_sin_atendidos_y_con_un_incumplimiento_seguro(tmp_path):
     analysis = analyze_run(log.events(), center, 1, 0)
     line = next(x for x in format_run_summary(analysis, []).splitlines() if x.startswith("nivel 4"))
     assert line.split()[2:] == ["0", "—", "—", "—", "120", "0.0", "%", "1", "de", "1"]
+
+
+def test_el_cumplimiento_desde_los_casos_es_el_de_la_tabla():
+    table = three_patients(155.0)
+    cases = compliance_cases(table, 0, 1, (0, 10, 60, 120, 240))
+    from_cases = compliance_from_cases(cases, 0, 1)
+    direct = manchester_compliance(table, 0, 1)
+    for name in ("n", "within", "out", "left_late", "censored"):
+        assert np.array_equal(getattr(from_cases, name), getattr(direct, name), equal_nan=True)

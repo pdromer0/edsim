@@ -9,13 +9,14 @@ from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.analysis import EpisodeRecord, WindowMetrics, completed_in_window
 from edsim.engine.targets import (
     CLOCKS,
+    MANCHESTER_MAX_WAIT,
     Compliance,
     ComplianceCase,
     LevelClocks,
     Pretriage,
     clock_quantiles,
     compliance_cases,
-    manchester_compliance,
+    compliance_from_cases,
     pretriage,
 )
 
@@ -108,8 +109,8 @@ def window_compliance(
     ``APP_COMPLIANCE_MEASURE``, clock C since task 4.9, as in
     ``manchester_compliance``; ``door_to_doctor`` gives clock A, as before.
     """
-    daily = manchester_compliance(table, first_day, end_day, measure=measure)
-    cases = compliance_cases(table, first_day, end_day, daily.max_wait, measure=measure)
+    cases = compliance_cases(table, first_day, end_day, MANCHESTER_MAX_WAIT, measure=measure)
+    daily = compliance_from_cases(cases, first_day, end_day, measure=measure)
     return WindowCompliance(daily, _pooled_levels(daily, cases))
 
 
