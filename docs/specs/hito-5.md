@@ -534,7 +534,7 @@ Todo se sortea al llegar, antes de transformar, y se consume aunque no se use: u
 
 ### `perfiles.toml`: el bloque del hito 5
 
-Todo o nada: `[abandono]`, `[destinos]` e `ingreso` en los 17 motivos. Valores de abajo orientativos (ver «Valores orientativos de partida»); lo que fija la especificación es la forma.
+Todo o nada: `[abandono]`, `[destinos]` e `ingreso` en los 17 motivos. Los valores son los de `tests/data/perfiles_h5_ejemplo.toml`, que crea la 5.2 (ver «Valores orientativos de partida»); la 5.6 los lleva a `config/perfiles.toml` con la paciencia calibrada.
 
 ```toml
 [abandono]
@@ -545,18 +545,19 @@ paciencia_edad = [0.8, 1.0, 1.0, 1.0]   # factor sobre la mediana por banda; opc
 
 [destinos]
 # Logística multinomial con el alta de referencia (decisión 71).
-ingreso = { objetivo = 9.90, or_gravedad = 2.0, or_mayor = 1.5, or_alterada = 1.5 }
-traslado = { objetivo = 0.75, base = 0.5, or_gravedad = 1.5 }   # base derivada
-exitus = { objetivo = 0.11, base = 0.02, or_gravedad = 6.0 }      # base derivada
+ingreso = { objetivo = 9.90, or_gravedad = 1.5, or_mayor = 1.5, or_alterada = 1.5 }
+traslado = { objetivo = 0.75, base = 0.7639, or_gravedad = 1.5 }   # base derivada
+exitus = { objetivo = 0.11, base = 0.001937, or_gravedad = 15.0 }  # base derivada
 
 [motivos.dolor_toracico]
 # … lo del hito 4 …
-ingreso = 5.0   # % en adulto < 65 con G = 0 y sin pruebas alteradas; derivado; marginal del año …
+ingreso = 6.527   # % en adulto < 65 con G = 0 y sin alteradas; derivado (catálogo: medio); marginal del año: 17,96 %
 ```
 
-- `objetivo` es el porcentaje de un año del perfil de llegadas (sobre todos los llegados, con el destino sorteado); las `base` y los `ingreso` de los motivos se derivan una vez para darlo y se escriben, sin recalcularse al cargar. Los `ingreso` conservan su orden: un factor común sobre sus odds.
-- `or_gravedad` es obligatorio; `or_mayor` y `or_alterada`, opcionales (valen 1). Porcentajes en el intervalo abierto (0, 100); claves desconocidas prohibidas, con la clave completa en el error.
-- `derive_written_values` (la cascada de la 4.6a) gana los derivados del destino, y un test comprueba que la cascada reproduce el fichero.
+- `objetivo` es el porcentaje de un año del perfil de llegadas (sobre todos los llegados, con el destino sorteado); las `base` y los `ingreso` de los motivos se derivan una vez para darlo y se escriben, sin recalcularse al cargar. Los `ingreso` conservan su orden: un factor común sobre las odds binarias de su porcentaje de partida, `ingreso_m = 100 · expit(logit(partida_m / 100) + λ)`, con la partida de la columna «Ingreso» del catálogo (`ADMISSION_CATALOG` y `ADMISSION_START_PCT` en `profiles/config.py`, entrada de la derivación como el reparto del catálogo lo es de los pesos base).
+- Las tres incógnitas (λ y las bases del traslado y el exitus) comparten el alta, la referencia de las tres odds: ajustadas una tras otra, la primera queda fuera de su objetivo. `destination_bases_for` las resuelve juntas con `optimize.root`, como `triage_error_for` (tarea 5.2).
+- `or_gravedad` es obligatorio; `or_mayor` y `or_alterada`, opcionales (valen 1), en los tres destinos. `base`, obligatoria en el traslado y el exitus y desconocida en el ingreso, cuya base va en cada motivo. Porcentajes en el intervalo abierto (0, 100); en cada motivo, `ingreso` más las dos bases por debajo de 100; claves desconocidas prohibidas, con la clave completa en el error.
+- `derive_written_values` (la cascada de la 4.6a) gana los derivados del destino como paso 4, con **4 cifras significativas** (los otros siguen con 3 decimales): la base del exitus es del 0,002 %, y con 3 decimales se escribiría 0,002, un 3 % de más. Un test comprueba que la cascada reproduce el fichero.
 
 ### `centro.toml`: `[camas]` en lugar de `[destino]`
 
@@ -569,14 +570,14 @@ factor_turno = [0.8, 1.0, 1.5]           # mañana, tarde, noche, con los turnos
 factor_estacion = [1.0, 1.0, 1.0, 1.0]   # invierno, primavera, verano, otoño; opcional, vale 1
 ```
 
-Un centro lleva `[destino]` (modelos provisional y del hito 4) o `[camas]` (hito 5), nunca los dos. `[destino]` deja de ser obligatoria; si falta y tampoco hay `[camas]`, el error dice cuál falta para qué modelo. El provisional no cambia. La app conserva las claves que no edita, como hoy.
+Un centro lleva `[destino]` (modelos provisional y del hito 4) o `[camas]` (hito 5), nunca los dos. `[destino]` deja de ser obligatoria; si falta y tampoco hay `[camas]`, el error dice cuál falta para qué modelo. El provisional no cambia. La app conserva las claves que no edita, como hoy. `[camas]` vacía cuenta como ausente, como el bloque provisional. Los lectores de `destino.probabilidad_ingreso` (el muestreador provisional, el del hito 4 y el resumen del centro) llaman a `require_destination`: con un centro de `[camas]` fallan con un error claro (tarea 5.2).
 
 ### Ground truth y ficheros en disco
 
 - **`EpisodeTruth`** gana al final la verdad del desenlace (`None` con los modelos anteriores).
 - **CSV del ground truth clínico:** con el hito 5, `destino` toma los cuatro valores sorteados (también el contrafactual de quien se fue) y se añaden al final `z_paciencia`, `paciencia`, `sorteo_destino_alta`, `sorteo_destino_ingreso`, `sorteo_destino_traslado`, `sorteo_destino_exitus`, `z_cama` y `espera_cama_base`. Leerlo da el mismo `EpisodeTruth` con `==`, floats bit a bit. Un CSV de 57 columnas es del hito 4 y se lee como hasta ahora.
 - **`run.json`** registra el modelo del hito 5 (el plan de la 5.3 propone cómo: una versión 3 con el modelo clínico y su versión de catálogo, por ejemplo). Las versiones 1 y 2 se leen como hoy; el emparejamiento no empareja modelos distintos.
-- **Ejemplos para los tests:** `tests/data/perfiles_h5_ejemplo.toml` y `tests/data/centro_h5_ejemplo.toml` (con sala), con sus huellas del log y del ground truth. Los ficheros de ejemplo de hoy no cambian ni un byte.
+- **Ejemplos para los tests:** `tests/data/perfiles_h5_ejemplo.toml` (de la 5.2: `perfiles_ejemplo.toml` sin tocar más el bloque del hito 5, con los derivados) y `tests/data/centro_h5_ejemplo.toml` (con sala, de la 5.3), con sus huellas del log y del ground truth (5.3). Los ficheros de ejemplo de hoy no cambian ni un byte.
 
 ### CLI
 
@@ -643,12 +644,12 @@ No hay fuente pública para la paciencia por nivel, los odds ratios del destino 
 
 | Parámetro | Partida | Criterio |
 | --- | --- | --- |
-| `ingreso` por motivo (adulto < 65, G = 0, sin alteradas) | Por la columna «Ingreso» del catálogo: muy bajo 1 %, bajo 2 %, medio 5 %, alto 10 %, muy alto 25 % | Solo el orden es dato; el nivel lo deriva el objetivo del 9,90 %. La 5.2 lo afina motivo a motivo por su marginal, como las pruebas en la 4.4 |
-| `ingreso.or_gravedad` | 2,0 | En el SAS, el nivel 1 ingresa un 46,5 % y el 4 un 3,9 %: unas odds 22 veces mayores, con unas cuatro desviaciones de G entre los centros de esos niveles, así que un odds ratio de orden 2 por unidad de G. La 5.2 lo comprueba con la tabla exacta de ingreso por nivel asignado |
+| `ingreso` por motivo (adulto < 65, G = 0, sin alteradas) | Por la columna «Ingreso» del catálogo: muy bajo 1 %, bajo 2 %, medio 5 %, alto 10 %, muy alto 25 %. Escrito (5.2): 1,322 / 2,636 / 6,527 / 12,85 / 30,66, con el factor común 1,3266 | Solo el orden es dato; el nivel lo deriva el objetivo del 9,90 %. La 5.2 no los afina: con la partida, las marginales del año (orl 1,16; bajos 2,40 a 3,76; medios 9,32 a 17,96; disnea 33,46; parada 74,21 %) ya respetan el orden del catálogo |
+| `ingreso.or_gravedad` | ~~2,0~~ **1,5** (5.2) | En el SAS, el nivel 1 ingresa un 46,5 % y el 4 un 3,9 %: unas odds 21 veces mayores, con 4,67 unidades de G entre las medias de esos niveles asignados. Pero la tabla exacta de la 5.2 con 2,0 da 87,8 / 33,1 / 11,5 / 3,2 / 0,9 %, con unas odds 220 veces mayores: `or_mayor`, `or_alterada` y la base de la parada también crecen con G. Con 1,5 (decisión de Pedro en el plan de la 5.2): 68,05 / 28,06 / 11,78 / 4,29 / 1,86 %, unas odds 48 veces mayores. El nivel 5 del SAS (7,4 %, más que el 4) no se fuerza |
 | `ingreso.or_mayor` | 1,5 | Odds brutas del SAS de ≥ 65 frente a 45–64 años: 2,1 en hombres y 2,8 en mujeres, pero incluyen la gravedad (los mayores ya tienen más G por su `por_edad`): el efecto ajustado es menor |
 | `ingreso.or_alterada` | 1,5 por prueba | Sin dato: una prueba alterada es una evidencia moderada. Se comprueba el ingreso por número de alteradas en el PR |
 | `traslado` | objetivo 0,75 %, `or_gravedad` 1,5 | Se trasladan pacientes que necesitan un centro de referencia, algo más graves; sin dato de gradiente |
-| `exitus` | objetivo 0,11 %, `or_gravedad` 6,0 | Concentra el exitus en las paradas: con G = 4,21, las odds frente a G = 0 se multiplican por unas 1.900. El PR informa del exitus entre las paradas como comprobación clínica |
+| `exitus` | objetivo 0,11 %, `or_gravedad` ~~6,0~~ **15** (5.2) | Concentrar el exitus en las paradas. Con 6, las odds de la parada (G = 4,21) se multiplican por unas 1.900, pero el ingreso de la parada crece aún más (base del 25 %, `or_mayor` y `or_alterada`): el exitus de las paradas sale del 2,6 % y solo el 7 % de los exitus son paradas. Con 15 (decisión de Pedro), el 18,5 % de las paradas y el 51 % de los exitus; la base escrita es 0,001937 % |
 
 ### Espera de cama (`[camas]`)
 
@@ -691,7 +692,7 @@ edsim/
 │   ├── live/tracker.py          # «esperando cama», pasillo y abandonos (5.4)
 │   └── cli.py                   # modelo por bloques, perfiles validar, calibración (5.3, 5.6)
 ├── config/                      # bloques del hito 5 y objetivos nuevos (5.6)
-├── tests/data/                  # perfiles_h5_ejemplo.toml y centro_h5_ejemplo.toml (5.3)
+├── tests/data/                  # perfiles_h5_ejemplo.toml (5.2) y centro_h5_ejemplo.toml (5.3)
 ├── app/                         # páginas (5.5, Codex)
 └── notebooks/05_cierre_del_flujo.ipynb   # nuevo (5.7)
 ```
@@ -700,8 +701,8 @@ edsim/
 
 - **Catálogo (5.1):** `CATALOG_V4`; `DESTINATIONS = ("alta", "ingreso", "traslado", "exitus")`, en el orden de los sorteos; `LWBS_WAITS = ("triaje", "box", "medico")`; la constante de la versión que escribe el modelo del hito 5, sin cambiar el valor ni el significado de `CURRENT_CLINICAL_SCHEMA_VERSION` (3), que sigue siendo la del modelo del hito 4 (un cambio de significado con el mismo nombre rompe en silencio).
 - **Sorteos (5.1):** `OutcomeDraws(patience, destination, bed_base, …)` con `bed_wait(t)`, inyectable a mano en los escenarios del motor sin perfiles.
-- **Exacto (5.2):** `destination_probabilities(persona, G, alteradas)`, `patience_cdf(nivel real, banda, minutos)`, las marginales de un año por motivo y por nivel, y los derivados (`destination_bases_for(...)`), con el integrador de Gauss-Legendre del hito 4 y la distribución exacta del número de alteradas (cuatro Bernoulli distintas por nodo de G).
-- **Muestreador (5.2):** `OutcomeSampler`, que recibe los `SeedSequence` de los flujos 4, 8 y 9 y no los modifica, con consumo fijo.
+- **Exacto (5.2):** `destination_probabilities(outcome, ingreso, mayor, G, k)`, `patience_cdf(abandono, nivel real, banda, minutos)`, `OutcomeModel` (`outcome_model`) con las marginales de un año por motivo, nivel real y asignado, quintil de G y número de alteradas, y los derivados (`destination_bases_for`), con el integrador de Gauss-Legendre del hito 4 y la distribución exacta del número de alteradas entre las pedidas (`abnormal_count_distribution`: la Poisson-binomial de cuatro Bernoulli `P(pedida) · P(alterada)` por nodo de G).
+- **Muestreador (5.2):** `OutcomeSampler(perfiles, [mediana, p90] de la cama, flujos 4, 8 y 9)`, que no modifica los `SeedSequence`, con consumo fijo y un dataclass propio, `Outcome`; la 5.3 lo convierte en `OutcomeDraws`.
 - **Métricas (5.4):** campos nuevos al final de `EpisodeRecord`; `left_without_being_seen_shares`, `bed_wait_quantiles`, `stay_by_destination` y el cumplimiento con censura, en `edsim.runs.__all__`, de forma aditiva.
 
 **Reglas que se mantienen:** paquete en inglés; tests del núcleo en español; claves TOML, payloads y opciones de la CLI en español; `profiles/` no importa SimPy ni el motor (test en un subproceso); el núcleo no importa `streamlit`, `pandas`, `edsim_app` ni, al importarse, `confluent_kafka`; lógica en el paquete y CLI fina; «derivado y escrito» para todo lo que se calcula una vez.
@@ -753,7 +754,8 @@ Con R3, R1 espera en el pasillo y en 185 emite `bed_assigned` y `patient_departe
 - **Derivados:** «escritos = recalculados» para las bases de traslado y exitus y los 17 `ingreso`; la cascada de `derive_written_values` reproduce el fichero; con los valores escritos, un escenario con la disnea × 1,5 da más ingreso que el base (no se recalculan al cargar).
 - **Números comunes:** cambiar un odds ratio del traslado solo cambia el destino de los pacientes que entran o salen del traslado; cambiar la paciencia o la espera de cama no cambia ningún otro sorteo; con otra plantilla, ningún sorteo cambia. Consumo fijo comprobado contando sorteos.
 - `profiles` sigue sin cargar SimPy ni el motor.
-- **Validación estadística** (`check_patience`, `check_destinations`), con el patrón de `check_workup`: cuantiles de la paciencia por nivel real y banda (binomial), destino por quintiles de G, por número de alteradas y por motivo, con Bonferroni, la potencia escrita y las guardas de pacientes suficientes; el plan elige el número de pacientes por potencia y tiempo.
+- **Validación estadística** (`check_patience`, `check_destinations`), con el patrón de `check_workup`: cuantiles de la paciencia por nivel real y banda (binomial), destino por quintiles de G, por número de alteradas y por motivo, con Bonferroni, la potencia escrita y las guardas de pacientes suficientes; el plan elige el número de pacientes por potencia y tiempo. Elegido en la 5.2: `check_patience`, 40 categorías y **2 años** (el nivel real 1 de 15 a 44 años espera 37 pacientes al año, menos que la guarda de 50; 41,5 s); `check_destinations`, 108 categorías y **un año** (18,3 s). Con un año, V10 queda por debajo de lo detectable (la mejor categoría, potencia 0,011).
+- **El destino usa G, no G + ε** (decisión de Pedro en el plan de la 5.2): un test determinista con un paciente de `child_streams(1, 10)` (traumatismo, G = −1,256993, ε = +0,749217) y las Gumbel (0; 3,7; 0; 0), que con G da alta y con G + ε daría ingreso; y el de números comunes: cambiar solo el ruido del triaje no cambia ningún destino ni ninguna paciencia.
 
 ### Modelo, formatos y métricas (5.3, 5.4)
 
@@ -778,9 +780,10 @@ Como en los hitos 3, 4 y 6: el plan escribe la predicción firme de cada una con
 | V8 | 5.1 | `TERMINAL_EVENTS[4]` sin `patient_left_wbs` | Falla el censo a mano (EP-000004 dentro) |
 | V21 | 5.1 | Con el plazo vencido en el triaje, ya no abandona | Fallan el escenario T (T1 recibe box y médico en 115) y su variante del médico |
 | V9 | 5.2 | Paciencia por nivel asignado | Falla `check_patience` por nivel real |
-| V10 | 5.2 | Destino con G + ε en lugar de G | Falla `check_destinations` por quintiles de G |
+| V10 | 5.2 | Destino con G + ε en lugar de G | ~~Falla `check_destinations` por quintiles de G~~ No la ve `check_destinations` con un año (potencia 0,011); fallan el test determinista del muestreador y el de números comunes con ε (5.2) |
 | V11 | 5.2 | Alteradas como «alguna» (0 o 1) en lugar de su número | Falla la fila «G = 1, 2 alteradas»: 22,18 % en vez de 29,94 % |
 | V12 | 5.2 | Los derivados se recalculan al cargar | Falla el escenario de la disnea × 1,5 |
+| V22 | 5.2 | Contar las alteradas de las pruebas no pedidas (nota del chat en el issue #69) | Fallan el unitario de `abnormal_count` y `check_destinations` por número de alteradas |
 | V13 | 5.3 | El modelo del hito 4 consume cuatro Gumbel en el flujo 4 | Fallan las tres huellas clínicas de la versión 3 |
 | V14 | 5.3 | Un bloque a medias se acepta | Falla el test de errores de la elección del modelo |
 | V15 | 5.3 | El destino de quien se fue no se guarda | Falla la ida y vuelta del CSV |
@@ -978,3 +981,114 @@ PR #98 (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once
 - 5.3: la verdad del desenlace en `EpisodeTruth` y las comparaciones de `abandonment` (abandono en max(llegada + paciencia, fin del triaje)) y `outcome` (destino sorteado, espera = base × factores) con ella.
 - 5.4: `analysis.episode_table`, `runs/` (filtros, métricas, verdad) y el `LiveTracker` con la versión 4; el directo, con los plazos sin evento del log en la cola.
 - 5.8: el catálogo de eventos v4 en `docs/diseno.md`.
+
+### Tarea 5.2: Perfiles del abandono, los destinos y la espera de cama
+
+**Qué se hizo**
+
+PR (rama `feat/h5-perfiles`, Claude Code, sin `@codex review`; issue #69): doce commits, sin tocar el motor ni `config/`, y con las huellas de las versiones 1 a 3 intactas.
+
+- **Lo aplazado de la 5.1** (nota 1 del chat): la cama como `timeout` del paciente en la pieza 3, `analysis.py` en la 5.4 y las métricas de la 5.1.
+- **`DESTINATIONS` en `profiles/config.py`** (nota 3): `events.py` lo importa de ahí, como `TEST_TYPES` y `REASON_KEYS`.
+- **`centro.toml`** (`engine/center.py`): `[camas]` (`espera`, `factor_turno`, `factor_estacion` opcional) y `[destino]` opcional. Un centro lleva uno de los dos, nunca los dos, y sin ninguno el error dice qué falta para qué modelo. `require_destination` da un error claro a los lectores de `destino.probabilidad_ingreso` (nota 4).
+- **`perfiles.toml`** (`profiles/config.py`): `Abandonment`, `DestinationOdds` y `OutcomeProfile`; `ReasonProfile.admission_pct` y `ClinicalProfiles.outcome`, al final y con `None` por defecto. El bloque es de todo o nada, y en cada motivo `ingreso` más las dos bases suma menos de 100. `ADMISSION_CATALOG` y `ADMISSION_START_PCT` dan los porcentajes de partida.
+- **`profiles/outcome.py`**, los exactos:
+  - la paciencia, los destinos y la cama;
+  - `abnormal_count_distribution`, la Poisson-binomial de las alteradas entre las pedidas;
+  - `OutcomeModel`, sobre los nodos de `WorkupModel`;
+  - `destination_bases_for`, las tres incógnitas resueltas juntas.
+- **La cascada** (`profiles/derivation.py`): el paso 4, con `SIGNIFICANT_DIGITS = 4`. `tests/data/perfiles_h5_ejemplo.toml` es `perfiles_ejemplo.toml` más el bloque, escrito por un script.
+- **`OutcomeSampler`** (`profiles/sampler.py`): flujos 4, 8 y 9 con consumo fijo, y un dataclass propio, `Outcome`.
+- **`check_patience` y `check_destinations`** (`profiles/validation.py`). `validate_profiles` y la CLI no cambian: los integra la 5.3.
+- **`check_number`** rechaza `10**400` con su `ValueError`; antes lanzaba `OverflowError`. Es un caso límite del plan.
+- **El subagente `mutante`** (`.claude/agents/mutante.md`), con `worktree.baseRef = "head"` y `.claude/worktrees/` en `.gitignore` (nota 2).
+- **Tests:**
+  - `test_center_beds.py` (24);
+  - `test_profiles_outcome_config.py` (38);
+  - `test_outcome_exact.py` (26);
+  - `test_destination_bases.py` (17);
+  - `test_outcome_sampler.py` (10);
+  - `test_outcome_validation.py` (10, tres de ellos `slow`);
+  - el fichero h5 en `test_derivation.py`, un enorme en `test_numeros_enormes.py` y uno en `test_events.py`.
+
+**Decisiones del diff**
+
+- **Los odds ratios del destino, decididos por Pedro en el plan** (ingreso 1,5 y exitus 15, en lugar de 2,0 y 6,0): con la tabla exacta, los de partida no cuadraban con el SAS ni concentraban el exitus en las paradas (ver «Valores orientativos»).
+- **Las bases, con 4 cifras significativas**, porque la del exitus es del 0,001937 %. Los derivados del hito 4 siguen con 3 decimales.
+- **Un factor común sobre las odds binarias de la partida**, `100 · expit(logit(partida/100) + λ)`, en lugar de sobre las odds frente al alta: estas dependen de las otras dos bases, y la partida dejaría de ser una entrada fija.
+- **La partida, en el código** (`ADMISSION_CATALOG`), como el reparto del catálogo para los pesos base. Así «la cascada no depende de lo ya derivado» se cumple también para el ingreso.
+- **El fichero h5 se crea ya en la 5.2** (decisión de Pedro): sin él, «escritos = recalculados» no tenía dónde vivir. La 5.3 añade el centro h5 y las huellas.
+- **`[camas]` en `_KEYS`, pero `DRAW_EFFECTS` sin cambios**: el test de las claves de un centro del hito 4 sigue en pie, y una diferencia en `camas.*` solo existe entre ejecuciones del hito 5 (5.3).
+- **`CenterConfig.admission_probability` sin valor por defecto, pero con `None`**: los constructores de hoy no cambian. `[camas]` vacía cuenta como ausente, como el bloque provisional.
+- **El muestreador recibe `[mediana, p90]` de la cama como números**, sin `CenterConfig` (nota 3). Las comprobaciones le pasan un par fijo que no miran.
+- **`destination_from_draws` busca el máximo de log odds + Gumbel**, que es `gumbel_max` sobre las odds sin pasar por `exp` y `log`. `destination_log_odds`, en una sola expresión. Son la misma función para lo exacto y el muestreador, así que un error en ella (V11) no lo ve la validación estadística, solo los valores a mano.
+- **V10 no puede escribirse sin tocar `SeverityAndTriage`:** el muestreador no ve ε. Esa garantía de diseño es lo que fija el test determinista; la versión incorrecta añade ε como campo temporal.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Tests nuevos | 125 en seis ficheros nuevos, más 3 en ficheros que ya existían |
+| `check_patience`, 2 años (219.084 pacientes) | 41,5 s |
+| `check_destinations`, 1 año (109.542) | 18,3 s |
+| Sorteo de 10.000 pacientes, sin y con el desenlace | 1,38 s y 1,84 s |
+| `scripts/tests-completos.sh` con Docker parado | (pendiente) |
+
+**Comprobaciones clínicas** (exactas, con `perfiles_h5_ejemplo` y `llegadas_ejemplo`):
+
+- **Ingreso por motivo:**
+  - muy bajo: orl 1,16 %;
+  - bajo: de 2,40 a 3,76 %;
+  - medio: de 9,32 a 17,96 %;
+  - alto: disnea 33,46 %;
+  - muy alto: parada 74,21 %.
+  - El orden del catálogo se mantiene, y lo fija un test.
+- **Por nivel asignado:** 68,05 / 28,06 / 11,78 / 4,29 / 1,86 %, frente al 46,5 / 25,1 / 11,0 / 3,9 / 7,4 % del SAS. El nivel 5 no se fuerza.
+- **Exitus de las paradas:** 18,50 %, la mitad (50,8 %) de los exitus del año.
+- **Ingreso por número de alteradas:** 4,91 / 14,02 / 29,02 / 47,82 / 69,06 %.
+- **Paciencia, cuántos aguantan 1, 2 y 4 h por nivel real:**
+  - nivel 1: 100 / 99,8 / 98,2 %;
+  - nivel 2: 99,2 / 94,7 / 79,1 %;
+  - nivel 3: 94,7 / 79,1 / 50,0 %;
+  - nivel 4: 85,7 / 60,3 / 29,2 %;
+  - nivel 5: 79,1 / 50,0 / 20,9 %.
+
+**Versiones incorrectas**
+
+Las aplicó un subagente en un worktree propio, una por subagente y cuatro en paralelo (ver «Piloto»).
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V11 (piloto) | `min(k, 1)` en `destination_log_odds` | 10 tests: las dos filas con k = 2 (22,18 y 36,30), los arrays, «escritos = recalculados», el año, la disnea, las clínicas, la cascada h5, la potencia escrita y el de detección | Exacta (10) |
+| V9 | La paciencia con el nivel asignado | `test_los_sorteos_son_los_del_flujo` (asignado 3, real 4), números comunes con ε y `check_patience` de dos años | Exacta (3): falla el nivel real 2, con p = 6,8e-25 en 15-44 |
+| V10 | El destino con G + ε (campo temporal en `SeverityAndTriage`) | El test determinista (ingreso en vez de alta) y los números comunes con ε; `check_destinations` de un año no la ve; incierto: la cadena de 300 | Exacta: fallan los dos firmes y el incierto; `check_destinations` pasa |
+| V12 | `outcome_model` rederiva las bases | El año (9,9000 frente a 9,9007), la disnea (se queda en 9,90) y el de detección | **Detecta más** (4): también la potencia escrita, que quedaba a 3,5e-6 del borde de su tolerancia; arreglada en `ea8ab4d` |
+| V22 | Contar las alteradas no pedidas | El unitario (2 frente a 1), la cadena y `check_destinations` con 30.000 | Exacta (3): fallan 6 categorías de alta e ingreso de los quintiles 2 a 4 |
+
+**Piloto del subagente `mutante`**
+
+- **Lo que funcionó:**
+  - El worktree nació del `HEAD` local, con `baseRef: "head"`: los cinco vieron `d8fae1b`.
+  - `uv sync --offline --frozen --all-packages` funcionó en todos. `uv` avisó de que `VIRTUAL_ENV` apunta al `.venv` principal y lo ignoró.
+  - En los cinco, `edsim.__file__` estaba dentro del worktree.
+  - El árbol principal no cambió.
+  - Claude Code borró solo los worktrees que terminaron limpios. El hook `PostToolUse` formatea también los ficheros del worktree.
+- **Lo que no funcionó:**
+  - Claude Code carga `.claude/agents/` al arrancar la sesión, y el tipo `mutante`, creado a mitad de sesión, no estaba disponible. Se usó `general-purpose` con Sonnet, `isolation: worktree` y las instrucciones de `mutante.md` en el prompt. Desde la próxima sesión, el tipo existe.
+  - El worktree de V9, que dejó trabajo propio en segundo plano, siguió bloqueado al acabar.
+  - Dos informes dieron por no ejecutado un test que sí corrió (`test_destinos_con_30000_pacientes` no es `slow`): el recuento de tests lo aclara.
+- **Tiempo de pared:** unos 5 min en paralelo, frente a unos 12 en serie. V9, con los tests lentos y la CPU compartida, tardó 335 s.
+
+**Revisión**
+
+(pendiente: `/code-review medium`)
+
+**Pendiente**
+
+- 5.3:
+  - `OutcomeDraws` y `BedWaitFactors` desde `Outcome` y `[camas]`;
+  - `check_patience` y `check_destinations` en `validate_profiles` y `edsim perfiles validar`;
+  - `DRAW_EFFECTS` con `camas.*` para emparejar ejecuciones del hito 5;
+  - el bloque a medias entre los dos ficheros (perfiles del hito 5 con un centro del hito 4);
+  - `centro_h5_ejemplo.toml` y las huellas.
+- 5.6: el bloque en `config/perfiles.toml` con los derivados de la 5.2 recalculados sobre `config/`.
