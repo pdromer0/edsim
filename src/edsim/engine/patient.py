@@ -34,6 +34,19 @@ waits and emits. With the clinical model (``draws.clinical``), the events
 carry the clinical payloads of version 3 of the catalog, and the turnaround of
 the tests is computed when they are ordered, with the shift band of that
 instant; without it, the process is exactly the one of the provisional model.
+
+**Outcome of milestone 5** (task 5.1, docs/specs/hito-5.md). With
+``draws.outcome`` the patient goes through ``_patient_with_outcome`` and writes
+version 4 of the catalog; without it, ``patient`` runs the code of milestone 4,
+line for line. The patience gives a deadline, arrival plus patience
+(``Deadline``, created on arrival; never for an assigned level 1). Before the
+first assessment starts, every wait for a nurse, a box or a doctor is "the
+resource or the deadline, whichever comes first" (``_granted``): at the
+deadline the patient emits ``patient_left_wbs`` with where it waited and, from
+a box, gives it back. In a tie the patient stays, because the deadline has the
+``LATE`` priority. Nobody leaves during the triage, but the deadline goes on:
+if it is due during it, the next wait asks only for what comes in that same
+instant. The destination is the one of the outcome.
 """
 
 import enum
@@ -116,15 +129,42 @@ class _Stay:
         pending: Minutes left of the assessment of the stage: the full
             duration, or what was left when it was interrupted.
         results: Triggered by the lab after emitting ``test_resulted``.
+        seen: Whether the first assessment has started; from then on the
+            patient never leaves (milestone 5).
     """
 
     stage: Stage
     pending: float
     results: simpy.Event | None = None
+    seen: bool = False
 
 
 RESULTS_ROOM = object()
 """What ``_in_box`` returns when the patient leaves its box for the results room."""
+
+LEFT = object()
+"""What ``_assessment`` and ``_in_box`` return when the deadline comes before the first doctor."""
+
+
+def _granted(
+    env: simpy.Environment, request: simpy.Event, deadline: Deadline | None
+) -> Generator[simpy.Event, object, bool]:
+    """Wait for ``request`` or the deadline, whichever comes first; whether it was granted.
+
+    Without a deadline, or with the request granted on creation, it is a plain
+    ``yield request``. Otherwise it waits for ``request | deadline``: the
+    deadline, of ``LATE`` priority, comes after any grant of its instant, so in
+    a tie the request wins. If the deadline was due while the patient waited
+    for nothing (during its triage), a new one in this instant stands for it:
+    the patient stays only if the resource comes in this same instant.
+    """
+    if deadline is None or request.triggered:
+        yield request
+        return True
+    if deadline.processed:
+        deadline = Deadline(env, 0)
+    yield request | deadline
+    return request.triggered
 
 
 def leaves_for_results(draws: PatientDraws, wait_outside: frozenset[int]) -> bool:
@@ -174,6 +214,8 @@ def patient(
             box (``CenterConfig.results_wait_outside``); only the clinical
             model uses it.
     """
+    if draws.outcome is not None:
+        return (yield from _patient_with_outcome(env, log, pools, arrival_id, draws, wait_outside))
     me = env.active_process
     pools.arrival_of[me] = arrival_id
     emit = partial(log.emit, arrival_id=arrival_id)
@@ -261,14 +303,17 @@ def _in_box(
     key: tuple[int, float],
     box: int,
     leaves: bool = False,
+    deadline: Deadline | None = None,
 ) -> Generator[simpy.Event, object, object]:
     """Go through the stages left in the box.
 
     Returns ``None`` when they are all done, the ``Preempted`` cause if the
-    patient is displaced, or ``RESULTS_ROOM`` right after ordering the tests if
-    ``leaves`` (the patient waits for the results outside). Waiting for the
-    results, a displacement needs nothing else: the lab keeps running. Waiting
-    for a doctor or in an assessment, ``_assessment`` handles it.
+    patient is displaced, ``RESULTS_ROOM`` right after ordering the tests if
+    ``leaves`` (the patient waits for the results outside), or ``LEFT`` if the
+    deadline comes while it waits for its first doctor (milestone 5; never
+    without a ``deadline``). Waiting for the results, a displacement needs
+    nothing else: the lab keeps running. Waiting for a doctor or in an
+    assessment, ``_assessment`` handles it.
     """
     while stay.stage is not Stage.DONE:
         if stay.stage is Stage.TESTS:
@@ -283,7 +328,8 @@ def _in_box(
             continue
 
         tipo = "inicial" if stay.stage is Stage.INITIAL else "reevaluacion"
-        cause = yield from _assessment(env, pools, emit, stay, tipo, key, box)
+        waiting = None if stay.seen else deadline
+        cause = yield from _assessment(env, pools, emit, stay, tipo, key, box, waiting)
         if cause is not None:
             return cause
         if stay.stage is Stage.INITIAL and draws.needs_tests:
@@ -313,22 +359,29 @@ def _assessment(
     tipo: str,
     key: tuple[int, float],
     box: int,
-) -> Generator[simpy.Event, object, Preempted | None]:
+    deadline: Deadline | None = None,
+) -> Generator[simpy.Event, object, object]:
     """One assessment in the patient's box: wait for a doctor, hold it, free it.
 
     Lasts ``stay.pending``. If the patient is displaced while waiting for the
     doctor, the request is dropped (the with cancels it, or releases it if it
     was already granted). If it is displaced during the assessment, it emits
     ``assessment_ended`` with ``interrumpida`` true and keeps in
-    ``stay.pending`` the time left. Returns the ``Preempted`` cause, or
-    ``None`` if the assessment ended.
+    ``stay.pending`` the time left. Returns the ``Preempted`` cause, ``None``
+    if the assessment ended, or ``LEFT`` if the ``deadline`` came before the
+    doctor (milestone 5; without a deadline, the wait of milestone 4).
     """
     with pools.doctors.request(priority=key) as doctor:
         try:
-            yield doctor
+            if deadline is None:
+                yield doctor
+            elif not (yield from _granted(env, doctor, deadline)):
+                return LEFT
         except simpy.Interrupt as interrupt:
             return _preempted(interrupt, pools)
         emit("assessment_started", env.now, tipo=tipo, pool="medicos", box=box)
+        if tipo == "inicial":
+            stay.seen = True
         start = env.now
         try:
             yield env.timeout(stay.pending)
@@ -339,6 +392,92 @@ def _assessment(
             return cause
         emit("assessment_ended", env.now, tipo=tipo, interrumpida=False)
     return None
+
+
+def _patient_with_outcome(
+    env: simpy.Environment,
+    log: EventLog,
+    pools: Pools,
+    arrival_id: int,
+    draws: PatientDraws,
+    wait_outside: frozenset[int],
+) -> Generator[simpy.Event]:
+    """SimPy process of one episode with the outcome of milestone 5 (version 4).
+
+    The flow of ``patient`` with the deadline of the patience in every wait
+    before the first assessment, and the destination of ``draws.outcome``.
+    """
+    outcome = draws.outcome
+    me = env.active_process
+    pools.arrival_of[me] = arrival_id
+    emit = partial(log.emit, arrival_id=arrival_id)
+
+    def leave(espera: str) -> None:
+        emit("patient_left_wbs", env.now, espera=espera)
+        del pools.arrival_of[me]
+
+    key = priority_key(draws.level, env.now)
+    # Created on arrival, as the patience counts from there. A level 1 never leaves.
+    deadline = None if draws.level == 1 else Deadline(env, outcome.patience)
+    emit("patient_arrived", env.now, **_extra(draws, "patient_arrived"))
+    emit("patient_registered", env.now, **_extra(draws, "patient_registered"))
+
+    if classified_at_the_door(draws.level):
+        emit("triage_started", env.now, circuito=DOOR)
+        emit("triage_completed", env.now, nivel=draws.level, **_extra(draws, "triage_completed"))
+    else:
+        with pools.nurses.request(priority=TRIAGE_PRIORITY) as nurse:
+            if not (yield from _granted(env, nurse, deadline)):
+                leave("triaje")
+                return  # the with cancels the request
+            emit("triage_started", env.now, circuito=NURSE)
+            yield env.timeout(draws.triage_time)
+            emit(
+                "triage_completed",
+                env.now,
+                nivel=draws.level,
+                **_extra(draws, "triage_completed"),
+            )
+
+    holder = Holder(me, arrival_id, draws.level)
+    stay = _Stay(Stage.INITIAL, draws.assessment_time)
+    leaves = leaves_for_results(draws, wait_outside)
+    while stay.stage is not Stage.DONE:
+        preempt = should_displace(pools.boxes, draws.level)
+        waiting = None if stay.seen else deadline
+        with pools.boxes.request(priority=key, preempt=preempt) as box_request:
+            try:
+                granted = yield from _granted(env, box_request, waiting)
+            except simpy.Interrupt as interrupt:
+                _preempted(interrupt, pools)
+                continue
+            if not granted:
+                leave("box")
+                return  # the with cancels the request
+            box = pools.box_numbers.take(holder)
+            emit("box_assigned", env.now, box=box)
+
+            cause = yield from _in_box(env, pools, emit, draws, stay, key, box, leaves, waiting)
+            if cause is LEFT:
+                # As a departure: emitted before giving the box back.
+                leave("medico")
+                pools.box_numbers.give(box)
+                return  # the with releases the box
+            if cause is RESULTS_ROOM:
+                emit("box_released", env.now, box=box, espera=RESULTS_WAIT)
+                pools.box_numbers.give(box)
+            elif cause is None:
+                destino = outcome.destination
+                emit("disposition_decided", env.now, destino=destino)
+                emit("patient_departed", env.now, destino=destino)
+                pools.box_numbers.give(box)
+                del pools.arrival_of[me]
+            else:
+                by = episode_id(pools.arrival_of[cause.by])
+                emit("patient_displaced", env.now, box=box, desalojado_por=by)
+                pools.box_numbers.hand_over(box, to=cause.by)
+        if cause is RESULTS_ROOM and not stay.results.triggered:
+            yield stay.results
 
 
 def _lab(
