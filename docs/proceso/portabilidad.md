@@ -220,15 +220,20 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
       "Bash(gh project item-add *)", "Bash(gh project item-edit *)",
       "Bash(scripts/tests-rapidos.sh*)", "Bash(scripts/tests-completos.sh*)"
     ],
+    "ask": [
+      "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)"
+    ],
     "deny": [
       "Bash(gh pr merge *)", "Bash(git push *--force*)", "Bash(git push -f*)",
       "Bash(git push * main)", "Bash(git push * main *)", "Read(./.env)"
     ]
   },
   "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh" }] }],
     "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command",
       "command": "command -v jq >/dev/null 2>&1 || { echo 'jq no está instalado; no se formatea.' >&2; exit 1; }; jq -r '.tool_input.file_path' | grep '\\.py$' | xargs -r uv run ruff format" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests.sh" }] }]
+    "Stop": [{ "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-tests.sh",
+      "statusMessage": "N2: tests rápidos con sello; solo las suites afectadas, 2-3 min" }] }]
   }
 }
 ```
@@ -237,11 +242,31 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **El push a ramas de tarea está permitido; la fusión, el push forzado y el push a `main`, denegados** [probado]. Las reglas `deny` son una barandilla de comportamiento: la frontera real es el ruleset de GitHub.
 - **Los permisos de las skills van aquí**, no en el `allowed-tools` de la skill [implantado]: ese campo solo vale durante el turno que la lanza, y una tarea dura muchos turnos.
 - **Hook `Stop`** [probado]: ejecuta los tests rápidos al final de cada turno. No hace nada en modo plan y comprueba `stop_hook_active` para no entrar en bucle. **Sin `jq` sale con código 1** [implantado], un error que se ve y no bloquea. Un 0 lo escondería y un 2 entraría en bucle, porque sin `jq` no puede leer `stop_hook_active`. En proyectos grandes, el «sello» (la huella del árbol en el último verde) evita volver a ejecutar las suites sin cambios.
-- **Pendiente para la A5** [pendiente]:
-  - `ask` al editar la configuración calibrada y los datos de referencia;
-  - un hook `SessionStart` con la rama, la última etiqueta, el hito en curso y `git status`;
-  - que el `Stop` anuncie que empieza;
-  - en el equipo de la persona (`~/.claude/settings.json`): el aviso de Windows (hook `Notification`), la línea de estado y Remote Control (`claude --rc`).
+- **Reglas `ask` sobre la configuración calibrada y los datos de referencia** [implantado]: en modo auto siguen preguntando (la documentación dice que una regla `ask` explícita fuerza el aviso y se evalúa antes que el clasificador). Se escriben para `Edit` y para `Write`. La barra inicial (`/config/**`) ancla la ruta a la raíz del proyecto; sin ella, una regla `ask` casa con un directorio de ese nombre a cualquier profundidad. Si en la prueba en vivo alguna de las cuatro combinaciones no preguntara, se pasa a la forma sin barra. **Límite:** solo cubren las herramientas `Edit` y `Write`; un `sed -i` o una redirección desde Bash sobre esos ficheros no las activa. Es una barandilla de comportamiento, como las reglas `deny`.
+- **Hook `SessionStart`** [implantado]: su salida entra en el contexto en cada apertura, reanudación, `/clear` y compactación. Rama, última etiqueta (`git describe --tags --abbrev=0`, «ninguna» si no hay), línea «Hito en curso» de `AGENTS.md` y `git status -sb`. Solo `git` y `grep` locales, siempre código 0 y en milisegundos.
+- **El `Stop` avisa de que empieza** [implantado] con `statusMessage` (el texto del spinner), y en verde termina con un `systemMessage` corto: las suites que ejecutó, o por qué ninguna. El JSON se construye con `jq -n --arg`, nunca con `printf`, porque la salida de los tests puede llevar comillas.
+- **En el equipo de la persona** (`~/.claude/settings.json`; no va al repositorio) [implantado]:
+  - **Aviso de Windows** cuando Claude Code espera: hook `Notification` con matcher `permission_prompt|idle_prompt` que llama a `powershell.exe` desde WSL. Con `[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800` basta: la pausa evita que el proceso termine antes de sonar.
+
+    ```json
+    "hooks": { "Notification": [ { "matcher": "permission_prompt|idle_prompt", "hooks": [ { "type": "command",
+      "command": "powershell.exe -NoProfile -Command \"[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800\"" } ] } ] }
+    ```
+
+  - **Línea de estado:** un `~/.claude/statusline.sh` con `jq` que recibe el JSON de la sesión por stdin y muestra modelo (`model.display_name`), rama (`git branch --show-current`, que el JSON no trae) y porcentaje de contexto (`context_window.used_percentage`). Se activa con `"statusLine": { "type": "command", "command": "~/.claude/statusline.sh" }` en los ajustes.
+
+    ```bash
+    #!/usr/bin/env bash
+    entrada=$(cat)
+    modelo=$(jq -r '.model.display_name // "?"' <<<"$entrada")
+    dir=$(jq -r '.workspace.current_dir // "."' <<<"$entrada")
+    pct=$(jq -r '(.context_window.used_percentage // 0) | floor' <<<"$entrada")
+    rama=$(git -C "$dir" branch --show-current 2>/dev/null)
+    printf '[%s] %s | %s%% contexto\n' "$modelo" "${rama:-sin rama}" "$pct"
+    ```
+
+  - **Plugin LSP de Python (pyright):** primero el binario (`uv tool install pyright`) y después el plugin, buscado en `/plugin`.
+  - **Remote Control** (`claude --rc`): seguir una sesión desde otro dispositivo. Solo se documenta.
 
 ### Codex [probado]
 
@@ -253,8 +278,8 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 
 ### Skills [implantado]
 
-- **`/tarea-<proyecto> N [notas del chat]`**: lleva una tarea del issue al PR, siguiendo `docs/proceso/tarea.md`. Sus fases:
-  - **en modo plan, solo lee:** el issue, sus dependencias, las secciones enlazadas de la especificación y el plan;
+- **`/tarea-<proyecto> N [notas efímeras]`**: lleva una tarea del issue al PR, siguiendo `docs/proceso/tarea.md`. Las notas duraderas van como comentario «Notas del chat» del issue. Sus fases:
+  - **en modo plan, solo lee:** el issue con sus comentarios, sus dependencias, las secciones enlazadas de la especificación y el plan;
   - **con el plan aprobado:** crea la rama, mueve la ficha, implementa y lanza la N3 en segundo plano;
   - **antes del push:** `/code-review` con su nivel y su destino (`main...<rama>`);
   - **al final:** abre el PR con la plantilla y comprueba que la ficha está en «En revisión».
@@ -274,7 +299,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
   - **los id del tablero se leen en cada uso** (`gh project field-list`), nunca de memoria.
 - **`cerrar-hito`** [piloto 5.8] y **`crear-tareas`**, de la especificación a los issues [pendiente, hito 7].
 - **Subagente `mutante`** para las versiones incorrectas en worktree [piloto 5.2].
-- **Plugins:** solo el LSP del lenguaje (pyright en Python) [pendiente, A5]. Superpowers y feature-dev quedan descartados porque chocan con la metodología propia. Para GitHub se usa `gh` en lugar del MCP de GitHub.
+- **Plugins:** solo el LSP del lenguaje (pyright en Python) [implantado, A5]. Superpowers y feature-dev quedan descartados porque chocan con la metodología propia. Para GitHub se usa `gh` en lugar del MCP de GitHub.
 
 ## 6. Documentación (docs-as-code) [implantado]
 
@@ -441,7 +466,7 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | Migración de la documentación al repositorio | P.2, A1 | Probado: diff normalizado limpio, original archivado |
 | Instrucciones coherentes y `/doctor prompt-audit` | P.2, A2 | Probado: segundo audit limpio |
 | GitHub como gestor (issues, tablero, dependencias) | P.2, A3 | Implantado: 32 issues; falta su uso en una tarea |
-| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | — |
+| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | A5, `/tarea-edsim`: probada de punta a punta. Seis hallazgos en [p2.md](p2.md); los de más peso: la tarea sin fichero de especificación (arreglado), cómo presentar el plan fuera del modo plan y si los scripts de los hooks cuentan para repetir la N3. `/sincronizar` ya funcionó con el PR #95. Falta 5.1 |
 | Subagentes para las versiones incorrectas | 5.2 | — |
 | `@claude` en el PR | 5.3 | — |
 | El chat lee el PR y el CI | 5.4 | — |

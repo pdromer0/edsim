@@ -1,7 +1,7 @@
 ---
 name: tarea-edsim
 description: Lleva una tarea de EDsim desde su issue de GitHub hasta el pull request, siguiendo docs/proceso/tarea.md (dependencias, plan, rama, commits, N1 a N3, /code-review, PR y tablero).
-argument-hint: N [notas del chat]
+argument-hint: N [notas efímeras de esta sesión]
 disable-model-invocation: true
 ---
 
@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 Argumentos: `$ARGUMENTS`
 
-El primer número es el issue N. El resto son las notas del chat: si precisan algo del issue, mandan las notas. Si no hay número, para y pide N.
+El primer número es el issue N. El resto es lo efímero de esta sesión. Las notas del chat duraderas van como comentario «Notas del chat» del issue, que se lee con él. Si un comentario o el argumento precisan algo del cuerpo, mandan ellos; entre dos comentarios que se contradicen, el más reciente. Si no hay número, para y pide N.
 
 ## Reglas de toda la tarea
 
@@ -20,12 +20,12 @@ El primer número es el issue N. El resto son las notas del chat: si precisan al
 
 ## Fase 1: en modo plan (solo lectura)
 
-1. `gh issue view N --json number,title,state,body,labels,milestone,blockedBy`. Si no existe o está cerrado, para.
+1. `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si no existe o está cerrado, para.
 2. Dependencias. Cada nodo de `blockedBy` trae su `state`: si alguno es `OPEN`, para y di cuáles, con su título. No crees el plan ni toques git o el tablero. Compara los números de `blockedBy` con los `#n` de la sección «Depende de» del cuerpo: si no coinciden, avisa del descuadre, pero decide por `blockedBy`.
 3. Especificación: la que enlaza la sección «Enlace a la especificación» del issue.
    - Si es un fichero de más de unos 50 KB (`wc -c`), lanza un subagente Explore que, a partir de `grep -n '^#'`, resuma las secciones enlazadas y dé sus rangos de líneas. Después lee tú esos rangos, sobre todo los que dan valores para el plan.
    - Si es más pequeño, léelo por secciones igualmente.
-   - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2») o está vacío (`_No response_`), las notas del chat son la especificación. Sin notas, pregunta.
+   - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2») o está vacío (`_No response_`), la especificación son el cuerpo y los comentarios del issue (más el argumento). Si no basta, pregunta.
 4. Plan con los seis apartados de `tarea.md`, más tres datos al principio:
    - la rama, la del issue; si está vacía, propón una con prefijo `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/` o `ci/` (los únicos con push permitido);
    - que la ficha pasará a «En curso» al aprobarlo;
