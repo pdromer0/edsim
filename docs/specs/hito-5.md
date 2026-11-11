@@ -239,7 +239,7 @@ Hoy hay 16,5 boxes ocupados de media (tarea 4.6a). Con la espera de cama, las ho
 
 - `centro.toml` gana `[camas]`: `espera = [mediana, p90]`, `factor_turno` (tres factores, mañana, tarde y noche) y `factor_estacion` (cuatro, opcional, vale 1). Sustituye a `[destino]` en los centros del hito 5 (pieza 6).
 - La z sale del flujo 9, una normal por paciente, ingrese o no.
-- En el motor, la espera es un proceso aparte, como `_lab`: al acabar emite `bed_assigned` y el paciente sale, esté en el box o en el pasillo.
+- En el motor, la espera es un `timeout` del propio paciente (ajuste de la 5.1, ver «Reglas de la espera de cama»): al acabar emite `bed_assigned` y `patient_departed` en el mismo paso, esté en el box o en el pasillo; tras un desalojo, espera el mismo `timeout` en el pasillo.
 - El estado del consumidor gana «esperando cama», con una marca «en el pasillo» (H5-11).
 
 ### Para aprender más
@@ -674,7 +674,7 @@ edsim/
 │   │   ├── patient.py           # abandono, espera de cama y pasillo; rama exacta del hito 4 (5.1)
 │   │   ├── scenarios.py         # pacientes a mano con desenlace (5.1)
 │   │   ├── invariants.py        # transitions, conservation, capacity, displacement; abandonment y outcome (5.1, 5.3)
-│   │   ├── analysis.py          # EpisodeRecord: abandono, destino, espera de cama, pasillo (5.1, 5.4)
+│   │   ├── analysis.py          # EpisodeRecord: abandono, destino, espera de cama, pasillo (5.4)
 │   │   ├── center.py            # [camas]; [destino] opcional; uno de los dos (5.2)
 │   │   ├── clinical_sampler.py  # el modelo del hito 5 y su elección por bloques (5.3)
 │   │   ├── ground_truth.py      # la verdad del desenlace (5.3)
@@ -914,7 +914,7 @@ Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones 
 
 **Qué se hizo**
 
-PR (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once commits, con las huellas de las versiones 1 a 3 intactas.
+PR #98 (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once commits, con las huellas de las versiones 1 a 3 intactas.
 
 - **Especificación:** al ciclo de la P.2 («esta especificación», el «Flujo de git» remite a `docs/proceso/tarea.md`), y los ajustes de la aprobación: el plazo vencido durante el triaje, la cama como `timeout` del propio paciente, los escenarios T, X y X-visto y la V21.
 - **Catálogo v4** (`events.py`): `OUTCOME_SCHEMA_VERSION = 4`, `CATALOG_V4`, `DESTINATIONS`, `LWBS_WAITS`, `WARD`, `TERMINAL_EVENTS[4]` con el abandono y `CLINICAL_SCHEMA_VERSIONS = {2, 3, 4}`; `CURRENT_CLINICAL_SCHEMA_VERSION` sigue en 3. `schemas/eventos-v4.schema.json`, generado.
@@ -941,6 +941,8 @@ PR (rama `feat/h5-motor`, Claude Code, con `@codex review`; issue #68): once com
 | Tests nuevos | 17 + 16 + 51 + 6 del contrato, más los del catálogo 4, los esquemas y el censo; cada fichero nuevo, menos de 0,2 s |
 | `scripts/tests-completos.sh` con Docker parado | 16 min 20 s en verde: núcleo 3.466 tests en 12:12, app 287 en 3:03, notebooks 5 en 0:59. La 6.6: 13 min 44 s (núcleo 3.334 en 8:54, app 3:46). La app, que no cambia, sale 43 s más rápida, y una primera N3, en paralelo con la revisión, tardó 13:51 en el núcleo: la diferencia es sobre todo del portátil |
 | `simulate_ed`, 14 días con `config/` (modelo del hito 4), `main` frente a la rama | mejor de 5 en tres rondas alternadas: `main` 1,766, 2,048 y 1,969 s; la rama 1,994, 1,897 y 2,066 s. Se solapan: sin regresión medible del camino del hito 4 |
+| Idas y vueltas del plan | 1: un «No, keep planning» con seis ajustes |
+| Rondas de revisión | 1: Codex, sin hallazgos; el chat, con ajustes aplazados a la 5.2 y la 5.3 |
 
 **Versiones incorrectas**
 
