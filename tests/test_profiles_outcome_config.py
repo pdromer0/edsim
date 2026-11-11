@@ -205,6 +205,13 @@ def test_valores_de_destinos(tmp_path, old, new, message):
         load_profiles(path)
 
 
+def test_los_objetivos_suman_menos_de_100(tmp_path):
+    # 99,2 + 0,75 + 0,11 = 100,06: el alta del año sería negativa.
+    path = write(tmp_path, block_text(destinations=DESTINATIONS.replace("9.90", "99.2")))
+    with pytest.raises(ValueError, match=r"^.*perfiles\.toml: destinos\.ingreso\.objetivo \+"):
+        load_profiles(path)
+
+
 @pytest.mark.parametrize("value", [0, 100, "nan"])
 def test_el_ingreso_de_un_motivo_va_en_el_intervalo_abierto(tmp_path, value):
     path = write(tmp_path, block_text(pct=ALL | {"orl": value}))

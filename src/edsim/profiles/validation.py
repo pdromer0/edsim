@@ -1013,9 +1013,9 @@ def _destinations_result(model: OutcomeModel, year: _Year) -> ValidationResult:
     alpha = ALPHA / N_DESTINATION_CATEGORIES
     fifth = severity_fifth(model.workup, year.severity)
     count = (year.ordered & year.abnormal).sum(axis=1)
+    by_severity = model.by_severity(N_SEVERITY_GROUPS)[::-1]  # the least severe first
     groups = [
-        (f"quintil_{q + 1}", fifth == q + 1, model.by_severity(N_SEVERITY_GROUPS)[::-1][q])
-        for q in range(N_SEVERITY_GROUPS)
+        (f"quintil_{q + 1}", fifth == q + 1, by_severity[q]) for q in range(N_SEVERITY_GROUPS)
     ]
     by_count = model.by_abnormal_count()
     groups += [(f"alteradas_{k}", count == k, by_count[k]) for k in range(N_ABNORMAL_COUNTS)]

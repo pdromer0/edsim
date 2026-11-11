@@ -266,11 +266,26 @@ def triage_matrix(
         A 5×5 array adding up to 1. Its row sums are ``real_shares`` and its
         column sums, ``assigned_shares``.
     """
-    edges = _edges(thresholds)
-    g, weights = interval_nodes(mixture, edges)  # (components, levels, nodes)
+    g, weights = interval_nodes(mixture, _edges(thresholds))  # (components, levels, nodes)
+    assigned = assigned_level_probabilities(g, thresholds, noise, bias)
+    return np.einsum("c,cin,jcin->ij", mixture.weights.ravel(), weights, assigned)
+
+
+def assigned_level_probabilities(
+    g: ArrayLike, thresholds: ArrayLike, noise: float, bias: float
+) -> NDArray[np.float64]:
+    """P(assigned level j | g) for j = 1 to 5, on a new first axis.
+
+    The nurse assigns the level that cuts ``G + ε``, with ``ε`` normal of mean
+    ``bias`` and deviation ``noise``: ``P(c_j < g + ε <= c_{j-1})``, a
+    difference of two normal CDFs. ``triage_matrix`` and the exact outcome by
+    assigned level (``outcome.OutcomeModel.by_assigned_level``) share it.
+    """
+    g = np.asarray(g, dtype=float)
+    edges = _edges(thresholds).reshape(-1, *([1] * g.ndim))
     # P(G + ε above each edge | g), from +inf (0) to -inf (1).
-    above = special.ndtr(-(edges[:, None, None, None] - g[None] - bias) / noise)
-    return np.einsum("c,cin,jcin->ij", mixture.weights.ravel(), weights, np.diff(above, axis=0))
+    above = special.ndtr(-(edges - g[None] - bias) / noise)
+    return np.diff(above, axis=0)
 
 
 def triage_error_rates(matrix: ArrayLike) -> tuple[float, float]:

@@ -57,7 +57,8 @@ from edsim.profiles.config import (
     OutcomeProfile,
 )
 from edsim.profiles.durations import duration_params, lognormal_mean
-from edsim.profiles.workup import WorkupModel, abnormal_logit, older_bands, workup_model
+from edsim.profiles.severity import assigned_level_probabilities
+from edsim.profiles.workup import WorkupModel, older_bands, workup_model
 
 N_ABNORMAL_COUNTS = N_TEST_TYPES + 1
 """Possible numbers of abnormal tests among the ordered ones: 0 to 4."""
@@ -259,10 +260,7 @@ class OutcomeModel:
             year in each interval.
         """
         g, mass, p = self.workup.nodes(edges)
-        abnormal = np.stack(
-            [special.expit(abnormal_logit(t, g)) for t in self.profiles.diagnostic_tests], axis=-1
-        )
-        pk = abnormal_count_distribution(p * abnormal)  # (68, I, N, 5)
+        pk = abnormal_count_distribution(p * self.workup._abnormal(g))  # (68, I, N, 5)
         probs = destination_probabilities(
             self.outcome,
             self.admission_pct[:, None, None, None],
@@ -320,14 +318,12 @@ class OutcomeModel:
 
         The nurse assigns the level by ``G + ε``, with ``ε`` normal of mean
         ``sesgo`` and deviation ``ruido``; the destination depends on G. At each
-        node, ``P(assigned j | g)`` is a difference of two normal CDFs, as in
-        ``severity.triage_matrix``.
+        node, ``P(assigned j | g)`` is ``severity.assigned_level_probabilities``,
+        the one of ``severity.triage_matrix``.
         """
         g, _, _ = self.workup.nodes([np.inf, -np.inf])
         t = self.profiles.triage
-        edges = self.workup.level_edges()
-        above = special.ndtr(-(edges[:, None, None, None] - g[None] - t.bias) / t.noise)
-        assigned = np.diff(above, axis=0)  # (5, 68, 1, N)
+        assigned = assigned_level_probabilities(g, t.thresholds, t.noise, t.bias)  # (5, 68, 1, N)
         joint = np.einsum("jcin,cinkd->jd", assigned, self._all())
         return joint / joint.sum(axis=1, keepdims=True)
 

@@ -122,14 +122,17 @@ def test_sin_bloque_no_hay_derivados_del_destino(arrivals):
         destination_bases_for(hito4, arrivals)
 
 
-def test_unos_objetivos_imposibles_no_convergen(profiles, arrivals):
-    # Un traslado del 95 % con un 9,90 % de ingreso no cabe en el 100 %.
+def test_unos_objetivos_que_no_caben_son_un_error(profiles):
+    # Un traslado del 95 % con un 9,90 % de ingreso y un 0,11 % de exitus no cabe en el
+    # 100 %: el alta sería negativa. Error al construir, no un RuntimeError al derivar.
     outcome = profiles.outcome
-    impossible = replace(
-        profiles, outcome=replace(outcome, transfer=replace(outcome.transfer, target=95.0))
-    )
+    with pytest.raises(ValueError, match=r"objetivo must be below 100, the rest is discharge"):
+        replace(outcome, transfer=replace(outcome.transfer, target=95.0))
+
+
+def test_si_no_converge_lo_dice(profiles, arrivals):
     with pytest.raises(RuntimeError, match="destination_bases_for did not converge"):
-        destination_bases_for(impossible, arrivals)
+        destination_bases_for(profiles, arrivals, max_evaluations=2)
 
 
 def test_el_factor_comun_conserva_el_orden():
@@ -163,3 +166,11 @@ def test_la_mayor_suma_queda_lejos_de_100(profiles):
     sums = [r.admission_pct + 0.7639 + 0.001937 for r in profiles.reasons]
     assert max(sums) == pytest.approx(31.425837)
     assert np.argmax(sums) == REASON_KEYS.index("parada")
+
+
+def test_la_cascada_sin_el_paso_4(profiles, arrivals):
+    # severity_mean_for solo lee el triaje: no resuelve los destinos de cada candidato.
+    without = derive_written_values(profiles, arrivals, destinations=False)
+    full = derive_written_values(profiles, arrivals)
+    assert without.destinations is None and full.destinations is not None
+    assert (without.base_weights, without.thresholds) == (full.base_weights, full.thresholds)

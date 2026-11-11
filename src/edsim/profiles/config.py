@@ -606,6 +606,12 @@ class OutcomeProfile:
             value = getattr(self, field)
             if not isinstance(value, DestinationOdds) or value.key != key:
                 raise ValueError(f"{field} must be the DestinationOdds of {key}, got {value!r}")
+        targets = [d.target for d in self.destinations]
+        if sum(targets) >= 100:
+            raise ValueError(
+                "destinos.ingreso.objetivo + destinos.traslado.objetivo + destinos.exitus.objetivo"
+                f" must be below 100, the rest is discharge: got {' + '.join(map(repr, targets))}"
+            )
 
     @property
     def destinations(self) -> tuple[DestinationOdds, ...]:
@@ -1144,14 +1150,7 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
         except ValueError as error:
             raise ValueError(f"{path}: {error}") from None
 
-    built_reasons = tuple(reason(key) for key in REASON_KEYS)
-    built_outcome = outcome()
-    try:
-        _check_outcome_block(built_outcome, built_reasons)
-    except ValueError as error:
-        raise ValueError(f"{path}: {error}") from None
-
-    return ClinicalProfiles(
+    values = dict(
         shift_band_starts=data["contexto"]["franjas"],
         population=Population(
             **{field: population[key] for key, field in _POPULATION_REQUIRED.items()},
@@ -1161,11 +1160,16 @@ def load_profiles(path: str | Path) -> ClinicalProfiles:
                 if key in population
             },
         ),
-        reasons=built_reasons,
+        reasons=tuple(reason(key) for key in REASON_KEYS),
         triage=TriageProfile(**{field: data["triaje"][k] for k, field in _TRIAGE_KEYS.items()}),
         durations=DurationProfile(
             **{field: data["duraciones"][k] for k, field in _DURATION_KEYS.items()}
         ),
         diagnostic_tests=tuple(diagnostic_test(key) for key in TEST_TYPES),
-        outcome=built_outcome,
+        outcome=outcome(),
     )
+    try:
+        return ClinicalProfiles(**values)
+    except ValueError as error:
+        # The checks across tables, such as the milestone 5 block, with the path.
+        raise ValueError(f"{path}: {error}") from None

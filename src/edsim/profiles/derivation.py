@@ -148,6 +148,8 @@ def derive_written_values(
     profiles: ClinicalProfiles,
     arrival_profile: ArrivalProfile,
     targets: Mapping[str, float] | None = None,
+    *,
+    destinations: bool = True,
 ) -> DerivedValues:
     """The cascade of derived values, each one on the previous ones as written.
 
@@ -165,6 +167,8 @@ def derive_written_values(
         profiles: The clinical profiles.
         arrival_profile: The arrival profile, for the weight of each context.
         targets: Global share of each reason, by key; the catalog by default.
+        destinations: Whether to run step 4 with the milestone 5 block; off
+            where only the triage is read, as in ``severity_mean_for``.
 
     Returns:
         The values that the file must have.
@@ -177,16 +181,16 @@ def derive_written_values(
     noise, bias = (round(x, DECIMALS) for x in triage_error_for(profiles, arrival_profile))
     profiles = replace(profiles, triage=replace(profiles.triage, noise=noise, bias=bias))
     thresholds = tuple(round(c, DECIMALS) for c in thresholds_for(profiles, arrival_profile))
-    destinations = None
-    if profiles.outcome is not None:
+    bases_written = None
+    if destinations and profiles.outcome is not None:
         profiles = replace(profiles, triage=replace(profiles.triage, thresholds=thresholds))
         bases = destination_bases_for(profiles, arrival_profile)
-        destinations = DestinationBases(
+        bases_written = DestinationBases(
             MappingProxyType({k: round_significant(v) for k, v in bases.admission.items()}),
             round_significant(bases.transfer),
             round_significant(bases.death),
         )
-    return DerivedValues(MappingProxyType(weights), noise, bias, thresholds, destinations)
+    return DerivedValues(MappingProxyType(weights), noise, bias, thresholds, bases_written)
 
 
 def _check_reason(reason: str) -> int:
@@ -263,7 +267,8 @@ def severity_mean_for(
         mean = round((first + k) * step, decimals)
         candidate = with_severity(profiles, reason, mean, sd)
         candidate = with_derived(
-            candidate, derive_written_values(candidate, arrival_profile, targets)
+            candidate,
+            derive_written_values(candidate, arrival_profile, targets, destinations=False),
         )
         real, assigned = reason_level1_shares(candidate, arrival_profile, reason)
         if real >= real_min and assigned >= assigned_min:
