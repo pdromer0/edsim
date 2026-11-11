@@ -10,7 +10,7 @@ Cuando una decisión es difícil de revertir, afecta a varias partes del sistema
 
 ## Nombres
 
-`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`.
+`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y del 0067 al 0079 están reservados a las decisiones del hito 5: un ADR nuevo toma el número de su decisión (hoy, a partir del 0083), no el primero que falte.
 
 ## Plantilla
 

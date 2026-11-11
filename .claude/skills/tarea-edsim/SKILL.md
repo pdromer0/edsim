@@ -20,7 +20,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 ## Fase 1: en modo plan (solo lectura)
 
-0. Si la sesión no está en modo plan, pide a Pedro que lo active (Shift+Tab) antes de presentar el plan: `ExitPlanMode` necesita el fichero de plan, y sin él el plan se presenta como texto y hace falta una segunda ronda.
+0. El modo inicial es `plan` (`.claude/settings.json`), así que normalmente ya estás en él. Si la sesión se cambió a otro modo, pide a Pedro que lo active (Shift+Tab) y no presentes el plan hasta que lo haga: `ExitPlanMode` necesita el fichero de plan, y sin él el plan se presenta como texto y hace falta una segunda ronda.
 1. `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si no existe o está cerrado, para.
 2. Dependencias. Cada nodo de `blockedBy` trae su `state`: si alguno es `OPEN`, para y di cuáles, con su título. No crees el plan ni toques git o el tablero. Compara los números de `blockedBy` con los `#n` de la sección «Depende de» del cuerpo: si no coinciden, avisa del descuadre, pero decide por `blockedBy`.
 3. Especificación: la que enlaza la sección «Enlace a la especificación» del issue.

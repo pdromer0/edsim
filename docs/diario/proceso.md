@@ -78,7 +78,7 @@ El núcleo se ejecuta en paralelo con pytest-xdist en los scripts locales; en el
 - Dos cortes de la API en la A1: el primero al reescribir el hito 5, el segundo por la conexión de la terminal.
 - El comprobador de dependencias de la prueba en seco marcó el #66, que había perdido una.
 - `docker compose ps` falla en este WSL porque no hay integración con Docker Desktop.
-- La skill no decía cómo presentar el plan si la sesión no está en modo plan: hizo falta una segunda ronda.
+- La skill no decía cómo presentar el plan si la sesión no está en modo plan: hizo falta una segunda ronda (resuelto en la A6, con un paso 0 en la skill).
 
 **Preguntas abiertas:**
 - Las comprobaciones en vivo de Pedro: las cuatro pruebas de `ask`, `SessionStart` en una sesión nueva y el texto del `Stop` mientras se ejecuta.
