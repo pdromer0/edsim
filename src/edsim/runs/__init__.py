@@ -142,14 +142,20 @@ from edsim.runs.summary import (
     summarize_profiles,
 )
 from edsim.runs.truth import (
+    SEVERE_LEVELS,
     TRUTH_ABS_TOL_MINUTES,
     ClinicalTruthView,
     DiagnosticTestTruth,
+    OutcomeTruthView,
+    TrueLevelAbandonment,
+    TrueLevelLeft,
     TruthComparison,
     TruthStatus,
     compare_episode_truth,
     episode_clinical_truth,
+    episode_outcome_truth,
     read_run_episode_truth,
+    true_level_abandonment,
     true_level_window_compliance,
 )
 from edsim.runs.variants import (
@@ -182,6 +188,12 @@ __all__ = [
     "left_without_being_seen_shares",
     "stay_by_destination",
     "window_outcome",
+    "SEVERE_LEVELS",
+    "OutcomeTruthView",
+    "TrueLevelAbandonment",
+    "TrueLevelLeft",
+    "episode_outcome_truth",
+    "true_level_abandonment",
     "ReplayAbandonment",
     "ReplayCounts",
     "ReplayDeparture",
