@@ -86,3 +86,20 @@ El núcleo se ejecuta en paralelo con pytest-xdist en los scripts locales; en el
 - Qué subagentes, `@claude`, Codex desde el issue y la sesión en la nube dan de verdad: se prueban en las tareas 5.2 a 5.8, una por tarea.
 
 **Enlaces:** PR #62, #95 y #96 · ADR 0080 a 0082 · [lecciones transversales](../proceso/lecciones.md)
+
+## 2026-11-11 · Tarea #100 — Una sola N3, tras la revisión propia
+
+**Qué se hizo:** antes del push, la N3 ya no corre en paralelo con `/code-review`. Primero va la revisión; se clasifican todos sus hallazgos, se hacen las correcciones con N1 y después se lanza una sola N3, que se repite una vez si falla ([ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md), [anexo](../proceso/p2.md#ajuste-posterior-una-sola-n3-issue-100)).
+
+**Qué aprendí:**
+- Una regla que dice que algo se repite tiene que decir cuándo. «La N3 se repite si las correcciones tocan algo que la N3 ejecuta» no decía si era una vez por ronda o una por corrección.
+- El paralelo solo ahorra tiempo si lo que va en paralelo no se invalida. La revisión casi siempre encuentra algo, así que la N3 lanzada a la vez casi nunca es la que sube: en la 5.2, 14:00 de 32:03 de N3.
+- Con el orden nuevo, «las correcciones solo tocan documentación» ya no libra de la N3 en la primera ronda: es la primera N3 sobre el código de la rama.
+
+**Qué costó o falló:**
+- El issue hablaba de más de una hora de N3 en la 5.2; el anexo recoge dos N3 en verde (32 min) y la ADR cita esa cifra.
+
+**Preguntas abiertas:**
+- Cuánto ahorra de verdad: se mide en las tareas 5.3 a 5.8 (minutos de la revisión frente a una N3).
+
+**Enlaces:** issue #100 · ADR 0082 y 0083 · [tarea.md](../proceso/tarea.md#4-antes-del-push)
