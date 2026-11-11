@@ -34,13 +34,21 @@ does not import the engine.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
 from edsim.engine.center import CenterConfig, require_destination
 from edsim.engine.clinical import PatientDraws
-from edsim.engine.events import ARRIVAL_MODES, SEXES, TEST_RESULTS
+from edsim.engine.events import (
+    ARRIVAL_MODES,
+    CURRENT_CLINICAL_SCHEMA_VERSION,
+    OUTCOME_SCHEMA_VERSION,
+    PROVISIONAL_SCHEMA_VERSION,
+    SEXES,
+    TEST_RESULTS,
+)
 from edsim.profiles.config import N_SHIFT_BANDS, TEST_TYPES, ClinicalProfiles
 from edsim.profiles.context import ArrivalContext, arrival_context
 from edsim.profiles.population import Person
@@ -54,6 +62,76 @@ from edsim.profiles.workup import Workup, turnaround_shift_factors
 
 N_SAMPLER_STREAMS = 7
 """Streams of the ``ClinicalSampler``: 1 to 7 of ``child_streams(seed, 8)``."""
+
+
+class PatientModel(Enum):
+    """The model of the patients of a run, chosen by the blocks of its files (H5-2).
+
+    Each model writes one version of the catalog and draws from
+    ``child_streams(seed, n_streams)``; child 0 is always the arrivals.
+    """
+
+    PROVISIONAL = ("provisional", PROVISIONAL_SCHEMA_VERSION, 5)
+    MILESTONE_4 = ("milestone 4", CURRENT_CLINICAL_SCHEMA_VERSION, 8)
+    MILESTONE_5 = ("milestone 5", OUTCOME_SCHEMA_VERSION, 10)
+
+    def __init__(self, label: str, schema_version: int, n_streams: int) -> None:
+        self.label = label
+        self.schema_version = schema_version
+        self.n_streams = n_streams
+
+
+class ModelChoiceError(ValueError):
+    """The two files do not choose one model: a milestone 5 block in only one of them."""
+
+
+def choose_model(
+    center: CenterConfig,
+    profiles: ClinicalProfiles | None,
+    *,
+    center_file: str = "centro.toml",
+    profiles_file: str = "perfiles.toml",
+) -> PatientModel:
+    """The model the center and the profiles choose, all or nothing (decision 68, H5-2).
+
+    Without profiles, the provisional model, which needs ``[destino]``. With
+    profiles without the milestone 5 block (``[abandono]``, ``[destinos]`` and
+    ``ingreso`` in the reasons) and a center with ``[destino]``, milestone 4;
+    with the block and a center with ``[camas]``, milestone 5. A block half
+    inside one file is already an error when the file is loaded; this is the
+    block half between the two files.
+
+    Args:
+        center: The center.
+        profiles: The clinical profiles, or ``None`` for the provisional model.
+        center_file: The name of the center file in the errors.
+        profiles_file: The name of the profiles file in the errors.
+
+    Raises:
+        ModelChoiceError: If the two files do not agree; the message names the
+            missing key and its file.
+    """
+    if profiles is None:
+        if center.has_beds:
+            raise ModelChoiceError(
+                f"{center_file}: the provisional model needs [destino], and [camas] is of "
+                "the milestone 5 model, which needs clinical profiles"
+            )
+        return PatientModel.PROVISIONAL
+    if profiles.outcome is None:
+        if center.has_beds:
+            raise ModelChoiceError(
+                f"{profiles_file}: missing [abandono], [destinos] and ingreso in the reasons; "
+                f"the center {center_file} has [camas], of the milestone 5 model"
+            )
+        return PatientModel.MILESTONE_4
+    if not center.has_beds:
+        raise ModelChoiceError(
+            f"{center_file}: missing [camas]; the profiles {profiles_file} have the "
+            "milestone 5 block ([abandono] and [destinos]), and [destino] is of milestone 4"
+        )
+    return PatientModel.MILESTONE_5
+
 
 CLINICAL_EVENTS = (
     "patient_arrived",
