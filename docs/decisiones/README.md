@@ -106,3 +106,8 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0064. Etiqueta de cierre `v0.6-hito6`](0064-etiqueta-v0-6-hito6.md)
 - [0065. El simulador corre fuera de Docker; Compose levanta solo Kafka y la consola](0065-simulador-fuera-de-docker.md)
 - [0066. `run_id` del directo con la semilla y la hora de arranque; el replay conserva el suyo](0066-run-id-del-directo.md)
+- [0080. El repositorio es la fuente de verdad de la documentación](0080-repositorio-fuente-de-verdad-de-la-documentacion.md)
+- [0081. GitHub como gestor del trabajo: issues, milestones, tablero y dependencias nativas](0081-github-como-gestor-del-trabajo.md)
+- [0082. El ciclo de cada tarea se escribe una vez en `tarea.md` y lo ejecutan las skills](0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)
+
+El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Por eso falta del 0067 al 0079: son las decisiones del hito 5, reservadas hasta que se cierre.
