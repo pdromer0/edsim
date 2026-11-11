@@ -23,6 +23,10 @@ Closes #
 | Hallazgo | Qué se hizo |
 | --- | --- |
 
+## Pendiente
+
+<!-- Lo que queda para otra tarea, con su destino (la tarea o el issue). -->
+
 ## Versiones incorrectas
 
 <!-- Cada una: predicción firme frente a lo observado. -->
