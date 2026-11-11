@@ -19,18 +19,30 @@ The model is provisional (docs/specs/hito-3.md). The clinical model of
 milestone 4 (``clinical_sampler.ClinicalSampler``) has the same interface and
 fills ``PatientDraws.clinical``; the provisional sampler stays for the
 validation of the engine, which needs a simple model with known theory.
+
+The model of milestone 5 adds the outcome (``OutcomeDraws``, task 5.1): the
+patience, the destination and the base wait for a ward bed. Task 5.1 injects
+it by hand in the scenarios of ``engine.scenarios``; the sampler of task 5.2
+draws it.
 """
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from edsim.arrivals.thinning import ArrivalRecord
-from edsim.engine.center import N_LEVELS, CenterConfig, require_provisional
+from edsim.engine.center import N_LEVELS, N_SHIFTS, CenterConfig, require_provisional
+from edsim.engine.events import DESTINATIONS
+from edsim.engine.shifts import shift_at
+from edsim.finite import to_float
 from edsim.lognormal import Z90 as Z90  # re-exported: imported from here before 4.4
 from edsim.lognormal import lognormal_params
+from edsim.profiles.config import N_SEASONS
+from edsim.profiles.context import arrival_context
 
 if TYPE_CHECKING:
     from edsim.engine.clinical_sampler import ClinicalDraws
@@ -81,6 +93,129 @@ def triage_duration(level: int, triage_time: float) -> float:
     return 0.0 if classified_at_the_door(level) else triage_time
 
 
+def _finite(name: str, value: object, *, positive: bool = False) -> float:
+    """``value`` as a float if it is a finite number >= 0 (> 0 if ``positive``).
+
+    ``to_float`` turns an int too large for a float, such as ``10**400``, into
+    ``None``, so it fails here with a ``ValueError`` and not an ``OverflowError``.
+    """
+    limit = "> 0" if positive else ">= 0"
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or (number := to_float(value)) is None
+        or not math.isfinite(number)
+        or number < 0
+        or (positive and number == 0)
+    ):
+        raise ValueError(f"{name} must be a finite number {limit}, got {value!r}")
+    return number
+
+
+def _factors(name: str, values: object, n: int) -> tuple[float, ...]:
+    if isinstance(values, str) or not isinstance(values, list | tuple) or len(values) != n:
+        raise ValueError(f"{name} must be {n} factors, got {values!r}")
+    return tuple(_finite(f"{name}[{i}]", v, positive=True) for i, v in enumerate(values))
+
+
+@dataclass(frozen=True, slots=True)
+class BedWaitFactors:
+    """The factors of the wait for a bed by the instant it is requested (H5-6).
+
+    One per run, shared by every patient, as ``TurnaroundShifts`` for the tests:
+    the shift is the one of the center (``[turnos]``, with ``shift_at``) and the
+    season the one of the date (``arrival_context``), both of the instant of
+    ``bed_requested``, not of the arrival.
+
+    Attributes:
+        start_date: Date of minute 0, at 00:00.
+        shift_starts: Starting hour of the morning, afternoon and night shifts.
+        shift_factors: Factor of each shift, in that order.
+        season_factors: Factor of each season: winter, spring, summer, autumn.
+
+    Raises:
+        ValueError: If a value is not valid: ``start_date`` must be a date
+            without time, the shift starts three increasing hours in 0-23, and
+            the factors finite and positive.
+    """
+
+    start_date: date
+    shift_starts: tuple[int, ...]
+    shift_factors: tuple[float, ...]
+    season_factors: tuple[float, ...] = (1.0,) * N_SEASONS
+
+    def __post_init__(self) -> None:
+        # datetime is a subclass of date: a date-time must not pass as a date.
+        if not isinstance(self.start_date, date) or isinstance(self.start_date, datetime):
+            raise ValueError(f"start_date must be a date without time, got {self.start_date!r}")
+        starts = self.shift_starts
+        if (
+            isinstance(starts, str)
+            or not isinstance(starts, list | tuple)
+            or len(starts) != N_SHIFTS
+            or any(isinstance(h, bool) or not isinstance(h, int) for h in starts)
+            or not all(0 <= h <= 23 for h in starts)
+            or any(b <= a for a, b in zip(starts, starts[1:], strict=False))
+        ):
+            raise ValueError(
+                f"shift_starts must be {N_SHIFTS} increasing hours in 0-23, got {starts!r}"
+            )
+        object.__setattr__(self, "shift_starts", tuple(starts))
+        object.__setattr__(
+            self, "shift_factors", _factors("shift_factors", self.shift_factors, N_SHIFTS)
+        )
+        object.__setattr__(
+            self, "season_factors", _factors("season_factors", self.season_factors, N_SEASONS)
+        )
+
+    def factor_at(self, t: float) -> float:
+        """``factor_turno × factor_estacion`` of the instant ``t``, in minutes since minute 0."""
+        shift = shift_at(self.shift_starts, t)
+        season = arrival_context(t, self.start_date, self.shift_starts).season
+        return self.shift_factors[shift] * self.season_factors[season]
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeDraws:
+    """What a patient of milestone 5 drew for its outcome (task 5.1).
+
+    Attributes:
+        patience: Minutes from the arrival the patient waits before leaving
+            without being seen (H5-4). A level 1 never leaves, whatever it is.
+        destination: One of ``DESTINATIONS``; used only if the patient stays.
+        bed_base: Wait for a bed with factor 1, in minutes; used only if
+            the patient is admitted.
+        beds: The factors of the run by the instant of the request.
+
+    Raises:
+        ValueError: If ``patience`` or ``bed_base`` is not a finite number
+            >= 0, or ``destination`` is not one of ``DESTINATIONS``.
+    """
+
+    patience: float
+    destination: str
+    bed_base: float
+    beds: BedWaitFactors
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "patience", _finite("patience", self.patience))
+        object.__setattr__(self, "bed_base", _finite("bed_base", self.bed_base))
+        if not isinstance(self.destination, str) or self.destination not in DESTINATIONS:
+            raise ValueError(
+                f"destination must be one of {DESTINATIONS!r}, got {self.destination!r}"
+            )
+        if not isinstance(self.beds, BedWaitFactors):
+            raise ValueError(f"beds must be a BedWaitFactors, got {self.beds!r}")
+
+    def bed_wait(self, t: float) -> float:
+        """Minutes from asking for a bed at ``t`` to getting it.
+
+        ``bed_base × factor_turno × factor_estacion``, with the shift and the
+        season of ``t``, the instant of ``bed_requested``, not of the arrival.
+        """
+        return self.bed_base * self.beds.factor_at(t)
+
+
 @dataclass(frozen=True, slots=True)
 class PatientDraws:
     """What a patient draws on arrival; the hidden truth of the episode.
@@ -107,11 +242,17 @@ class PatientDraws:
         admitted: Whether the patient is admitted; otherwise discharged.
         clinical: What the clinical model drew (``ClinicalDraws``), or
             ``None`` with the provisional model.
+        outcome: The outcome of milestone 5 (``OutcomeDraws``), or ``None``
+            with the provisional model and the one of milestone 4. With it,
+            the destination is ``outcome.destination`` and ``admitted`` is
+            only kept consistent with it.
 
     Raises:
         ValueError: If ``test_turnaround`` and ``clinical`` are both given or
-            both missing, or ``needs_tests`` is not whether the clinical
-            patient has a round.
+            both missing, ``needs_tests`` is not whether the clinical patient
+            has a round, ``outcome`` comes without ``clinical`` (version 4 of
+            the catalog has the clinical payloads), or ``admitted`` is not
+            whether the destination of ``outcome`` is ``ingreso``.
     """
 
     level: int
@@ -122,6 +263,7 @@ class PatientDraws:
     test_turnaround: float | None
     admitted: bool
     clinical: "ClinicalDraws | None" = None
+    outcome: OutcomeDraws | None = None
 
     def __post_init__(self) -> None:
         if (self.clinical is None) == (self.test_turnaround is None):
@@ -134,6 +276,14 @@ class PatientDraws:
                 f"needs_tests={self.needs_tests!r} but the clinical patient "
                 f"{'has' if self.clinical.truth.workup.has_round else 'has no'} round of tests"
             )
+        if self.outcome is not None:
+            if self.clinical is None:
+                raise ValueError("an outcome needs the clinical draws: version 4 is clinical")
+            if self.admitted != (self.outcome.destination == "ingreso"):
+                raise ValueError(
+                    f"admitted={self.admitted!r} but the destination of the outcome is "
+                    f"{self.outcome.destination!r}"
+                )
 
 
 class ProvisionalSampler:
