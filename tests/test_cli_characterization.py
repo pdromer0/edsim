@@ -1,4 +1,4 @@
-"""Freeze the pre-refactor CLI artifacts with portable input paths."""
+"""Congela los ficheros de la CLI de antes de la refactorización, con rutas portables."""
 
 import hashlib
 import math
@@ -10,7 +10,7 @@ from edsim.cli import main
 from edsim.engine.events import TIMEZONE, read_events
 
 
-def test_simulate_cli_characterization(tmp_path, monkeypatch):
+def test_caracterizacion_cli_simular(tmp_path, monkeypatch):
     # El modelo provisional: desde la tarea 4.9, con --provisional (el clínico es el de por
     # defecto). Mismas huellas que antes.
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
@@ -87,7 +87,7 @@ CLINICAL_CHARACTERIZATION = {
 }
 
 
-def test_simulate_cli_characterization_clinico(tmp_path, monkeypatch):
+def test_caracterizacion_cli_simular_clinico(tmp_path, monkeypatch):
     from edsim.engine.center import load_center
     from edsim.engine.engine import simulate_ed
     from edsim.engine.events import JsonlSink
@@ -191,7 +191,7 @@ def _rows_without_center(path: Path) -> list[dict[str, str]]:
         ]
 
 
-def test_simulate_cli_characterization_clinico_con_sala(tmp_path, monkeypatch):
+def test_caracterizacion_cli_simular_clinico_con_sala(tmp_path, monkeypatch):
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     room, plain = tmp_path / "sala", tmp_path / "sin_sala"
     _simulate_clinical(room, "tests/data/centro_sala_ejemplo.toml")
@@ -224,7 +224,7 @@ H5_CHARACTERIZATION = {
 H5_STDOUT = "4e8398f7c33ecf61c5281a2f579c7d325dae9eef8d78e0204fb4153aa95faa36"
 
 
-def test_simulate_cli_characterization_hito_5(tmp_path, monkeypatch, capsys):
+def test_caracterizacion_cli_simular_hito_5(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     output = tmp_path / "salida"
     arguments = [
