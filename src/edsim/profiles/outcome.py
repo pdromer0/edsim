@@ -34,20 +34,24 @@ The module does not import the engine nor SimPy.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy import special
+from scipy import optimize, special
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.lognormal import lognormal_params
 from edsim.profiles.config import (
+    ADMISSION_CATALOG,
+    ADMISSION_START_PCT,
     DESTINATIONS,
     N_BANDS,
     N_DESTINATIONS,
     N_LEVELS,
     N_TEST_TYPES,
+    REASON_KEYS,
     Abandonment,
     ClinicalProfiles,
     OutcomeProfile,
@@ -351,4 +355,121 @@ def outcome_model(profiles: ClinicalProfiles, arrival_profile: ArrivalProfile) -
         workup=workup,
         admission_pct=np.repeat(pct, n_bands),
         older=np.tile(older, len(profiles.reasons)),
+    )
+
+
+# The derived bases (decision 75, H5-9).
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationBases:
+    """The base percentages of the destinations, derived from the targets of a year.
+
+    Attributes:
+        admission: ``ingreso`` of each reason, by key, in the order of ``REASON_KEYS``.
+        transfer: ``destinos.traslado.base``.
+        death: ``destinos.exitus.base``.
+    """
+
+    admission: Mapping[str, float]
+    transfer: float
+    death: float
+
+
+def with_destination_bases(profiles: ClinicalProfiles, bases: DestinationBases) -> ClinicalProfiles:
+    """The profiles with these base percentages of the destinations written in them.
+
+    Raises:
+        ValueError: If the profiles have no milestone 5 block, or some reason
+            would add up to 100 or more with the bases.
+    """
+    outcome = require_outcome(profiles)
+    return replace(
+        profiles,
+        reasons=tuple(replace(r, admission_pct=bases.admission[r.key]) for r in profiles.reasons),
+        outcome=replace(
+            outcome,
+            transfer=replace(outcome.transfer, base=bases.transfer),
+            death=replace(outcome.death, base=bases.death),
+        ),
+    )
+
+
+def admission_start_pct() -> NDArray[np.float64]:
+    """Starting percentage of admission of each reason: its level in the catalog, shape (17,)."""
+    return np.array([ADMISSION_START_PCT[ADMISSION_CATALOG[key]] for key in REASON_KEYS])
+
+
+def admission_from_factor(log_factor: float) -> dict[str, float]:
+    """``ingreso`` of each reason with a common factor ``e^log_factor`` on its starting odds.
+
+    ``100 · expit(logit(partida / 100) + log_factor)``: the binary odds of each
+    starting percentage times the same factor, so the order of the catalog is kept.
+    """
+    pct = 100 * special.expit(special.logit(admission_start_pct() / 100) + log_factor)
+    return {key: float(x) for key, x in zip(REASON_KEYS, pct, strict=True)}
+
+
+def destination_bases_for(
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    tolerance: float = 1e-10,
+    max_evaluations: int = 200,
+) -> DestinationBases:
+    """The base percentages that give the three targets of a year, solved together.
+
+    The three unknowns are the logarithm of the common factor on the starting
+    odds of the admission (``admission_from_factor``) and the logarithms of
+    the bases of transfer and death. They share the discharge, the reference
+    of the three odds: fitted one after the other, the first would miss its
+    target, so the three equations (the share of a year of each destination,
+    exact with ``OutcomeModel``, at its ``objetivo``) are solved at once with
+    ``scipy.optimize.root``, as ``triage_error_for``. Only the starting
+    percentages of the catalog, the targets, the odds ratios and the mixture
+    of G are used: the bases already written do not change the result. It is
+    run once, and its result written in the profiles, rounded.
+
+    Args:
+        profiles: The profiles, with the milestone 5 block.
+        arrival_profile: The arrival profile, for the weight of each context.
+        tolerance: Largest error allowed in each share, as a fraction.
+        max_evaluations: Evaluations of the shares before giving up.
+
+    Raises:
+        ValueError: If the profiles have no milestone 5 block.
+        RuntimeError: If the root does not converge or misses a target by more
+            than ``tolerance``.
+    """
+    outcome = require_outcome(profiles)
+    model = outcome_model(profiles, arrival_profile)
+    targets = np.array([d.target for d in outcome.destinations]) / 100
+
+    def shares(x: NDArray[np.float64]) -> NDArray[np.float64]:
+        bases = DestinationBases(admission_from_factor(x[0]), math.exp(x[1]), math.exp(x[2]))
+        try:
+            variant = with_destination_bases(profiles, bases)
+        except ValueError:  # a reason at 100 or more: far from any solution
+            return np.ones(N_DESTINATIONS - 1)
+        pct = np.array([r.admission_pct for r in variant.reasons])
+        n_bands = model.workup.mixture.weights.shape[1]
+        variant_model = replace(model, profiles=variant, admission_pct=np.repeat(pct, n_bands))
+        return variant_model.year_shares()[1:]
+
+    start = np.array([0.0, math.log(outcome.transfer.target), math.log(outcome.death.target)])
+    solution = optimize.root(
+        lambda x: shares(x) - targets,
+        start,
+        method="hybr",
+        options={"maxfev": max_evaluations, "xtol": 1e-14},
+    )
+    error = float(np.max(np.abs(shares(solution.x) - targets)))
+    if not solution.success or error > tolerance:
+        raise RuntimeError(
+            f"destination_bases_for did not converge after {solution.nfev} evaluations: "
+            f"largest error {error:.3g} ({solution.message})"
+        )
+    log_factor, log_transfer, log_death = (float(x) for x in solution.x)
+    return DestinationBases(
+        admission_from_factor(log_factor), math.exp(log_transfer), math.exp(log_death)
     )

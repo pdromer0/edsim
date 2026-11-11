@@ -7,14 +7,18 @@ derived, each with its own function, and written in the file with a comment
 - the base weights, ``base_weights_for``, for the catalog's global mix;
 - the noise and the bias of the triage, ``triage_error_for``, for the targets
   of under- and overtriage;
-- the thresholds, ``thresholds_for``, for the target assigned mix.
+- the thresholds, ``thresholds_for``, for the target assigned mix;
+- with the milestone 5 block, the base percentages of the destinations,
+  ``destination_bases_for``, for the targets of admission, transfer and death
+  of a year (task 5.2).
 
 They form a cascade: the noise and the bias are calibrated on the mixture of
 G of a year, which depends on the base weights, and the thresholds on the
 noise and the bias. Changing a reason's share or severity means running the
 three again, in this order, each one on the values the previous one wrote.
 ``derive_written_values`` does exactly that, with the rounding of the file
-(three decimals), so that what it returns is what the file must say.
+(three decimals; four significant figures for the bases of the destinations,
+which go down to 0.002 %), so that what it returns is what the file must say.
 
 ``severity_mean_for`` chooses the mean severity of one reason by a written
 criterion, not by eye: the smallest mean of a grid such that, after the whole
@@ -34,10 +38,25 @@ from scipy import special
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.profiles.config import REASON_KEYS, ClinicalProfiles
 from edsim.profiles.mixing import base_weights_for
+from edsim.profiles.outcome import DestinationBases, destination_bases_for, with_destination_bases
 from edsim.profiles.severity import severity_mixture, thresholds_for, triage_error_for
 
 DECIMALS = 3
 """Decimals of the base weights, the noise, the bias and the thresholds in the file."""
+
+SIGNIFICANT_DIGITS = 4
+"""Significant figures of the base percentages of the destinations in the file.
+
+The base of death is about 0.002 %: with three decimals it would be written
+0.002, 3 % off, and the deaths of a year would miss their target by as much.
+"""
+
+
+def round_significant(x: float, digits: int = SIGNIFICANT_DIGITS) -> float:
+    """``x`` rounded to ``digits`` significant figures, such as 0.0019369 → 0.001937."""
+    if x == 0 or not math.isfinite(x):
+        return x
+    return round(x, digits - 1 - math.floor(math.log10(abs(x))))
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +69,15 @@ class DerivedValues:
         noise: ``triaje.ruido``.
         bias: ``triaje.sesgo``.
         thresholds: ``triaje.umbrales``, from c1 to c4.
+        destinations: The ``ingreso`` of each reason and the bases of transfer
+            and death, with the milestone 5 block; ``None`` without it.
     """
 
     base_weights: Mapping[str, float]
     noise: float
     bias: float
     thresholds: tuple[float, ...]
+    destinations: DestinationBases | None = None
 
 
 def with_base_weights(profiles: ClinicalProfiles, weights: Mapping[str, float]) -> ClinicalProfiles:
@@ -83,7 +105,7 @@ def with_severity(
 def with_derived(profiles: ClinicalProfiles, derived: DerivedValues) -> ClinicalProfiles:
     """The profiles with the derived values written in them."""
     profiles = with_base_weights(profiles, derived.base_weights)
-    return replace(
+    profiles = replace(
         profiles,
         triage=replace(
             profiles.triage,
@@ -92,6 +114,9 @@ def with_derived(profiles: ClinicalProfiles, derived: DerivedValues) -> Clinical
             thresholds=derived.thresholds,
         ),
     )
+    if derived.destinations is not None:
+        profiles = with_destination_bases(profiles, derived.destinations)
+    return profiles
 
 
 def with_target_mix(
@@ -130,6 +155,8 @@ def derive_written_values(
        ``DECIMALS``.
     2. ``triage_error_for`` with those weights, rounded.
     3. ``thresholds_for`` with those weights, noise and bias, rounded.
+    4. With the milestone 5 block, ``destination_bases_for`` with those
+       values, rounded to ``SIGNIFICANT_DIGITS``.
 
     Only the factors, the severities and the targets of ``profiles`` are
     used: the derived values it already has do not change the result.
@@ -150,7 +177,16 @@ def derive_written_values(
     noise, bias = (round(x, DECIMALS) for x in triage_error_for(profiles, arrival_profile))
     profiles = replace(profiles, triage=replace(profiles.triage, noise=noise, bias=bias))
     thresholds = tuple(round(c, DECIMALS) for c in thresholds_for(profiles, arrival_profile))
-    return DerivedValues(MappingProxyType(weights), noise, bias, thresholds)
+    destinations = None
+    if profiles.outcome is not None:
+        profiles = replace(profiles, triage=replace(profiles.triage, thresholds=thresholds))
+        bases = destination_bases_for(profiles, arrival_profile)
+        destinations = DestinationBases(
+            MappingProxyType({k: round_significant(v) for k, v in bases.admission.items()}),
+            round_significant(bases.transfer),
+            round_significant(bases.death),
+        )
+    return DerivedValues(MappingProxyType(weights), noise, bias, thresholds, destinations)
 
 
 def _check_reason(reason: str) -> int:
