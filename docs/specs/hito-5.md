@@ -1254,7 +1254,7 @@ Issue #71, rama `feat/h5-app-nucleo`, Claude Code, sin `@codex review` (tarea no
 | `read_run_results`, 14 días, mínimo de 3 | Hito 4: 1,37 s; hito 5: 1,87 s |
 | Vistos por el médico y dentro en el horizonte, llegados en [2, 14) | Hito 4: 12 de 12 dentro (por nivel 0 / 2 / 7 / 3 / 0). Hito 5: 28 de 39 dentro (0 / 6 / 14 / 8 / 0), 11 de ellos esperando cama. Quedan fuera de los relojes y del cumplimiento; es un dato para la 5.6 |
 | N3 (`scripts/tests-completos.sh`, Docker parado) | La primera, en rojo por el notebook 06 (núcleo 15:13, app 2:56, total 18:59). La segunda, en verde: 14:33 de pared, con el núcleo (3.813 tests) en 10:45, la app (287) en 2:52 y los notebooks (5) en 0:56 |
-| `scripts/tests-integracion.sh` | PENDIENTE |
+| `scripts/tests-integracion.sh`, después de la N3 | En verde: 24 tests en 1:01 (1:18 de pared, con el arranque y la bajada de Kafka), incluido el consumidor en vivo con la versión 4 |
 
 **Comprobaciones clínicas** (ejemplos del hito 5, 14 días, semilla 2026, ventana [2, 14)), con lo que da el paquete frente a los recuentos de la 5.3:
 
