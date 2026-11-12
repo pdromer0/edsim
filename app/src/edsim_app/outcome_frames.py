@@ -16,7 +16,7 @@ from edsim.runs import (
     WindowCompliance,
     WindowOutcome,
 )
-from edsim_app.frames import format_number
+from edsim_app.frames import LEFT_FROM_LABELS, format_number
 
 DESTINATION_LABELS = {
     "alta": "Alta",
@@ -24,11 +24,7 @@ DESTINATION_LABELS = {
     "traslado": "Traslado",
     "exitus": "Exitus",
 }
-WAIT_LABELS = {
-    "triaje": "Esperando el triaje",
-    "box": "Esperando box",
-    "medico": "Esperando médico en el box",
-}
+WAIT_LABELS = LEFT_FROM_LABELS
 OUTCOME_CURVE_LABELS = {
     "boxes_waiting_bed": "Boxes con ingresados esperando cama",
     "hallway": "Pacientes en el pasillo",

@@ -269,6 +269,21 @@ EPISODE_COLUMNS = {
 }
 
 
+OUTCOME_EPISODE_COLUMNS = {
+    "left": "Se va sin ser visto (min)",
+    "left_from": "Se va desde",
+    "bed_requested": "Pide cama (min)",
+    "bed_assigned": "Recibe cama (min)",
+    "bed_wait": "Espera de cama (min)",
+    "hallway": "Pasillo",
+}
+LEFT_FROM_LABELS = {
+    "triaje": "Esperando el triaje",
+    "box": "Esperando box",
+    "medico": "Esperando médico en el box",
+}
+
+
 def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.DataFrame:
     """Present every record field, final stay and observed lower bound unchanged."""
     frame = pd.DataFrame(
@@ -283,6 +298,12 @@ def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.Dat
         ],
         columns=[*EPISODE_COLUMNS.values(), "Tiempo observado (min)"],
     )
+    if result.outcome is not None:
+        # The outcome of milestone 5 (task 5.4): abandonment, bed and hallway.
+        for field, label in OUTCOME_EPISODE_COLUMNS.items():
+            frame[label] = [getattr(record, field) for record in table]
+        frame["Se va desde"] = frame["Se va desde"].map(LEFT_FROM_LABELS)
+        frame["Pasillo"] = frame["Pasillo"].map({True: "Sí", False: "No"})
     frame["Llegada (UTC+1)"] = wall_times(result, [record.arrival for record in table])
     frame["Nivel"] = frame["Nivel"].astype("Int64")
     if result.observed is not None:

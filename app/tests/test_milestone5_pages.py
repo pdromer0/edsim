@@ -16,9 +16,12 @@ from streamlit.testing.v1 import AppTest
 
 import edsim_app
 from edsim.runs import (
+    EpisodeFilters,
     RunStore,
     build_episode_event_index,
+    compare_episode_truth,
     episode_segments,
+    filter_episodes,
     read_center_values,
     read_episode_events,
     read_run_episode_truth,
@@ -28,7 +31,7 @@ from edsim.runs import (
     true_level_window_compliance,
 )
 from edsim_app import defaults
-from edsim_app.frames import format_number
+from edsim_app.frames import format_number, wall_times
 from edsim_app.outcome_frames import format_censored
 
 MAIN = Path(edsim_app.__file__).with_name("main.py")
@@ -43,6 +46,10 @@ def open_page(page, run_id="h5", episode=None):
     app.run().switch_page(page).run()
     assert not app.exception and not app.error
     return app
+
+
+def wall_times_of(result, minute):
+    return wall_times(result, [minute])[0]
 
 
 def results(root, run_id="h5"):
@@ -227,3 +234,112 @@ def test_results_truth_only_after_the_toggle(h5_catalog):
     compliance = true_level_window_compliance(result.analysis.table, truth, 1, 3)
     table = next(f for f in frames if "Porcentaje que lo supera" in f.columns)
     assert list(table["Superan el máximo"]) == [c.exceeded for c in compliance.by_level]
+
+
+# --- Episodios -----------------------------------------------------------------------------
+
+
+def passing(app):
+    caption = next(c.value for c in app.caption if "episodios pasan los filtros" in c.value)
+    return int(caption.split(" de ")[0])
+
+
+def filtered_count(result, filters):
+    return len(
+        filter_episodes(
+            result.analysis.table,
+            filters,
+            warmup_end=result.info.warmup_days * 1440,
+            horizon=result.analysis.curves.horizon,
+            observed=result.observed,
+        )
+    )
+
+
+@pytest.mark.slow
+def test_episodes_filters_of_the_outcome_match_the_core(h5_catalog):
+    result = results(h5_catalog)
+    app = open_page("views/episodes.py")
+    for field, value, filters in (
+        ("left", True, EpisodeFilters(left=True)),
+        ("left_from", "medico", EpisodeFilters(left=True, left_from="medico")),
+        ("bed", True, EpisodeFilters(left=True, left_from="medico", bed=True)),
+    ):
+        app.selectbox(key=f"episode_filter_{field}_widget").set_value(value).run()
+        assert not app.exception
+        assert passing(app) == filtered_count(result, filters)
+    # Who leaves never asks for a bed: the three filters together leave nobody.
+    assert passing(app) == 0
+    for field in ("left", "left_from", "bed"):
+        app.selectbox(key=f"episode_filter_{field}_widget").set_value(None).run()
+    app.selectbox(key="episode_filter_hallway_widget").set_value(True).run()
+    expected = filtered_count(result, EpisodeFilters(hallway=True))
+    assert expected > 0 and passing(app) == expected
+    frame = app.dataframe[0].value
+    assert set(frame["Pasillo"]) == {"Sí"}
+
+
+@pytest.mark.slow
+def test_episodes_outcome_filter_is_removed_for_a_milestone_4_run(h5_catalog):
+    app = open_page("views/episodes.py")
+    app.selectbox(key="episode_filter_left_widget").set_value(True).run()
+    app.query_params["run"] = "h4"
+    app.session_state["selected_run_id"] = "h4"
+    app.run()
+    assert not app.exception
+    assert any("filtro del desenlace" in i.value for i in app.info)
+    assert app.session_state["episode_filters"]["left"] is None
+    assert not any(s.key == "episode_filter_left_widget" for s in app.selectbox)
+
+
+@pytest.mark.slow
+def test_episode_card_and_truth_of_a_patient_who_left(h5_catalog):
+    result = results(h5_catalog)
+    record = next(e for e in result.analysis.table if e.left_from == "medico")
+    app = open_page("views/episodes.py", episode=record.episode_id)
+    metrics = metric_values(app)
+    assert metrics["Se va sin ser visto (UTC+1)"] == (
+        wall_times_of(result, record.left).strftime("%d/%m/%Y %H:%M:%S")
+    )
+    assert "**Desde:** Esperando médico en el box" in [m.value for m in app.markdown]
+    row = app.dataframe[0].value.set_index("Episodio").loc[record.episode_id]
+    assert row["Se va sin ser visto (min)"] == record.left
+    app.toggle(key="episode_truth_widget").set_value(True).run()
+    assert not app.exception and not app.error
+    store = RunStore(h5_catalog)
+    events = read_episode_events(
+        store, "h5", record.episode_id, build_episode_event_index(store, "h5")
+    )
+    truth = read_run_episode_truth(store, "h5")[record.episode_id]
+    expected = {
+        row.field: row.status
+        for row in compare_episode_truth(
+            events,
+            episode_segments(events, result.analysis.curves.horizon),
+            truth,
+            profiles=result.profiles,
+            start_date=result.start_date,
+            center=result.center,
+        )
+    }
+    assert expected["patience"] == "match" and expected["assessment_time"] == "unused"
+    frames = [d.value for d in app.dataframe]
+    shown = next(f for f in frames if "Estado" in f.columns and "Dato" in f.columns)
+    shown = dict(zip(shown["Dato"], shown["Estado"], strict=True))
+    assert shown["Paciencia"] == "Coincide" and shown["Valoración"] == "No usada"
+    assert shown["Destino"] == "No usada" and shown["Espera de cama"] == "No usada"
+    outcome = next(f for f in frames if list(f.columns) == ["Dato", "Valor"]).set_index("Dato")
+    assert outcome.loc["Contrafactual", "Valor"].startswith("Sí")
+    assert outcome.loc["Paciencia", "Valor"] == f"{format_number(truth.outcome.patience)} min"
+
+
+@pytest.mark.slow
+def test_episode_card_of_a_hallway_patient_shows_its_bed_wait(h5_catalog):
+    record, _ = hallway_case(h5_catalog)
+    app = open_page("views/episodes.py", episode=record.episode_id)
+    metrics = metric_values(app)
+    expected = (
+        "Sigue esperando" if record.bed_wait is None else f"{format_number(record.bed_wait)} min"
+    )
+    assert metrics["Espera de cama"] == expected
+    assert any(m.value.startswith("**Pasillo:** sí") for m in app.markdown)
