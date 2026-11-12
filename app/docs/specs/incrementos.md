@@ -292,3 +292,77 @@ Aprobado en el código. La descripción del PR no se pudo leer desde el chat (l�
 
 - Un test del aviso «No hay diferencias frente al centro base» con los campos del editor clínico, o la explicación de en qué estado se muestra (próxima tarea de la app).
 - Sin cambios desde la 4.8b: `true_level_window_compliance` no se muestra; Comparar no muestra las diferencias de los perfiles clave a clave.
+
+## Hito 5 — Abandono, destinos y espera de cama
+
+Especificación del hito: [Hito 5 — Cierre del flujo](../../../docs/specs/hito-5.md). Incremento de la app: tareas 5.4 (núcleo en `runs/`) y 5.5 (páginas), las dos de Claude Code (la 5.5 era de Codex hasta el cambio de Pedro del 12 de noviembre), con la etiqueta `app-v0.3.0` al terminar.
+
+### Objetivo y alcance
+
+Al terminar el incremento, EDsim Lab abre y simula el modelo del hito 5 y enseña lo que trae (decisiones 77 y 78, H5-11 y H5-12): quién se va sin ser visto y desde dónde, el destino de cada paciente entre cuatro (alta, ingreso, traslado y exitus), y la espera de cama de los ingresados, en su box o en el pasillo. Las ejecuciones del hito 4 se abren igual que antes.
+
+Dentro del alcance
+
+- Estados, filtros e indicadores del hito 5 en las páginas, con la censura del abandono (H5-8).
+- «Ver la verdad» con el desenlace sorteado y los indicadores de nivel real, siempre aparte de los KPI observables.
+- La espera de cama editable en Simular.
+- Manual y ayudas «¿Qué estoy viendo?».
+- Los cinco pendientes de la app del hito 4.
+
+Fuera del alcance
+
+- La carga prevista del modelo del hito 5: issue #103. Simular lo avisa y sigue funcionando.
+- Editar los perfiles desde la app (APP-0004) y el rendimiento de la app: fase 2 y tarea de proceso.
+- Los bloques del hito 5 en `config/`: tarea 5.6. Hasta entonces, una ejecución del hito 5 sale de los ficheros de `tests/data` (CLI o una variante con `[camas]` en Simular).
+
+### Cambios en el núcleo (tarea 5.4, Claude Code)
+
+Todo en `edsim.runs`, aditivo (campos al final, con valor por defecto). El detalle está en el anexo de la 5.4 de la especificación del hito y en el comentario «API de `edsim.runs` para la 5.5» del issue #72:
+
+- `RunResults.outcome` (`WindowOutcome`): abandono, destinos, espera de cama con `CensoredValue` y `OverThreshold`, estancia por destino y boxes con ingresados y pasillo.
+- El cumplimiento con censura: `LevelCompliance.censored` y `Compliance.left_late`.
+- `EpisodeRecord` con el abandono, la cama y el pasillo, y `EpisodeFilters` con los filtros del desenlace.
+- El estado `waiting_bed` con la marca de pasillo, el abandono aparte en el Replay (`ReplayState.abandonments`) y `ReplayCounts` con `boxes_waiting_bed` y `hallway`.
+- «Ver la verdad»: `compare_episode_truth(..., center=)`, `episode_outcome_truth` y `true_level_abandonment`.
+
+La 5.5 añadió, cada pieza con sus tests del núcleo: `LevelCompliance.left_late` agrupado, `profiles_diff` y `read_run_profiles_values`, `patient_model` (y `PatientModel` reexportado), las filas `unused` de quien se va en `compare_episode_truth` (#105) y las curvas de la cama en `curve_blocks` y `curve_steps`.
+
+### Cambios en las páginas (tarea 5.5, Claude Code)
+
+| Página | Qué cambia |
+| --- | --- |
+| Simular | Con un centro con `[camas]`, la espera de cama ([mediana, p90]) y su factor por turno (y por estación, si el fichero lo trae) en lugar de la probabilidad de ingreso. La carga prevista avisa de que llega con el #103; si el centro y los perfiles no casan, sale el error del núcleo. El centro cumplidor entre los orígenes |
+| Resultados | Sección «Desenlace»: abandono global, antes y después del triaje, por sitio y por nivel asignado; destinos; espera de cama con sus cotas «≥» y los umbrales sobre los conocidos; estancia por destino; boxes con ingresados y pasillo. La tabla de esperas gana los que se van después del máximo y los censurados. Las curvas de la cama en el selector. «Ver la verdad»: cumplimiento y abandono por nivel real |
+| Episodios | Filtros del desenlace, columnas del abandono y de la cama, la ficha con el abandono, la espera de cama y el pasillo, y el desenlace sorteado en «Ver la verdad» |
+| Replay | «Esperando cama» en el box, la zona del pasillo, los cuatro destinos, los que se van sin ser vistos en la última hora y la barra de estado con boxes bloqueados y pasillo |
+| Comparar | «Versión del catálogo» entre los bloqueos, las claves de `[camas]` y las diferencias de los perfiles clave a clave |
+| «¿Qué estoy viendo?» | El abandono, la censura con el ejemplo de la pieza 4 (66,7 % frente a 100 %), la espera de cama y el pasillo, y una ayuda nueva del Replay |
+
+Todo lo del hito 5 aparece solo con un log de la versión 4: con el hito 4, las páginas son las de antes.
+
+### Tests
+
+- Núcleo (`tests/`): los valores a mano del plan de la 5.5 (escenario M para #105, cuatro pacientes de nivel 4 para `left_late`, diccionarios a mano para `profiles_diff`).
+- Páginas (`app/tests/test_milestone5_pages.py`): una ejecución del hito 5 de 3 días (semilla 2026) y su gemela del hito 4, de los ficheros de `tests/data`, en un directorio temporal. Cada test comprueba antes que su situación ocurre y compara lo mostrado con lo que da `edsim.runs`. Dos humos (Replay y Episodios con el pasillo) van en la suite rápida.
+- Prueba manual: Pedro abre la app, recorre las páginas cambiadas y revisa el PR.
+
+### Tareas
+
+| # | Tarea | Quién | Rama | Resultado |
+| --- | --- | --- | --- | --- |
+| 5.4 | Núcleo de la app en `runs/` y directo con la versión 4 | Claude Code | `feat/h5-app-nucleo` | `runs/` trabaja con el hito 5 y la app sigue verde sin cambios |
+| 5.5 | Páginas del hito 5 y pendientes del hito 4 | Claude Code | `feat/app-h5-paginas` | La app enseña el hito 5; etiqueta `app-v0.3.0` tras la fusión |
+
+### Anexo del incremento del hito 5
+
+#### Tarea 5.5: páginas de la app del hito 5
+
+La entrada completa (decisiones del diff, medidas, versiones incorrectas y revisión) está en el [anexo de la 5.5](../../../docs/specs/hito-5.md#tarea-55-páginas-de-la-app-del-hito-5) de la especificación del hito. Los cinco pendientes del hito 4:
+
+| Pendiente | Destino |
+| --- | --- |
+| Test del aviso «No hay diferencias frente al centro base» | Cerrado: `test_untouched_base_center_says_there_are_no_differences` |
+| `true_level_window_compliance` no se muestra | Cerrado: «Ver la verdad» de Resultados |
+| Comparar sin diferencias de perfiles clave a clave | Cerrado: `profiles_diff` y su tabla |
+| El cumplidor como variante | Cerrado: «Centro cumplidor» entre los orígenes de Simular |
+| La copia redundante del reloj C en `cached_run_results` | Cerrado: `cached_run_results` devuelve `read_run_results` tal cual |

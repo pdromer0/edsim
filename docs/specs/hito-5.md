@@ -1318,3 +1318,89 @@ Las aplicó el subagente `mutante`, dos por worktree y cuatro worktrees en paral
 - **5.7:** `engine/timeline.py` (notebooks) no sabe de la versión 4.
 - **«Ver la verdad»:** en quien se va, las filas de la valoración, la reevaluación y las pruebas quedan `pending` para siempre, como antes el destino. Podrían ser `unused`, como el destino; se vio en la comprobación a mano, después de la N3 en verde. Para la ronda de revisión o la 5.5.
 - **5.8:** el motivo de la decisión 74 (H5-8) dice que «más abandono nunca mejora el cumplimiento». La regla garantiza algo más débil (ver «Revisión»), y el ADR 0074 lo puede precisar.
+
+### Tarea 5.5: Páginas de la app del hito 5
+
+**Qué se hizo**
+
+Issue #72, rama `feat/app-h5-paginas`, Claude Code (la tarea era de Codex hasta el cambio de Pedro del 12 de noviembre), sin `@codex review` (tarea no crítica). Son diecinueve commits más el de esta entrada: trece del plan (uno de ellos, la corrección de las curvas, fuera de él) y seis de la revisión propia. Entra también el #105. No toca `config/` (sigue con el hito 4 hasta la 5.6). La sección del incremento está en [app/docs/specs/incrementos.md](../../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama).
+
+- **Núcleo (`edsim.runs`), aditivo:**
+  - `compare_episode_truth`: lo que quien se va nunca alcanza (valoración, reevaluación y pruebas; si se fue antes del triaje, también el nivel y el triaje) sale `unused`, no `pending` (#105).
+  - `LevelCompliance.left_late`, la suma del diario `Compliance.left_late` por nivel.
+  - `profiles_diff` y `read_run_profiles_values`: los perfiles de dos ejecuciones, clave a clave.
+  - `patient_model(center, profiles)` con `PatientModel` reexportado; `RunConfigurationError` si los ficheros no casan, con sus nombres. `_check_model` de `simulate_run` delega en él.
+  - `curve_blocks` y `curve_steps` aceptan las dos curvas de la cama (`OUTCOME_CURVES`), que la 5.4 dejó en `StepCurves`.
+- **Páginas:**
+  - **Simular:** la espera de cama editable con un centro con `[camas]`, el aviso del #103 en la carga prevista y el centro cumplidor entre los orígenes.
+  - **Resultados:** el desenlace, las columnas de la censura en las esperas, las curvas de la cama y la zona «Ver la verdad» con el cumplimiento y el abandono por nivel real.
+  - **Episodios:** filtros, columnas, ficha y desenlace sorteado.
+  - **Replay:** «Esperando cama», el pasillo, los cuatro destinos, el abandono aparte y la barra de estado.
+  - **Comparar:** la versión del catálogo, `[camas]` y los perfiles clave a clave.
+- **Manual y ayudas:** `app/README.md` y «¿Qué estoy viendo?» de cinco páginas, más una nueva del Replay.
+- **El cambio de agente**, en esta especificación (alcance, reparto, H5-12, tareas) y en `docs/proceso/portabilidad.md`.
+- **Tests nuevos:**
+  - del núcleo: `test_profiles_diff.py`, `test_patient_model.py` y casos en `test_outcome_truth.py`, `test_censura.py` y `test_curve_blocks.py`;
+  - de la app: `test_milestone5_pages.py` (15), `test_outcome_frames.py` y casos en `test_frames.py`, `test_plan.py` y `test_simulate.py`.
+
+**Decisiones del diff**
+
+- **Todo lo del hito 5 aparece solo con un log de la versión 4** (`result.outcome` no es `None`): columnas, filtros, curvas, destinos del plano y del filtro. Con el hito 4 las páginas son las de antes, y los tests del hito 4 no cambian.
+- **#105 ampliado:** quien se va antes del triaje tampoco tendrá nivel ni triaje, así que esas dos filas también son `unused` (propuesto en el plan).
+- **La app no vuelve a filtrar lo que trae el núcleo** (ajuste de Pedro al plan). El plano cuenta `len(state.abandonments)`, que el núcleo ya recorta a (t − 60, t]. El porcentaje por sitio del abandono no se calcula: el núcleo da los recuentos y la página los enseña sin porcentaje.
+- **`patient_model` devuelve el enum `PatientModel`**, no un `Literal` en español (ajuste de Pedro al plan). Sus mensajes de error siguen en inglés, como al simular.
+- **Las curvas de la cama en `curve_blocks`** (fuera del plan): `_check` solo aceptaba `CURVES`. Lo vio el test de la curva del pasillo de Resultados; ahora acepta cualquier curva del análisis.
+- **Dos humos rápidos** (Replay y Episodios con el pasillo) quedan fuera de `slow`: la fixture tarda 0,9 s por simulación (ajuste 3 de Pedro al plan, umbral de 10 s).
+- **Los cinco pendientes del hito 4, cerrados:**
+  - el test del aviso «No hay diferencias»;
+  - el cumplimiento por nivel real en «Ver la verdad»;
+  - los perfiles clave a clave;
+  - el cumplidor como origen;
+  - `cached_run_results` sin el `replace`.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Ejecución del hito 5 de las pruebas: 3 días, semilla 2026, ejemplos de `tests/data` | Simular 0,88 s y leer 0,16 s. 305 abandonos, 107 pedidos de cama, 3 en el pasillo y 9 esperando cama al final. Destinos: 643 altas, 98 ingresos, 12 traslados y 3 exitus |
+| Espera de cama en esa ejecución | Mediana ≥ 212,7 min y p90 ≥ 694,5 min. Más de 6 h: 19 de 63 conocidos (6 sin saber); más de 12 h: 6 de 62 (7 sin saber); más de 24 h: 0 de 60 (9 sin saber) |
+| Los dos humos rápidos con la fixture | 4,9 s |
+| N3 (`scripts/tests-completos.sh`, Docker parado) | En verde, la primera: 18:13 de pared, con el núcleo (3.827 tests) en 13:55, la app (311) en 3:24 y los notebooks (5) en 0:54. La app de la 5.4 tardó 2:52 con 287 tests; los 24 nuevos suman unos 30 s |
+
+**Versiones incorrectas**
+
+Las aplicó el subagente `mutante` sobre `d2a0dbb`, dos por worktree y cuatro worktrees en paralelo. Las predicciones de V4 y V5 se ampliaron antes de aplicarlas, con los tests escritos.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | `format_censored` ignora `exact` | El unitario «≥» y la espera de cama de Resultados h5 | Exacta (2) |
+| V2 | La verdad de Resultados sin el toggle | Solo el test de la verdad tras el toggle | **Más de lo predicho (3).** También fallan `test_distribution_uses_window_arrivals_and_never_true_levels` (aparece una columna «real») y el de Resultados del hito 4 (aparece la columna «Se van después del máximo» de la tabla de nivel real). Los dos detectan la fuga |
+| V3 | El porcentaje de los umbrales sobre conocidos y sin saber | El unitario del umbral y Resultados h5 | Exacta (2) |
+| V4 | Se revierte el #105 | El test nuevo del núcleo y la ficha de quien se va en Episodios h5 (ampliada) | Exacta (2) |
+| V5 | `episode_state_label` ignora el pasillo | El unitario de la etiqueta, el plano con pasillo y el humo del Replay (ampliada: la ficha de Episodios mira el texto «Pasillo», no la etiqueta) | Exacta en los 3. Fallaron además dos `AppTest` antiguos de `test_clinical_replay.py` por el límite de 3 s, con la máquina cargada por los cuatro worktrees. Al repetirlo, los que fallaban cambiaron de una vez a otra; en el árbol principal el fichero pasó entero. Es el pendiente de QA de `app/AGENTS.md`, sin relación con la mutación |
+| V6 | Las curvas de la cama también con el hito 4 | El test del selector del hito 4 | Exacta (1) |
+| V7 | `left_late = exceeded` | Los dos casos de `test_los_que_se_van_tarde_agrupados` | Exacta (2) |
+
+**Revisión**
+
+`/code-review medium` sobre `main...feat/app-h5-paginas`, con 9 hallazgos:
+
+| Hallazgo | Destino |
+| --- | --- |
+| Dos `AppTest` con la fixture h5 fuera de `slow` | Explicado: ajuste 3 de Pedro al plan; la fixture tarda 0,9 s por simulación |
+| «Ver la verdad» de Resultados no captura el `ValueError` de una verdad incompleta | Corregido (`2cd424c`), con un test que quita un episodio del CSV |
+| El filtro de destino ofrece traslado y exitus con el hito 4, y un destino guardado no se quita | Corregido (`96c5a1d`) |
+| «— min» en la espera de cama sin valor | Corregido (`fba2498`) |
+| `patient_model` nombra «centro.toml» y no el fichero elegido | Corregido (`5cc80aa`) |
+| El plano dibuja traslado, exitus y abandonos a 0 con el hito 4 | Corregido (`11363c7`) |
+| `left_late` agrupado recuenta con otra condición en vez de sumar el diario | Corregido (`7ba6ac9`) |
+| `patient_model` y `_check_model` duplican la traducción del error | Corregido (`5cc80aa`): `_check_model` delega |
+| Los indicadores de nivel real y `profiles_diff`, sin caché | Pendiente: tarea de rendimiento de la app (fuera del hito, ver «Objetivo y alcance») |
+
+**Pendiente**
+
+- **#103:** la carga ofrecida del hito 5 (Simular la avisa).
+- **Rendimiento de la app:** caché de los indicadores de nivel real de Resultados y de `profiles_diff` en Comparar.
+- **QA de `app/tests`:** `default_timeout` en los `AppTest` antiguos. Con la máquina cargada fallan por el límite de 3 s (V5).
+- **5.6:** con los bloques en `config/`, las páginas del hito 5 dejan de necesitar los ficheros de `tests/data`.
+- **Pedro:** la revisión en el navegador y la etiqueta `app-v0.3.0` tras la fusión.
