@@ -255,7 +255,7 @@ Con el abandono, los pacientes que más esperan son los que se van, y quitarlos 
 
 ### Para qué sirve
 
-Para que un día malo parezca malo. Si el abandono mejorara el cumplimiento, un panel del hito 8 premiaría los días en que más gente se fue, y un modelo entrenado con esos datos aprendería lo contrario de lo que pasa.
+Para que un día malo parezca malo. Si irse escondiera los incumplimientos, un panel del hito 8 premiaría los días en que más gente se fue, y un modelo entrenado con esos datos aprendería lo contrario de lo que pasa.
 
 ### Cómo funciona
 
@@ -277,7 +277,7 @@ Media de espera de los atendidos: 60 min. Cumplimiento: 2 de 3, el 66,7 %. Quita
 | --- | --- | --- |
 | Medias de los relojes A, B y C | Solo los atendidos | Como el TPAM del SAS, que mide a los que vio un médico: la calibración compara lo mismo con lo mismo |
 | Pretriaje medio y porcentaje > 5 min | Solo los triados | Como el indicador del SAS |
-| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Más abandono nunca mejora el cumplimiento |
+| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Irse nunca esconde un incumplimiento seguro. No garantiza más: si el paciente 3 se fuera a los 20 min, quedaría censurado y el cumplimiento subiría al 100 % (corregido en la 5.8, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md)) |
 | Estancia en urgencias | Por destino; los que se van, aparte, con su tiempo hasta irse | Como el TPU del SAS por tipo de alta |
 
 Para el cumplimiento con el reloj C hace falta la clasificación: quien se va antes del triaje no tiene nivel y no entra, con ningún reloj y tampoco en el cumplimiento por nivel real, aunque el ground truth le dé nivel. Su abandono cuenta en el indicador de «antes del triaje».
@@ -836,7 +836,7 @@ Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y 
 | 71 (H5-5) | Cuatro destinos (alta, ingreso, traslado, exitus; la UCI dentro del ingreso), con una logística multinomial sobre G, mayor, el motivo (en el ingreso) y el número de pruebas alteradas, sorteada con Gumbel-max en el flujo 4; parámetros en `perfiles.toml` y `[destino]` fuera de `config/centro.toml` | El médico atiende la gravedad real; el resultado de las pruebas por fin tiene efecto; la UCI necesitaría camas propias sin datos (v2) |
 | 72 (H5-6) | Espera de cama lognormal `[mediana, p90]` por un factor del turno del pedido (y uno opcional de estación), en `[camas]` de `centro.toml`, con su z en el flujo 9 | Boarding simple y calibrable; el patrón de la respuesta de las pruebas; las camas finitas pedirían semanas de calentamiento (v2) |
 | 73 (H5-7) | Catálogo versión 4: `patient_left_wbs`, `bed_requested`, `bed_assigned` y cuatro destinos; `TERMINAL_EVENTS[4]` con el abandono; traslado sin espera; un ingresado desalojado espera la cama en el pasillo | Un evento por hecho; el censo del directo funciona sin tocarlo; un atendido no compite por un box con quien no lo está |
-| 74 (H5-8) | Medias de los atendidos; cumplimiento con censura (quien se va después de su máximo incumple, quien se va antes no cuenta); indicadores propios del abandono, la cama y el destino; los de nivel real, solo con el ground truth | Cada métrica como su fuente; más abandono nunca mejora el cumplimiento |
+| 74 (H5-8) | Medias de los atendidos; cumplimiento con censura (quien se va después de su máximo incumple, quien se va antes no cuenta); indicadores propios del abandono, la cama y el destino; los de nivel real, solo con el ground truth | Cada métrica como su fuente; irse nunca esconde un incumplimiento seguro (motivo corregido en la 5.8: «más abandono nunca mejora el cumplimiento» es falso con el ejemplo de la pieza 4) |
 | 75 (H5-9) | Ingreso, traslado y exitus derivados y escritos; abandono (mando: paciencia) y estancia de los ingresados (mando: espera de cama) de ajuste; el resto, de comprobación; en orden, con la plantilla de la 4.6c fija y medida de nuevo, y cambiada solo si sale de su horquilla, con una vuelta como máximo | Un mando por objetivo (identificabilidad); las duraciones siguen fijas; los mandos están acoplados |
 | 76 (H5-10) | El ground truth guarda todo lo sorteado, también lo que no se usó, con el destino contrafactual de quien se fue; CSV con columnas nuevas y `run.json` que registra el modelo, con los antiguos leídos como hoy | Reconstruir cada paciente bit a bit; medir el daño oculto del abandono; validar modelos con una verdad completa |
 | 77 (H5-11) | En el consumidor y el Replay, un estado nuevo «esperando cama» con una marca de pasillo y el abandono como cierre contado aparte | La misma solución que la sala de resultados (4.8a): el estado dice qué hace el paciente; la marca, dónde está |
@@ -1508,10 +1508,10 @@ El plan predecía para V20 que `test_sin_veto_la_comprobacion_no_cambia_la_elecc
 **Pendiente**
 
 - **#103:** la carga ofrecida del hito 5. Simular la avisa, y con `config/` en el hito 5 es lo que ve Pedro por defecto.
-- **Recalibrar k si llega el refuerzo de invierno:** issue para el Backlog, redactado en el PR.
+- **Recalibrar k si llega el refuerzo de invierno:** #108, en el Backlog.
 - **5.7:** el notebook 05 con el `config/` calibrado. El 04 lee las copias del hito 4.
 - **5.8:** los ADR, con la decisión de los boxes y la discrepancia de k.
-- **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada, sin tarea.
+- **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada; la forma que cuadre las dos cifras, en el #109 del Backlog.
 
 ### Tarea 5.7: Notebook 05_cierre_del_flujo
 
