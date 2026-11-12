@@ -473,7 +473,7 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | `@claude` en el PR | Pospuesto al cierre del hito 5 | — |
 | El chat lee el PR y el CI | 5.4 | — |
 | Codex desde el issue | 5.5 | Sin hacer: la 5.5 pasó a Claude Code (cambio de Pedro del 12 de noviembre). Codex sigue en el hito con `@codex review` en la 5.6 |
-| Sesión en la nube | 5.7 | — |
+| Sesión en la nube | 5.7 | Probado de punta a punta, con tres salvedades. Funcionó: el push a `feat/h5-notebook`, los hooks, las skills y el subagente `mutante` (dos worktrees en paralelo), `uv sync --all-packages` en 35 s y la N3 en segundo plano: 10 min 41 s (núcleo 6:13, app 3:23, notebooks 1:05) frente a 13 min 52 s en el portátil. Falló: `gh issue view` y todo `gh project` (GraphQL, 403 del proxy), así que el issue se lee con la herramienta de GitHub de la sesión y la ficha del tablero la mueve Pedro; el script del entorno falló porque se ejecutaba fuera del repositorio (corregido buscándolo con `find`); y la sesión limitaba la rama a `claude/*` frente a la del issue (Pedro eligió la del issue). Detalle en el anexo de la 5.7 de [hito-5.md](../specs/hito-5.md) |
 | `cerrar-hito`, Release y web | 5.8 | — |
 
 ## Referencias
