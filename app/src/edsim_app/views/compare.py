@@ -1,5 +1,6 @@
 """Choose independent runs and present core-computed comparison summaries."""
 
+import pandas as pd
 import streamlit as st
 
 from edsim.runs import (
@@ -13,7 +14,9 @@ from edsim.runs import (
     compare_run_summary,
     pairing_blockers,
     pairing_category,
+    profiles_diff,
     read_run_header,
+    read_run_profiles_values,
 )
 from edsim_app.charts import difference_histogram_chart
 from edsim_app.comparison import cached_run_comparison
@@ -27,6 +30,7 @@ from edsim_app.comparison_frames import (
     comparison_levels_frame,
     difference_histogram_frame,
     draw_differences_frame,
+    profiles_differences_frame,
 )
 from edsim_app.episodes import open_comparison_episode
 from edsim_app.frames import format_number, kpis_frame
@@ -78,7 +82,12 @@ def render_side(store: RunStore, side: str, choices: list[str]) -> tuple[RunResu
 
 
 def render_summary(
-    summary: RunSummaryComparison, a_id: str, b_id: str, *, clinical: bool = False
+    summary: RunSummaryComparison,
+    a_id: str,
+    b_id: str,
+    *,
+    clinical: bool = False,
+    profiles: pd.DataFrame | None = None,
 ) -> None:
     """Render populations beside KPIs, then supplied configuration and level differences."""
     st.subheader("KPIs de la ventana")
@@ -113,6 +122,11 @@ def render_summary(
             st.caption("Centro idéntico.")
         else:
             st.dataframe(center, hide_index=True, width="stretch")
+        if profiles is not None:
+            if profiles.empty:
+                st.caption("Perfiles clínicos idénticos.")
+            else:
+                st.dataframe(profiles, hide_index=True, width="stretch")
 
 
 @st.fragment(key="comparison_patients")
@@ -247,9 +261,19 @@ else:
                 + ("; ".join(changed) if changed else "ninguno en esta muestra (0 pacientes)")
                 + ". La categoría se conserva por los parámetros modificados."
             )
-render_summary(
-    summary, a.info.run_id, b.info.run_id, clinical=a.info.is_clinical and b.info.is_clinical
-)
+both_clinical = a.info.is_clinical and b.info.is_clinical
+profiles = None
+if both_clinical:
+    try:
+        profiles = profiles_differences_frame(
+            profiles_diff(
+                read_run_profiles_values(store, a.info.run_id),
+                read_run_profiles_values(store, b.info.run_id),
+            )
+        )
+    except RunReadError as error:
+        st.error(str(error))
+render_summary(summary, a.info.run_id, b.info.run_id, clinical=both_clinical, profiles=profiles)
 if comparison is not None:
     st.subheader("Comprobación de los sorteos (verdad)")
     if comparison.pairing.clinical_differences:

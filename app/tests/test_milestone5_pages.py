@@ -23,11 +23,13 @@ from edsim.runs import (
     compare_episode_truth,
     episode_segments,
     filter_episodes,
+    profiles_diff,
     read_center_values,
     read_episode_events,
     read_replay_state,
     read_run_episode_truth,
     read_run_header,
+    read_run_profiles_values,
     read_run_results,
     replay_counts,
     true_level_abandonment,
@@ -376,3 +378,39 @@ def test_replay_plan_draws_the_hallway_and_counts_the_core_abandonments(h5_catal
     expected = len(read_replay_state(store, "h5", index, left.left).abandonments)
     assert expected >= 1
     assert f"Se van sin ser vistos (última hora): {expected}" in svg_of(app)
+
+
+# --- Comparar ------------------------------------------------------------------------------
+
+
+def open_compare(a, b):
+    app = AppTest.from_file(MAIN, default_timeout=TIMEOUT)
+    app.session_state["compare_a"] = a
+    app.session_state["compare_b"] = b
+    app.run().switch_page("views/compare.py").run()
+    assert app.title[0].value == "Comparar" and not app.exception and not app.error
+    return app
+
+
+@pytest.mark.slow
+def test_compare_explains_the_catalog_block_and_lists_profile_keys(h5_catalog):
+    store = RunStore(h5_catalog)
+    h4, h5 = results(h5_catalog, "h4"), results(h5_catalog)
+    assert (h4.info.catalog_version, h5.info.catalog_version) == (3, 4)
+    app = open_compare("h4", "h5")
+    notice = " ".join(i.value for i in app.info)
+    assert "Versión del catálogo: 3 → 4" in notice
+    expected = profiles_diff(
+        read_run_profiles_values(store, "h4"), read_run_profiles_values(store, "h5")
+    )
+    assert any(d.key.startswith("abandono.") for d in expected)
+    frame = next(d.value for d in app.dataframe if "Clave de los perfiles" in d.value.columns)
+    assert list(frame["Clave de los perfiles"]) == [d.key for d in expected]
+    centre = next(d.value for d in app.dataframe if "Clave del centro" in d.value.columns)
+    assert "camas.espera" in set(centre["Clave del centro"])
+
+
+@pytest.mark.slow
+def test_compare_a_run_with_itself_has_identical_profiles(h5_catalog):
+    app = open_compare("h5", "h5")
+    assert "Perfiles clínicos idénticos." in [c.value for c in app.caption]
