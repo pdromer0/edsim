@@ -230,6 +230,7 @@ def render_live(result, identity, index, position):
             counts,
             start_date=result.start_date,
             highlighted_episode=position.highlighted_episode,
+            outcome=result.outcome is not None,
         )
     )
 

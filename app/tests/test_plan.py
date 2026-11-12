@@ -55,10 +55,14 @@ def counts(**changes):
     return ReplayCounts(**(values | changes))
 
 
-def draw(value, counters=None, highlight=None):
+def draw(value, counters=None, highlight=None, outcome=False):
     return ET.fromstring(
         render_plan(
-            value, counters or counts(), start_date=date(2026, 1, 5), highlighted_episode=highlight
+            value,
+            counters or counts(),
+            start_date=date(2026, 1, 5),
+            highlighted_episode=highlight,
+            outcome=outcome,
         )
     )
 
@@ -177,7 +181,7 @@ def test_results_room_has_its_own_patients_without_duplicating_the_box_queue():
 def test_waiting_bed_in_a_box_and_the_four_destinations():
     four = {"alta": 3, "ingreso": 1, "traslado": 1, "exitus": 0}
     value = replace(state([patient(1, 3, "waiting_bed", 3)], t=600), departures_by_destination=four)
-    svg = draw(value)
+    svg = draw(value, outcome=True)
     box = next(e for e in elements(svg, "box") if e.attrib["data-box"] == "3")
     assert "Esperando cama" in " ".join(box.itertext())
     text = " ".join(svg.itertext())
@@ -195,7 +199,7 @@ def test_hallway_patients_and_the_abandonments_the_state_brings():
         ReplayAbandonment("EP-000020", "PT-000020", 500.0, 4, 550.0, "box"),
         ReplayAbandonment("EP-000021", "PT-000021", 510.0, None, 590.0, "triaje"),
     )
-    svg = draw(replace(state([in_hallway], t=600), abandonments=left))
+    svg = draw(replace(state([in_hallway], t=600), abandonments=left), outcome=True)
     zone = elements(svg, "hallway-queue")
     assert len(zone) == 1
     (group,) = zone[0].findall('.//*[@data-role="patient"]', NS)
@@ -205,3 +209,13 @@ def test_hallway_patients_and_the_abandonments_the_state_brings():
     assert count.text == "Se van sin ser vistos (última hora): 2"
     # Not a box patient: the hallway patient has no box.
     assert all("EP-000007" not in " ".join(b.itertext()) for b in elements(svg, "box"))
+
+
+def test_without_the_outcome_only_discharge_and_admission():
+    """A log of versions 1 to 3 has neither transfers, deaths nor abandonments."""
+    four = {"alta": 3, "ingreso": 1, "traslado": 0, "exitus": 0}
+    svg = draw(replace(state(t=600), departures_by_destination=four))
+    text = " ".join(svg.itertext())
+    assert "Alta: 3" in text and "Ingreso: 1" in text
+    assert "Traslado" not in text and "Exitus" not in text
+    assert svg.find('.//*[@data-count="left"]', NS) is None

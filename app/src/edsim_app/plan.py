@@ -15,8 +15,14 @@ def render_plan(
     *,
     start_date: date,
     highlighted_episode: str | None = None,
+    outcome: bool = False,
 ) -> str:
-    """Draw bounded queues and one cell per physical box; totals are supplied curves."""
+    """Draw bounded queues and one cell per physical box; totals are supplied curves.
+
+    With ``outcome`` (a log of version 4, task 5.5) the plan shows the four
+    destinations and the abandonments of the last hour; without it, discharge
+    and admission only, as the older models have no others.
+    """
     waiting_triage = sorted(
         (p for p in state.patients if p.state == "waiting_triage"),
         key=lambda p: (p.arrival, p.episode_id),
@@ -178,14 +184,18 @@ def render_plan(
         "doctors",
     )
     text(1130, 26, "Salidas · última hora", "heading")
-    for i, (destination, count) in enumerate(state.departures_by_destination.items()):
+    departures = state.departures_by_destination.items()
+    if not outcome:
+        departures = [(d, n) for d, n in departures if d in ("alta", "ingreso")]
+    for i, (destination, count) in enumerate(departures):
         text(1130, 66 + i * 32, f"{destination.capitalize()}: {count}")
-    text(
-        1130,
-        194,
-        f"Se van sin ser vistos (última hora): {len(state.abandonments)}",
-        attributes='data-count="left"',
-    )
+    if outcome:
+        text(
+            1130,
+            194,
+            f"Se van sin ser vistos (última hora): {len(state.abandonments)}",
+            attributes='data-count="left"',
+        )
 
     def side_section(patients, y, title, role):
         if not patients:
