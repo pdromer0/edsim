@@ -14,9 +14,11 @@ inicio = [8, 15, 22]
 # turno / u⌉, con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene como
 # mucho un 10 % de días fuera del cumplimiento Manchester con el reloj C, con los días
 # fuera y los días medidos sumados en las 12 réplicas de la ventana anual (con 144 días,
-# 14 fuera pasan): u de 0,67 a 0,6775 (en el centro base, 0,85). Días fuera / medidos de
-# los niveles 2 a 5: 1/144, 0/144, 2/144 y 6/142; la siguiente, [14, 14, 5], tiene
-# 22/142 en el nivel 5 y no pasa.
+# 14 fuera pasan): u de 0,67 a 0,6775 (en el centro base, 0,85). En la tarea 4.6c, días
+# fuera / medidos de los niveles 2 a 5: 1/144, 0/144, 2/144 y 6/142. Con el modelo del
+# hito 5 (tarea 5.6: la cama, la paciencia y los 36 boxes del centro base) la regla da la
+# misma plantilla: 1/144, 0/144, 7/144 y 11/142; la siguiente, [14, 14, 5], tiene 22/142
+# en el nivel 5 y no pasa.
 #   uv run edsim calibracion sensibilidad --mando medicos
 enfermeria_triaje = [3, 2, 1]
 medicos = [14, 14, 6]
