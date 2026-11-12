@@ -69,6 +69,8 @@ class LevelCompliance:
     With the abandonment (task 5.4, H5-8), ``n`` and ``exceeded`` include
     whoever left without being seen once its clock reached the maximum (a sure
     miss), and ``censored`` counts whoever left before it, out of ``n``.
+    ``left_late`` is the part of ``exceeded`` that left without being seen
+    (task 5.5): the pooled ``Compliance.left_late``.
     """
 
     level: int
@@ -78,6 +80,7 @@ class LevelCompliance:
     exceeded_share: float | None
     share_out: float | None
     censored: int = 0
+    left_late: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +142,7 @@ def _pooled_levels(
                 exceeded / n if n else None,
                 float(shares[index]) if n else None,
                 len(patients) - n,
+                sum(c.status == "exceeded" and c.episode.left is not None for c in counted),
             )
         )
     return tuple(levels)

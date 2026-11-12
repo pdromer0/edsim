@@ -91,6 +91,41 @@ def test_cumplimiento_con_censura(p3_leaves, n, within, exceeded, censored):
     assert pooled.exceeded_share == pytest.approx(exceeded / n, abs=1e-12)
 
 
+def four_patients(p3_leaves: float) -> list:
+    """Cuatro de nivel 4 que llegan en a y se clasifican de a a a + 5 (C cuenta desde a + 5).
+
+    P1 (a = 0) y P2 (a = 1) ven al médico en 35 y 96 (C = 30 y 90); P4 (a = 3), en 138
+    (C = 130 > 120: visto tarde). P3 (a = 2) se va esperando box en `p3_leaves`.
+    """
+    log = HandLog()
+    for who in (1, 2, 3, 4):
+        log.arrive(who, who - 1.0).triage(who, who - 1.0, who + 4.0, 4)
+    log.box(1, 5.0, 1).box(2, 6.0, 2).box(4, 8.0, 3)
+    log.assess(1, 35.0, 45.0, 1).depart(1, 45.0)
+    log.assess(2, 96.0, 106.0, 2).depart(2, 106.0)
+    log.assess(4, 138.0, 148.0, 3).depart(4, 148.0)
+    log.leave(3, p3_leaves, "box")
+    return episode_table(log.events())
+
+
+@pytest.mark.parametrize(
+    ("p3_leaves", "n", "exceeded", "left_late", "censored"),
+    [
+        (157.0, 4, 2, 1, 0),  # P3: C = 157 − 7 = 150 ≥ 120; P4 incumple visto
+        (27.0, 3, 1, 0, 1),  # P3: C = 27 − 7 = 20 < 120, censurado
+    ],
+)
+def test_los_que_se_van_tarde_agrupados(p3_leaves, n, exceeded, left_late, censored):
+    """`LevelCompliance.left_late` cuenta solo a los que se van, no a los vistos tarde."""
+    pooled = window_compliance(four_patients(p3_leaves), 0, 1).by_level[LEVEL_4]
+    assert (pooled.n, pooled.exceeded, pooled.left_late, pooled.censored) == (
+        n,
+        exceeded,
+        left_late,
+        censored,
+    )
+
+
 def test_sin_abandonos_los_campos_nuevos_valen_0():
     log = HandLog().arrive(1, 0.0).triage(1, 0.0, 5.0, 4).box(1, 5.0, 1)
     log.assess(1, 35.0, 45.0, 1).depart(1, 45.0)
