@@ -1,0 +1,53 @@
+1a: boxes 36, k 1.0, p90 = 3 × mediana
+  abandono 5.49 [4.27, 6.70] FALLA; tiempo_medico_niveles_2_5 20.33 [17.92, 22.74] FALLA; estancia_ingresados 470.75 [459.86, 481.65] pasa; pretriaje_medio 6.03 [5.07, 6.99] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.17 / 1.94 / 9.37 / 13.19 % (2364 se van)
+  tiempo desde la llegada hasta irse: p10 27.2, p50 70.2, p90 163.2 min (media 85.1; 12.7 % en 30 min o menos)
+  box / médico (2 a 5): 2.12 / 7.00 min
+
+1b: boxes 36, k 3.364, p90 = 3 × mediana
+  abandono 2.13 [1.39, 2.88] pasa; tiempo_medico_niveles_2_5 33.21 [26.85, 39.57] FALLA; estancia_ingresados 479.44 [466.78, 492.10] pasa; pretriaje_medio 6.71 [5.45, 7.97] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 0.43 / 3.86 / 9.72 % (927 se van)
+  tiempo desde la llegada hasta irse: p10 73.9, p50 172.3, p90 335.6 min (media 190.7; 0.9 % en 30 min o menos)
+  box / médico (2 a 5): 6.71 / 14.34 min
+
+1c: boxes 36, k 4.0, p90 = 3 × mediana
+  abandono 1.68 [1.06, 2.30] pasa; tiempo_medico_niveles_2_5 35.31 [28.14, 42.48] pasa; estancia_ingresados 479.90 [466.95, 492.86] pasa; pretriaje_medio 6.73 [5.46, 8.00] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 0.31 / 3.04 / 9.03 % (729 se van)
+  tiempo desde la llegada hasta irse: p10 84.1, p50 190.9, p90 360.0 min (media 208.3; 0.8 % en 30 min o menos)
+  box / médico (2 a 5): 7.55 / 15.48 min
+
+2: boxes 36, k 2.0, p90 = 3 × mediana
+  abandono 3.52 [2.53, 4.51] pasa; tiempo_medico_niveles_2_5 27.31 [23.02, 31.59] FALLA; estancia_ingresados 476.39 [464.13, 488.64] pasa; pretriaje_medio 6.59 [5.37, 7.81] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 0.84 / 6.31 / 12.15 % (1524 se van)
+  tiempo desde la llegada hasta irse: p10 49.9, p50 119.7, p90 244.5 min (media 136.3; 2.4 % en 30 min o menos)
+  box / médico (2 a 5): 4.35 / 11.05 min
+
+3: boxes 36, k 1.0, p90 = 2 × mediana
+  abandono 5.11 [3.90, 6.32] FALLA; tiempo_medico_niveles_2_5 20.81 [18.24, 23.39] FALLA; estancia_ingresados 472.47 [461.65, 483.29] pasa; pretriaje_medio 6.51 [5.36, 7.66] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 1.29 / 9.08 / 16.67 % (2205 se van)
+  tiempo desde la llegada hasta irse: p10 52.1, p50 97.5, p90 184.6 min (media 110.5; 0.7 % en 30 min o menos)
+  box / médico (2 a 5): 2.38 / 6.90 min
+
+4a: boxes 30, k 1.0, p90 = 3 × mediana
+  abandono 9.45 [6.56, 12.35] FALLA; tiempo_medico_niveles_2_5 25.62 [21.13, 30.11] FALLA; estancia_ingresados 477.57 [464.40, 490.75] pasa; pretriaje_medio 6.03 [5.07, 6.99] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.11 / 3.30 / 16.32 / 22.92 % (4097 se van)
+  tiempo desde la llegada hasta irse: p10 30.4, p50 79.2, p90 192.6 min (media 99.3; 9.6 % en 30 min o menos)
+  box / médico (2 a 5): 8.20 / 6.30 min
+
+4b: boxes 30, k 3.364, p90 = 3 × mediana
+  abandono 5.42 [3.01, 7.83] FALLA; tiempo_medico_niveles_2_5 52.10 [37.55, 66.66] pasa; estancia_ingresados 491.05 [473.95, 508.14] pasa; pretriaje_medio 6.71 [5.45, 7.97] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 1.16 / 9.91 / 18.40 % (2369 se van)
+  tiempo desde la llegada hasta irse: p10 91.0, p50 219.3, p90 450.6 min (media 251.8; 0.3 % en 30 min o menos)
+  box / médico (2 a 5): 26.64 / 13.44 min
+
+4c: boxes 30, k 4.0, p90 = 3 × mediana
+  abandono 4.77 [2.51, 7.04] FALLA; tiempo_medico_niveles_2_5 57.13 [40.63, 73.62] pasa; estancia_ingresados 493.87 [475.61, 512.12] pasa; pretriaje_medio 6.73 [5.46, 8.00] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 0.98 / 8.76 / 17.71 % (2092 se van)
+  tiempo desde la llegada hasta irse: p10 105.2, p50 247.5, p90 500.4 min (media 280.7; 0.3 % en 30 min o menos)
+  box / médico (2 a 5): 30.76 / 14.23 min
+
+3 con 30 boxes: boxes 30, k 1.0, p90 = 2 × mediana
+  abandono 9.44 [6.29, 12.59] FALLA; tiempo_medico_niveles_2_5 25.19 [21.17, 29.20] FALLA; estancia_ingresados 478.26 [465.14, 491.38] pasa; pretriaje_medio 6.51 [5.36, 7.66] pasa
+  abandono por nivel real 1 a 5: 0.00 / 0.00 / 2.54 / 16.85 / 25.69 % (4098 se van)
+  tiempo desde la llegada hasta irse: p10 55.3, p50 106.9, p90 206.3 min (media 121.1; 0.5 % en 30 min o menos)
+  box / médico (2 a 5): 7.79 / 5.97 min
