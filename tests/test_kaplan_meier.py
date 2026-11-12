@@ -234,3 +234,10 @@ def test_errores():
     bad = [episode(1, 0.0, departure=50.0)]
     with pytest.raises(ValueError, match="without being seen"):
         patience_survival(bad, {"EP-000001": truth_of(10.0)}, 0.0, 1000.0, 1000.0, "true_level")
+
+
+def test_irse_despues_de_ser_visto_es_un_error_del_log_no_un_dato():
+    # H5-3: nadie se va después de ver al médico. En vez de contarlo como evento, se rechaza.
+    bad = [episode(1, 0.0, assessment=20.0, left=50.0)]
+    with pytest.raises(ValueError, match="left after being seen"):
+        patience_survival(bad, {"EP-000001": truth_of(10.0)}, 0.0, 1000.0, 1000.0, "true_level")

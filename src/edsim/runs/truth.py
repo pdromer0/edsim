@@ -796,7 +796,9 @@ def patience_survival(
     Raises:
         ValueError: If ``by`` is not valid, the window is not inside
             ``[0, horizon]``, an episode is not in the truth or lacks its
-            clinical truth or outcome, or one departed without being seen.
+            clinical truth or outcome, or the log breaks H5-3: one departed
+            without being seen, or left after being seen. Both are errors of the
+            log (the invariants forbid them), not data to censor.
     """
     if by not in ("true_level", "assigned_level"):
         raise ValueError(f"by must be 'true_level' or 'assigned_level', got {by!r}")
@@ -812,6 +814,8 @@ def patience_survival(
         if level is None:
             unclassified += 1
             continue
+        if e.left is not None and e.first_assessment is not None:
+            raise ValueError(f"{e.episode_id} left after being seen: the log breaks H5-3")
         if e.left is not None:
             minutes, event, seen = e.left - e.arrival, True, False
         elif e.first_assessment is not None:

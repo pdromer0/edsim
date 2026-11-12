@@ -662,7 +662,8 @@ class ClockMean:
     """The mean of one clock over the attended patients of some levels.
 
     Attributes:
-        n: Episodes that arrived in the days, departed and have one of the levels.
+        n: Episodes that arrived in the days, departed, have one of the levels
+            and have the clock (an episode without it is left out).
         mean: Their mean; ``None`` if ``n`` is 0.
     """
 
@@ -685,16 +686,17 @@ def clock_mean(
 
     Raises:
         ValueError: If the days are not valid, a level is not 1 to 5, or
-            ``measure`` is not one of ``MEASURES``.
+            ``measure`` is not one of the three ``CLOCKS``.
     """
     first_day, end_day = _check_days(first_day, end_day)
-    if measure not in MEASURES:
-        raise ValueError(f"measure must be one of {MEASURES}, got {measure!r}")
+    if measure not in CLOCKS:
+        raise ValueError(f"measure must be one of {CLOCKS}, got {measure!r}")
     wanted = set(levels)
     if not wanted or not wanted <= set(range(1, N_LEVELS + 1)):
         raise ValueError(f"levels must be a non-empty subset of 1 to {N_LEVELS}, got {levels!r}")
     done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
     values = [getattr(e, measure) for e in done if e.level in wanted]
+    values = [v for v in values if v is not None]
     return ClockMean(len(values), float(np.mean(values)) if values else None)
 
 

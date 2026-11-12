@@ -26,6 +26,7 @@ from edsim.runs import (
     bed_little,
     clock_mean,
     destinations_by_severity,
+    patience_survival,
     true_level_abandonment,
 )
 
@@ -335,9 +336,18 @@ def test_niveles_no_validos(levels):
         clock_mean(clock_table(), 0, 1, levels)
 
 
+def test_un_episodio_sin_el_reloj_no_cuenta():
+    # Uno que salió sin primera valoración (reloj A vacío): n cuenta valores, no episodios.
+    table = [*clock_table(), episode(9, 70.0, departure=300.0)]
+    result = clock_mean(table, 0, 1, (4,))
+    assert (result.n, result.mean) == (3, pytest.approx(60.0, abs=1e-12))
+
+
 def test_medida_y_dias_no_validos():
     with pytest.raises(ValueError, match="measure"):
         clock_mean(clock_table(), 0, 1, (4,), "sopa")
+    with pytest.raises(ValueError, match="measure"):
+        clock_mean(clock_table(), 0, 1, (4,), "stay")  # una medida, no un reloj
     with pytest.raises(ValueError, match="first_day"):
         clock_mean(clock_table(), 2, 1, (4,))
 
@@ -398,6 +408,27 @@ def test_little_de_la_ejecucion_real_cuadra_con_las_curvas(real_run):
     assert little.requests > 0
     # Hay efectos de borde de la ventana, pero ninguno de orden de magnitud.
     assert little.by_curves == pytest.approx(little.by_little, rel=0.5)
+
+
+def test_el_km_de_la_ejecucion_real_cuadra_con_el_abandono_y_con_la_verdad(real_run):
+    table, truth, _, _ = real_run
+    start, end, horizon = 1440.0, DAYS * 1440.0, DAYS * 1440.0
+    arrived = [e for e in table if start <= e.arrival < end]
+    ground = true_level_abandonment(table, truth, start, end)
+    for by in ("true_level", "assigned_level"):
+        result = patience_survival(table, truth, start, end, horizon, by)
+        for g in result.groups:
+            assert g.km.n == g.n == len(g.patiences) == g.left + g.seen + g.waiting
+            assert g.late_leavers <= g.left and g.km.at(0.0) == 1.0
+        classified = len(arrived) - result.unclassified
+        assert sum(g.n for g in result.groups) == classified
+    by_true = patience_survival(table, truth, start, end, horizon, "true_level")
+    assert ground.left > 0 and sum(g.left for g in by_true.groups) == ground.left
+    # Por nivel real, la paciencia verdadera de cada nivel viene del ground truth real.
+    assert [g.n for g in by_true.groups] == [lv.arrivals for lv in ground.by_level]
+    # Con tantos que se van, el KM del nivel 4 baja y la verdad también.
+    level_4 = by_true.groups[3]
+    assert level_4.km.survival[-1] < 1.0 and level_4.truth_survival(1e9) == 0.0
 
 
 def test_la_hora_de_la_ejecucion_real_suma_las_llegadas(real_run):
