@@ -142,7 +142,7 @@ def _pooled_levels(
                 exceeded / n if n else None,
                 float(shares[index]) if n else None,
                 len(patients) - n,
-                sum(c.status == "exceeded" and c.episode.left is not None for c in counted),
+                int(daily.left_late[:, index].sum()),
             )
         )
     return tuple(levels)
