@@ -355,7 +355,7 @@ Para que el centro base siga pareciéndose a un hospital andaluz real cuando sus
 4. Si alguno se sale, se repite la sensibilidad de ese mando con la regla de la plantilla equivalente y se vuelven a comprobar el abandono y la estancia de los ingresados. Una sola vuelta: si no cuadra, la tarea para y se decide con Pedro.
 5. El centro cumplidor vuelve a elegir sus médicos con su regla de siempre (como mucho el 10 % de días fuera con el reloj C, con días enteros).
 
-Si los boxes pasan a ser el cuello de botella por la espera de cama, siguen fijos en 30 (decisión 41): cambiarlos se decide con Pedro, con los resultados delante. Y la semana del 19 al 25 de enero de la semilla 2026 se vuelve a medir con el modelo nuevo y se escribe en el registro, sin objetivo: es el pendiente del hito 4.
+Si los boxes pasan a ser el cuello de botella por la espera de cama, siguen fijos en 30 (decisión 41): cambiarlos se decide con Pedro, con los resultados delante. Pasó en la 5.6, y Pedro decidió el 12 de noviembre que los boxes son un derivado: los 30 del hito 4, calibrado sin boxes ocupados por ingresados, más los que ocupa de media la espera de cama (ley de Little, λ · W redondeado), 36 con la cama y la paciencia calibradas ([registro](../calibracion/registro.md), «Tarea 5.6»). Y la semana del 19 al 25 de enero de la semilla 2026 se vuelve a medir con el modelo nuevo y se escribe en el registro, sin objetivo: es el pendiente del hito 4.
 
 ### En EDsim
 
@@ -600,7 +600,7 @@ La tarea 5.6 calibra el modelo del hito 5 en el orden de la pieza 5, con las reg
 
 ### Objetivos nuevos en `config/objetivos.toml`
 
-| Nombre propuesto | Medida | Estadístico | Referencia | Horquilla | Uso |
+| Nombre | Medida | Estadístico | Referencia | Horquilla | Uso |
 | --- | --- | --- | --- | --- | --- |
 | `abandono` | Pacientes con `patient_left_wbs` sobre los llegados en la ventana | Porcentaje | 1,82 | 1–4 | Ajuste (mando: paciencia) |
 | `estancia_ingresados` | De la llegada a la salida, destino ingreso | Media | 472,5 | 360–600 | Ajuste (mando: espera de cama) |
@@ -608,7 +608,18 @@ La tarea 5.6 calibra el modelo del hito 5 en el orden de la pieza 5, con las reg
 | `estancia_atendidos` | De la llegada a la salida, todos los que salen | Media | 162,2 | 120–210 | Comprobación |
 | `ingreso_observado` | Salidas con destino ingreso sobre los llegados | Porcentaje | 9,90 | 8–13 | Comprobación (el ingreso se deriva en `perfiles.toml`) |
 
-Fuente de todos: SAS, CMBD de urgencias 2013, con las cifras «sin observación», porque EDsim no tiene observación; incluye menores salvo el 9,90 %, convertido a adultos. El esquema de `objetivos.toml` gana las medidas nuevas y, si hace falta, un filtro por destino; el plan de la 5.6 propone las claves, con las reglas de la 4.6b (claves desconocidas prohibidas, errores con la clave completa). Los objetivos del hito 4 no cambian.
+Fuente de todos: SAS, CMBD de urgencias 2013, con las cifras «sin observación», porque EDsim no tiene observación; incluye menores salvo el 9,90 %, convertido a adultos. Los objetivos del hito 4 no cambian.
+
+El esquema de `objetivos.toml` (tarea 5.6, con las reglas de la 4.6b: claves desconocidas prohibidas, errores con la clave completa) gana:
+
+- **`estadistico = "porcentaje_de_llegadas"`**: el porcentaje de los llegados a la ventana, clasificados o no, con un suceso. Con él, `medida` es `"left"` (se fue sin ser visto, para `abandono`) o `"departure"` (salió, para `ingreso_observado`), y `niveles` y `umbral` están prohibidos.
+- **`destino`**: opcional, solo con `medida = "stay"` o `"departure"`, para los que salen a ese destino (`estancia_ingresados`, `ingresados_mas_4h`, `ingreso_observado`).
+- **Quién cuenta, con el abandono** (reglas de la 5.4):
+  - el pretriaje, los triados;
+  - los relojes, los atendidos;
+  - sus porcentajes, con la censura del cumplimiento;
+  - la estancia, también quien sigue dentro al final del vaciado, con su cota.
+- **Modelo:** los objetivos del abandono y de los destinos solo aplican al modelo del hito 5. Con otro modelo, `calibracion evaluar` los lista como «no aplican», nunca como un 0 %.
 
 ### Los dos mandos nuevos
 
@@ -647,7 +658,7 @@ No hay fuente pública para la paciencia por nivel, los odds ratios del destino 
 
 - **p90 = 3 × mediana** en todos (σ = 0,857): una paciencia muy dispersa, como en la encuesta (un 17 % esperaría de 2 a 8 horas). Sin dato de forma; se mantiene en la calibración.
 - **Edad:** 0,8 en la banda de 15 a 44 años y 1 en las demás (en Ontario abandonan más los de 15 a 35 años; en el Clínic, los menores de 50).
-- **Calibración:** el nivel absoluto lo fija el factor k de la 5.6 contra el 1,82 % de abandono; lo de esta tabla es la forma (cuánto más paciente es cada nivel).
+- **Calibración:** el nivel absoluto lo fija el factor k de la 5.6 contra el 1,82 % de abandono; lo de esta tabla es la forma (cuánto más paciente es cada nivel). La 5.6 eligió k = 4 (medianas de 10 h en el nivel 4 y 8 h en el 5), una discrepancia estructural aceptada por Pedro tras un diagnóstico de la forma ([registro](../calibracion/registro.md), «La paciencia: k = 4»).
 
 ### Destinos (`[destinos]` e `ingreso` por motivo)
 
@@ -664,7 +675,7 @@ No hay fuente pública para la paciencia por nivel, los odds ratios del destino 
 
 | Parámetro | Partida | Criterio |
 | --- | --- | --- |
-| `espera` | \[240, 720\] min | Un hospital general medio: por encima del comarcal de Zaragoza (6 h de demora total) y muy por debajo de los terciarios con más de 24 h. La mediana la calibra la 5.6; el cociente p90 / mediana = 3, por criterio |
+| `espera` | \[240, 720\] min | Un hospital general medio: por encima del comarcal de Zaragoza (6 h de demora total) y muy por debajo de los terciarios con más de 24 h. La mediana la calibra la 5.6 (210 min: \[210, 630\]); el cociente p90 / mediana = 3, por criterio |
 | `factor_turno` | \[0,8; 1,0; 1,5\] | Las altas de planta salen por la mañana: de mañana la cama llega antes; de noche, casi nunca hasta la mañana siguiente |
 | `factor_estacion` | \[1; 1; 1; 1\] | Sin dato de estacionalidad de la espera de cama: neutro. Queda para escenarios («bloqueo de camas en invierno») |
 
