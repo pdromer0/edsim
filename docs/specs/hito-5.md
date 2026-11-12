@@ -1665,3 +1665,99 @@ La predicción del plan para V37 era que fallaban también los valores a mano de
 
 - **5.8:** los ADR y la entrada del diario; el contrafactual y el KM son material de «Pedro sabe explicar» (el KM no es la paciencia; qué dice Little de los boxes bloqueados).
 - **Sin tarea:** el error típico de Greenwood solo existe para el KM; una banda de confianza en el gráfico queda para quien la pida.
+
+### Tarea 5.8: Cierre del hito 5
+
+**Qué se hizo**
+
+Issue #75, rama `docs/h5-cierre`, Claude Code (Opus, en local), sin `@codex review` (tarea no crítica). Son doce commits más el de esta entrada: diez de los pasos del plan y dos con las correcciones de la revisión propia.
+
+- **Los ADR 0067 a 0079**, uno por decisión, cada uno con «Qué cambió al implementarla», indexados en `docs/decisiones/README.md` y en el registro de `docs/diseno.md`. La corrección de la invariante `nobody_jumps_the_queue` (5.6) va en el 0073, porque es la regla del orden de los eventos de un mismo instante.
+- **El motivo de la decisión 74**, corregido aquí (pieza 4, tabla de decisiones y ADR 0074): «más abandono nunca mejora el cumplimiento» es falso con el ejemplo de la propia pieza. Lo que la regla garantiza es que irse nunca esconde un incumplimiento seguro.
+- **El diseño:**
+  - el catálogo versión 4;
+  - «Calibración del hito 5» (cinco objetivos, mandos, k = 4, [210, 630] y 36 boxes);
+  - los destinos de la v0;
+  - la hoja de ruta con el hito 5 cerrado, la tabla de lo aplazado y el incremento de la app;
+  - las decisiones 67 a 79 en el registro.
+- **El diario** `docs/diario/hito-5.md`: una entrada por tarea, «Pedro sabe explicar» y «Reflexiones de Pedro» vacía.
+- **La app:**
+  - la columna «Modelo» distingue el hito 4 del 5 por la versión del catálogo, también en los pies de Resultados y Comparar (`frames.model_label`);
+  - Replay pasa a tener una sola ayuda;
+  - las ayudas de Ejecuciones, Simular y Resultados se completan;
+  - `app/README.md` gana «Primeros pasos con el hito 5»;
+  - `incrementos.md` da el incremento por cerrado.
+- **El proceso:**
+  - cuatro lecciones;
+  - el «Balance del hito» (antes del anexo), con seis propuestas de velocidad sin implantar;
+  - el chat en GitHub, en `flujo.md` y en `portabilidad.md`, con la §14 al día;
+  - la skill `/cerrar-hito`.
+- **Correcciones:**
+  - el pendiente de la 5.6 cita el #108 y el #109;
+  - `registro.md` dice que los 36 boxes son estables con la semilla de ajuste (con 2027, 6,56 daría 37).
+- **La portada:** `AGENTS.md` («Hito en curso»: el 7, persistencia, con la hoja de ruta hasta que tenga especificación), `README.md` y `docs/README.md`.
+
+**Decisiones del diff**
+
+- **La columna «Modelo» y una sola ayuda en Replay** (decisiones de Pedro en el plan): sin la columna, el manual no podía explicar cómo distinguir un hito 4 de un hito 5 en Ejecuciones. La etiqueta sale de `RunInfo.catalog_version`; una versión desconocida da «Clínico (vN)» sin excepción. Solo se alcanza con un doble, porque `RunInfo` no admite hoy otra versión.
+- **El balance va en la especificación**, como el de la P.2 y el del hito 1, no en el diario.
+- **La fecha de los ADR es la de la sesión conceptual** (10 de noviembre); lo que cambió después lleva su tarea y su commit.
+- **Los ejemplos de la censura, con instantes y el reloj C derivado** (hallazgo de la revisión): «clasificados en el minuto 10; el tercero se va en el 160 (C = 150)», no «a los 150».
+- **La skill `/cerrar-hito` sigue a `/tarea-edsim`** para el ciclo y solo añade el inventario del cierre y la Release: el ciclo sigue escrito en un solo sitio.
+- **Tres tests nuevos de la app en la rápida:** usan la fixture del hito 5 de 3 días (0,9 s por simulación), como los dos humos de la 5.5.
+
+**Valores a mano**
+
+- **Pieza 4:**
+  - tres pacientes de nivel 4 clasificados en el minuto 10 con C = 30, 90 y 150: 2/3 = 66,7 %;
+  - si el tercero se va con C = 20, queda censurado: 2/2 = 100 %.
+- **Boxes:** 30 + 6,44 = 36,44, que redondea a 36 (2026); 30 + 6,56 = 36,56, que redondea a 37 (2027). Comprobado con `python3` (`round`).
+- **Cifras del balance:** los minutos de la apertura a la fusión y los commits de cada PR, con `gh pr view` y un script.
+
+**Medidas**
+
+- **N3** (`scripts/tests-completos.sh`, una sola, tras la revisión, con Docker parado): en verde en 25 min 29 s (lint y formato 0 s, núcleo 19:38, app 4:51 con 316 tests, notebooks 1:00). Es más lenta que la de la 5.6 (13:52): lo más probable es que la N2 del hook Stop corriera a la vez, al acabar un turno con la N3 en marcha; sin comprobar.
+- **Enlaces:** un script del scratchpad comprobó los enlaces relativos y sus anclajes en los 28 ficheros markdown cambiados, sin problemas, y que cada ADR del 0067 al 0079 está en el índice y en el registro del diseño.
+- **Selección `slow` de la app:** 145 tests en la rápida y 171 en la lenta; los seis humos siguen en la rápida.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en cuatro worktrees del `HEAD` (`affa6fb`), en paralelo.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | `model_label` ignora la versión: todo clínico es «hito 4 (v3)» | Fallan 3: los dos de `test_frames.py` (la columna y la versión desconocida) y el de Ejecuciones de `test_milestone5_pages.py`; pasan los cuatro casos de `test_catalog_and_results_open_both_models_and_legacy` | Como se predijo (3 fallan, 43 pasan) |
+| V2 | Etiquetas de las versiones 3 y 4 cambiadas | Fallan 4: la columna, Ejecuciones y los casos `[clinical]` y `[absurd]`; pasan `[provisional]`, `[legacy]` y la versión desconocida | Como se predijo (4 fallan, 42 pasan) |
+| V3 | Vuelve el segundo «¿Qué estoy viendo?» de Replay | Falla 1: el de la ayuda única | Como se predijo (`assert 2 == 1`; 32 pasan) |
+| V4 | La ayuda de Replay pierde el texto que venía de la página | Falla 1: el mismo, por «UTC+1 fijo» | Como se predijo (32 pasan) |
+
+La predicción de V1 se afinó antes de aplicarla: el plan decía «el resto de `test_frames.py` pasa», pero el test de la versión desconocida, escrito después, también cae con V1.
+
+En la primera pasada de V1 y de V2 falló además `test_three_clocks_match_core`, por tiempo, con cuatro worktrees ejecutando tests a la vez. Pasó solo y en la repetición: es el límite de 3 s de los `AppTest` antiguos con la máquina cargada, el pendiente de QA de `app/AGENTS.md`.
+
+**Revisión**
+
+`/code-review medium main...docs/h5-cierre`, con nueve hallazgos.
+
+| Hallazgo | Destino |
+| --- | --- |
+| Resultados y Comparar seguían diciendo «Modelo: Clínico» | **Corregido** (`703f530`), con `model_label` y aserciones en sus tests |
+| `incrementos.md` cita la entrada de la 5.8, que no existía | **Explicado:** es esta entrada, escrita antes del push |
+| El manual no decía que irse con el reloj justo en el máximo incumple | **Corregido** (`e0711dd`) en el README. Las filas de la especificación no cambian: la precisión de la 5.4 está justo debajo de la pieza 4, y la tabla de decisiones es la decisión tal como se tomó (el ADR 0074 la precisa) |
+| Ejemplos con «a los 30» en lugar de instantes y reloj derivado | **Corregido** (`e0711dd`) en el README, el ADR 0074, el diario y la frase nueva de la pieza 4 |
+| `app-v0.3.0` no contiene los retoques de la 5.8 | **Corregido** (`e0711dd`) el texto; una `app-v0.3.1` la decide Pedro (pendiente) |
+| `docs/README.md` decía 190 KB para `hito-5.md`, que medía unos 180 | **Comprobado** con `wc -c` después de esta entrada: 190.662 bytes, así que los 190 KB de la tabla quedan bien |
+| La ayuda de Simular fija 36 boxes y λ·W = 6,44 | **Explicado:** documenta la calibración de la 5.6, como el README y el diseño. Si se recalibra (#108), se actualizan los tres (pendiente) |
+| `CLINICAL_MODELS` repite lo que sabe el núcleo | **Explicado:** el núcleo da números de versión, no exportados en `edsim.runs.__all__`; el nombre en español para la interfaz es de la app, y la versión desconocida se ve («Clínico (vN)») |
+| La viñeta «lo observado no es la paciencia» se contradecía | **Corregido** (`e0711dd`): el sesgo de selección, explícito |
+
+**Pendiente**
+
+- **Pedro:**
+  - crear `v0.5-hito5` tras la fusión; después, la Release con `gh release create` (skill `/cerrar-hito`, «Después de la fusión»);
+  - decidir si los retoques de la app de la 5.8 llevan `app-v0.3.1`;
+  - revisar en el navegador Ejecuciones (columna Modelo), Replay (una ayuda), Simular y Resultados (ayudas).
+- **#108:** si se recalibra k o cambian los boxes, la ayuda de Simular, el README de la app y el diseño citan 36 boxes y 6,44.
+- **#103, #109, #110 y #112:** en el Backlog.
+- **Las propuestas de velocidad del balance:** por decidir, cada una en su tarea.
+- **QA de `app/tests`:** `default_timeout` en los `AppTest` antiguos (`test_three_clocks_match_core` cayó por tiempo con cuatro worktrees en paralelo).
