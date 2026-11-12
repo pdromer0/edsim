@@ -95,6 +95,15 @@ def test_replay_shows_the_wait_for_a_bed_in_the_hallway(h5_catalog):
     assert patients.loc[record.episode_id, "Estado"] == "Pasillo · esperando cama"
 
 
+def test_replay_has_a_single_help_with_the_plan_and_the_bed(h5_catalog):
+    app = open_page("views/replay.py")
+    assert app.header[0].value == "h5"  # a run is chosen: the page below the selector ran
+    helps = [box for box in app.expander if box.label == "¿Qué estoy viendo?"]
+    assert len(helps) == 1
+    text = " ".join(item.value for item in helps[0].markdown)
+    assert "Esperando cama" in text and "UTC+1 fijo" in text
+
+
 def test_episodes_opens_the_card_of_a_hallway_patient(h5_catalog):
     record, _ = hallway_case(h5_catalog)
     app = open_page("views/episodes.py", episode=record.episode_id)
@@ -102,6 +111,34 @@ def test_episodes_opens_the_card_of_a_hallway_patient(h5_catalog):
     assert any(f"Ficha del episodio {record.episode_id}" in s.value for s in app.subheader)
     destinations = app.selectbox(key="episode_filter_destination_widget").options
     assert destinations == ["Todos", "Alta", "Ingreso", "Traslado", "Exitus"]
+
+
+def test_runs_table_tells_the_two_clinical_models_apart(h5_catalog):
+    store = RunStore(h5_catalog)
+    versions = {info.run_id: info.catalog_version for info in store.list()}
+    assert versions == {"h4": 3, "h5": 4}
+    app = open_page("views/runs.py")
+    assert app.title[0].value == "Ejecuciones"
+    frame = app.dataframe[0].value.set_index("Ejecución")
+    assert frame.loc["h4", "Modelo"] == "Clínico · hito 4 (v3)"
+    assert frame.loc["h5", "Modelo"] == "Clínico · hito 5 (v4)"
+    assert "versión del catálogo" in help_text(app)
+
+
+def help_text(app):
+    box = next(item for item in app.expander if item.label == "¿Qué estoy viendo?")
+    return " ".join(item.value for item in box.markdown)
+
+
+def test_simulate_help_explains_the_derived_boxes_and_the_missing_load(h5_catalog):
+    app = open_page("views/simulate.py")
+    assert app.title[0].value == "Simular"
+    # config/ is the milestone 5 model since task 5.6: the page takes the branch without load.
+    assert "La carga prevista del modelo del hito 5 llega con el issue #103." in [
+        i.value for i in app.info
+    ]
+    text = help_text(app)
+    assert "36 boxes" in text and "#103" in text
 
 
 # --- Simular with a center with [camas] (task 5.5) -----------------------------------------
@@ -209,6 +246,7 @@ def test_results_show_the_outcome_with_its_lower_bounds(h5_catalog):
 @pytest.mark.slow
 def test_results_of_milestone_4_have_no_outcome(h5_catalog):
     app = open_page("views/results.py", run_id="h4")
+    assert "Modelo: Clínico · hito 4 (v3)" in [c.value for c in app.caption]
     assert "Desenlace: abandono, destinos y espera de cama" not in [s.value for s in app.subheader]
     options = app.selectbox(key="results_curve_widget").options
     assert "Boxes con ingresados esperando cama" not in options
@@ -409,6 +447,9 @@ def test_compare_explains_the_catalog_block_and_lists_profile_keys(h5_catalog):
     app = open_compare("h4", "h5")
     notice = " ".join(i.value for i in app.info)
     assert "Versión del catálogo: 3 → 4" in notice
+    captions = [c.value for c in app.caption]
+    assert "Modelo: Clínico · hito 4 (v3)" in captions
+    assert "Modelo: Clínico · hito 5 (v4)" in captions
     expected = profiles_diff(
         read_run_profiles_values(store, "h4"), read_run_profiles_values(store, "h5")
     )

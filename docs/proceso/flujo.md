@@ -81,7 +81,7 @@ En las tareas de proceso, la especificación y su anexo son `docs/proceso/<tarea
 | Quién | Qué hace |
 | --- | --- |
 | Pedro | Prioriza (de Backlog a Próximo), aprueba los planes, revisa los PR, escribe `@codex review` en las tareas críticas y fusiona; después, `/clear` y `/sincronizar`. |
-| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues, revisa el plan y el PR, recalcula los valores a mano y completa las métricas del PR. |
+| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues, revisa el plan y el PR, recalcula los valores a mano y completa las métricas del PR. Desde la 5.4 escribe él mismo en GitHub, con `add_repo` y `gh api` REST: las «Notas del chat» de cada issue, su revisión y las métricas en el PR, y los issues del Backlog ([portabilidad.md](portabilidad.md#7-github-como-gestor-de-trabajo-implantado), §7). |
 | Claude Code | Con `/tarea-edsim N`: plan, rama, commits con N1, `/code-review` y sus correcciones, una sola N3, entrada del anexo, push, PR y ficha. Con `/sincronizar`: comprueba la fusión, actualiza `main`, borra la rama y revisa el tablero. |
 | Codex | Implementa las tareas con la etiqueta `quien:codex` siguiendo [tarea.md](tarea.md) y pide permiso para el push; en las tareas críticas, revisa el PR cuando Pedro escribe `@codex review`. |
 

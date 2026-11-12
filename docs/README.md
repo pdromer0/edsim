@@ -28,8 +28,8 @@ Las especificaciones de los últimos hitos son largas: no se leen enteras, sino 
 | --- | --- |
 | [specs/hito-4.md](specs/hito-4.md) | 250 KB |
 | [specs/hito-6.md](specs/hito-6.md) | 190 KB |
+| [specs/hito-5.md](specs/hito-5.md) | 190 KB |
 | [app/docs/specs/fase-1.md](../app/docs/specs/fase-1.md) | 140 KB |
 | [specs/hito-3.md](specs/hito-3.md) | 110 KB |
-| [specs/hito-5.md](specs/hito-5.md) | 95 KB |
-| [diseno.md](diseno.md) | 75 KB |
+| [diseno.md](diseno.md) | 85 KB |
 | [specs/hito-2.md](specs/hito-2.md) | 60 KB |

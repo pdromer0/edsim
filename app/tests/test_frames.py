@@ -1,10 +1,11 @@
 """Check catalog values and formatting without running Streamlit."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from pandas.api.types import is_numeric_dtype
 
-from edsim_app.frames import runs_frame, style_runs
+from edsim_app.frames import model_label, runs_frame, style_runs
 
 
 def test_run_table_columns_values_and_fixed_timezone(run_info):
@@ -25,6 +26,28 @@ def test_run_table_columns_values_and_fixed_timezone(run_info):
             "Origen": "CLI",
         }
     ]
+
+
+def test_model_column_tells_milestone_4_from_milestone_5_by_the_catalog(run_info):
+    clinical = {
+        "model": "clinico",
+        "clinical_profiles_path": "config/perfiles.toml",
+        "clinical_profiles_fingerprint": "fedcba9876543210",
+    }
+    milestone_4 = replace(run_info, run_id="h4", format_version=2, **clinical)
+    milestone_5 = replace(run_info, run_id="h5", format_version=3, schema_version=4, **clinical)
+    assert [info.catalog_version for info in (run_info, milestone_4, milestone_5)] == [1, 3, 4]
+    frame = runs_frame([run_info, milestone_4, milestone_5])
+    assert frame["Modelo"].tolist() == [
+        "Provisional",
+        "Clínico · hito 4 (v3)",
+        "Clínico · hito 5 (v4)",
+    ]
+
+
+def test_model_label_of_an_unknown_catalog_names_its_version():
+    future = SimpleNamespace(is_clinical=True, catalog_version=5)
+    assert model_label(future) == "Clínico (v5)"
 
 
 def test_table_preserves_input_order_and_describes_violations(run_info):

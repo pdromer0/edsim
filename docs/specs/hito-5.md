@@ -255,7 +255,7 @@ Con el abandono, los pacientes que más esperan son los que se van, y quitarlos 
 
 ### Para qué sirve
 
-Para que un día malo parezca malo. Si el abandono mejorara el cumplimiento, un panel del hito 8 premiaría los días en que más gente se fue, y un modelo entrenado con esos datos aprendería lo contrario de lo que pasa.
+Para que un día malo parezca malo. Si irse escondiera los incumplimientos, un panel del hito 8 premiaría los días en que más gente se fue, y un modelo entrenado con esos datos aprendería lo contrario de lo que pasa.
 
 ### Cómo funciona
 
@@ -277,7 +277,7 @@ Media de espera de los atendidos: 60 min. Cumplimiento: 2 de 3, el 66,7 %. Quita
 | --- | --- | --- |
 | Medias de los relojes A, B y C | Solo los atendidos | Como el TPAM del SAS, que mide a los que vio un médico: la calibración compara lo mismo con lo mismo |
 | Pretriaje medio y porcentaje > 5 min | Solo los triados | Como el indicador del SAS |
-| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Más abandono nunca mejora el cumplimiento |
+| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Irse nunca esconde un incumplimiento seguro. No garantiza más: si el paciente 3 se fuera con 20 min de espera, quedaría censurado y el cumplimiento subiría al 100 % (corregido en la 5.8, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md)) |
 | Estancia en urgencias | Por destino; los que se van, aparte, con su tiempo hasta irse | Como el TPU del SAS por tipo de alta |
 
 Para el cumplimiento con el reloj C hace falta la clasificación: quien se va antes del triaje no tiene nivel y no entra, con ningún reloj y tampoco en el cumplimiento por nivel real, aunque el ground truth le dé nivel. Su abandono cuenta en el indicador de «antes del triaje».
@@ -836,7 +836,7 @@ Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y 
 | 71 (H5-5) | Cuatro destinos (alta, ingreso, traslado, exitus; la UCI dentro del ingreso), con una logística multinomial sobre G, mayor, el motivo (en el ingreso) y el número de pruebas alteradas, sorteada con Gumbel-max en el flujo 4; parámetros en `perfiles.toml` y `[destino]` fuera de `config/centro.toml` | El médico atiende la gravedad real; el resultado de las pruebas por fin tiene efecto; la UCI necesitaría camas propias sin datos (v2) |
 | 72 (H5-6) | Espera de cama lognormal `[mediana, p90]` por un factor del turno del pedido (y uno opcional de estación), en `[camas]` de `centro.toml`, con su z en el flujo 9 | Boarding simple y calibrable; el patrón de la respuesta de las pruebas; las camas finitas pedirían semanas de calentamiento (v2) |
 | 73 (H5-7) | Catálogo versión 4: `patient_left_wbs`, `bed_requested`, `bed_assigned` y cuatro destinos; `TERMINAL_EVENTS[4]` con el abandono; traslado sin espera; un ingresado desalojado espera la cama en el pasillo | Un evento por hecho; el censo del directo funciona sin tocarlo; un atendido no compite por un box con quien no lo está |
-| 74 (H5-8) | Medias de los atendidos; cumplimiento con censura (quien se va después de su máximo incumple, quien se va antes no cuenta); indicadores propios del abandono, la cama y el destino; los de nivel real, solo con el ground truth | Cada métrica como su fuente; más abandono nunca mejora el cumplimiento |
+| 74 (H5-8) | Medias de los atendidos; cumplimiento con censura (quien se va después de su máximo incumple, quien se va antes no cuenta); indicadores propios del abandono, la cama y el destino; los de nivel real, solo con el ground truth | Cada métrica como su fuente; irse nunca esconde un incumplimiento seguro (motivo corregido en la 5.8: «más abandono nunca mejora el cumplimiento» es falso con el ejemplo de la pieza 4) |
 | 75 (H5-9) | Ingreso, traslado y exitus derivados y escritos; abandono (mando: paciencia) y estancia de los ingresados (mando: espera de cama) de ajuste; el resto, de comprobación; en orden, con la plantilla de la 4.6c fija y medida de nuevo, y cambiada solo si sale de su horquilla, con una vuelta como máximo | Un mando por objetivo (identificabilidad); las duraciones siguen fijas; los mandos están acoplados |
 | 76 (H5-10) | El ground truth guarda todo lo sorteado, también lo que no se usó, con el destino contrafactual de quien se fue; CSV con columnas nuevas y `run.json` que registra el modelo, con los antiguos leídos como hoy | Reconstruir cada paciente bit a bit; medir el daño oculto del abandono; validar modelos con una verdad completa |
 | 77 (H5-11) | En el consumidor y el Replay, un estado nuevo «esperando cama» con una marca de pasillo y el abandono como cierre contado aparte | La misma solución que la sala de resultados (4.8a): el estado dice qué hace el paciente; la marca, dónde está |
@@ -932,6 +932,67 @@ Consultadas el 9 y el 10 de noviembre de 2026. Las de «para aprender más» est
 | Triaje y saturación (H5-1) | [Chen et al.](https://nta.web.unc.edu/wp-content/uploads/sites/14577/2021/08/Wanyi-census.pdf) y [revisión en JOHM](https://johm.ubb.ac.id/index.php/home/article/view/16) | Evidencia mixta, sin coeficiente |
 
 **Cálculos propios de esta especificación.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
+
+## Balance del hito
+
+Escrito en la tarea 5.8. El hito dejó el modelo v0 cerrado: los pacientes se van sin ser vistos, salen con uno de cuatro destinos y los ingresados esperan cama, todo calibrado contra el SAS.
+
+### Qué se entregó y dónde
+
+| Pieza | Dónde |
+| --- | --- |
+| Abandono, destinos y espera de cama en el motor, catálogo versión 4 | `src/edsim/engine/`, [ADR 0069](../decisiones/0069-abandono-antes-del-primer-medico.md) a [0073](../decisiones/0073-catalogo-version-4.md) |
+| El modelo elegido por los ficheros, con el del hito 4 intacto | [ADR 0068](../decisiones/0068-bloque-del-hito-5-de-todo-o-nada.md), `tests/data/*_h4.toml` |
+| Métricas con censura e indicadores del desenlace | `src/edsim/runs/`, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md) |
+| Ground truth con el contrafactual | [ADR 0076](../decisiones/0076-ground-truth-con-lo-sorteado-y-el-contrafactual.md) |
+| Calibración: cinco objetivos, k = 4, [210, 630] y 36 boxes | `config/`, [registro](../calibracion/registro.md), [ADR 0075](../decisiones/0075-calibracion-en-orden-con-un-mando-por-objetivo.md) |
+| La app con el hito 5 (`app-v0.3.0`) | [incrementos](../../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama), [ADR 0078](../decisiones/0078-la-app-ensena-el-hito-5.md) |
+| Notebook 05 | `notebooks/05_cierre_del_flujo.ipynb` |
+| Lo aprendido | [diario](../diario/hito-5.md), [lecciones](../proceso/lecciones.md) |
+| Proceso: `mutante`, una sola N3, la nube, el chat en GitHub, `cerrar-hito` | [ADR 0079](../decisiones/0079-ocho-tareas-en-orden-y-etiqueta-v0-5-hito5.md), [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md), [portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba) §14 |
+
+### Cifras
+
+- **Tiempo:** del primer PR, abierto el 11 de noviembre a las 13:42 UTC, al de la 5.7, fusionado el 12 a las 17:21 UTC. Son ocho issues (#68 a #75) y ocho PR, uno por tarea.
+- **Los PR de la 5.1 a la 5.7**, con sus commits y los minutos de la apertura a la fusión, sacados de `gh pr view`:
+
+  | Tarea | PR | Commits | Apertura → fusión |
+  | --- | --- | --- | --- |
+  | 5.1 | #98 | 11 | 19 min |
+  | 5.2 | #99 | 14 | 19 min |
+  | 5.3 | #102 | 18 | 131 min |
+  | 5.4 | #104 | 16 | 24 min |
+  | 5.5 | #106 | 20 | 64 min |
+  | 5.6 | #107 | 15 | 25 min |
+  | 5.7 | #111 | 6 | 17 min |
+
+- **Issues que salieron del hito:**
+  - **#105**, las filas «no usado» de quien se va: cerrado en la 5.5.
+  - **Abiertos:** #103 (la carga prevista del hito 5), #108 (recalibrar k con el refuerzo de invierno), #109 (la forma de la espera de cama), #110 (subagente «revisor del plan») y #112 (web de la documentación).
+- **N3:**
+  - en la 5.2, dos en verde (32 min en total, el 43,7 % perdido en la primera), lo que llevó a la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md);
+  - en la 5.6, 13 min 52 s en el portátil;
+  - en la 5.7, 10 min 41 s en la nube.
+- **Paradas para decidir con Pedro:** dos, las dos en la 5.6: los boxes de cuello de botella y k ≥ 4. El resto de las decisiones nuevas llegaron como ajustes de Pedro al plan, anotados en el anexo de cada tarea.
+
+### Propuestas de velocidad
+
+Salen de lo que costó tiempo en el hito. Ninguna se implanta aquí: cada una, si se aprueba, va en su tarea.
+
+1. **Un subagente «revisor del plan»** (#110): lee el plan contra la especificación y las notas del chat antes de presentarlo, en las tareas complejas.
+2. **El formato del plan:**
+   - una sección «Lo que el plan interpreta»;
+   - otra, «Diferencias con las notas del chat»;
+   - los valores a mano con su cálculo ejecutable;
+   - el detalle en el PR, no en el plan.
+
+   Los errores del hito estaban en lo que el plan interpretaba, no en la aritmética ([lecciones](../proceso/lecciones.md#proceso-y-agentes)).
+3. **`/tarea-edsim` y `/sincronizar` con `gh api` REST**, para que funcionen también en la nube. El tablero, que solo existe en GraphQL, lo seguirían moviendo Pedro o el workflow.
+4. **La nube por defecto** para las tareas de núcleo, tests, notebooks y calibración: la N3 tardó 10 min 41 s allí, frente a 13 min 52 s en el portátil. En local, las de la app en el navegador, Kafka con Docker y lo que viva solo en el portátil.
+5. **El chat escribe en GitHub**, como desde la 5.4: notas en los issues, revisiones y métricas en los PR, issues del Backlog. Queda documentado como práctica ([flujo.md](../proceso/flujo.md#papeles), [portabilidad.md](../proceso/portabilidad.md#7-github-como-gestor-de-trabajo-implantado) §7).
+6. **La revisión del chat, a la medida:**
+   - el plan, en las tareas críticas o con conceptos nuevos;
+   - el PR, ligera: el CI y lo que el plan interpretaba, que es lo que hizo falta en todo el hito.
 
 ## Anexo: guía de referencia del hito 5
 
@@ -1508,10 +1569,10 @@ El plan predecía para V20 que `test_sin_veto_la_comprobacion_no_cambia_la_elecc
 **Pendiente**
 
 - **#103:** la carga ofrecida del hito 5. Simular la avisa, y con `config/` en el hito 5 es lo que ve Pedro por defecto.
-- **Recalibrar k si llega el refuerzo de invierno:** issue para el Backlog, redactado en el PR.
+- **Recalibrar k si llega el refuerzo de invierno:** #108, en el Backlog.
 - **5.7:** el notebook 05 con el `config/` calibrado. El 04 lee las copias del hito 4.
 - **5.8:** los ADR, con la decisión de los boxes y la discrepancia de k.
-- **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada, sin tarea.
+- **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada; la forma que cuadre las dos cifras, en el #109 del Backlog.
 
 ### Tarea 5.7: Notebook 05_cierre_del_flujo
 
@@ -1604,3 +1665,99 @@ La predicción del plan para V37 era que fallaban también los valores a mano de
 
 - **5.8:** los ADR y la entrada del diario; el contrafactual y el KM son material de «Pedro sabe explicar» (el KM no es la paciencia; qué dice Little de los boxes bloqueados).
 - **Sin tarea:** el error típico de Greenwood solo existe para el KM; una banda de confianza en el gráfico queda para quien la pida.
+
+### Tarea 5.8: Cierre del hito 5
+
+**Qué se hizo**
+
+Issue #75, rama `docs/h5-cierre`, Claude Code (Opus, en local), sin `@codex review` (tarea no crítica). Son doce commits más el de esta entrada: diez de los pasos del plan y dos con las correcciones de la revisión propia.
+
+- **Los ADR 0067 a 0079**, uno por decisión, cada uno con «Qué cambió al implementarla», indexados en `docs/decisiones/README.md` y en el registro de `docs/diseno.md`. La corrección de la invariante `nobody_jumps_the_queue` (5.6) va en el 0073, porque es la regla del orden de los eventos de un mismo instante.
+- **El motivo de la decisión 74**, corregido aquí (pieza 4, tabla de decisiones y ADR 0074): «más abandono nunca mejora el cumplimiento» es falso con el ejemplo de la propia pieza. Lo que la regla garantiza es que irse nunca esconde un incumplimiento seguro.
+- **El diseño:**
+  - el catálogo versión 4;
+  - «Calibración del hito 5» (cinco objetivos, mandos, k = 4, [210, 630] y 36 boxes);
+  - los destinos de la v0;
+  - la hoja de ruta con el hito 5 cerrado, la tabla de lo aplazado y el incremento de la app;
+  - las decisiones 67 a 79 en el registro.
+- **El diario** `docs/diario/hito-5.md`: una entrada por tarea, «Pedro sabe explicar» y «Reflexiones de Pedro» vacía.
+- **La app:**
+  - la columna «Modelo» distingue el hito 4 del 5 por la versión del catálogo, también en los pies de Resultados y Comparar (`frames.model_label`);
+  - Replay pasa a tener una sola ayuda;
+  - las ayudas de Ejecuciones, Simular y Resultados se completan;
+  - `app/README.md` gana «Primeros pasos con el hito 5»;
+  - `incrementos.md` da el incremento por cerrado.
+- **El proceso:**
+  - cuatro lecciones;
+  - el «Balance del hito» (antes del anexo), con seis propuestas de velocidad sin implantar;
+  - el chat en GitHub, en `flujo.md` y en `portabilidad.md`, con la §14 al día;
+  - la skill `/cerrar-hito`.
+- **Correcciones:**
+  - el pendiente de la 5.6 cita el #108 y el #109;
+  - `registro.md` dice que los 36 boxes son estables con la semilla de ajuste (con 2027, 6,56 daría 37).
+- **La portada:** `AGENTS.md` («Hito en curso»: el 7, persistencia, con la hoja de ruta hasta que tenga especificación), `README.md` y `docs/README.md`.
+
+**Decisiones del diff**
+
+- **La columna «Modelo» y una sola ayuda en Replay** (decisiones de Pedro en el plan): sin la columna, el manual no podía explicar cómo distinguir un hito 4 de un hito 5 en Ejecuciones. La etiqueta sale de `RunInfo.catalog_version`; una versión desconocida da «Clínico (vN)» sin excepción. Solo se alcanza con un doble, porque `RunInfo` no admite hoy otra versión.
+- **El balance va en la especificación**, como el de la P.2 y el del hito 1, no en el diario.
+- **La fecha de los ADR es la de la sesión conceptual** (10 de noviembre); lo que cambió después lleva su tarea y su commit.
+- **Los ejemplos de la censura, con instantes y el reloj C derivado** (hallazgo de la revisión): «clasificados en el minuto 10; el tercero se va en el 160 (C = 150)», no «a los 150».
+- **La skill `/cerrar-hito` sigue a `/tarea-edsim`** para el ciclo y solo añade el inventario del cierre y la Release: el ciclo sigue escrito en un solo sitio.
+- **Tres tests nuevos de la app en la rápida:** usan la fixture del hito 5 de 3 días (0,9 s por simulación), como los dos humos de la 5.5.
+
+**Valores a mano**
+
+- **Pieza 4:**
+  - tres pacientes de nivel 4 clasificados en el minuto 10 con C = 30, 90 y 150: 2/3 = 66,7 %;
+  - si el tercero se va con C = 20, queda censurado: 2/2 = 100 %.
+- **Boxes:** 30 + 6,44 = 36,44, que redondea a 36 (2026); 30 + 6,56 = 36,56, que redondea a 37 (2027). Comprobado con `python3` (`round`).
+- **Cifras del balance:** los minutos de la apertura a la fusión y los commits de cada PR, con `gh pr view` y un script.
+
+**Medidas**
+
+- **N3** (`scripts/tests-completos.sh`, una sola, tras la revisión, con Docker parado): en verde en 25 min 29 s (lint y formato 0 s, núcleo 19:38, app 4:51 con 316 tests, notebooks 1:00). Es más lenta que la de la 5.6 (13:52): lo más probable es que la N2 del hook Stop corriera a la vez, al acabar un turno con la N3 en marcha; sin comprobar.
+- **Enlaces:** un script del scratchpad comprobó los enlaces relativos y sus anclajes en los 28 ficheros markdown cambiados, sin problemas, y que cada ADR del 0067 al 0079 está en el índice y en el registro del diseño.
+- **Selección `slow` de la app:** 145 tests en la rápida y 171 en la lenta; los seis humos siguen en la rápida.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en cuatro worktrees del `HEAD` (`affa6fb`), en paralelo.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | `model_label` ignora la versión: todo clínico es «hito 4 (v3)» | Fallan 3: los dos de `test_frames.py` (la columna y la versión desconocida) y el de Ejecuciones de `test_milestone5_pages.py`; pasan los cuatro casos de `test_catalog_and_results_open_both_models_and_legacy` | Como se predijo (3 fallan, 43 pasan) |
+| V2 | Etiquetas de las versiones 3 y 4 cambiadas | Fallan 4: la columna, Ejecuciones y los casos `[clinical]` y `[absurd]`; pasan `[provisional]`, `[legacy]` y la versión desconocida | Como se predijo (4 fallan, 42 pasan) |
+| V3 | Vuelve el segundo «¿Qué estoy viendo?» de Replay | Falla 1: el de la ayuda única | Como se predijo (`assert 2 == 1`; 32 pasan) |
+| V4 | La ayuda de Replay pierde el texto que venía de la página | Falla 1: el mismo, por «UTC+1 fijo» | Como se predijo (32 pasan) |
+
+La predicción de V1 se afinó antes de aplicarla: el plan decía «el resto de `test_frames.py` pasa», pero el test de la versión desconocida, escrito después, también cae con V1.
+
+En la primera pasada de V1 y de V2 falló además `test_three_clocks_match_core`, por tiempo, con cuatro worktrees ejecutando tests a la vez. Pasó solo y en la repetición: es el límite de 3 s de los `AppTest` antiguos con la máquina cargada, el pendiente de QA de `app/AGENTS.md`.
+
+**Revisión**
+
+`/code-review medium main...docs/h5-cierre`, con nueve hallazgos.
+
+| Hallazgo | Destino |
+| --- | --- |
+| Resultados y Comparar seguían diciendo «Modelo: Clínico» | **Corregido** (`703f530`), con `model_label` y aserciones en sus tests |
+| `incrementos.md` cita la entrada de la 5.8, que no existía | **Explicado:** es esta entrada, escrita antes del push |
+| El manual no decía que irse con el reloj justo en el máximo incumple | **Corregido** (`e0711dd`) en el README. Las filas de la especificación no cambian: la precisión de la 5.4 está justo debajo de la pieza 4, y la tabla de decisiones es la decisión tal como se tomó (el ADR 0074 la precisa) |
+| Ejemplos con «a los 30» en lugar de instantes y reloj derivado | **Corregido** (`e0711dd`) en el README, el ADR 0074, el diario y la frase nueva de la pieza 4 |
+| `app-v0.3.0` no contiene los retoques de la 5.8 | **Corregido** (`e0711dd`) el texto; una `app-v0.3.1` la decide Pedro (pendiente) |
+| `docs/README.md` decía 190 KB para `hito-5.md`, que medía unos 180 | **Comprobado** con `wc -c` después de esta entrada: 190.662 bytes, así que los 190 KB de la tabla quedan bien |
+| La ayuda de Simular fija 36 boxes y λ·W = 6,44 | **Explicado:** documenta la calibración de la 5.6, como el README y el diseño. Si se recalibra (#108), se actualizan los tres (pendiente) |
+| `CLINICAL_MODELS` repite lo que sabe el núcleo | **Explicado:** el núcleo da números de versión, no exportados en `edsim.runs.__all__`; el nombre en español para la interfaz es de la app, y la versión desconocida se ve («Clínico (vN)») |
+| La viñeta «lo observado no es la paciencia» se contradecía | **Corregido** (`e0711dd`): el sesgo de selección, explícito |
+
+**Pendiente**
+
+- **Pedro:**
+  - crear `v0.5-hito5` tras la fusión; después, la Release con `gh release create` (skill `/cerrar-hito`, «Después de la fusión»);
+  - decidir si los retoques de la app de la 5.8 llevan `app-v0.3.1`;
+  - revisar en el navegador Ejecuciones (columna Modelo), Replay (una ayuda), Simular y Resultados (ayudas).
+- **#108:** si se recalibra k o cambian los boxes, la ayuda de Simular, el README de la app y el diseño citan 36 boxes y 6,44.
+- **#103, #109, #110 y #112:** en el Backlog.
+- **Las propuestas de velocidad del balance:** por decidir, cada una en su tarea.
+- **QA de `app/tests`:** `default_timeout` en los `AppTest` antiguos (`test_three_clocks_match_core` cayó por tiempo con cuatro worktrees en paralelo).

@@ -70,6 +70,13 @@ def render_results_help() -> None:
             "nivel real, los graves que se fueron y los que habrían ingresado."
         )
         st.write(
+            "«Ver la verdad» es un interruptor al final, antes de las descargas. Sin él, "
+            "Resultados no enseña nada del ground truth: todo sale del log, como lo vería el "
+            "hospital. Con "
+            "él, el cumplimiento Manchester por nivel real y, con el hito 5, el abandono por "
+            "nivel real, siempre aparte de los KPI observables."
+        )
+        st.write(
             "El pretriaje tiene su indicador: 10 minutos o menos (objetivo diario 85 %) "
             "y más de 5 minutos; excluye el nivel 1. El nivel 1 se informa con mediana y p90, "
             "sin porcentaje. «—» significa que no hay pacientes para esa estadística. "
@@ -99,6 +106,12 @@ def render_runs_help() -> None:
             "también la copia de sus perfiles y su huella."
         )
         st.write(
+            "La columna Modelo sale de la versión del catálogo del log: «Provisional» (hito 3), "
+            "«Clínico · hito 4 (v3)» o «Clínico · hito 5 (v4)», el que trae el abandono, los "
+            "cuatro destinos y la espera de cama. Comparar solo empareja ejecuciones del "
+            "mismo catálogo."
+        )
+        st.write(
             "Las ejecuciones provisionales del hito 3 se siguen abriendo, pero la app "
             "ya no las crea. Una carpeta no válida no se puede abrir porque sus metadatos "
             "faltan, no son compatibles o su ruta no cumple las reglas."
@@ -119,6 +132,12 @@ def render_simulate_help(prior_days: int | None = None) -> None:
             "hito 5 ([camas]), la espera de cama: [mediana, p90] y el factor del turno del "
             "pedido (y de la estación, si el fichero lo trae). El resumen de los "
             "perfiles muestra su expectativa anual, no lo que dará una ejecución."
+        )
+        st.write(
+            "El centro base y el cumplidor tienen 36 boxes desde la calibración del hito 5: "
+            "los 30 del hito 4, que se calibró sin ingresados esperando cama, más los que "
+            "ellos ocupan de media por la ley de Little (λ·W = 6,44). La carga prevista del "
+            "modelo del hito 5 aún no existe (issue #103): Simular lo avisa y simula igual."
         )
         st.write(
             "La carga prevista sale de una muestra de pacientes del modelo clínico. "
@@ -172,8 +191,18 @@ def render_replay_help() -> None:
     """Explain the plan's zones, the hallway mark and the abandonment as a separate closure."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
-            "El plano reconstruye el servicio en el instante elegido: colas, triaje, boxes, "
-            "médicos y las salidas de la última hora. Los colores son el nivel asignado."
+            "El plano reconstruye el log hasta el instante elegido, incluidos sus eventos: "
+            "colas, triaje, boxes, médicos y las salidas de la última hora. Los contadores "
+            "usan las mismas curvas que Resultados. El triaje atiende por llegada y la cola "
+            "de box por nivel y llegada; solo el nivel 1 puede desalojar."
+        )
+        st.write(
+            "La edad y el motivo de la ficha solo aparecen cuando ya constan en el log. "
+            "Los colores muestran el nivel asignado, nunca el real. La sala de resultados "
+            "está fuera del box; su etiqueta distingue espera de pruebas y vuelta al box. "
+            "El laboratorio sigue trabajando si el paciente pierde su box. Los bordes "
+            "marcan desalojos de los últimos 60 minutos. Ocupados / plantilla puede "
+            "superar 1 al bajar la plantilla: nadie se interrumpe. Horas UTC+1 fijo."
         )
         st.write(
             "Con el modelo del hito 5, un ingresado espera la cama en su box («Esperando "

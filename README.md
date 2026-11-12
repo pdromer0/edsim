@@ -4,6 +4,8 @@ Simulador de urgencias hospitalarias que genera datos sintéticos realistas, en 
 
 El proyecto se construye paso a paso, por hitos, con un doble objetivo: obtener el sistema y aprender sus fundamentos.
 
+**Estado:** hitos 0 a 6 cerrados (el 6, antes que el 5); el modelo v0 está completo, con abandono, cuatro destinos y espera de cama (`v0.5-hito5`). El siguiente es el hito 7, persistencia ([hoja de ruta](docs/diseno.md#hoja-de-ruta)).
+
 ## Requisitos
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/). Instala Python 3.13 automáticamente según `.python-version`.

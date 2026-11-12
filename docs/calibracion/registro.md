@@ -666,7 +666,9 @@ del hito 4, que se calibró sin boxes ocupados por ingresados, más los que ocup
 espera de cama, por la ley de Little (L = λ · W = Σ esperas / minutos de la ventana),
 redondeado al entero más cercano y recalculado con la cama y la paciencia elegidas. Con 37,
 λ · W salió 6,44, así que la regla da **36**; se rehízo el orden con 36, y con la cama y la
-paciencia finales λ · W es otra vez 6,44 con 2026 (6,56 con 2027): 36 es estable. Las copias
+paciencia finales λ · W es otra vez 6,44 con 2026: 36 es estable con la semilla de ajuste,
+que es la que usa la regla. Con la de comprobación, 2027, λ · W = 6,56 daría 37 (30 + 6,56 =
+36,56). Las copias
 del hito 4 de `tests/data` se quedan en 30. `calibracion evaluar` da la medida en la línea
 «Esperando cama (ley de Little …)»; por las curvas de la ejecución, 6,50 (de 4,91 a 8,00 por
 réplica).

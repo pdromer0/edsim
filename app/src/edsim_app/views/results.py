@@ -28,6 +28,7 @@ from edsim_app.frames import (
     kpis_frame,
     level_one_clocks_frame,
     little_frame,
+    model_label,
     observed_distribution_frames,
     occupancy_frame,
     pretriage_frame,
@@ -56,7 +57,7 @@ def render_header(info: RunInfo) -> None:
     st.header(info.run_id)
     created = format_created_at(info.created_at)
     st.write(f"Variante: **{info.variant}** · Huella del centro: `{info.center_fingerprint}`")
-    st.caption(f"Modelo: {'Clínico' if info.is_clinical else 'Provisional'}")
+    st.caption(f"Modelo: {model_label(info)}")
     if info.is_clinical:
         st.caption(
             f"Perfiles: {info.clinical_profiles_path} · "

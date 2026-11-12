@@ -10,7 +10,7 @@ Cuando una decisión es difícil de revertir, afecta a varias partes del sistema
 
 ## Nombres
 
-`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y del 0067 al 0079 están reservados a las decisiones del hito 5: un ADR nuevo toma el número de su decisión (hoy, a partir del 0083), no el primero que falte.
+`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y un ADR nuevo toma el número de su decisión (hoy, a partir del 0084), no el primero que falte. Los del 0067 al 0079, las decisiones del hito 5, se escribieron en su cierre.
 
 ## Plantilla
 
@@ -106,9 +106,22 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0064. Etiqueta de cierre `v0.6-hito6`](0064-etiqueta-v0-6-hito6.md)
 - [0065. El simulador corre fuera de Docker; Compose levanta solo Kafka y la consola](0065-simulador-fuera-de-docker.md)
 - [0066. `run_id` del directo con la semilla y la hora de arranque; el replay conserva el suyo](0066-run-id-del-directo.md)
+- [0067. El ruido de triaje que crece con la saturación y el re-triaje van a la v2](0067-ruido-de-triaje-y-re-triaje-a-la-v2.md)
+- [0068. El modelo del hito 5 lo elige un bloque de todo o nada en los ficheros](0068-bloque-del-hito-5-de-todo-o-nada.md)
+- [0069. Abandono solo antes del primer médico, desde tres sitios](0069-abandono-antes-del-primer-medico.md)
+- [0070. Paciencia lognormal por nivel real, contada desde la llegada](0070-paciencia-lognormal-por-nivel-real.md)
+- [0071. Cuatro destinos con una logística multinomial sobre la gravedad real](0071-cuatro-destinos-con-logistica-multinomial.md)
+- [0072. Espera de cama lognormal con un factor del turno del pedido](0072-espera-de-cama-lognormal-con-factor-de-turno.md)
+- [0073. Catálogo versión 4: abandono, cama y cuatro destinos](0073-catalogo-version-4.md)
+- [0074. Métricas con abandono: medias de los atendidos y cumplimiento con censura](0074-metricas-con-censura-del-abandono.md)
+- [0075. Calibración del hito 5 en orden, con un mando por objetivo](0075-calibracion-en-orden-con-un-mando-por-objetivo.md)
+- [0076. El ground truth guarda todo lo sorteado, también el destino contrafactual](0076-ground-truth-con-lo-sorteado-y-el-contrafactual.md)
+- [0077. «Esperando cama», con una marca de pasillo, y el abandono contado aparte](0077-estado-esperando-cama-con-marca-de-pasillo.md)
+- [0078. La app enseña el hito 5 entero](0078-la-app-ensena-el-hito-5.md)
+- [0079. Ocho tareas en orden y la etiqueta `v0.5-hito5`](0079-ocho-tareas-en-orden-y-etiqueta-v0-5-hito5.md)
 - [0080. El repositorio es la fuente de verdad de la documentación](0080-repositorio-fuente-de-verdad-de-la-documentacion.md)
 - [0081. GitHub como gestor del trabajo: issues, milestones, tablero y dependencias nativas](0081-github-como-gestor-del-trabajo.md)
 - [0082. El ciclo de cada tarea se escribe una vez en `tarea.md` y lo ejecutan las skills](0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)
 - [0083. Una sola N3, después de la revisión propia](0083-una-sola-n3-tras-la-revision-propia.md)
 
-El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Por eso falta del 0067 al 0079: son las decisiones del hito 5, reservadas hasta que se cierre.
+El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Los del 0067 al 0079, las decisiones del hito 5, se escribieron al cerrarlo (tarea 5.8), después de los de la P.2 y del 0083.
