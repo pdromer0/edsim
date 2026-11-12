@@ -67,6 +67,18 @@ def format_created_at(value: str) -> str:
     return datetime.fromisoformat(value).astimezone(TIMEZONE).strftime("%d/%m/%Y %H:%M:%S")
 
 
+CLINICAL_MODELS = {3: "Clínico · hito 4 (v3)", 4: "Clínico · hito 5 (v4)"}
+"""The clinical model of a run by the version of the catalog of its log (H5-2)."""
+
+
+def model_label(info: RunInfo) -> str:
+    """Name the model of a run, telling milestone 4 from milestone 5 by the catalog."""
+    if not info.is_clinical:
+        return "Provisional"
+    version = info.catalog_version
+    return CLINICAL_MODELS.get(version, f"Clínico (v{version})")
+
+
 COLUMNS = (
     "Ejecución",
     "Variante del centro",
@@ -95,7 +107,7 @@ def runs_frame(runs: Sequence[RunInfo]) -> pd.DataFrame:
                 info.warmup_days,
                 info.seed,
                 info.center_fingerprint[:8],
-                "Clínico" if info.is_clinical else "Provisional",
+                model_label(info),
                 info.clinical_profiles_fingerprint[:8] if info.is_clinical else "—",
                 info.arrivals_per_day,
                 "correctas"

@@ -107,7 +107,7 @@ def test_catalog_and_results_open_both_models_and_legacy(clinical_catalog, run_i
     app.switch_page("views/runs.py").run()
     frame = app.dataframe[0].value.set_index("Ejecución")
     assert frame.loc[run_id, "Modelo"] == (
-        "Clínico" if run_id in ("clinical", "absurd") else "Provisional"
+        "Clínico · hito 4 (v3)" if run_id in ("clinical", "absurd") else "Provisional"
     )
     if run_id in ("clinical", "absurd"):
         assert frame.loc[run_id, "Huella de perfiles clínicos"] != "—"

@@ -104,6 +104,17 @@ def test_episodes_opens_the_card_of_a_hallway_patient(h5_catalog):
     assert destinations == ["Todos", "Alta", "Ingreso", "Traslado", "Exitus"]
 
 
+def test_runs_table_tells_the_two_clinical_models_apart(h5_catalog):
+    store = RunStore(h5_catalog)
+    versions = {info.run_id: info.catalog_version for info in store.list()}
+    assert versions == {"h4": 3, "h5": 4}
+    app = open_page("views/runs.py")
+    assert app.title[0].value == "Ejecuciones"
+    frame = app.dataframe[0].value.set_index("Ejecución")
+    assert frame.loc["h4", "Modelo"] == "Clínico · hito 4 (v3)"
+    assert frame.loc["h5", "Modelo"] == "Clínico · hito 5 (v4)"
+
+
 # --- Simular with a center with [camas] (task 5.5) -----------------------------------------
 
 
