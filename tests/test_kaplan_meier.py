@@ -75,6 +75,23 @@ def test_sin_observaciones():
     assert (km.n, km.times) == (0, ()) and km.at(5) == 1.0 and km.at_risk_at(0) == 0
 
 
+def test_error_tipico_de_greenwood_a_mano():
+    # Tiempos 10 (E), 20 (C), 30 (E), 40 (E). Greenwood: Var S = S² · Σ d / (n (n − d)).
+    # En 10: S = 0,75 y Σ = 1/(4·3) = 1/12 → Var = 0,5625/12 = 0,046875 → ET = 0,216506.
+    # En 30: S = 0,375 y Σ = 1/12 + 1/(2·1) = 7/12 → Var = 0,140625 · 7/12 = 0,08203125
+    # → ET = 0,286411. En 40: todos los que quedan lo tienen, S = 0 y su error también.
+    km = kaplan_meier([10, 20, 30, 40], [True, False, True, True])
+    assert km.standard_error_at(5) == 0.0
+    assert km.standard_error_at(10) == pytest.approx(math.sqrt(0.046875), abs=1e-12)
+    assert km.standard_error_at(25) == pytest.approx(math.sqrt(0.046875), abs=1e-12)
+    assert km.standard_error_at(30) == pytest.approx(math.sqrt(0.08203125), abs=1e-12)
+    assert km.standard_error_at(40) == 0.0 and km.standard_error_at(1e6) == 0.0
+
+
+def test_el_error_tipico_sin_eventos_es_cero():
+    assert kaplan_meier([5, 7], [False, False]).standard_error_at(6) == 0.0
+
+
 def test_el_orden_de_entrada_no_importa():
     a = kaplan_meier([40, 10, 30, 20], [True, True, True, False])
     b = kaplan_meier([10, 20, 30, 40], [True, False, True, True])

@@ -543,6 +543,9 @@ class KaplanMeier:
             a censoring at the same time still counts (the event goes first).
         events: Events at each of them.
         survival: ``S(t)`` after each of them: the product of ``1 - d / n``.
+        greenwood: At each of them, the sum of ``d / (n (n - d))`` up to it: the
+            relative variance of ``S`` (the term where everyone at risk has the
+            event is left out: ``S`` is 0 from there and so is its error).
         n: Observations, events and censored.
         observed: Times of all the observations, increasing: the risk set at
             any ``t`` is read from them (``at_risk_at``).
@@ -555,6 +558,7 @@ class KaplanMeier:
     at_risk: tuple[int, ...]
     events: tuple[int, ...]
     survival: tuple[float, ...]
+    greenwood: tuple[float, ...]
     n: int
     observed: tuple[float, ...]
 
@@ -568,6 +572,16 @@ class KaplanMeier:
         """The observations whose time is at least ``t``: 0 above the largest."""
         _check_time(t)
         return self.n - bisect_left(self.observed, t)
+
+    def standard_error_at(self, t: float) -> float:
+        """The standard error of ``S(t)`` by Greenwood's formula: ``S sqrt(Σ d / (n (n - d)))``.
+
+        0 before the first event and where ``S`` is 0. It is the error of the
+        sampling alone, and it grows where few remain at risk.
+        """
+        _check_time(t)
+        i = bisect_right(self.times, t)
+        return 0.0 if i == 0 else self.survival[i - 1] * math.sqrt(self.greenwood[i - 1])
 
 
 def _check_time(t: float) -> None:
@@ -607,11 +621,15 @@ def kaplan_meier(times: Sequence[float], events: Sequence[bool]) -> KaplanMeier:
         event_times, distinct, side="left"
     )
     survival = np.cumprod(1.0 - counts / at_risk) if len(distinct) else np.empty(0)
+    remaining = at_risk - counts
+    terms = np.divide(counts, at_risk * remaining, out=np.zeros(len(distinct)), where=remaining > 0)
+    greenwood = np.cumsum(terms)
     return KaplanMeier(
         times=tuple(float(x) for x in distinct),
         at_risk=tuple(int(x) for x in at_risk),
         events=tuple(int(x) for x in counts),
         survival=tuple(float(x) for x in survival),
+        greenwood=tuple(float(x) for x in greenwood),
         n=int(n),
         observed=tuple(float(x) for x in t),
     )
