@@ -30,6 +30,7 @@ from edsim.profiles.config import load_profiles
 
 DAY = 1440.0
 CONFIG = Path(__file__).parent.parent / "config"
+DATA_H4 = Path(__file__).parent / "data"  # el config/ del hito 4, congelado en la tarea 5.6
 
 
 def record(n: int, arrival: float, level: int, classified: float) -> EpisodeRecord:
@@ -218,16 +219,17 @@ def test_esperas_medida_desconocida():
 
 @pytest.fixture(scope="module")
 def short_run():
-    """Tres días del modelo clínico con config/: la tabla y el ground truth."""
+    """Tres días del modelo clínico del hito 4 (sin abandono: el cumplimiento cuenta a los
+    completados), con sus copias congeladas: la tabla y el ground truth."""
     sink = MemorySink()
     result = simulate_ed(
-        load_center(CONFIG / "centro.toml"),
+        load_center(DATA_H4 / "centro_h4.toml"),
         load_profile(CONFIG / "llegadas.toml"),
         3,
         2026,
         sink=sink,
         warmup_days=1,
-        profiles=load_profiles(CONFIG / "perfiles.toml"),
+        profiles=load_profiles(DATA_H4 / "perfiles_h4.toml"),
     )
     return episode_table(sink.events), result.ground_truth
 

@@ -1,7 +1,14 @@
-# Objetivos de calibración del centro base. Ver docs/specs/hito-4.md («Calibración»).
+# Objetivos de calibración del centro base. Ver docs/specs/hito-4.md («Calibración») y,
+# para los del hito 5 (los cinco últimos), docs/specs/hito-5.md («Calibración y objetivos»).
 #
 # Cada objetivo compara una medida por paciente de los niveles asignados que
 # indica, en la ventana después del calentamiento, con una horquilla observada.
+# Con "porcentaje_de_llegadas", un suceso (medida "left", se fue sin ser visto, o
+# "departure", salió) sobre todos los llegados a la ventana, sin niveles; con destino,
+# solo los que salen a él. Con el abandono, cada medida cuenta a los suyos (tarea 5.6):
+# el pretriaje, a los triados; los relojes, a los atendidos; la estancia, también a
+# quien sigue dentro al final, con su cota. Los del abandono y los destinos solo
+# aplican al modelo del hito 5.
 # Uso: "ajuste" (elige la plantilla de un mando) o "comprobacion" (reservado
 # para comprobar el ajuste con otra semilla; nunca elige). Las normas
 # (Manchester con el reloj C, pretriaje en 10 minutos) no son objetivos.
@@ -73,3 +80,68 @@ uso = "comprobacion"
 fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
 enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
 nota = "Incluye menores de 15 años"
+
+[objetivos.abandono]
+# Mando: paciencia (tarea 5.6). Salidas voluntarias sobre todas las urgencias, «sin
+# observación». Horquilla del 1,8 % del Clínic al 3,6 % del peor año del Aljarafe; el
+# estándar de SEMES es como mucho el 2 %.
+medida = "left"
+estadistico = "porcentaje_de_llegadas"
+referencia = 1.82
+horquilla = [1, 4]
+uso = "ajuste"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Salida voluntaria, sin observación. Incluye menores de 15 años"
+
+[objetivos.estancia_ingresados]
+# Mando: espera de cama (tarea 5.6). De la llegada a la salida de los que ingresan; los que
+# siguen esperando cama al final entran con su cota.
+medida = "stay"
+destino = "ingreso"
+niveles = [1, 2, 3, 4, 5]
+estadistico = "media"
+referencia = 472.5
+horquilla = [360, 600]
+uso = "ajuste"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Tiempo de permanencia de los ingresados, sin observación. Incluye menores de 15 años"
+
+[objetivos.ingresados_mas_4h]
+medida = "stay"
+destino = "ingreso"
+niveles = [1, 2, 3, 4, 5]
+estadistico = "porcentaje_sobre_umbral"
+umbral = 240
+referencia = 49.69
+horquilla = [35, 65]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Ingresados con más de 4 horas en urgencias, sin observación. Incluye menores de 15 años"
+
+[objetivos.estancia_atendidos]
+# No se ajusta: el único mando serían las duraciones, fijas por criterio (decisión 41).
+medida = "stay"
+niveles = [1, 2, 3, 4, 5]
+estadistico = "media"
+referencia = 162.2
+horquilla = [120, 210]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Tiempo de permanencia de todos los atendidos, sin observación. Incluye menores de 15 años"
+
+[objetivos.ingreso_observado]
+# El ingreso se deriva en perfiles.toml (9,90 % de los llegados, con el destino sorteado);
+# aquí se comprueba el observado, que rebaja quien habría ingresado y se fue.
+medida = "departure"
+destino = "ingreso"
+estadistico = "porcentaje_de_llegadas"
+referencia = 9.90
+horquilla = [8, 13]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Ingreso de adultos: (8,55 − 0,21 × 3,47) / 0,79 = 9,90 %, con un 21 % de menores que ingresan un 3,47 %"

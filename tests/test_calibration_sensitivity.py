@@ -310,7 +310,7 @@ def test_sensibilidad_corta_cada_candidato_con_su_plantilla(monkeypatch):
     center = load_center(DATA / "centro_sala_ejemplo.toml")
     arrivals = load_profile(DATA / "llegadas_ejemplo.toml")
     profiles = load_profiles(DATA / "perfiles_ejemplo.toml")
-    targets = load_targets(ROOT / "config" / "objetivos.toml")
+    targets = load_targets(DATA / "objetivos_h4.toml")  # el ejemplo es del hito 4
     expected = rule_staffings(nurse_loads(profiles, arrivals, center.shift_starts), 0.6, 0.9)
     assert len(expected) >= 2  # hay varias plantillas que comparar
 
@@ -353,7 +353,7 @@ def test_plantillas_dadas_en_su_orden_y_cada_una_con_su_plantilla(monkeypatch):
     center = load_center(DATA / "centro_sala_ejemplo.toml")
     arrivals = load_profile(DATA / "llegadas_ejemplo.toml")
     profiles = load_profiles(DATA / "perfiles_ejemplo.toml")
-    targets = load_targets(ROOT / "config" / "objetivos.toml")
+    targets = load_targets(DATA / "objetivos_h4.toml")  # el ejemplo es del hito 4
     # Dos plantillas de médicos que no son de la regla, en un orden cualquiera.
     given = [RuleStaffing((9, 9, 4), 0.80, 0.81), RuleStaffing((14, 13, 5), 0.60, 0.61)]
 

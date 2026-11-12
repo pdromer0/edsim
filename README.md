@@ -24,7 +24,7 @@ uv run edsim mm1 comparar    # M/M/1: tabla de teoría frente a simulación
 uv run edsim mm1 barrido     # M/M/1: CSV y gráfica de Wq frente a ρ en resultados/mm1/
 uv run edsim llegadas generar  # llegadas: dos CSV en resultados/llegadas/
 uv run edsim llegadas validar  # llegadas: cinco pruebas y tres gráficas
-uv run edsim motor simular   # motor, modelo clínico (config/perfiles.toml): log JSONL, ground truth y resumen en resultados/ejecuciones/<run_id>/
+uv run edsim motor simular   # motor, modelo del hito 5 (config/): log JSONL, ground truth y resumen en resultados/ejecuciones/<run_id>/
 uv run edsim motor simular --provisional --centro tests/data/centro_ejemplo.toml  # el modelo provisional del hito 3
 uv run edsim motor validar   # motor, con el modelo provisional y su centro: tabla de validación y cuatro gráficas (unos 2 min)
 uv run pytest                # tests
@@ -205,7 +205,11 @@ con el modelo clínico, `perfiles.toml`, y los metadatos versionados de `run.jso
 público `edsim.runs.simulate_run` para escribir este formato de forma atómica.
 
 Desde el cierre del hito 4, `motor simular` usa el modelo clínico: cada paciente
-sale de los perfiles, `config/perfiles.toml` u otro con `--perfiles`. Con
+sale de los perfiles, `config/perfiles.toml` u otro con `--perfiles`. Desde la tarea
+5.6, `config/` es el modelo del hito 5 (abandono, destinos y espera de cama: el bloque
+del hito 5 en `perfiles.toml` y `[camas]` en `centro.toml`); el del hito 4 se simula
+con sus ficheros, congelados en `tests/data/` (`--centro tests/data/centro_h4.toml
+--perfiles tests/data/perfiles_h4.toml`). Con
 `--provisional`, simula el modelo provisional del hito 3, que se queda para la
 validación del motor y necesita un centro con `[triaje]`, `[duraciones]` y
 `[pruebas]`: `config/centro.toml` ya no las tiene, y el centro del provisional es

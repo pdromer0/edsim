@@ -727,6 +727,15 @@ def ended_in_window(
     return [e for e in table if start <= e.arrival < end and e.end is not None]
 
 
+def triaged_in_window(
+    table: Sequence[EpisodeRecord], start: float, end: float
+) -> list[EpisodeRecord]:
+    """Episodes that arrived in ``[start, end)``, ended and were triaged: the ones whose
+    pretriage is measured (H5-8). Those who depart and, in version 4, those who leave
+    after their triage; with the logs of versions 1 to 3, ``completed_in_window``."""
+    return [e for e in ended_in_window(table, start, end) if e.level is not None]
+
+
 def _level_metrics(level: int | None, episodes: Sequence[EpisodeRecord]) -> LevelMetrics:
     mean: dict[str, float | None] = {}
     p90: dict[str, float | None] = {}

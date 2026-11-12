@@ -534,3 +534,208 @@ def test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas(tmp_path, capsys, m
     ((seed, _, replicas, days, dates),) = calls
     assert (seed, replicas, days) == (8, 12, 2)
     assert [d.isoformat() for d in dates] == MONDAYS_2026
+
+
+# --- evaluar con el modelo del hito 5 (tarea 5.6) -----------------------------------------
+
+H5 = [
+    "--centro",
+    str(DATA / "centro_h5_ejemplo.toml"),
+    "--llegadas",
+    str(DATA / "llegadas_ejemplo.toml"),
+    "--perfiles",
+    str(DATA / "perfiles_h5_ejemplo.toml"),
+]
+
+
+def h5_targets_file(path: Path) -> Path:
+    """Los objetivos de targets_file más los del hito 5, con horquillas anchas."""
+    targets_file(path)
+    source = 'fuente = "a mano"\nenlace = "https://example.org"\n'
+    with path.open("a", encoding="utf-8") as f:
+        f.write(
+            f"""
+[objetivos.abandono]
+medida = "left"
+estadistico = "porcentaje_de_llegadas"
+horquilla = [0, 100]
+uso = "ajuste"
+{source}
+[objetivos.estancia_ingresados]
+medida = "stay"
+destino = "ingreso"
+niveles = [1, 2, 3, 4, 5]
+estadistico = "media"
+horquilla = [0, 100000]
+uso = "ajuste"
+{source}
+[objetivos.estancia_atendidos]
+medida = "stay"
+niveles = [1, 2, 3, 4, 5]
+estadistico = "media"
+horquilla = [0, 100000]
+uso = "comprobacion"
+{source}"""
+        )
+    return path
+
+
+def test_evaluar_el_hito_5_con_cotas_recuentos_y_cuello_de_botella(tmp_path, capsys):
+    out_dir = tmp_path / "salida"
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    code = main(
+        ["calibracion", "evaluar", *H5, "--objetivos", str(targets), *SHORT]
+        + ["--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "No aplican" not in out
+    assert "Se van sin ser vistos: " in out
+    assert "Ingresados esperando cama al final del vaciado" in out
+    assert "Cuello de botella (atendidos de los niveles 2 a 5, media entre réplicas)" in out
+    rows = {r["objetivo"]: r for r in read_rows(out_dir / "evaluacion.csv")}
+    assert rows["estancia_ingresados"]["destino"] == "ingreso"
+    # Las réplicas del CSV llevan los recuentos y, por objetivo, cuántos entran con su cota.
+    replicas = read_rows(out_dir / "evaluacion_replicas.csv")
+    abandono = [r for r in replicas if r["objetivo"] == "abandono"]
+    assert len(abandono) == 2 and all(int(r["se_van"]) > 0 for r in abandono)
+    bounded = sum(int(r["acotados"]) for r in replicas if r["objetivo"] == "estancia_ingresados")
+    assert (rows["estancia_ingresados"]["cota"] == "True") == (bounded > 0)
+    # El porcentaje de llegadas no tiene desglose por nivel.
+    assert {r["objetivo"] for r in read_rows(out_dir / "evaluacion_niveles.csv")} == {
+        "porcentaje_sobre_manchester"
+    }
+
+
+def test_evaluar_el_hito_4_con_objetivos_del_hito_5_no_los_mide(tmp_path, capsys):
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    code = main(
+        ["calibracion", "evaluar", *EXAMPLE, "--objetivos", str(targets), *SHORT]
+        + ["--salida", str(tmp_path / "salida")]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (
+        "No aplican (el modelo no tiene el bloque del hito 5: sin abandono ni sus destinos;"
+        " no se miden, no son un 0 %): abandono, estancia_ingresados"
+    ) in out
+    # La estancia de todos sí existe en el hito 4; sin abandono ni camas, sin sus recuentos.
+    assert "estancia_atendidos" in out
+    assert "Se van sin ser vistos" not in out and "Cuello de botella" not in out
+    rows = {r["objetivo"] for r in read_rows(tmp_path / "salida" / "evaluacion.csv")}
+    assert "abandono" not in rows and "estancia_atendidos" in rows
+
+
+def test_evaluar_con_el_bloque_del_hito_5_en_un_solo_fichero_es_un_error_de_uso(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(evaluate, "simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    centro = str(DATA / "centro_h5_ejemplo.toml")
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            ["calibracion", "evaluar", *EXAMPLE, "--centro", centro, *SHORT]
+            + ["--objetivos", str(targets_file(tmp_path / "o.toml"))]
+            + ["--salida", str(tmp_path / "salida")]
+        )
+    assert exit_info.value.code == 2
+    assert "missing [abandono], [destinos] and ingreso in the reasons" in capsys.readouterr().err
+
+
+# --- sensibilidad de los mandos del hito 5 (tarea 5.6) -------------------------------------
+
+
+def test_sensibilidad_de_la_espera_de_cama_con_sus_valores(tmp_path, capsys):
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "espera_cama", "--valores", "180,240"]
+        + [*H5, "--objetivos", str(targets), *SHORT, "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (
+        "Sensibilidad del mando espera_cama (mediana de la espera de cama (min; p90 = 3 ·"
+        " mediana)) en 180, 240"
+    ) in out
+    assert "mediana (min)" in out and "box / médico (2 a 5)" in out
+    assert "Elección (entre los que pasan estancia_ingresados" in out
+    rows = read_rows(out_dir / "sensibilidad_espera_cama.csv")
+    assert {r["valor"] for r in rows} == {"180.0", "240.0"}
+    assert {r["manana"] for r in rows} == {""}
+    # Más espera de cama, más estancia de los ingresados, con los mismos pacientes.
+    stay = {r["valor"]: float(r["media"]) for r in rows if r["objetivo"] == "estancia_ingresados"}
+    assert stay["240.0"] > stay["180.0"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["--mando", "paciencia", *EXAMPLE],
+            "the knob paciencia needs the milestone 5 model",
+        ),
+        (
+            ["--mando", "espera_cama", "--u-min", "0.6", *H5],
+            "--u-min: la rejilla de u es de los mandos de plantilla; con espera_cama, --valores",
+        ),
+        (["--mando", "medicos", "--valores", "2", *H5], "--valores es de espera_cama y paciencia"),
+        (["--mando", "paciencia", "--valores", "0", *H5], "a value of paciencia must be in"),
+        (["--mando", "paciencia", "--valores", "1,x", *H5], "no son números separados por comas"),
+        # El modelo antes que la rejilla: con el hito 4, la causa es el modelo (revisión).
+        (
+            ["--mando", "espera_cama", "--u-min", "0.6", *EXAMPLE],
+            "the knob espera_cama needs the milestone 5 model",
+        ),
+    ],
+    ids=[
+        "hito_4",
+        "u_con_un_valor",
+        "valores_con_plantilla",
+        "valor_cero",
+        "no_numeros",
+        "hito_4_con_u",
+    ],
+)
+def test_sensibilidad_de_los_mandos_del_hito_5_errores_de_uso(
+    argv, message, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(evaluate, "simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            ["calibracion", "sensibilidad", *argv, "--objetivos", str(targets), *SHORT]
+            + ["--salida", str(tmp_path / "salida")]
+        )
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_evaluar_un_porcentaje_sin_regla_para_quien_se_va_es_un_error_de_uso(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(evaluate, "simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    with targets.open("a", encoding="utf-8") as f:
+        f.write(
+            """
+[objetivos.box_mas_30]
+medida = "box_wait"
+niveles = [4]
+estadistico = "porcentaje_sobre_umbral"
+umbral = 30
+horquilla = [0, 100]
+uso = "comprobacion"
+fuente = "a mano"
+enlace = "https://example.org"
+"""
+        )
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            ["calibracion", "evaluar", *H5, "--objetivos", str(targets), *SHORT]
+            + ["--salida", str(tmp_path / "salida")]
+        )
+    assert exit_info.value.code == 2
+    assert "objetivos.box_mas_30: the measure 'box_wait' has no clock" in capsys.readouterr().err

@@ -15,6 +15,8 @@ from datetime import date
 from pathlib import Path
 
 from edsim.calibration.evaluate import (
+    ADMITTED_CENSORED_WARNING,
+    BOTTLENECK_LEVELS,
     CENSORED_WARNING,
     COMPLIANCE_LEVELS,
     COMPLIANCE_SHARE_OUT,
@@ -24,12 +26,14 @@ from edsim.calibration.evaluate import (
     ReplicaValues,
     SensitivityRow,
     TargetResult,
+    candidate_key,
     level_breakdown,
     passes_fit,
     pooled_value,
 )
-from edsim.calibration.staffing import DOCTORS
-from edsim.calibration.targets import FIT, Target
+from edsim.calibration.knobs import BED_P90_RATIO, BED_WAIT, VALUE_KNOBS, KnobValue
+from edsim.calibration.staffing import DOCTORS, RuleStaffing
+from edsim.calibration.targets import FIT, PERCENTAGE, Target
 
 PARAMETER_COLUMNS = (
     "centro",
@@ -54,6 +58,7 @@ EVALUATION_COLUMNS = (
     "niveles",
     "estadistico",
     "umbral",
+    "destino",
     "uso",
     "referencia",
     "horquilla_min",
@@ -67,6 +72,7 @@ EVALUATION_COLUMNS = (
     "ic_estrecho",
     "resultado",
     "media_por_paciente",
+    "cota",
     *PARAMETER_COLUMNS,
 )
 
@@ -75,8 +81,15 @@ REPLICA_COLUMNS = (
     "fecha_inicio",
     "llegados_ventana",
     "censurados",
+    "se_van",
+    "atendidos_dentro",
+    "ingresados",
+    "ingresados_esperando_cama",
+    "espera_box",
+    "espera_medico",
     "objetivo",
     "valor",
+    "acotados",
     "dias_fuera",
     *PARAMETER_COLUMNS,
 )
@@ -85,12 +98,16 @@ LEVEL_COLUMNS = ("objetivo", "nivel", "porcentaje", "contribucion", *PARAMETER_C
 
 SENSITIVITY_COLUMNS = (
     "mando",
+    "valor",
     "manana",
     "tarde",
     "noche",
     "u_min",
     "u_max",
     "censurados_max",
+    "ingresados_esperando_cama_max",
+    "espera_box",
+    "espera_medico",
     *(f"fuera_manchester_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
     *(f"dias_fuera_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
     *(f"dias_medidos_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
@@ -100,6 +117,7 @@ SENSITIVITY_COLUMNS = (
     "ic_max",
     "dias_fuera",
     "resultado",
+    "cota",
     "elegida",
     "cumplidor",
     *PARAMETER_COLUMNS,
@@ -126,6 +144,21 @@ def _optional(value: object) -> object:
     return "" if value is None else value
 
 
+def is_bound(replicas: Sequence[ReplicaValues], target: Target) -> bool:
+    """Whether the mean of ``target`` is a lower bound: some replication has a patient
+    still inside at the horizon in it (``TargetValues.bounded``)."""
+    return any(r.targets[target.name].bounded for r in replicas)
+
+
+def _mean_text(replicas: Sequence[ReplicaValues], target: Target, mean: float) -> str:
+    return f"{'≥' if is_bound(replicas, target) else ''}{mean:.2f}"
+
+
+def _nanmean(values: Sequence[float]) -> float:
+    known = [v for v in values if v == v]
+    return sum(known) / len(known) if known else float("nan")
+
+
 # --- Evaluation -------------------------------------------------------------------------------
 
 _NAME_WIDTH = 30
@@ -144,7 +177,61 @@ def _censored_lines(replicas: Sequence[ReplicaValues]) -> list[str]:
             f"AVISO: alguna réplica pasa del {100 * CENSORED_WARNING:g} % de censurados: las "
             "esperas pueden estar sesgadas a la baja"
         )
+    left = sum(r.left for r in replicas)
+    admitted = sum(r.admitted for r in replicas)
+    if not left and not admitted:
+        return lines  # without the milestone 5 block: nobody leaves nor asks for a bed
+    seen = max(replicas, key=lambda r: r.censored_seen)
+    lines.append(
+        f"Se van sin ser vistos: {left} en total. Atendidos dentro al final del vaciado"
+        f" (fuera de los relojes y del cumplimiento): {sum(r.censored_seen for r in replicas)}"
+        f" en total, máximo {seen.censored_seen} en una réplica"
+    )
+    bed = max(replicas, key=lambda r: r.censored_admitted_share)
+    lines.append(
+        f"Ingresados esperando cama al final del vaciado (su estancia entra con su cota, ≥):"
+        f" máximo {bed.censored_admitted} de {bed.admitted}"
+        f" ({100 * bed.censored_admitted_share:.2f} %) en una réplica;"
+        f" {sum(r.censored_admitted for r in replicas)} de {admitted} en total"
+    )
+    little = [r.waiting_for_bed for r in replicas]
+    lines.append(
+        f"Esperando cama (ley de Little, λ · W = Σ esperas / minutos de la ventana): media"
+        f" {_nanmean(little):.2f} entre réplicas, de {min(little):.2f} a {max(little):.2f};"
+        " casi todos en su box"
+    )
+    if bed.censored_admitted_share > ADMITTED_CENSORED_WARNING:
+        lines.append(
+            f"AVISO: alguna réplica pasa del {100 * ADMITTED_CENSORED_WARNING:g} % de"
+            " ingresados esperando cama al final: la estancia de los ingresados es una cota"
+            " que puede quedarse corta"
+        )
     return lines
+
+
+def bottleneck_line(replicas: Sequence[ReplicaValues]) -> str:
+    """The wait for a box against the wait for a doctor of the attended patients of levels
+    2 to 5, mean between replications (task 5.6): the boxes are the bottleneck when the
+    first is larger."""
+    box = _nanmean([r.box_wait for r in replicas])
+    doctor = _nanmean([r.doctor_wait for r in replicas])
+    levels = f"{BOTTLENECK_LEVELS[0]} a {BOTTLENECK_LEVELS[-1]}"
+    line = (
+        f"Cuello de botella (atendidos de los niveles {levels}, media entre réplicas):"
+        f" espera de box {box:.2f} min, espera de médico en el box {doctor:.2f} min"
+    )
+    if box > doctor:
+        line += " · AVISO: los boxes son el cuello de botella"
+    return line
+
+
+def _not_applicable_lines(not_applicable: Sequence[Target]) -> list[str]:
+    if not not_applicable:
+        return []
+    return [
+        "No aplican (el modelo no tiene el bloque del hito 5: sin abandono ni sus destinos;"
+        " no se miden, no son un 0 %): " + ", ".join(t.name for t in not_applicable)
+    ]
 
 
 def _breakdown_lines(target: Target, shares: Sequence[LevelShare]) -> list[str]:
@@ -208,7 +295,11 @@ def _pooled_lines(
     ]
     for r in results:
         pooled = pooled_value(replicas, r.target)
-        lines.append(f"{r.target.name:<{_NAME_WIDTH}}{r.mean:>16.2f}{pooled:>14.2f}")
+        mark = "≥" if is_bound(replicas, r.target) else ""
+        lines.append(
+            f"{r.target.name:<{_NAME_WIDTH}}{_mean_text(replicas, r.target, r.mean):>16}"
+            f"{f'{mark}{pooled:.2f}':>14}"
+        )
     return lines
 
 
@@ -218,15 +309,19 @@ def format_evaluation(
     start_dates: Sequence[date],
     *,
     annual: bool = False,
+    not_applicable: Sequence[Target] = (),
 ) -> str:
     """The table of ``calibracion evaluar``: one row per target, then the censored
-    patients, the value of each replication (with the annual window, the profile
-    by month), the mean per patient, the breakdown by level of each percentage
-    and the outcome.
+    patients, the bottleneck, the value of each replication (with the annual window,
+    the profile by month), the mean per patient, the breakdown by level of each
+    percentage above a threshold and the outcome. A mean with patients still inside
+    at the horizon is a bound, marked ``≥``.
 
     Args:
         start_dates: The date on which each replication starts.
         annual: Whether the replications are those of the annual window.
+        not_applicable: The targets that do not apply to the model
+            (``split_targets``), listed by name.
     """
     lines = [
         f"{'objetivo':<{_NAME_WIDTH}}{'uso':<14}{'media':>8}  {'IC al 95 %':<20}"
@@ -237,14 +332,18 @@ def format_evaluation(
         interval = f"[{r.summary.ci_low:.2f}, {r.summary.ci_high:.2f}]"
         band = f"[{t.band[0]:g}, {t.band[1]:g}]"
         lines.append(
-            f"{t.name:<{_NAME_WIDTH}}{t.use:<14}{r.mean:>8.2f}  {interval:<20}{band:<12}"
-            f"{100 * r.share_days_out:>9.1f} %  {_outcome(r.passed)}"
+            f"{t.name:<{_NAME_WIDTH}}{t.use:<14}{_mean_text(replicas, t, r.mean):>8}"
+            f"  {interval:<20}{band:<12}{100 * r.share_days_out:>9.1f} %  {_outcome(r.passed)}"
         )
+    if not_applicable:
+        lines += ["", *_not_applicable_lines(not_applicable)]
     lines += ["", *_censored_lines(replicas)]
+    if any(r.left or r.admitted for r in replicas):
+        lines += ["", bottleneck_line(replicas)]
     lines += ["", *_replica_lines(results, replicas, start_dates, annual)]
     lines += ["", *_pooled_lines(results, replicas, annual)]
     for r in results:
-        if r.target.is_percentage:
+        if r.target.statistic == PERCENTAGE:
             lines += ["", *_breakdown_lines(r.target, level_breakdown(replicas, r.target))]
     failed = [r.target.name for r in results if r.target.use == FIT and not r.passed]
     checks = [r.target.name for r in results if r.target.use != FIT and not r.passed]
@@ -281,6 +380,7 @@ def write_evaluation_csv(
                     _levels(t),
                     t.statistic,
                     _optional(t.threshold),
+                    _optional(t.destination),
                     t.use,
                     _optional(t.reference),
                     t.band[0],
@@ -294,6 +394,7 @@ def write_evaluation_csv(
                     r.narrow,
                     "pasa" if r.passed else "falla",
                     repr(pooled_value(replicas, t)),
+                    is_bound(replicas, t),
                     *_params(parameters),
                 ]
             )
@@ -306,8 +407,9 @@ def write_replicas_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per replication and target: its start date, its value, its days out
-    and its censored."""
+    """One row per replication and target: its start date, its counts (censored, gone
+    without being seen, attended inside, admitted and still waiting for a bed), its
+    bottleneck, its value, how many patients enter it at a bound and its days out."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(REPLICA_COLUMNS)
@@ -319,8 +421,15 @@ def write_replicas_csv(
                         start_dates[i].isoformat(),
                         rep.arrivals,
                         rep.censored,
+                        rep.left,
+                        rep.censored_seen,
+                        rep.admitted,
+                        rep.censored_admitted,
+                        repr(rep.box_wait),
+                        repr(rep.doctor_wait),
                         r.target.name,
                         repr(r.values[i]),
+                        rep.targets[r.target.name].bounded,
                         repr(r.days_out[i]),
                         *_params(parameters),
                     ]
@@ -333,12 +442,13 @@ def write_levels_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per percentage target and level: its percentage and its contribution."""
+    """One row per target of a percentage above a threshold and level: its percentage and
+    its contribution."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(LEVEL_COLUMNS)
         for r in results:
-            if not r.target.is_percentage:
+            if r.target.statistic != PERCENTAGE:
                 continue
             for s in level_breakdown(replicas, r.target):
                 writer.writerow(
@@ -359,23 +469,48 @@ def _cell_width(target: Target) -> int:
     return max(len(target.name), 12) + 2
 
 
-def sensitivity_header(targets: Sequence[Target], knob: str) -> str:
-    """The header of the table of ``calibracion sensibilidad``."""
-    head = f"{'plantilla':<14}{'u':<17}"
+def setting_text(setting: RuleStaffing | KnobValue) -> str:
+    """A candidate as the tables show it: ``[3, 2, 1]``, or its value."""
+    if isinstance(setting, RuleStaffing):
+        return _staff(setting.staff)
+    return f"{setting.value:g}"
+
+
+def sensitivity_header(targets: Sequence[Target], knob: str, *, outcome: bool = False) -> str:
+    """The header of the table of ``calibracion sensibilidad``; with ``outcome`` (the
+    milestone 5 model, always with its knobs), the columns of the admitted still waiting
+    for a bed and of the bottleneck."""
+    if knob in VALUE_KNOBS:
+        head = f"{'mediana (min)' if knob == BED_WAIT else 'factor k':<15}"
+    else:
+        head = f"{'plantilla':<14}{'u':<17}"
     head += "".join(f"{t.name:<{_cell_width(t)}}" for t in targets)
     head += f"{'censurados':>11}"
+    if outcome or knob in VALUE_KNOBS:
+        head += f"{'ingr. cama':>12}{'box / médico (2 a 5)':>24}"
     if knob == DOCTORS:
         head += "  días fuera de Manchester (C) / días medidos, sumados; niveles 2 a 5"
     return head
 
 
-def format_sensitivity_row(row: SensitivityRow, knob: str) -> str:
-    """One row of the table: each target as ``mean pasa`` or ``mean FALLA``."""
-    s = row.staffing
-    line = f"{_staff(s.staff):<14}{f'{s.u_low:.4f}–{s.u_high:.4f}':<17}"
+def format_sensitivity_row(row: SensitivityRow, knob: str, *, outcome: bool = False) -> str:
+    """One row of the table: each target as ``mean pasa`` or ``mean FALLA``, with ``≥`` when
+    the mean is a bound; with ``outcome`` (as in ``sensitivity_header``), also the admitted
+    still waiting for a bed at the end and the bottleneck."""
+    s = row.setting
+    if isinstance(s, RuleStaffing):
+        line = f"{_staff(s.staff):<14}{f'{s.u_low:.4f}–{s.u_high:.4f}':<17}"
+    else:
+        line = f"{setting_text(s):<15}"
     for r in row.results:
-        line += f"{f'{r.mean:.2f} {_outcome(r.passed)}':<{_cell_width(r.target)}}"
+        mean = _mean_text(row.replicas, r.target, r.mean)
+        line += f"{f'{mean} {_outcome(r.passed)}':<{_cell_width(r.target)}}"
     line += f"{100 * row.max_censored_share:>9.2f} %"
+    if outcome or knob in VALUE_KNOBS:
+        bed = max(r.censored_admitted_share for r in row.replicas)
+        box = _nanmean([r.box_wait for r in row.replicas])
+        doctor = _nanmean([r.doctor_wait for r in row.replicas])
+        line += f"{100 * bed:>10.2f} %{f'{box:.1f} / {doctor:.1f}':>24}"
     if knob == DOCTORS:
         days = row.compliance_days
         line += "  " + " ".join(
@@ -400,7 +535,7 @@ def format_check(knob: str, seed: int, checked: Sequence[SensitivityRow]) -> str
             for r in (row.result(name),)
         )
         verdict = "elegida" if passes_fit(row, knob) else "vetada"
-        lines.append(f"  {_staff(row.staffing.staff):<13} {cells} → {verdict}")
+        lines.append(f"  {setting_text(row.setting):<13} {cells} → {verdict}")
     if not checked:
         lines.append("  ninguna candidata pasa con la semilla de ajuste: no hay nada que comprobar")
     return "\n".join(lines)
@@ -412,21 +547,27 @@ def format_choice(
     compliant: SensitivityRow | None = None,
     *,
     seeds: tuple[int, int] | None = None,
+    rows: Sequence[SensitivityRow] = (),
 ) -> str:
-    """The lines below the table: the staffing chosen and, for the doctors, the compliant one.
+    """The lines below the table: the candidate chosen and, for the doctors, the compliant
+    one. For a knob of one number, a warning when the chosen value is at an edge of the
+    values evaluated (``rows``): the best one might be beyond it.
 
     Args:
         seeds: The fit seed and the check seed, when the check seed may veto the choice
             (``choose_staffing`` with ``check``); without them, the choice is the one of
             the fit seed, and the line says that the check seed may veto it.
+        rows: Every candidate evaluated, for the warning of the edge.
     """
     names, chooser = KNOB_TARGETS[knob]
     passing = ", ".join(names)
     if seeds is not None:
         passing += f" con las semillas {seeds[0]} y {seeds[1]}"
     lines = []
+    value_knob = knob in VALUE_KNOBS
     if chosen is None:
-        lines.append(f"Elección: ninguna plantilla de la regla pasa {passing}; no se fuerza")
+        what = "ningún valor de la rejilla" if value_knob else "ninguna plantilla de la regla"
+        lines.append(f"Elección: {what} pasa {passing}; no se fuerza")
     else:
         r = chosen.result(chooser)
         aim = "a la referencia" if r.target.reference is not None else "al centro de la horquilla"
@@ -436,12 +577,31 @@ def format_choice(
             else ", con la semilla de ajuste; la de comprobación puede vetarla (--comprobacion,"
             " decisión 41)"
         )
-        lines.append(
-            f"Elección (entre las que pasan {passing}, la más cercana {aim} de"
-            f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
-            f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
-            f" {chooser} {r.mean:.2f}{veto}"
-        )
+        if value_knob:
+            value = chosen.setting.value
+            detail = (
+                f"{value:g} min de mediana (p90 {BED_P90_RATIO * value:g})"
+                if knob == BED_WAIT
+                else f"factor {value:g}"
+            )
+            lines.append(
+                f"Elección (entre los que pasan {passing}, el más cercano {aim} de"
+                f" {chooser}, {r.target.aim:g}): {knob} {detail};"
+                f" {chooser} {_mean_text(chosen.replicas, r.target, r.mean)}{veto}"
+            )
+            values = [candidate_key(row.setting) for row in rows]
+            if values and value in (min(values), max(values)):
+                lines.append(
+                    f"AVISO: {value:g} está en el borde de los valores evaluados"
+                    f" ({min(values):g} a {max(values):g}): el mejor podría estar fuera"
+                )
+        else:
+            lines.append(
+                f"Elección (entre las que pasan {passing}, la más cercana {aim} de"
+                f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
+                f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
+                f" {chooser} {r.mean:.2f}{veto}"
+            )
     if knob == DOCTORS:
         if compliant is None:
             lines.append(
@@ -468,22 +628,27 @@ def write_sensitivity_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per staffing and target."""
+    """One row per candidate and target: a staff and its interval of u, or a value."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(SENSITIVITY_COLUMNS)
         for row in rows:
-            s = row.staffing
+            s = row.setting
+            if isinstance(s, RuleStaffing):
+                candidate = ["", *s.staff, s.u_low, s.u_high]
+            else:
+                candidate = [s.value, "", "", "", "", ""]
             out = row.compliance_out
             days = row.compliance_days
             for r in row.results:
                 writer.writerow(
                     [
                         knob,
-                        *s.staff,
-                        s.u_low,
-                        s.u_high,
+                        *candidate,
                         repr(row.max_censored_share),
+                        repr(max(x.censored_admitted_share for x in row.replicas)),
+                        repr(_nanmean([x.box_wait for x in row.replicas])),
+                        repr(_nanmean([x.doctor_wait for x in row.replicas])),
                         *(repr(out[level - 1]) for level in COMPLIANCE_LEVELS),
                         *(days[level - 1][0] for level in COMPLIANCE_LEVELS),
                         *(days[level - 1][1] for level in COMPLIANCE_LEVELS),
@@ -493,6 +658,7 @@ def write_sensitivity_csv(
                         repr(r.summary.ci_high),
                         repr(r.share_days_out),
                         "pasa" if r.passed else "falla",
+                        is_bound(row.replicas, r.target),
                         row is chosen,
                         row is compliant,
                         *_params(parameters),

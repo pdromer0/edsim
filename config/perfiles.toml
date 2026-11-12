@@ -2,6 +2,14 @@
 # pruebas y duraciones. Ver docs/specs/hito-4.md («Población y contexto»,
 # «Motivos de consulta», «Gravedad latente y triaje» y «Pruebas y duraciones»).
 #
+# Desde la tarea 5.6 lleva el bloque del hito 5 (docs/specs/hito-5.md): [abandono],
+# [destinos] e ingreso en cada motivo. Con él, y con un centro con [camas], el modelo es el
+# del hito 5; el del hito 4, sin el bloque, está congelado en tests/data/perfiles_h4.toml.
+# Los derivados del bloque (los 17 ingreso y las bases del traslado y el exitus) los da
+#   edsim.profiles.derivation.derive_written_values(perfiles, load_profile("config/llegadas.toml"))
+# con 4 cifras significativas, y no se recalculan al cargar: son los de la tarea 5.2, porque
+# config/llegadas.toml es tests/data/llegadas_ejemplo.toml sin los comentarios.
+#
 # Cada valor lleva su estado:
 #   calibrado:   ajustado a un objetivo público con su horquilla;
 #   derivado:    lo calcula el código a partir de otros valores;
@@ -80,6 +88,7 @@ dia = [1.0, 1.2]                    # orientativo: deporte y ocio de fin de sema
 estacion = [0.9, 1.0, 1.1, 1.0]     # orientativo: más actividad al aire libre en verano
 gravedad = { media = -0.56, por_edad = [-0.09, 0.0, 0.09, 0.38], desviacion = 0.66 }   # orientativo, baja: esguinces y contusiones; fractura de cadera en ≥80
 pruebas = { analitica = 9, radiografia = 72, ecg = 4, imagen = 7 }   # orientativo, elegido por su marginal: 8,1 / 69,7 / 4,6 / 6,4 % en un año
+ingreso = 2.636                     # derivado (catálogo: bajo); marginal del año: 2,78 %
 duracion = 0.85                     # orientativo: Rx en casi todos; exploración rápida y localizada
 
 [motivos.dolor_abdominal]
@@ -87,6 +96,7 @@ nombre = "Dolor abdominal"
 peso_base = 10.698                  # derivado; sin factores: todas las edades, sin patrón claro
 gravedad = { media = 0.29, por_edad = [-0.19, 0.0, 0.19, 0.47], desviacion = 0.75 }   # orientativo, media: gastroenteritis y cólicos frente a abdomen agudo; isquemia y perforación atenuadas en mayores
 pruebas = { analitica = 67, radiografia = 14, ecg = 7, imagen = 25 }   # orientativo, elegido por su marginal: 75,0 / 19,5 / 14,9 / 35,1 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 11,74 %
 duracion = 1.1                      # orientativo: analítica y eco/TC; exploración y reevaluación del abdomen
 
 [motivos.fiebre]
@@ -95,6 +105,7 @@ peso_base = 8.359                   # derivado
 estacion = [1.4, 1.0, 0.7, 1.0]     # orientativo: gripe y VRS en invierno
 gravedad = { media = -0.18, por_edad = [-0.19, 0.0, 0.28, 0.47], desviacion = 0.75 }   # orientativo, baja-media: viriasis en jóvenes; neumonía y sepsis en mayores
 pruebas = { analitica = 72, radiografia = 46, ecg = 6, imagen = 4 }   # orientativo, elegido por su marginal: 69,8 / 49,6 / 10,2 / 5,4 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 9,32 %
 duracion = 1.0                      # orientativo: analítica y Rx de tórax; cultivos con la analítica
 
 [motivos.disnea]
@@ -105,6 +116,7 @@ franja = [1.0, 1.0, 1.2]            # orientativo: disnea paroxística nocturna 
 estacion = [1.5, 1.0, 0.7, 1.0]     # orientativo: infecciones respiratorias de invierno
 gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.38], desviacion = 0.85 }   # orientativo, media-alta: asma leve en jóvenes; EPOC e insuficiencia cardiaca en mayores
 pruebas = { analitica = 59, radiografia = 73, ecg = 32, imagen = 2 }   # orientativo, elegido por su marginal: 84,8 / 85,0 / 65,1 / 7,3 % en un año
+ingreso = 12.85                     # derivado (catálogo: alto); marginal del año: 33,46 %
 duracion = 1.1                      # orientativo: gasometría con la analítica y Rx de tórax; angioTC raro
 
 [motivos.malestar]
@@ -113,6 +125,7 @@ peso_base = 5.618                   # derivado
 edad = [0.5, 0.9, 1.8, 2.5]         # orientativo: fragilidad y pluripatología
 gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.28], desviacion = 0.75 }   # orientativo, media: inespecífico; en frágiles esconde sepsis o descompensación
 pruebas = { analitica = 68, radiografia = 24, ecg = 38, imagen = 4 }   # orientativo, elegido por su marginal: 79,9 / 35,4 / 60,0 / 8,4 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 13,42 %
 duracion = 1.2                      # orientativo: analítica y ECG; inespecífico en frágiles, valoración lenta
 
 [motivos.dolor_toracico]
@@ -122,6 +135,7 @@ edad = [0.6, 1.3, 1.4, 1.2]         # orientativo: cardiopatía isquémica de 45
 estacion = [1.1, 1.0, 0.9, 1.0]     # orientativo: más síndromes coronarios en invierno
 gravedad = { media = 0.94, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media-alta: mecánico o ansiedad en jóvenes; síndrome coronario desde los 45
 pruebas = { analitica = 65, radiografia = 56, ecg = 96, imagen = 2 }   # orientativo, elegido por su marginal: 84,9 / 69,9 / 98,2 / 5,9 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 17,96 %
 duracion = 1.0                      # orientativo: ECG casi universal, troponinas y Rx
 
 [motivos.neurologico]
@@ -130,6 +144,7 @@ peso_base = 4.983                   # derivado
 edad = [0.7, 1.0, 1.5, 1.7]         # orientativo: el ictus aumenta con la edad
 gravedad = { media = 0.38, por_edad = [-0.28, 0.0, 0.28, 0.38], desviacion = 1.13 }   # orientativo, variable: cefalea y vértigo frente a ictus, que crece con la edad
 pruebas = { analitica = 40, radiografia = 4, ecg = 13, imagen = 40 }   # orientativo, elegido por su marginal: 59,7 / 7,3 / 30,6 / 54,7 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 14,58 %
 duracion = 1.15                     # orientativo: TC craneal; exploración neurológica completa
 
 [motivos.sincope]
@@ -139,6 +154,7 @@ edad = [0.7, 0.8, 1.5, 2.0]         # orientativo: ortostatismo, fármacos y arr
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: calor, deshidratación e hipotensión en verano
 gravedad = { media = 0.29, por_edad = [-0.38, 0.0, 0.19, 0.28], desviacion = 0.75 }   # orientativo, media: vasovagal en jóvenes; arritmia o hemorragia en mayores
 pruebas = { analitica = 49, radiografia = 9, ecg = 92, imagen = 8 }   # orientativo, elegido por su marginal: 64,9 / 14,5 / 94,9 / 14,9 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 12,89 %
 duracion = 1.1                      # orientativo: ECG casi universal y analítica; TC si hay traumatismo
 
 [motivos.urologico]
@@ -148,6 +164,7 @@ edad = [1.0, 1.1, 1.0, 1.1]         # orientativo: cólico renal en la edad medi
 estacion = [1.0, 1.0, 1.2, 1.0]     # orientativo: cólico renal por deshidratación con el calor
 gravedad = { media = -0.18, por_edad = [0.0, 0.0, 0.09, 0.19], desviacion = 0.66 }   # orientativo, baja-media: infección de orina y cólico; retención y urosepsis en mayores
 pruebas = { analitica = 59, radiografia = 17, ecg = 3, imagen = 32 }   # orientativo, elegido por su marginal: 60,0 / 20,0 / 5,0 / 35,5 % en un año
+ingreso = 2.636                     # derivado (catálogo: bajo); marginal del año: 3,76 %
 duracion = 0.9                      # orientativo: orina con la analítica y eco; cuadros acotados
 
 [motivos.cutaneo]
@@ -158,6 +175,7 @@ dia = [1.0, 1.2]                    # orientativo: consulta demorable con el cen
 estacion = [0.9, 1.2, 1.2, 0.9]     # orientativo: alergias estacionales, picaduras y quemaduras solares
 gravedad = { media = -0.75, desviacion = 0.56 }   # orientativo, baja: banal; la anafilaxia es la cola
 pruebas = { analitica = 14, radiografia = 3, ecg = 3, imagen = 2 }   # orientativo, elegido por su marginal: 9,9 / 2,9 / 3,2 / 1,6 % en un año
+ingreso = 2.636                     # derivado (catálogo: bajo); marginal del año: 2,40 %
 duracion = 0.8                      # orientativo: «pocas» pruebas; consulta breve
 
 [motivos.orl]
@@ -168,6 +186,7 @@ dia = [1.0, 1.2]                    # orientativo: consulta demorable con el cen
 estacion = [1.2, 1.0, 0.9, 1.0]     # orientativo: otitis y faringitis de invierno
 gravedad = { media = -0.84, desviacion = 0.56 }   # orientativo, baja: otitis, faringitis, cuerpo extraño ocular
 pruebas = { analitica = 8, radiografia = 4, ecg = 2, imagen = 4 }   # orientativo, elegido por su marginal: 5,2 / 3,7 / 2,0 / 3,1 % en un año
+ingreso = 1.322                     # derivado (catálogo: muy bajo); marginal del año: 1,16 %
 duracion = 0.8                      # orientativo: «pocas» pruebas; consulta breve
 
 [motivos.digestivo]
@@ -175,6 +194,7 @@ nombre = "Digestivo"
 peso_base = 4.279                   # derivado; sin factores: variable, sin patrón claro
 gravedad = { media = -0.09, por_edad = [-0.19, 0.0, 0.19, 0.38], desviacion = 1.03 }   # orientativo, variable: gastroenteritis frente a hemorragia digestiva
 pruebas = { analitica = 72, radiografia = 12, ecg = 9, imagen = 11 }   # orientativo, elegido por su marginal: 69,6 / 15,2 / 15,6 / 15,2 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 9,95 %
 duracion = 1.0                      # orientativo: analítica
 
 [motivos.psiquiatrico]
@@ -184,6 +204,7 @@ edad = [1.4, 1.0, 0.5, 0.4]         # orientativo: crisis de ansiedad y debuts e
 franja = [1.0, 1.0, 1.3]            # orientativo: crisis y agitación nocturnas
 gravedad = { media = 0.19, desviacion = 0.75 }   # orientativo, media: ansiedad frente a agitación o ideación suicida; sin patrón por edad
 pruebas = { analitica = 12, radiografia = 2, ecg = 8, imagen = 2 }   # orientativo, elegido por su marginal: 19,8 / 2,5 / 12,2 / 2,9 % en un año
+ingreso = 2.636                     # derivado (catálogo: bajo); marginal del año: 3,47 %
 duracion = 1.3                      # orientativo: «pocas» pruebas: tóxicos y organicidad; entrevista larga
 
 [motivos.palpitaciones]
@@ -192,6 +213,7 @@ peso_base = 2.064                   # derivado
 edad = [0.7, 1.1, 1.5, 1.3]         # orientativo: fibrilación auricular con la edad
 gravedad = { media = 0.29, por_edad = [-0.28, 0.0, 0.09, 0.19], desviacion = 0.66 }   # orientativo, media: taquicardias benignas en jóvenes; fibrilación auricular rápida en mayores
 pruebas = { analitica = 58, radiografia = 18, ecg = 97, imagen = 2 }   # orientativo, elegido por su marginal: 70,1 / 25,3 / 98,0 / 3,7 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 11,96 %
 duracion = 0.9                      # orientativo: ECG casi universal y analítica; cuadro acotado
 
 [motivos.intoxicacion]
@@ -202,6 +224,7 @@ franja = [1.0, 1.0, 1.8]            # orientativo: ocio nocturno
 dia = [1.0, 1.7]                    # orientativo: fin de semana; noche × fin de semana = 3,06 (el «×3» de la especificación)
 gravedad = { media = 0.10, desviacion = 1.13 }   # orientativo, variable: embriaguez leve frente a sobredosis o coma
 pruebas = { analitica = 78, radiografia = 7, ecg = 46, imagen = 6 }   # orientativo, elegido por su marginal: 74,7 / 8,3 / 49,8 / 8,4 % en un año
+ingreso = 6.527                     # derivado (catálogo: medio); marginal del año: 9,88 %
 duracion = 1.1                      # orientativo: analítica con tóxicos y ECG por el QT; vigilancia
 
 # Parada / crítico: 0,3 % del catálogo («< 1 %»; 0,5 hasta la tarea 4.6a). Su
@@ -220,6 +243,7 @@ peso_base = 0.324                   # derivado
 edad = [0.2, 0.8, 1.8, 2.5]         # orientativo: muerte súbita y parada en mayores
 gravedad = { media = 4.21, desviacion = 0.25 }   # orientativo, elegido por criterio (ver arriba): muy alta y poco dispersa, a cualquier edad (4,38 y 0,27 antes de la transformación común)
 pruebas = { analitica = 36, radiografia = 61, ecg = 83, imagen = 4 }   # orientativo, elegido por su marginal: 99,3 / 92,8 / 99,4 / 54,2 % en un año
+ingreso = 30.66                     # derivado (catálogo: muy alto); marginal del año: 74,21 %
 duracion = 1.0                      # orientativo: «todas»; la base del nivel 1 ya es larga
 
 [motivos.otros]
@@ -227,6 +251,7 @@ nombre = "Otros"
 peso_base = 10.698                  # derivado; sin factores: cajón de sastre
 gravedad = { media = -0.56, desviacion = 0.75 }   # orientativo, baja: cajón de sastre, en su mayoría banal
 pruebas = { analitica = 22, radiografia = 10, ecg = 7, imagen = 4 }   # orientativo, elegido por su marginal: 19,7 / 10,4 / 8,5 / 3,9 % en un año
+ingreso = 2.636                     # derivado (catálogo: bajo); marginal del año: 2,77 %
 duracion = 0.9                      # orientativo: «pocas» pruebas
 
 [triaje]
@@ -301,3 +326,28 @@ respuesta_franja = [1.0, 1.1, 1.3]  # de noche, radiólogo de guardia y sin eco 
 or_gravedad = 2.0
 or_mayor = 1.8                      # TC craneal en caídas con anticoagulantes
 alterado = { base = 35, or_gravedad = 2.0 }
+
+# Bloque del hito 5 (decisiones 68 a 72; docs/specs/hito-5.md, «Valores orientativos»).
+
+[abandono]
+# Paciencia por nivel real: [mediana, p90] en minutos (decisión 70). La forma, orientativa
+# (p90 = 3 × mediana, σ = 0,857), y el orden de los niveles son los de partida:
+# [[1440, 4320], [480, 1440], [240, 720], [150, 450], [120, 360]]. Su nivel, calibrado en
+# la tarea 5.6 con un factor común k = 4 sobre medianas y p90 contra el abandono (1-4 %,
+# SAS 1,82): 1,68 % con 2026 y 2,00 % con 2027, con la cama y los 36 boxes de
+# config/centro.toml (rejilla 2^(i/4) de 1 a 8: k = 3,364 da 2,13 %);
+#   uv run edsim calibracion sensibilidad --mando paciencia --comprobacion 2027
+# Discrepancia estructural (docs/calibracion/registro.md, tarea 5.6): la mediana del nivel
+# 4 es de 600 min y la del 5 de 480, frente a las 2 h que declaran los pacientes en la
+# encuesta de Shaikh; la piden el abandono y el reloj A con la plantilla anual.
+paciencia = [[5760, 17280], [1920, 5760], [960, 2880], [600, 1800], [480, 1440]]
+paciencia_edad = [0.8, 1.0, 1.0, 1.0]   # orientativo: los jóvenes se van antes
+
+[destinos]
+# Logística multinomial con el alta de referencia (decisión 71). Los objetivo son del SAS
+# (CMBD de urgencias 2013, adultos). or_gravedad del ingreso 1,5 y del exitus 15 (tarea 5.2):
+# con ellos el ingreso por nivel asignado es 68,1 / 28,1 / 11,8 / 4,3 / 1,9 % y la mitad de
+# los exitus son paradas.
+ingreso = { objetivo = 9.90, or_gravedad = 1.5, or_mayor = 1.5, or_alterada = 1.5 }
+traslado = { objetivo = 0.75, base = 0.7639, or_gravedad = 1.5 }   # base derivada
+exitus = { objetivo = 0.11, base = 0.001937, or_gravedad = 15.0 }   # base derivada

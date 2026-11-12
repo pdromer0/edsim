@@ -60,14 +60,16 @@ def neutral(profiles):
     )
 
 
+# La carga ofrecida aún no admite el modelo del hito 5 (#103): estos tests usan el
+# config/ del hito 4, congelado en tests/data en la tarea 5.6 (decisión 68).
 @pytest.fixture(scope="module")
 def center():
-    return load_center(CONFIG / "centro.toml")
+    return load_center(DATA / "centro_h4.toml")
 
 
 @pytest.fixture(scope="module")
 def neutral_profiles():
-    return neutral(load_profiles(CONFIG / "perfiles.toml"))
+    return neutral(load_profiles(DATA / "perfiles_h4.toml"))
 
 
 @pytest.fixture(scope="module")
@@ -230,7 +232,7 @@ def short():
 
 
 def model_center(center, clinical):
-    """El centro de config/ con el clínico; sin perfiles, el del provisional (tarea 4.9)."""
+    """El centro del hito 4 con el clínico; sin perfiles, el del provisional (tarea 4.9)."""
     return center if clinical else load_center(DATA / "centro_ejemplo.toml")
 
 

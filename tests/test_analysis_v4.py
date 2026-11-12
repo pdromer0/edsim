@@ -19,6 +19,7 @@ from edsim.engine.analysis import (
     episode_table,
     little_laws,
     step_curves,
+    triaged_in_window,
     utilization_identities,
 )
 from edsim.engine.center import load_center
@@ -88,6 +89,10 @@ def test_terminados_frente_a_completados(log_m):
     done = {e.episode_id for e in completed_in_window(table, 0.0, HORIZON)}
     assert done == {"EP-000000", "EP-000002"}
     assert ended == done | {"EP-000001", "EP-000003"}
+    # Los triados (los del pretriaje, H5-8): Q2 se fue después del triaje y cuenta; Q4 se
+    # fue antes, sin nivel, y no.
+    triaged = {e.episode_id for e in triaged_in_window(table, 0.0, HORIZON)}
+    assert triaged == done | {"EP-000001"}
 
 
 # --- Las curvas (plan, sección E) ----------------------------------------------------

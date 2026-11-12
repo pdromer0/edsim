@@ -633,10 +633,23 @@ def check_nobody_jumps_the_queue(
 
     A wait that began in the same instant does not count: SimPy may have
     granted the resource before the other request was made, even if the
-    events of the instant come in another order in the file.
+    events of the instant come in another order in the file. Nor does a wait
+    that ends in the same instant with the same resource: when several places
+    are freed at once (a change of shift), SimPy grants them by the key, but
+    in version 4 a patient waiting with its patience resumes one step later
+    (``request | deadline``) than one waiting without it, such as a
+    reassessment, so the events of the instant may come in another order
+    (task 5.6). Nobody waited for the other: both got the resource then.
     """
     name = "nobody_jumps_the_queue"
     keys = _keys(events)
+    # The instants at which each episode gets each resource, to tell a grant of the same
+    # instant from a jump.
+    granted_at: dict[str, dict[str, set[float]]] = {"box": {}, "doctor": {}}
+    for e in events:
+        resource = {"box_assigned": "box", "assessment_started": "doctor"}.get(e.event_type)
+        if resource is not None:
+            granted_at[resource].setdefault(e.episode_id, set()).add(e.sim_time)
     out: list[Violation] = []
     waiting: dict[str, dict[str, float]] = {"box": {}, "doctor": {}}  # episode → since
     waiting_triage: dict[str, float] = {}  # episode → arrival
@@ -650,7 +663,12 @@ def check_nobody_jumps_the_queue(
         if mine is None:
             return
         for other, since in waiting[resource].items():
-            if other != e.episode_id and since < e.sim_time and keys[other] < mine:
+            if (
+                other != e.episode_id
+                and since < e.sim_time
+                and keys[other] < mine
+                and e.sim_time not in granted_at[resource].get(other, ())
+            ):
                 out.append(
                     _at(
                         name,

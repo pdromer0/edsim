@@ -18,7 +18,30 @@ inside at its end are mostly the ones who wait longest: cutting them biases
 the waits down, precisely in the tight staffings. So each replication runs
 ``DRAIN_DAYS`` more day, with its arrivals, and only the patients who arrive in
 the window ``[warmup_days, days)`` are measured. Those still inside at the end
-of the horizon are counted as censored, per replication.
+of the horizon are counted as censored, per replication: inside, not merely
+without a departure, since whoever leaves without being seen has none either
+(milestone 5).
+
+**Who counts, with the abandonment** (the rules of task 5.4, H5-8; without it, the
+targets of milestone 4 give the values of before bit for bit; a stay without ``destino``
+takes the seen patients still inside at their bound with any model):
+
+- the pretriage (``triage_wait``), of the triaged patients that end in the
+  window, also those who leave after the triage (``triaged_in_window``);
+- the means of the clocks to the doctor and of the other waits, of the patients
+  who depart (the attended, ``completed_in_window``);
+- the percentage of a clock above its threshold, with the censoring of the
+  Manchester compliance (``compliance_cases``): whoever leaves with its clock at
+  or above the threshold is above it for sure, and whoever leaves before is
+  censored and does not count;
+- the stay, of those who depart (to the ``destino`` of the target) and of those
+  still inside at the horizon who would count (the admitted waiting for a bed,
+  or every patient already seen without a ``destino``), at their lower bound
+  ``horizon - arrival``: the mean is then a bound (``TargetValues.bounded``),
+  and above a threshold a bound counts only once past it, as
+  ``over_threshold`` of ``engine.outcome_metrics``;
+- a percentage of the arrivals (``porcentaje_de_llegadas``), over every patient
+  who arrives in the window, classified or not.
 
 **Rule 4 of the calibration.** A target passes if the mean between
 replications falls inside its band and the width of its 95 % confidence
@@ -61,6 +84,15 @@ import numpy as np
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.calibration.knobs import (
+    BED_WAIT,
+    DEFAULT_GRIDS,
+    PATIENCE,
+    VALUE_KNOBS,
+    KnobValue,
+    check_knob_value,
+    knob_inputs,
+)
 from edsim.calibration.staffing import (
     DOCTORS,
     KNOBS,
@@ -72,14 +104,29 @@ from edsim.calibration.staffing import (
     knob_loads,
     rule_staffings,
 )
-from edsim.calibration.targets import FIT, Target
+from edsim.calibration.targets import (
+    ARRIVALS_PERCENTAGE,
+    DEPARTURE,
+    FIT,
+    LEFT,
+    PERCENTAGE,
+    STAY,
+    Target,
+)
 from edsim.calibration.window import with_start_date
 from edsim.checks import check_count
-from edsim.engine.analysis import EpisodeRecord, completed_in_window, episode_table
+from edsim.engine.analysis import (
+    EpisodeRecord,
+    completed_in_window,
+    episode_table,
+    triaged_in_window,
+)
 from edsim.engine.center import N_LEVELS, CenterConfig
+from edsim.engine.clinical_sampler import PatientModel, choose_model
 from edsim.engine.engine import check_horizon, simulate_ed
 from edsim.engine.events import Event, MemorySink
-from edsim.engine.targets import manchester_compliance
+from edsim.engine.outcome_metrics import ADMISSION
+from edsim.engine.targets import CLOCKS, compliance_cases, manchester_compliance
 from edsim.profiles.config import ClinicalProfiles
 from edsim.seeds import child_streams
 from edsim.stats import Summary, summarize
@@ -104,6 +151,14 @@ CONFIDENCE = 0.95
 CENSORED_WARNING = 0.001
 """Share of censored patients of a replication above which the CLI warns."""
 
+ADMITTED_CENSORED_WARNING = 0.01
+"""Share of the admitted patients of a replication still waiting for a bed at the end of
+the drain day above which the CLI warns (task 5.6): their stay enters the means at its
+lower bound."""
+
+BOTTLENECK_LEVELS = (2, 3, 4, 5)
+"""Levels of the bottleneck line: the wait for a box against the wait for a doctor."""
+
 COMPLIANCE_SHARE_OUT = Fraction(1, 10)
 """Largest share of days out of Manchester (clock C) of the compliant center: the
 days out summed over the replications over the days with patients summed over
@@ -122,18 +177,23 @@ class TargetValues:
 
     Attributes:
         value: The statistic over the patients of the window: the mean, or the
-            percentage above the threshold; ``nan`` without patients.
+            percentage above the threshold or of the arrivals; ``nan`` without
+            patients.
         daily: The same on each day of the window, with the patients who
             arrived that day; ``nan`` on a day without them.
-        n_by_level: Patients of the window of each level of the target.
+        n_by_level: Patients of the window of each level of the target; with a
+            percentage of the arrivals, one number, the arrivals.
         over_by_level: With a percentage, how many of them are above the
-            threshold; empty with a mean.
+            threshold (or had the event); empty with a mean.
+        bounded: Patients that enter a mean at a lower bound (still inside at
+            the horizon): with any, the mean is a bound (``≥``).
     """
 
     value: float
     daily: tuple[float, ...]
     n_by_level: tuple[int, ...]
     over_by_level: tuple[int, ...]
+    bounded: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,10 +203,22 @@ class ReplicaValues:
     Attributes:
         targets: The values of each target, by its name.
         arrivals: Episodes that arrived in the window.
-        censored: Of them, those without a departure at the end of the horizon.
+        censored: Of them, those still inside at the end of the horizon.
         compliance_days_out: Days of the window out of the Manchester
             compliance with clock C, per level 1 to 5.
         compliance_days: Days of the window with patients of each level 1 to 5.
+        left: Of the arrivals, those who left without being seen.
+        censored_seen: Of the censored, those already seen by a doctor: out of
+            the clocks and of the compliance, inside the stays at their bound.
+        admitted: Of the arrivals, those who asked for a bed.
+        censored_admitted: Of them, those still waiting for it at the end.
+        box_wait: Mean of ``initial_box_wait`` of the patients of levels 2 to 5
+            who depart; ``nan`` without them.
+        doctor_wait: Mean of ``initial_doctor_wait`` of the same patients.
+        bed_wait_minutes: The waits for a bed of the patients of the window who
+            asked for one, added up: the complete ones and, of those still
+            waiting at the horizon, ``horizon - bed_requested`` (a bound).
+        window_minutes: Length of the window, in minutes.
     """
 
     targets: Mapping[str, TargetValues]
@@ -154,11 +226,32 @@ class ReplicaValues:
     censored: int
     compliance_days_out: tuple[int, ...]
     compliance_days: tuple[int, ...]
+    left: int = 0
+    censored_seen: int = 0
+    admitted: int = 0
+    censored_admitted: int = 0
+    box_wait: float = math.nan
+    doctor_wait: float = math.nan
+    bed_wait_minutes: float = 0.0
+    window_minutes: float = math.nan
 
     @property
     def censored_share(self) -> float:
         """Censored over the arrivals of the window; 0 without arrivals."""
         return self.censored / self.arrivals if self.arrivals else 0.0
+
+    @property
+    def waiting_for_bed(self) -> float:
+        """Mean number of patients waiting for a bed, by Little's law: L = λ · W =
+        (N / T) · (Σ W / N) = Σ W / T, with the patients of the window (task 5.6). Almost
+        all of them wait in their box; those displaced to the hallway, rare, count too
+        (the curve ``boxes_waiting_bed`` of the analysis leaves them out)."""
+        return self.bed_wait_minutes / self.window_minutes
+
+    @property
+    def censored_admitted_share(self) -> float:
+        """Admitted still waiting for a bed over the admitted; 0 without them."""
+        return self.censored_admitted / self.admitted if self.admitted else 0.0
 
     @property
     def compliance_out(self) -> tuple[float, ...]:
@@ -170,56 +263,176 @@ class ReplicaValues:
         )
 
 
-def _statistic(target: Target, episodes: Sequence[EpisodeRecord]) -> float:
-    if not episodes:
-        return math.nan
-    values = np.array([_measure(target, e) for e in episodes], dtype=float)
-    if not target.is_percentage:
-        return float(values.mean())
-    thresholds = np.array([target.threshold_for(e.level) for e in episodes], dtype=float)
-    return float(100 * np.mean(values > thresholds))
+@dataclass(frozen=True, slots=True)
+class _Case:
+    """One patient of a target: its day and level, and its value or whether it is above.
+
+    ``value`` is the measure (a lower bound if ``bounded``) for a mean, and 1 or 0
+    (above the threshold, or with the event) for a percentage.
+    """
+
+    day: int
+    level: int | None
+    value: float
+    bounded: bool = False
 
 
-def _measure(target: Target, e: EpisodeRecord) -> float:
+def _day(e: EpisodeRecord, first_day: int) -> int:
+    return math.floor(e.arrival / MINUTES_PER_DAY) - first_day
+
+
+def _in_levels(target: Target, e: EpisodeRecord) -> bool:
+    return e.level in target.levels
+
+
+def _known(target: Target, e: EpisodeRecord) -> float:
     value = getattr(e, target.measure)
     if value is None:
         raise ValueError(f"{e.episode_id} departed without a {target.measure}")
     return value
 
 
-def _target_values(
-    target: Target, done: Sequence[EpisodeRecord], first_day: int, end_day: int
-) -> TargetValues:
-    episodes = [e for e in done if e.level in target.levels]
-    by_day: list[list[EpisodeRecord]] = [[] for _ in range(first_day, end_day)]
-    for e in episodes:
-        by_day[math.floor(e.arrival / MINUTES_PER_DAY) - first_day].append(e)
-    n_by_level = tuple(sum(e.level == level for e in episodes) for level in target.levels)
-    over_by_level: tuple[int, ...] = ()
-    if target.is_percentage:
-        over_by_level = tuple(
-            sum(
-                _measure(target, e) > target.threshold_for(level)
-                for e in episodes
-                if e.level == level
+def _arrival_cases(target: Target, arrived: Sequence[EpisodeRecord], first_day: int) -> list[_Case]:
+    def happened(e: EpisodeRecord) -> bool:
+        if target.measure == LEFT:
+            return e.left is not None
+        if target.measure == DEPARTURE:
+            return e.departure is not None and target.destination in (None, e.destination)
+        raise ValueError(f"objetivos.{target.name}: unknown event {target.measure!r}")
+
+    return [_Case(_day(e, first_day), None, float(happened(e))) for e in arrived]
+
+
+def _stay_cases(
+    target: Target, arrived: Sequence[EpisodeRecord], first_day: int, horizon: float
+) -> list[_Case]:
+    """The stays of those who depart, and the bounds of those still inside who count."""
+    out = []
+    for e in arrived:
+        if not _in_levels(target, e):
+            continue
+        if e.departure is not None:
+            if target.destination in (None, e.destination):
+                out.append(_Case(_day(e, first_day), e.level, e.stay))
+        elif e.end is None:
+            # Still inside at the horizon: an admitted patient waiting for a bed counts in
+            # the stay of the admitted; with no destino, any patient already seen.
+            waiting_bed = e.bed_requested is not None
+            counts = (
+                waiting_bed
+                if target.destination == ADMISSION
+                else target.destination is None and e.first_assessment is not None
             )
-            for level in target.levels
+            if counts:
+                out.append(_Case(_day(e, first_day), e.level, horizon - e.arrival, True))
+    return out
+
+
+def _cases(
+    target: Target,
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    horizon: float,
+) -> list[_Case]:
+    """The patients of ``target`` in the window, with the rules of the module docstring."""
+    start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
+    arrived = [e for e in table if start <= e.arrival < end]
+    if target.statistic == ARRIVALS_PERCENTAGE:
+        return _arrival_cases(target, arrived, first_day)
+    if target.measure == STAY:
+        cases = _stay_cases(target, arrived, first_day, horizon)
+        if not target.is_percentage:
+            return cases
+        # Above the threshold, a bound counts only once past it; at or below it, it may
+        # still pass it and is left out (as over_threshold of engine.outcome_metrics).
+        return [
+            _Case(c.day, c.level, float(c.value > target.threshold_for(c.level)))
+            for c in cases
+            if not c.bounded or c.value > target.threshold_for(c.level)
+        ]
+    if target.measure == "triage_wait":
+        episodes = [e for e in triaged_in_window(table, start, end) if _in_levels(target, e)]
+    elif target.is_percentage and target.measure in CLOCKS:
+        # The censoring of the Manchester compliance, with the threshold of each level as
+        # its maximum: "exceeded" is above it, and the censored do not count.
+        maxima = [target.threshold_for(level) for level in range(1, N_LEVELS + 1)]
+        return [
+            _Case(c.day, c.level, float(c.status == "exceeded"))
+            for c in compliance_cases(table, first_day, end_day, maxima, measure=target.measure)
+            if c.status != "censored" and c.level in target.levels
+        ]
+    else:
+        episodes = [e for e in completed_in_window(table, start, end) if _in_levels(target, e)]
+        if target.is_percentage and any(
+            e.left is not None and _in_levels(target, e) for e in arrived
+        ):
+            raise ValueError(
+                f"objetivos.{target.name}: the measure {target.measure!r} has no clock for"
+                " the patients who leave without being seen, so its percentage is not defined"
+            )
+    if not target.is_percentage:
+        return [_Case(_day(e, first_day), e.level, _known(target, e)) for e in episodes]
+    return [
+        _Case(_day(e, first_day), e.level, float(_known(target, e) > target.threshold_for(e.level)))
+        for e in episodes
+    ]
+
+
+def _statistic(target: Target, cases: Sequence[_Case]) -> float:
+    if not cases:
+        return math.nan
+    mean = float(np.mean([c.value for c in cases]))
+    return 100 * mean if target.is_percentage else mean
+
+
+def _target_values(
+    target: Target,
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    horizon: float,
+) -> TargetValues:
+    cases = _cases(target, table, first_day, end_day, horizon)
+    by_day: list[list[_Case]] = [[] for _ in range(first_day, end_day)]
+    for c in cases:
+        by_day[c.day].append(c)
+    if target.statistic == ARRIVALS_PERCENTAGE:
+        n_by_level: tuple[int, ...] = (len(cases),)
+        over_by_level: tuple[int, ...] = (int(sum(c.value for c in cases)),)
+    else:
+        n_by_level = tuple(sum(c.level == level for c in cases) for level in target.levels)
+        over_by_level = (
+            tuple(int(sum(c.value for c in cases if c.level == level)) for level in target.levels)
+            if target.is_percentage
+            else ()
         )
     return TargetValues(
-        value=_statistic(target, episodes),
+        value=_statistic(target, cases),
         daily=tuple(_statistic(target, day) for day in by_day),
         n_by_level=n_by_level,
         over_by_level=over_by_level,
+        bounded=sum(c.bounded for c in cases),
     )
 
 
+def _mean_or_nan(values: Sequence[float]) -> float:
+    return float(np.mean(values)) if values else math.nan
+
+
 def replica_values(
-    table: Sequence[EpisodeRecord], targets: Sequence[Target], first_day: int, end_day: int
+    table: Sequence[EpisodeRecord],
+    targets: Sequence[Target],
+    first_day: int,
+    end_day: int,
+    *,
+    horizon: float | None = None,
 ) -> ReplicaValues:
     """Reduce the episodes of one replication: a pure function.
 
     Only the episodes that arrive in days ``[first_day, end_day)`` count, as in
     ``completed_in_window``; the day of an episode is the day of its arrival.
+    Who counts in each target, with the abandonment, is in the module docstring.
 
     Args:
         table: The episodes of the replication, from ``episode_table``; its
@@ -227,25 +440,45 @@ def replica_values(
         targets: The targets to evaluate.
         first_day: First day of the window, the warm-up.
         end_day: Day after the last of the window.
+        horizon: End of the log, in minutes: the bound of who is still inside.
+            ``None`` is the one of ``replica_table``, ``end_day + DRAIN_DAYS`` days.
 
     Raises:
-        ValueError: If the days are not valid, or a departed episode lacks the
-            measure of a target.
+        ValueError: If the days are not valid, a departed episode lacks the
+            measure of a target, or a percentage of a measure without a clock
+            for who leaves meets one who left.
     """
     if not 0 <= first_day < end_day:
         raise ValueError(f"need 0 <= first_day < end_day, got {first_day} and {end_day}")
+    if horizon is None:
+        horizon = float((end_day + DRAIN_DAYS) * MINUTES_PER_DAY)
     start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
     arrived = [e for e in table if start <= e.arrival < end]
-    done = completed_in_window(table, start, end)
+    inside = [e for e in arrived if e.end is None]
+    attended = [e for e in completed_in_window(table, start, end) if e.level in BOTTLENECK_LEVELS]
     compliance = manchester_compliance(table, first_day, end_day)
     return ReplicaValues(
         targets=MappingProxyType(
-            {t.name: _target_values(t, done, first_day, end_day) for t in targets}
+            {t.name: _target_values(t, table, first_day, end_day, horizon) for t in targets}
         ),
         arrivals=len(arrived),
-        censored=sum(e.departure is None for e in arrived),
+        censored=len(inside),
         compliance_days_out=tuple(int(x) for x in compliance.out.sum(axis=0)),
         compliance_days=tuple(int(x) for x in compliance.days_with_patients),
+        left=sum(e.left is not None for e in arrived),
+        censored_seen=sum(e.first_assessment is not None for e in inside),
+        admitted=sum(e.bed_requested is not None for e in arrived),
+        censored_admitted=sum(e.bed_requested is not None for e in inside),
+        box_wait=_mean_or_nan([e.initial_box_wait for e in attended]),
+        doctor_wait=_mean_or_nan([e.initial_doctor_wait for e in attended]),
+        bed_wait_minutes=float(
+            sum(
+                e.bed_wait if e.bed_wait is not None else horizon - e.bed_requested
+                for e in arrived
+                if e.bed_requested is not None
+            )
+        ),
+        window_minutes=float(end - start),
     )
 
 
@@ -361,10 +594,16 @@ def evaluate_targets(
     first_day: int,
     end_day: int,
     confidence: float = CONFIDENCE,
+    *,
+    horizon: float | None = None,
 ) -> tuple[TargetResult, ...]:
-    """``summarize_targets`` of the ``replica_values`` of each table: a pure function."""
+    """``summarize_targets`` of the ``replica_values`` of each table: a pure function.
+
+    ``horizon`` is the end of every log, as in ``replica_values``."""
     return summarize_targets(
-        [replica_values(t, targets, first_day, end_day) for t in tables], targets, confidence
+        [replica_values(t, targets, first_day, end_day, horizon=horizon) for t in tables],
+        targets,
+        confidence,
     )
 
 
@@ -395,10 +634,13 @@ def level_breakdown(replicas: Sequence[ReplicaValues], target: Target) -> tuple[
     breakdown shows how much of the overall figure comes from each level.
 
     Raises:
-        ValueError: If the target is a mean.
+        ValueError: If the target is not a percentage above a threshold.
     """
-    if not target.is_percentage:
-        raise ValueError(f"objetivos.{target.name} is a mean: it has no breakdown by level")
+    if target.statistic != PERCENTAGE:
+        raise ValueError(
+            f"objetivos.{target.name} is not a percentage above a threshold: it has no"
+            " breakdown by level"
+        )
     out = []
     for i, level in enumerate(target.levels):
         percentages, contributions = [], []
@@ -410,6 +652,12 @@ def level_breakdown(replicas: Sequence[ReplicaValues], target: Target) -> tuple[
             contributions.append(100 * over / total if total else math.nan)
         out.append(LevelShare(level, float(np.mean(percentages)), float(np.mean(contributions))))
     return tuple(out)
+
+
+def waiting_for_bed(replicas: Sequence[ReplicaValues]) -> float:
+    """Mean between replications of the patients waiting for a bed (Little's law): the
+    boxes that the wait for a bed takes from the others (task 5.6), the hallway apart."""
+    return float(np.mean([r.waiting_for_bed for r in replicas]))
 
 
 def mean_compliance_out(replicas: Sequence[ReplicaValues]) -> tuple[float, ...]:
@@ -427,6 +675,67 @@ def compliance_days(replicas: Sequence[ReplicaValues]) -> tuple[tuple[int, int],
         )
         for k in range(N_LEVELS)
     )
+
+
+# --- Which targets apply ---------------------------------------------------------------------
+
+
+def target_applies(target: Target, model: PatientModel) -> bool:
+    """Whether ``target`` can be measured with ``model``: the abandonment and the
+    destinations (``Target.needs_outcome``) only exist in the milestone 5 model."""
+    return model is PatientModel.MILESTONE_5 or not target.needs_outcome
+
+
+def split_targets(
+    targets: Sequence[Target], center: CenterConfig, profiles: ClinicalProfiles
+) -> tuple[tuple[Target, ...], tuple[Target, ...]]:
+    """The targets that apply to the model of ``center`` and ``profiles``, and those that
+    do not, each in their order (task 5.6). Those that do not apply are listed as such,
+    never measured as a 0 %.
+
+    Raises:
+        ModelChoiceError: If the two files do not choose one model.
+    """
+    model = choose_model(center, profiles)
+    return (
+        tuple(t for t in targets if target_applies(t, model)),
+        tuple(t for t in targets if not target_applies(t, model)),
+    )
+
+
+LEFT_RULE_MEASURES = ("triage_wait", STAY, *CLOCKS)
+"""The measures whose percentage above a threshold has a rule for whoever leaves without
+being seen: the pretriage of the triaged, the stay of those who depart, and the clocks with
+the censoring of the compliance (module docstring)."""
+
+
+def check_targets_apply(
+    targets: Sequence[Target], center: CenterConfig, profiles: ClinicalProfiles
+) -> None:
+    """Check, before simulating, that every target can be measured with the model.
+
+    Raises:
+        ValueError: If a target does not apply to the model (``split_targets``), or, with
+            the milestone 5 model, it is a percentage above a threshold of a measure with
+            no rule for whoever leaves (outside ``LEFT_RULE_MEASURES``).
+        ModelChoiceError: If the two files do not choose one model.
+    """
+    _, out = split_targets(targets, center, profiles)
+    if out:
+        names = ", ".join(f"objetivos.{t.name}" for t in out)
+        raise ValueError(
+            f"{names}: only the milestone 5 model has abandonment and its destinations;"
+            " leave them out with split_targets"
+        )
+    if choose_model(center, profiles) is not PatientModel.MILESTONE_5:
+        return
+    for t in targets:
+        if t.statistic == PERCENTAGE and t.measure not in LEFT_RULE_MEASURES:
+            raise ValueError(
+                f"objetivos.{t.name}: the measure {t.measure!r} has no clock for the patients"
+                " who leave without being seen, so its percentage is not defined with the"
+                f" milestone 5 model (it is with {LEFT_RULE_MEASURES})"
+            )
 
 
 # --- Simulating -----------------------------------------------------------------------------
@@ -501,11 +810,13 @@ def simulate_replicas(
             ``None`` starts all of them on the profile's ``start_date``.
 
     Raises:
-        ValueError: If ``replicas`` is below 2, the days are not valid or there
-            is not one start date per replication.
+        ValueError: If ``replicas`` is below 2, the days are not valid, there is
+            not one start date per replication or a target does not apply to the
+            model (``split_targets``).
     """
     replicas = check_count("replicas", replicas, 2)
     days, warmup_days = check_horizon(days, warmup_days)
+    check_targets_apply(targets, center, profiles)
     if start_dates is None:
         profiles_by_replica = [arrival_profile] * replicas
     else:
@@ -519,17 +830,31 @@ def simulate_replicas(
     for child, profile in zip(child_streams(seed, replicas), profiles_by_replica, strict=True):
         run = clinical_run(center, profile, profiles, child, warmup_days)
         out.append(
-            replica_values(replica_table(run, days, warmup_days), targets, warmup_days, days)
+            replica_values(
+                replica_table(run, days, warmup_days),
+                targets,
+                warmup_days,
+                days,
+                horizon=(days + DRAIN_DAYS) * MINUTES_PER_DAY,
+            )
         )
     return tuple(out)
 
 
 # --- Sensitivity and choice -------------------------------------------------------------------
 
+ALL_KNOBS = (*KNOBS, *VALUE_KNOBS)
+"""The four knobs: the staffs of milestone 4 and the two numbers of milestone 5."""
+
+Setting = RuleStaffing | KnobValue
+"""A candidate of a knob: a staff of the rule, or one value of a knob of one number."""
+
 KNOB_TARGETS: Mapping[str, tuple[tuple[str, ...], str]] = MappingProxyType(
     {
         NURSES: (("pretriaje_medio",), "pretriaje_medio"),
         DOCTORS: (("tiempo_medico_niveles_2_5",), "tiempo_medico_niveles_2_5"),
+        BED_WAIT: (("estancia_ingresados",), "estancia_ingresados"),
+        PATIENCE: (("abandono",), "abandono"),
     }
 )
 """The fit targets of each knob, and the one whose aim (its reference or, without
@@ -540,7 +865,17 @@ The doctors were to be fitted also to clock A of level 3 (59.0 minutes, band
 45-75), but the sensitivity showed that no staffing of the rule takes it above
 23 minutes: with a strict priority in one pool of doctors, level 3 hardly waits
 and the waits fall on levels 4 and 5. ``tiempo_medico_nivel_3`` became a check
-target after measuring it (rule 5), and a check never chooses (task 4.6b)."""
+target after measuring it (rule 5), and a check never chooses (task 4.6b).
+
+The knobs of milestone 5 (task 5.6, H5-9): the wait for a bed fits the stay of the
+admitted and the patience fits the abandonment, one target each."""
+
+
+def _check_knob(knob: str) -> str:
+    if knob not in ALL_KNOBS:
+        raise ValueError(f"knob must be one of {ALL_KNOBS}, got {knob!r}")
+    return knob
+
 
 _CENTER_FIELD = {NURSES: "triage_nurses", DOCTORS: "doctors"}
 
@@ -552,14 +887,34 @@ def candidate_center(center: CenterConfig, knob: str, staff: Sequence[int]) -> C
     return dataclasses.replace(center, **{_CENTER_FIELD[knob]: tuple(staff)})
 
 
+def candidate_inputs(
+    center: CenterConfig, profiles: ClinicalProfiles, knob: str, setting: Setting
+) -> tuple[CenterConfig, ClinicalProfiles]:
+    """The center and the profiles of one candidate of ``knob``: only its knob changes.
+
+    A staff replaces that of its knob in the center (``candidate_center``); a value of
+    the bed changes the wait for a bed of the center, and one of the patience the
+    patience of the profiles (``calibration.knobs``).
+
+    Raises:
+        ValueError: If the knob is unknown, or the setting is not of its kind.
+    """
+    if _check_knob(knob) in KNOBS:
+        if not isinstance(setting, RuleStaffing):
+            raise ValueError(f"the knob {knob} takes a staff of the rule, got {setting!r}")
+        return candidate_center(center, knob, setting.staff), profiles
+    if not isinstance(setting, KnobValue):
+        raise ValueError(f"the knob {knob} takes one value, got {setting!r}")
+    return knob_inputs(center, profiles, knob, setting.value)
+
+
 def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
     """Check that the targets have the fit targets of ``knob`` before simulating anything.
 
     Raises:
         ValueError: If a target is missing or is not of fit.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    _check_knob(knob)
     by_name = {t.name: t for t in targets}
     names, _ = KNOB_TARGETS[knob]
     for name in names:
@@ -569,21 +924,53 @@ def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
             raise ValueError(f"objetivos.{name} must be of use {FIT!r} to fit {knob}")
 
 
+def check_knob_model(knob: str, center: CenterConfig, profiles: ClinicalProfiles) -> None:
+    """Check that the model of the two files has ``knob`` before simulating anything:
+    the wait for a bed and the patience only exist in the milestone 5 model.
+
+    Raises:
+        ValueError: If the knob is unknown or of milestone 5 with another model.
+        ModelChoiceError: If the two files do not choose one model.
+    """
+    model = choose_model(center, profiles)
+    if _check_knob(knob) in VALUE_KNOBS and model is not PatientModel.MILESTONE_5:
+        raise ValueError(
+            f"the knob {knob} needs the milestone 5 model ([camas] in the center and"
+            f" [abandono] in the profiles), got the {model.label} model"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SensitivityRow:
-    """One staffing of the rule, evaluated.
+    """One candidate of a knob, evaluated.
 
     Attributes:
-        staffing: The staff and its interval of u.
-        center: The center simulated, with that staff.
+        setting: The candidate: a staff of the rule and its interval of u, or a
+            value of a knob of one number.
+        center: The center simulated, with that candidate.
         results: One result per target.
         replicas: The reduced replications.
+        profiles: The profiles simulated, with that candidate (``None`` when
+            they are those of the knob's sensitivity unchanged and the row was
+            built by hand).
     """
 
-    staffing: RuleStaffing
+    setting: Setting
     center: CenterConfig
     results: tuple[TargetResult, ...]
     replicas: tuple[ReplicaValues, ...]
+    profiles: ClinicalProfiles | None = None
+
+    @property
+    def staffing(self) -> RuleStaffing:
+        """The staff of a knob of staff.
+
+        Raises:
+            ValueError: If the row is of a knob of one number.
+        """
+        if not isinstance(self.setting, RuleStaffing):
+            raise ValueError(f"{self.setting!r} is not a staff of the rule")
+        return self.setting
 
     def result(self, name: str) -> TargetResult:
         for r in self.results:
@@ -606,13 +993,13 @@ class SensitivityRow:
         return max(r.censored_share for r in self.replicas)
 
 
-def evaluate_staffings(
+def evaluate_settings(
     center: CenterConfig,
     arrival_profile: ArrivalProfile,
     profiles: ClinicalProfiles,
     targets: Sequence[Target],
     knob: str,
-    staffings: Sequence[RuleStaffing],
+    settings: Sequence[Setting],
     *,
     replicas: int,
     days: int,
@@ -621,31 +1008,31 @@ def evaluate_staffings(
     start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
-    """Evaluate the given staffings of ``knob``, in their order, the other knob fixed.
+    """Evaluate the given candidates of ``knob``, in their order, the rest fixed.
 
     Each one is simulated with the same replications (the same seed and the
     same ``start_dates``, as in ``simulate_replicas``), so the rows differ only
-    in the staff. ``sensitivity`` gives it every staffing of
-    the rule; a subset, such as the staffings around the chosen one, costs
-    less.
+    in the knob: the common random numbers of the calibration. ``sensitivity``
+    gives it every candidate of the knob; a subset, such as the candidates
+    around the chosen one, costs less.
 
     Args:
-        staffings: The staffings to evaluate, such as some of ``rule_staffings``.
+        settings: The candidates: staffs such as some of ``rule_staffings``, or
+            values (``KnobValue``) of a knob of one number.
         on_row: Called with each row as soon as it is evaluated, such as a
             progress line of the CLI.
 
     Raises:
-        ValueError: If ``knob`` is unknown.
+        ValueError: If ``knob`` is unknown, or a candidate is not of its kind.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    _check_knob(knob)
     rows = []
-    for staffing in staffings:
-        candidate = candidate_center(center, knob, staffing.staff)
+    for setting in settings:
+        candidate, candidate_profiles = candidate_inputs(center, profiles, knob, setting)
         reduced = simulate_replicas(
             candidate,
             arrival_profile,
-            profiles,
+            candidate_profiles,
             targets,
             replicas=replicas,
             days=days,
@@ -653,11 +1040,47 @@ def evaluate_staffings(
             seed=seed,
             start_dates=start_dates,
         )
-        row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
+        row = SensitivityRow(
+            setting, candidate, summarize_targets(reduced, targets), reduced, candidate_profiles
+        )
         rows.append(row)
         if on_row is not None:
             on_row(row)
     return tuple(rows)
+
+
+evaluate_staffings = evaluate_settings
+"""``evaluate_settings`` by its name of milestone 4, with the same signature: the
+staffings of a knob of staff (or the values of a knob of one number)."""
+
+
+def knob_settings(
+    knob: str,
+    center: CenterConfig,
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    u_min: float = U_MIN,
+    u_max: float = U_MAX,
+    step: float = U_STEP,
+    values: Sequence[float] | None = None,
+) -> tuple[Setting, ...]:
+    """The candidates of the sensitivity of ``knob``: every staff of the rule on the grid
+    of u, or the values of a knob of one number (``values``, or its default grid).
+
+    Raises:
+        ValueError: If the knob is unknown, ``values`` is given to a knob of staff,
+            or is empty or has an invalid value.
+    """
+    if _check_knob(knob) in KNOBS:
+        if values is not None:
+            raise ValueError(f"the knob {knob} takes the grid of u, not values")
+        loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
+        return rule_staffings(loads, u_min, u_max, step)
+    grid = DEFAULT_GRIDS[knob] if values is None else tuple(values)
+    if not grid:
+        raise ValueError(f"the knob {knob} needs at least one value")
+    return tuple(KnobValue(check_knob_value(knob, v)) for v in grid)
 
 
 def sensitivity(
@@ -674,29 +1097,35 @@ def sensitivity(
     u_min: float = U_MIN,
     u_max: float = U_MAX,
     step: float = U_STEP,
+    values: Sequence[float] | None = None,
     start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
-    """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
+    """Evaluate every candidate of ``knob`` (``knob_settings``), the rest fixed.
 
-    The staffings come from ``rule_staffings`` with the loads of the knob and
-    the shifts of ``center``, and ``evaluate_staffings`` simulates each one
-    with the same replications (the same seed and ``start_dates``), so the
-    rows differ only in the staff. The loads are those of the mean day of the
-    profile, which do not depend on its ``start_date``.
+    For a knob of staff, the staffings come from ``rule_staffings`` with the loads
+    of the knob and the shifts of ``center``; the loads are those of the mean day of
+    the profile, which do not depend on its ``start_date``. For a knob of one number,
+    its values (``values``, or the default grid of ``calibration.knobs``).
+    ``evaluate_settings`` simulates each one with the same replications (the same
+    seed and ``start_dates``), so the rows differ only in the knob.
 
     Args:
+        values: The values of a knob of one number; ``None`` is its default grid.
         on_row: Called with each row as soon as it is evaluated, such as a
             progress line of the CLI.
     """
-    loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
-    return evaluate_staffings(
+    settings = knob_settings(
+        knob, center, profiles, arrival_profile, u_min=u_min, u_max=u_max, step=step,
+        values=values,
+    )  # fmt: skip
+    return evaluate_settings(
         center,
         arrival_profile,
         profiles,
         targets,
         knob,
-        rule_staffings(loads, u_min, u_max, step),
+        settings,
         replicas=replicas,
         days=days,
         warmup_days=warmup_days,
@@ -708,25 +1137,31 @@ def sensitivity(
 
 def passes_fit(row: SensitivityRow, knob: str) -> bool:
     """Whether ``row`` passes every fit target of ``knob`` (rule 4)."""
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    names, _ = KNOB_TARGETS[knob]
+    names, _ = KNOB_TARGETS[_check_knob(knob)]
     return all(row.result(name).passed for name in names)
+
+
+def candidate_key(setting: Setting) -> tuple[int, ...] | float:
+    """What identifies a candidate: its staff, or its value (not its interval of u)."""
+    return setting.staff if isinstance(setting, RuleStaffing) else setting.value
+
+
+def _size(setting: Setting) -> float:
+    """What a tie is broken by: the smaller staff, or the smaller value."""
+    return sum(setting.staff) if isinstance(setting, RuleStaffing) else setting.value
 
 
 def choice_order(rows: Sequence[SensitivityRow], knob: str) -> tuple[SensitivityRow, ...]:
     """The rows that pass every fit target of ``knob``, in the order of the choice:
     the mean of the choosing target closest to its aim (``Target.aim``: the
     reference, or the centre of the band without one) first; on a tie, the smaller
-    staff first.
+    staff, or the smaller value, first.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    _, chooser = KNOB_TARGETS[knob]
+    _, chooser = KNOB_TARGETS[_check_knob(knob)]
 
-    def distance(row: SensitivityRow) -> tuple[float, int]:
+    def distance(row: SensitivityRow) -> tuple[float, float]:
         r = row.result(chooser)
-        return abs(r.mean - r.target.aim), sum(row.staffing.staff)
+        return abs(r.mean - r.target.aim), _size(row.setting)
 
     return tuple(sorted((row for row in rows if passes_fit(row, knob)), key=distance))
 
@@ -759,8 +1194,10 @@ def choose_staffing(
         if check is None:
             return row
         checked = check(row)
-        if checked.staffing.staff != row.staffing.staff:
-            raise ValueError(f"the check of {row.staffing.staff} is of {checked.staffing.staff}")
+        if candidate_key(checked.setting) != candidate_key(row.setting):
+            raise ValueError(
+                f"the check of {candidate_key(row.setting)} is of {candidate_key(checked.setting)}"
+            )
         if passes_fit(checked, knob):
             return row
     return None

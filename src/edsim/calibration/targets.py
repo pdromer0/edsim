@@ -5,10 +5,17 @@ calibrated against, its band and its source, so that the CLI, the notebook and
 the tests read the same numbers (docs/specs/hito-4.md, "Calibración"):
 
 - ``medida``: a per-episode measure of ``EpisodeRecord``, such as
-  ``triage_wait`` (the pretriage) or ``door_to_doctor`` (clock A);
+  ``triage_wait`` (the pretriage), ``door_to_doctor`` (clock A) or ``stay``; with
+  ``"porcentaje_de_llegadas"``, an event: ``"left"`` (left without being seen) or
+  ``"departure"`` (departed);
 - ``niveles``: the assigned levels whose patients count, such as ``[2, 3, 4, 5]``;
-- ``estadistico``: ``"media"`` (mean per patient, in minutes) or
-  ``"porcentaje_sobre_umbral"`` (percentage of patients above ``umbral``);
+  not with ``"porcentaje_de_llegadas"``, whose denominator is every arrival of the
+  window, classified or not;
+- ``estadistico``: ``"media"`` (mean per patient, in minutes),
+  ``"porcentaje_sobre_umbral"`` (percentage of patients above ``umbral``) or
+  ``"porcentaje_de_llegadas"`` (percentage of the arrivals with the event, task 5.6);
+- ``destino``: optional, only with ``stay`` or ``departure``: the patients who
+  depart to that destination (``ingreso``, …), such as the stay of the admitted;
 - ``umbral``: only with the percentage, in minutes or ``"manchester"`` (the
   Manchester maximum of each patient's assigned level); above means strictly
   above, so a patient exactly at the threshold is not counted;
@@ -20,6 +27,10 @@ the tests read the same numbers (docs/specs/hito-4.md, "Calibración"):
 
 Unknown keys are an error, and every error names the full key, such as
 ``objetivos.pretriaje_medio.horquilla``.
+
+The targets of the abandonment and the destinations (``left`` or a ``destino``)
+only exist in the milestone 5 model (``needs_outcome``): with another model they
+do not apply, they are never measured as a 0 % (task 5.6).
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ from edsim.checks import check_integer, check_list, check_number
 from edsim.engine.analysis import MEASURES
 from edsim.engine.center import N_LEVELS
 from edsim.engine.targets import MANCHESTER_MAX_WAIT
+from edsim.profiles.config import DESTINATIONS
 
 MEAN = "media"
 """Statistic: mean of the measure per patient, in minutes."""
@@ -40,7 +52,23 @@ MEAN = "media"
 PERCENTAGE = "porcentaje_sobre_umbral"
 """Statistic: percentage of the patients whose measure is above the threshold."""
 
-STATISTICS = (MEAN, PERCENTAGE)
+ARRIVALS_PERCENTAGE = "porcentaje_de_llegadas"
+"""Statistic: percentage of the arrivals of the window with an event (task 5.6), such as
+the abandonment, over every arrival, classified or not, as the ``objetivo`` of
+``perfiles.toml``."""
+
+STATISTICS = (MEAN, PERCENTAGE, ARRIVALS_PERCENTAGE)
+
+LEFT = "left"
+"""Event of ``ARRIVALS_PERCENTAGE``: the patient left without being seen."""
+
+DEPARTURE = "departure"
+"""Event of ``ARRIVALS_PERCENTAGE``: the patient departed (with ``destino``, to it)."""
+
+EVENTS = (LEFT, DEPARTURE)
+
+STAY = "stay"
+"""The measure of the stay, the other one that takes a ``destino``."""
 
 FIT = "ajuste"
 """Use of a target that fits a knob."""
@@ -53,8 +81,8 @@ USES = (FIT, CHECK)
 MANCHESTER = "manchester"
 """Threshold of a percentage: the Manchester maximum of the assigned level."""
 
-_REQUIRED = ("medida", "niveles", "estadistico", "horquilla", "uso", "fuente", "enlace")
-_OPTIONAL = ("referencia", "umbral", "nota")
+_REQUIRED = ("medida", "estadistico", "horquilla", "uso", "fuente", "enlace")
+_OPTIONAL = ("niveles", "referencia", "umbral", "destino", "nota")
 
 
 def _check_text(key: str, value: object) -> str:
@@ -81,9 +109,11 @@ class Target:
 
     Attributes:
         name: The name of its table, such as ``pretriaje_medio``.
-        measure: A name of ``MEASURES`` (``medida``).
-        levels: Assigned levels that count, increasing (``niveles``).
-        statistic: ``MEAN`` or ``PERCENTAGE`` (``estadistico``).
+        measure: A name of ``MEASURES`` or, with ``ARRIVALS_PERCENTAGE``, of
+            ``EVENTS`` (``medida``).
+        levels: Assigned levels that count, increasing (``niveles``); empty with
+            ``ARRIVALS_PERCENTAGE``.
+        statistic: ``MEAN``, ``PERCENTAGE`` or ``ARRIVALS_PERCENTAGE`` (``estadistico``).
         threshold: With ``PERCENTAGE``, minutes or ``MANCHESTER``; ``None``
             with ``MEAN`` (``umbral``).
         band: ``(min, max)`` of the band (``horquilla``).
@@ -93,6 +123,9 @@ class Target:
         reference: The observed value, inside the band, or ``None``
             (``referencia``).
         note: A remark on the source, or ``None`` (``nota``).
+        destination: Only the patients who depart to it, one of
+            ``DESTINATIONS``, or ``None`` (``destino``); only with ``stay`` or
+            ``departure``.
     """
 
     name: str
@@ -106,18 +139,42 @@ class Target:
     link: str
     reference: float | None = None
     note: str | None = None
+    destination: str | None = None
 
     def __post_init__(self) -> None:
         set_ = object.__setattr__
         name = _check_text("target name", self.name)
         key = f"objetivos.{name}"
-        if self.measure not in MEASURES:
-            raise ValueError(f"{key}.medida must be one of {MEASURES}, got {self.measure!r}")
-        set_(self, "levels", _check_levels(f"{key}.niveles", self.levels))
         if self.statistic not in STATISTICS:
             raise ValueError(
                 f"{key}.estadistico must be one of {STATISTICS}, got {self.statistic!r}"
             )
+        if self.statistic == ARRIVALS_PERCENTAGE:
+            if self.measure not in EVENTS:
+                raise ValueError(
+                    f"{key}.medida must be one of {EVENTS} with {ARRIVALS_PERCENTAGE!r},"
+                    f" got {self.measure!r}"
+                )
+            if self.levels:
+                raise ValueError(
+                    f"{key}.niveles is not allowed with {ARRIVALS_PERCENTAGE!r}: its"
+                    " denominator is every arrival of the window, classified or not"
+                )
+            set_(self, "levels", ())
+        else:
+            if self.measure not in MEASURES:
+                raise ValueError(f"{key}.medida must be one of {MEASURES}, got {self.measure!r}")
+            set_(self, "levels", _check_levels(f"{key}.niveles", self.levels))
+        if self.destination is not None:
+            if self.measure not in (STAY, DEPARTURE):
+                raise ValueError(
+                    f"{key}.destino is only for the measures {STAY!r} and {DEPARTURE!r},"
+                    f" got it with {self.measure!r}"
+                )
+            if self.destination not in DESTINATIONS:
+                raise ValueError(
+                    f"{key}.destino must be one of {DESTINATIONS}, got {self.destination!r}"
+                )
         set_(self, "threshold", self._checked_threshold(key))
         low, high = (
             check_number(f"{key}.horquilla[{i}]", x)
@@ -125,7 +182,7 @@ class Target:
         )
         if not low < high:
             raise ValueError(f"{key}.horquilla must have min < max, got {[low, high]!r}")
-        if self.statistic == PERCENTAGE and not 0 <= low < high <= 100:
+        if self.is_percentage and not 0 <= low < high <= 100:
             raise ValueError(f"{key}.horquilla of a percentage must be within [0, 100]")
         set_(self, "band", (low, high))
         if self.use not in USES:
@@ -144,9 +201,11 @@ class Target:
 
     def _checked_threshold(self, key: str) -> float | str | None:
         threshold = self.threshold
-        if self.statistic == MEAN:
+        if self.statistic != PERCENTAGE:
             if threshold is not None:
-                raise ValueError(f"{key}.umbral is only for {PERCENTAGE!r}, not for {MEAN!r}")
+                raise ValueError(
+                    f"{key}.umbral is only for {PERCENTAGE!r}, not for {self.statistic!r}"
+                )
             return None
         if threshold is None:
             raise ValueError(f"{key}.umbral is required with {PERCENTAGE!r}")
@@ -168,13 +227,20 @@ class Target:
 
     @property
     def is_percentage(self) -> bool:
-        """Whether the statistic is a percentage of patients."""
-        return self.statistic == PERCENTAGE
+        """Whether the statistic is a percentage: of the patients above the threshold, or
+        of the arrivals with the event."""
+        return self.statistic in (PERCENTAGE, ARRIVALS_PERCENTAGE)
+
+    @property
+    def needs_outcome(self) -> bool:
+        """Whether it only exists in the milestone 5 model: the abandonment (``left``) or a
+        ``destino`` of its four destinations. With another model it does not apply."""
+        return self.measure == LEFT or self.destination is not None
 
     def threshold_for(self, level: int) -> float:
         """The threshold of a patient of assigned ``level``, in minutes."""
         if self.threshold is None:
-            raise ValueError(f"objetivos.{self.name} is a mean: it has no threshold")
+            raise ValueError(f"objetivos.{self.name} has no threshold ({self.statistic!r})")
         if self.threshold == MANCHESTER:
             return MANCHESTER_MAX_WAIT[level - 1]
         return float(self.threshold)
@@ -184,7 +250,12 @@ def _target(name: str, table: object) -> Target:
     key = f"objetivos.{name}"
     if not isinstance(table, dict):
         raise ValueError(f"{key} must be a table, got {table!r}")
-    missing = [f"{key}.{k}" for k in _REQUIRED if k not in table]
+    required = (
+        _REQUIRED
+        if table.get("estadistico") == ARRIVALS_PERCENTAGE
+        else (*_REQUIRED[:1], "niveles", *_REQUIRED[1:])
+    )
+    missing = [f"{key}.{k}" for k in required if k not in table]
     unknown = [f"{key}.{k}" for k in sorted(table.keys() - {*_REQUIRED, *_OPTIONAL})]
     problems = []
     if missing:
@@ -196,7 +267,7 @@ def _target(name: str, table: object) -> Target:
     return Target(
         name=name,
         measure=table["medida"],
-        levels=table["niveles"],
+        levels=table.get("niveles", ()),
         statistic=table["estadistico"],
         threshold=table.get("umbral"),
         band=table["horquilla"],
@@ -205,6 +276,7 @@ def _target(name: str, table: object) -> Target:
         link=table["enlace"],
         reference=table.get("referencia"),
         note=table.get("nota"),
+        destination=table.get("destino"),
     )
 
 

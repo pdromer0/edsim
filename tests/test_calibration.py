@@ -311,9 +311,14 @@ def test_desglose_por_nivel_a_mano():
     assert level2.contribution + level3.contribution == 25.0
 
 
-def test_desglose_solo_para_porcentajes():
-    with pytest.raises(ValueError, match="is a mean"):
+def test_desglose_solo_para_porcentajes_sobre_un_umbral():
+    message = "objetivos.t is not a percentage above a threshold"
+    with pytest.raises(ValueError, match=message):
         level_breakdown([replica("t", 1.0)], target())
+    # El porcentaje de llegadas (tarea 5.6) no tiene niveles que desglosar.
+    arrivals = target(measure="left", levels=(), statistic="porcentaje_de_llegadas", band=(1, 4))
+    with pytest.raises(ValueError, match=message):
+        level_breakdown([replica("t", 1.0)], arrivals)
 
 
 # --- Día de vaciado ------------------------------------------------------------------------

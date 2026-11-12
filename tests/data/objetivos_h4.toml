@@ -1,0 +1,75 @@
+# Objetivos de calibración del centro base. Ver docs/specs/hito-4.md («Calibración»).
+#
+# Cada objetivo compara una medida por paciente de los niveles asignados que
+# indica, en la ventana después del calentamiento, con una horquilla observada.
+# Uso: "ajuste" (elige la plantilla de un mando) o "comprobacion" (reservado
+# para comprobar el ajuste con otra semilla; nunca elige). Las normas
+# (Manchester con el reloj C, pretriaje en 10 minutos) no son objetivos.
+#
+# El CMBD del SAS es de 2013 e incluye menores: da el orden de magnitud, y por
+# eso las horquillas son anchas.
+
+[objetivos.pretriaje_medio]
+# Mando: enfermería de triaje. Pretriaje = de la llegada al inicio del triaje.
+medida = "triage_wait"
+niveles = [2, 3, 4, 5]               # el nivel 1 se clasifica en la puerta
+estadistico = "media"
+referencia = 12.4
+horquilla = [6, 15]
+uso = "ajuste"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Incluye menores de 15 años"
+
+[objetivos.tiempo_medico_niveles_2_5]
+# Mando: médicos. Reloj A (TPAM del SAS), de la llegada al primer médico. Sin
+# referencia, la elección busca el centro de la horquilla (52,5 minutos).
+medida = "door_to_doctor"
+niveles = [2, 3, 4, 5]
+estadistico = "media"
+horquilla = [35, 70]
+uso = "ajuste"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Sin referencia única: el SAS da de 35,6 a 68,5 minutos según el nivel. Incluye menores de 15 años"
+
+[objetivos.tiempo_medico_nivel_3]
+# De ajuste a comprobación en la tarea 4.6b (6 de noviembre de 2026), después de
+# medir la sensibilidad: ver la nota. Una comprobación nunca decide el ajuste.
+medida = "door_to_doctor"
+niveles = [3]
+estadistico = "media"
+referencia = 59.0
+horquilla = [45, 75]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Discrepancia estructural: con prioridad estricta en un solo grupo de médicos, el nivel 3 casi no espera (reloj C de 4,4 minutos) y las esperas recaen en los niveles 4 y 5; en los hospitales reales los niveles 4 y 5 suelen tener circuito propio (consultas o vía rápida) y el nivel 3 compite con el 2. Pasó a comprobación después de medir la sensibilidad (regla 5: ninguna plantilla de la regla lo lleva por encima de 22,9 minutos), no antes. Incluye menores de 15 años"
+
+[objetivos.porcentaje_sobre_manchester]
+# % de pacientes con el reloj A por encima del máximo de Manchester de su nivel
+# asignado (estrictamente por encima). Con el reloj A, el nivel 2 (10 minutos)
+# queda casi siempre por encima: se informa también desglosado por nivel.
+medida = "door_to_doctor"
+niveles = [2, 3, 4, 5]
+estadistico = "porcentaje_sobre_umbral"
+umbral = "manchester"
+referencia = 18.95
+horquilla = [10, 30]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Porcentaje por encima del tiempo recomendado. Incluye menores de 15 años"
+
+[objetivos.porcentaje_pretriaje_mas_5]
+# % de pacientes con más de 5 minutos de pretriaje (indicador TECLA del SAS).
+medida = "triage_wait"
+niveles = [2, 3, 4, 5]
+estadistico = "porcentaje_sobre_umbral"
+umbral = 5
+referencia = 46.3
+horquilla = [30, 60]
+uso = "comprobacion"
+fuente = "SAS, Urgencias hospitalarias en el Servicio Andaluz de Salud, CMBD 2013"
+enlace = "https://www.sspa.juntadeandalucia.es/servicioandaluzdesalud/sites/default/files/sincfiles/wsas-media-pdf_publicacion/2020/UrgenciasHospitalariasenelServicioAndaluzdeSalud.CMBD2013_0.pdf"
+nota = "Incluye menores de 15 años"

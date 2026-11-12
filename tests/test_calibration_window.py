@@ -145,7 +145,7 @@ def example():
         load_center(DATA / "centro_sala_ejemplo.toml"),
         load_profile(DATA / "llegadas_ejemplo.toml"),
         load_profiles(DATA / "perfiles_ejemplo.toml"),
-        load_targets(CONFIG / "objetivos.toml"),
+        load_targets(DATA / "objetivos_h4.toml"),
     )
 
 
@@ -247,16 +247,17 @@ def test_fechas_con_otra_longitud(example):
 
 @pytest.mark.slow
 def test_la_replica_de_enero_reproduce_la_replica_0_de_la_ventana_de_la_4_6b():
-    # El centro de la 4.6b fijado en tests/data ([3, 2, 1] y [12, 11, 5]) con el resto de
-    # config/, 14 días con 2 de calentamiento y la semilla 2026: la réplica de enero de la
-    # ventana anual es la réplica 0 de la ventana de la 4.6b, valor a valor.
+    # El centro de la 4.6b fijado en tests/data ([3, 2, 1] y [12, 11, 5]) con el resto del
+    # modelo del hito 4 (las copias h4 y las llegadas de config/), 14 días con 2 de
+    # calentamiento y la semilla 2026: la réplica de enero de la ventana anual es la réplica 0
+    # de la ventana de la 4.6b, valor a valor.
     center = load_center(DATA / "centro_4_6b.toml")
     assert (center.triage_nurses, center.doctors) == ((3, 2, 1), (12, 11, 5))
     args = (
         center,
         load_profile(CONFIG / "llegadas.toml"),
-        load_profiles(CONFIG / "perfiles.toml"),
-        load_targets(CONFIG / "objetivos.toml"),
+        load_profiles(DATA / "perfiles_h4.toml"),
+        load_targets(DATA / "objetivos_h4.toml"),
     )
     options = {"days": 14, "warmup_days": 2, "seed": 2026}
     annual = simulate_replicas(*args, replicas=12, start_dates=first_mondays(2026), **options)
