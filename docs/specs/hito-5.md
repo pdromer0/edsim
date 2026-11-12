@@ -280,7 +280,15 @@ Media de espera de los atendidos: 60 min. Cumplimiento: 2 de 3, el 66,7 %. Quita
 | Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Más abandono nunca mejora el cumplimiento |
 | Estancia en urgencias | Por destino; los que se van, aparte, con su tiempo hasta irse | Como el TPU del SAS por tipo de alta |
 
-Para el cumplimiento con el reloj C hace falta la clasificación: quien se va antes del triaje no tiene nivel y no entra; su abandono cuenta en el indicador de «antes del triaje».
+Para el cumplimiento con el reloj C hace falta la clasificación: quien se va antes del triaje no tiene nivel y no entra, con ningún reloj y tampoco en el cumplimiento por nivel real, aunque el ground truth le dé nivel. Su abandono cuenta en el indicador de «antes del triaje».
+
+**Precisiones de la 5.4:**
+
+- **El máximo exacto.** Quien se va con su reloj justo en el máximo incumple. Quien se va en el instante t no fue visto en t (con el empate, se habría quedado), así que su espera hasta el médico habría sido mayor que el máximo.
+- **El reloj de quien se va depende de la medida:** con C, desde la clasificación; con B, desde el inicio del triaje, y con A, desde la llegada.
+- **Medias y cuantiles con censurados** (la espera de cama y la estancia de quien sigue dentro en el horizonte). Un cuantil crece cuando crece uno de sus valores. Con los censurados en su cota inferior sale el mínimo posible y, con ellos por encima de todo, el máximo. Si coinciden, el valor es exacto; si no, se da la cota («≥»). La media con censurados es siempre una cota.
+- **Umbrales con censurados.** Para un porcentaje por encima de un umbral (las 6, 12 y 24 horas de cama, las 4 horas de los ingresados), el censurado que ya lo pasó cuenta por encima, y el que no, como desconocido. Quitar a los censurados acortaría las esperas.
+- **Denominadores.** Los porcentajes globales de abandono y de destino van sobre las llegadas de la ventana; los de nivel asignado, sobre los clasificados con ese nivel.
 
 **Indicadores nuevos** (los observables, desde el log):
 
@@ -581,8 +589,8 @@ Un centro lleva `[destino]` (modelos provisional y del hito 4) o `[camas]` (hito
 
 ### CLI
 
-- `edsim motor simular` usa `config/`: el modelo del hito 4 hasta la 5.6 y el del hito 5 después; con `--perfiles` y `--centro` del hito 5, el del hito 5. La cabecera dice el modelo. Un bloque a medias es código 2, antes de escribir nada. Hasta la 5.4, con el hito 5 la salida da los recuentos del desenlace (`outcome_counts`: llegadas, abandonos por sitio, salidas por destino y dentro) en lugar del resumen, cuyas métricas cuentan como dentro a quien se fue, y dice que las métricas con abandono llegan con la 5.4.
-- El directo (`edsim directo lanzar`) y la carga ofrecida rechazan los ficheros del hito 5 con un error claro hasta la 5.4: el directo nunca etiqueta un log de la versión 4 como versión 3.
+- `edsim motor simular` usa `config/`: el modelo del hito 4 hasta la 5.6 y el del hito 5 después; con `--perfiles` y `--centro` del hito 5, el del hito 5. La cabecera dice el modelo. Un bloque a medias es código 2, antes de escribir nada. Con el hito 5, la salida da el resumen completo más una sección «Desenlace» (tarea 5.4): abandono, cumplimiento con censura, destinos, espera de cama, estancia por destino y boxes bloqueados. En la 5.3 daba los recuentos del desenlace (`outcome_counts`).
+- El directo (`edsim directo lanzar`) acepta los ficheros del hito 5 desde la 5.4 y escribe la versión 4; hasta entonces los rechazaba, para no etiquetar nunca un log de la versión 4 como versión 3. La carga ofrecida los sigue rechazando con un error claro: va en su propio issue (#103).
 - `edsim perfiles validar` gana `check_patience` y `check_destinations`, con el patrón de `check_workup`.
 - `edsim calibracion evaluar` y `sensibilidad` ganan los objetivos y los mandos nuevos (5.6).
 
@@ -1191,3 +1199,122 @@ Dos errores los vieron los tests antes de la revisión: el lector del CSV del de
 - 5.4: el resumen completo de `motor simular` con el hito 5 (y el cambio de la huella de su salida que trae); las métricas, los KPI y las curvas de un run del hito 5 (`analyze_run`, `episode_table`); el directo de la versión 4; la carga ofrecida del hito 5 (la especificación no la asigna; se propone aquí).
 - 5.5: la etiqueta de `catalog_version` en `METADATA_LABELS` de la app.
 - 5.6: los bloques en `config/`.
+
+### Tarea 5.4: Núcleo de la app y directo con la versión 4
+
+**Qué se hizo**
+
+Issue #71, rama `feat/h5-app-nucleo`, Claude Code, sin `@codex review` (tarea no crítica). Son catorce commits más el de esta entrada: ocho del plan, cinco de la revisión propia y uno de la primera N3. No toca `config/` (sigue con el modelo del hito 4 hasta la 5.6) ni `app/` (la 5.5, de Codex). Las huellas de las versiones 1 a 3 y de los KPI no cambian; la salida estándar de `motor simular` con el hito 5 tiene huella nueva.
+
+- **La tabla y las curvas** (`engine/analysis.py`):
+  - `EpisodeRecord` gana al final `left`, `left_from`, `bed_requested`, `bed_assigned`, `bed_wait` y `hallway`, y las propiedades `end` y `time_to_leave`. Los relojes de quien se va quedan vacíos; sus esperas son definitivas al irse.
+  - `step_curves` saca del censo y de su cola o su box a quien se va. El ingresado desalojado no entra en la cola de box y, al salir del pasillo, no resta un box.
+  - Dos curvas nuevas fuera de `CURVES` (`OUTCOME_CURVES`): `boxes_waiting_bed` y `hallway`.
+  - `busy_intervals` cierra el box con `patient_left_wbs`, y la ley de Little cuenta a todos los que terminan (`ended_in_window`).
+- **El cumplimiento con censura** (`engine/targets.py`, H5-8). `compliance_cases` clasifica cada paciente como `within`, `exceeded` o `censored` (pieza 4, «Precisiones de la 5.4»). La usan `manchester_compliance`, `true_level_compliance`, `window_compliance` y `true_level_window_compliance`. `Compliance` gana `left_late` y `censored`, y `LevelCompliance` gana `censored`. El pretriaje cuenta a los triados.
+- **Los indicadores del desenlace** (`engine/outcome_metrics.py`, módulo nuevo):
+  - `left_without_being_seen_shares`, `destination_shares`, `bed_wait_quantiles`, `stay_by_destination` y `bed_occupancy`, todos juntos en `window_outcome` (`WindowOutcome`);
+  - `censored_quantile` y `censored_mean`, con la cota «≥», y `over_threshold`.
+- **`runs/`:**
+  - `LocationState` gana el estado `waiting_bed` y las marcas `hallway` y `left` (H5-11). Es el mismo reductor para el Replay, los episodios y el `LiveTracker`.
+  - El Replay cierra el abandono aparte (`ReplayAbandonment`) y da los cuatro destinos.
+  - `EpisodeFilters` acepta los cuatro destinos y gana `left`, `left_from`, `bed` y `hallway`.
+  - `RunResults.outcome` y `SimulationResult.outcome` traen el desenlace con un log de la versión 4.
+  - `compare_run_summary` no cuenta como dentro a quien se fue.
+- **«Ver la verdad»** (`runs/truth.py`, H5-10):
+  - `compare_episode_truth` da como `unused` el destino de quien se fue y, con `center`, las filas `patience` y `bed_wait`.
+  - `episode_outcome_truth` devuelve `OutcomeTruthView`.
+  - `true_level_abandonment` da el abandono por nivel real, los graves que se fueron y los que habrían ingresado.
+- **CLI:** `motor simular` con el hito 5 da el resumen completo más la sección «Desenlace». Desaparecen `format_outcome_counts` y su aviso.
+- **Directo:**
+  - `prepare_live` acepta el hito 5 (versión 4).
+  - `Occupancy` del `LiveTracker` gana `hallway`, `departed` y `left`.
+  - «Directo = batch» y «consumidor = batch» tienen caso v4, y el consumidor contra Kafka real también (`tests_integracion`).
+- **Tests nuevos:** `test_analysis_v4.py`, `test_censura.py`, `test_outcome_metrics.py`, `test_runs_v4.py`, `test_outcome_truth.py` y `tests/v4_logs.py` (`HandLog`, logs a mano de la versión 4). Además, casos nuevos en `test_tracker.py`, `test_directo.py` y `test_launch.py`.
+- **`refactor(tests)`:** los cuatro `test_simulate_cli_characterization*` pasan al español (P1 de idioma de Codex en el PR #102), sin tocar huellas.
+- **Issue #103:** la carga ofrecida del hito 5.
+- **Comentario en el #72:** la API nueva para la 5.5.
+
+**Decisiones del diff**
+
+- **Las curvas de la cama van fuera de `CURVES`:** sus lectores (las medias de `WindowMetrics`, `ReplayCounts`, la app) siguen igual con los logs antiguos. `ReplayCounts` las gana como campos con valor por defecto.
+- **El máximo exacto incumple, y el reloj de quien se va depende de la medida** (ajuste de Pedro al plan, A2). Un paciente clasificado de 0 a 5 que se va en 122 queda censurado con C (117) e incumple con A (122).
+- **La media con censurados es una cota**, con la misma regla que los cuantiles (ajuste de Pedro al plan). Para el máximo de un cuantil, los censurados se sustituyen por un valor finito mayor que todos: con infinito, numpy interpola `inf − inf`.
+- **Los destinos por nivel asignado van sobre los clasificados de cada nivel**, como el abandono (ajuste de Pedro al plan). Los globales van sobre las llegadas, como el `objetivo` de `perfiles.toml`.
+- **La primera línea del resumen separa a los que se van** siempre que los haya, con o sin la sección del desenlace. Así un log de la versión 4 nunca dice «salidos + dentro» sin cuadrar. Con las versiones 1 a 3 no cambia.
+- **«Directo = batch» v4:** quien se fue antes de W está cerrado y no entra en el censo. La guarda comprueba eso, no que haya abandonos en el censo.
+- **El notebook 06**, otro lector de `LOCATIONS`, emparejaba siete colores con las ubicaciones (`zip(strict=True)`). La primera N3 lo vio, y ahora tiene «espera cama» y el hueco 8 de la paleta (`#e34948`). El plan buscó los lectores de `EpisodeRecord` y del tracker, pero no los de los notebooks.
+- **Pasos vacíos:** el pacer no espera por ellos ni publica nada. El test compara un directo a mano con y sin pasos vacíos: mismos mensajes y mismos instantes del reloj.
+
+**Medidas**
+
+| Medida | Valor |
+| --- | --- |
+| Pasos del motor sin eventos del log, 3 días, semilla 2026 | Hito 4: 8.841 de 18.001 (8,03 por paciente); hito 5: 9.889 de 17.861 (8,98). Los pasos internos de SimPy ya estaban; el hito 5 añade ~0,95 por paciente, casi uno: el plazo de su paciencia |
+| `read_run_results`, 14 días, mínimo de 3 | Hito 4: 1,37 s; hito 5: 1,87 s |
+| Vistos por el médico y dentro en el horizonte, llegados en [2, 14) | Hito 4: 12 de 12 dentro (por nivel 0 / 2 / 7 / 3 / 0). Hito 5: 28 de 39 dentro (0 / 6 / 14 / 8 / 0), 11 de ellos esperando cama. Quedan fuera de los relojes y del cumplimiento; es un dato para la 5.6 |
+| N3 (`scripts/tests-completos.sh`, Docker parado) | La primera, en rojo por el notebook 06 (núcleo 15:13, app 2:56, total 18:59). La segunda, en verde: 14:33 de pared, con el núcleo (3.813 tests) en 10:45, la app (287) en 2:52 y los notebooks (5) en 0:56 |
+| `scripts/tests-integracion.sh`, después de la N3 | En verde: 24 tests en 1:01 (1:18 de pared, con el arranque y la bajada de Kafka), incluido el consumidor en vivo con la versión 4 |
+
+**Comprobaciones clínicas** (ejemplos del hito 5, 14 días, semilla 2026, ventana [2, 14)), con lo que da el paquete frente a los recuentos de la 5.3:
+
+- **Abandono:** 478 de 3.681 (13,0 %): triaje 0, box 456, médico 22. Por nivel asignado, sobre los clasificados: 0 / 0 / 0,9 / 23,8 / 29,6 % (12 de 1.265, 450 de 1.889 y 16 de 54). Igual que la 5.3.
+- **Nivel real:**
+  - abandono 0 / 0 / 58 / 412 / 8, con 0 graves (niveles 1 y 2);
+  - 23 habrían ingresado, igual que la 5.3.
+- **Boxes con ingresados esperando cama:** media 8,101, como la L de la 5.3 (8,10); máximo 17.
+- **Pasillo:** media 0,0077, máximo 1.
+- **Espera de cama:** 368 pedidos, 357 con cama y 11 esperando al final; mediana ≥ 250,6 y p90 ≥ 789,9.
+- **Destinos sobre las llegadas:** alta 75,33 %, ingreso 9,70 %, traslado 0,79 % y exitus 0,14 %.
+- **Cumplimiento con C:** 141 se van después de su máximo (3, 136 y 2 en los niveles 3, 4 y 5) y 337 antes (9, 314 y 14).
+- **En el directo de 3 días de «consumidor = batch»** hay 3 desalojos al pasillo.
+- **«Ver la verdad», a mano:**
+  - EP-000738 llega en 2.778,791 con paciencia 105,674 y se va esperando box en 2.884,465, justo en el plazo (el triaje acabó en 2.787,4). Su destino sorteado (alta) sale como contrafactual: `unused`.
+  - EP-000011 pide cama a las 2:55, de noche: 545,42 × 1,5 = 818,13, igual que la espera observada, desde el pasillo.
+  - EP-000071 sale en traslado, el sorteado, con la cama `unused`.
+
+**Versiones incorrectas**
+
+Las aplicó el subagente `mutante`, dos por worktree y cuatro worktrees en paralelo, sobre `b70c859`. Las predicciones de V16 (A2) y V28 (`H5_STDOUT`) se ampliaron antes de aplicarlas, con los tests escritos.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V16 | Los abandonos se quitan del cumplimiento | El ejemplo A (sus 3 casos), A2 (sus 3 casos) y `H5_STDOUT` | Exacta (7) |
+| V17 | Las medias de C incluyen a los que se van | Solo la media de A (90 en vez de 60) | Exacta (1); `H5_STDOUT` pasa |
+| V18 | El estado del consumidor sin la marca de pasillo | El log a mano F en 70, su estado, los segmentos y el Replay con pasillo (5) | Exacta (5); «consumidor = batch» y «directo = batch» v4 pasan |
+| V27 | La mediana y el p90 de la cama sin censurados | El ejemplo B (300 en vez de 500) y `H5_STDOUT` | Exacta (2) |
+| V28 | Little con W solo de los que salen | Little exacto con el escenario M (2) y `H5_STDOUT` | Exacta (3) |
+| V29 | Al salir del pasillo se resta un box | Las curvas de C en 185, sus áreas y la identidad de utilización de boxes | Exacta (3) |
+| V30 | Quien se va en el máximo exacto queda censurado | Solo el caso límite de A | Exacta (1) |
+| V31 | El reloj de quien se va es siempre `left − triage_end` | A2 con los relojes A y B | Exacta (2) |
+
+**Revisión**
+
+`/code-review medium` sobre `main...feat/h5-app-nucleo`, con 10 hallazgos:
+
+| Hallazgo | Destino |
+| --- | --- |
+| La app da `KeyError` con `waiting_bed` (`EPISODE_STATE_LABELS`, `STATE_LABELS`) | Pendiente de la 5.5 (zona de Codex), en el comentario del #72. `config/` sigue con el hito 4, así que la app no crea ejecuciones v4 por defecto |
+| La app solo muestra alta e ingreso (`plan.py:182`, filtro de `views/episodes.py:94`) | Pendiente de la 5.5, en el comentario del #72 |
+| La app no pasa `center` a `compare_episode_truth` y no ve las filas `patience` y `bed_wait` | Pendiente de la 5.5, en el comentario del #72 |
+| El resumen escondía el cumplimiento de un nivel sin atendidos con incumplimientos seguros | Corregido (`ed0836f`), con un test que falla con la condición vieja |
+| `manchester_compliance` dos veces en el mismo resumen | Corregido (`ed0836f`) |
+| `window_compliance` y `true_level_window_compliance` clasificaban dos veces | Corregido (`0213599`): `compliance_from_cases` |
+| `SimulationResult.outcome_counts` sin lectores | Explicado: es API pública de la 5.3 y sale del log por otro camino; un test comprueba que coincide con `window_outcome` |
+| `stay_by_destination` repetía el filtro de los ingresados | Corregido (`c0e98a1`) |
+| Dos criterios del desenlace (modelo al simular, catálogo al leer) | Corregido (`617acea`): los dos miran el catálogo |
+| El docstring decía que «más abandono nunca mejora el cumplimiento» | Corregido (`2a68045`): un censurado que se habría visto tarde puede subir el porcentaje; la garantía es que irse nunca esconde un incumplimiento seguro. El motivo de H5-8 en «Decisiones del hito» dice lo mismo: para la 5.8 |
+
+**Pendiente**
+
+- **#103:** la carga ofrecida del hito 5.
+- **5.5:**
+  - las páginas con la API nueva (comentario en el #72);
+  - `METADATA_LABELS` con `catalog_version`;
+  - `waiting_bed` en `EPISODE_STATE_LABELS` y `STATE_LABELS`;
+  - los cuatro destinos en `plan.py` y en el filtro de `views/episodes.py`;
+  - la marca de pasillo y el abandono en el plano.
+- **5.6:** `calibration/evaluate.py` cuenta como censurado a quien se fue. Los atendidos que siguen dentro en el horizonte quedan fuera de los relojes y del cumplimiento, y con la cama son más que en el hito 4 (28 frente a 12).
+- **5.7:** `engine/timeline.py` (notebooks) no sabe de la versión 4.
+- **«Ver la verdad»:** en quien se va, las filas de la valoración, la reevaluación y las pruebas quedan `pending` para siempre, como antes el destino. Podrían ser `unused`, como el destino; se vio en la comprobación a mano, después de la N3 en verde. Para la ronda de revisión o la 5.5.
+- **5.8:** el motivo de la decisión 74 (H5-8) dice que «más abandono nunca mejora el cumplimiento». La regla garantiza algo más débil (ver «Revisión»), y el ADR 0074 lo puede precisar.

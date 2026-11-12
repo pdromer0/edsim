@@ -254,6 +254,52 @@ def test_directo_a_mano_hasta_el_horizonte():
     assert all(any(e is f for f in events) for e in sink.events)
 
 
+class WithEmptySteps:
+    """Una fuente que intercala pasos sin eventos en los instantes dados.
+
+    Con la versión 4, cada plazo de la paciencia que vence sin efecto (el paciente ya fue
+    visto) es un paso del motor sin eventos del log (tarea 5.4). En un empate con un evento,
+    el paso vacío va antes.
+    """
+
+    def __init__(self, source: LogSource, empty_at) -> None:
+        self._source = source
+        self._empty = sorted(empty_at)
+        self.empty_steps = 0
+
+    def peek(self) -> float:
+        return min(self._source.peek(), self._empty[0] if self._empty else math.inf)
+
+    def step(self) -> list:
+        if self._empty and self._empty[0] <= self._source.peek():
+            self._empty.pop(0)
+            self.empty_steps += 1
+            return []
+        return self._source.step()
+
+
+def test_los_pasos_vacios_no_esperan_ni_publican():
+    # El mismo directo a mano con pasos vacíos en el calentamiento (100), en un instante con
+    # eventos y entre ellos: publica lo mismo y en los mismos instantes del reloj.
+    _, plain = run_hand()
+    clock = FakeClock()
+    sink = TimedSink(clock)
+    source = WithEmptySteps(LogSource(live_hand_log(), 180), [100, 130, 150, 150, 170])
+    end = run_live(
+        source,
+        Pacer(clock, 60, (0.0, 0.0)),
+        ScriptedControl(clock, ()),
+        sink,
+        start=120,
+        horizon=180,
+        run_info=INFO,
+    )
+    assert source.empty_steps == 5
+    assert [describe(i) for i in sink.items] == [describe(i) for i in plain.items]
+    assert sink.times == plain.times
+    assert (end.reason, end.published) == ("horizonte", plain.run_end.published)
+
+
 def test_directo_a_mano_con_parar():
     end, sink = run_hand(script=[(40.1, Command(STOP))])
 
@@ -544,12 +590,14 @@ SCRIPT = [
 
 ARRIVALS = DATA / "llegadas_ejemplo.toml"
 PROFILES = DATA / "perfiles_ejemplo.toml"
+PROFILES_H5 = DATA / "perfiles_h5_ejemplo.toml"
 CASES = {
-    # caso: (centro, con perfiles clínicos, versión, anclado)
-    "v1": ("centro_ejemplo.toml", False, 1, False),
-    "v2": ("centro_ejemplo.toml", True, 2, False),
-    "v3": ("centro_sala_ejemplo.toml", True, 3, False),
-    "v3-anclada": ("centro_sala_ejemplo.toml", True, 3, True),
+    # caso: (centro, perfiles clínicos o None, versión, anclado)
+    "v1": ("centro_ejemplo.toml", None, 1, False),
+    "v2": ("centro_ejemplo.toml", PROFILES, 2, False),
+    "v3": ("centro_sala_ejemplo.toml", PROFILES, 3, False),
+    "v3-anclada": ("centro_sala_ejemplo.toml", PROFILES, 3, True),
+    "v4": ("centro_h5_ejemplo.toml", PROFILES_H5, 4, False),  # el hito 5 (tarea 5.4)
 }
 
 
@@ -582,7 +630,7 @@ def v2_log(tmp_path_factory):
 
 def run_case(case: str, v2_path: Path):
     """El batch y el directo de un caso; devuelve lo necesario para compararlos."""
-    center_file, clinical, version, anchored = CASES[case]
+    center_file, profiles_file, version, anchored = CASES[case]
     clock = FakeClock(wall_start=ANCHOR_WALL if anchored else FAKE_WALL_START)
     profile = load_profile(ARRIVALS)
     start = W
@@ -595,7 +643,7 @@ def run_case(case: str, v2_path: Path):
         source = LogSource(read_events(v2_path), HORIZON)
     else:
         center = load_center(DATA / center_file)
-        profiles = load_profiles(PROFILES) if clinical else None
+        profiles = None if profiles_file is None else load_profiles(profiles_file)
         sink = MemorySink()
         simulate_ed(center, profile, DAYS, SEED, sink=sink, run_id=RUN_ID, profiles=profiles)
         batch = sink.events
@@ -627,9 +675,14 @@ def run_case(case: str, v2_path: Path):
 
 def filtered_batch(batch: list, start: float) -> list:
     """La fórmula de la pieza 7, sin census ni open_episodes: sim_time >= W, sin episodio,
-    o episodio abierto en W (llegó antes de W y no salió antes de W)."""
+    o episodio abierto en W (llegó antes de W y no salió antes de W).
+
+    Con la versión 4, también se sale yéndose sin ser visto (patient_left_wbs).
+    """
     before = [e for e in batch if e.sim_time < start]
-    departed = {e.episode_id for e in before if e.event_type == "patient_departed"}
+    departed = {
+        e.episode_id for e in before if e.event_type in ("patient_departed", "patient_left_wbs")
+    }
     still_open = {e.episode_id for e in before if e.episode_id is not None} - departed
     return [
         e
@@ -661,3 +714,12 @@ def test_directo_igual_a_batch(case, v2_log):
     assert all(0 <= seen - planned <= MAX_SLICE + TOL for planned, seen, _ in control.delivered)
     if version == 3:
         assert any(e.event_type == "box_released" for e in direct)  # con sala
+    if version == 4:  # con abandonos y camas
+        # Quien se fue antes de W está cerrado: hay abandonos en el calentamiento y ninguno de
+        # esos episodios entra en el censo.
+        gone = {
+            e.episode_id for e in batch if e.event_type == "patient_left_wbs" and e.sim_time < start
+        }
+        assert gone and not gone & {e.episode_id for e in initial}
+        kinds = {e.event_type for e in direct}
+        assert {"patient_left_wbs", "bed_requested", "bed_assigned"} <= kinds

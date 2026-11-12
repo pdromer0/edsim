@@ -15,7 +15,7 @@ import subprocess
 import pytest
 from confluent_kafka import ConsumerGroupTopicPartitions, TopicPartition
 from kafka_testing import TIMEOUT
-from test_cli_directo import EDSIM, LAUNCH, expected_of, finish, new_consumer
+from test_cli_directo import EDSIM, LAUNCH, LAUNCH_H5, expected_of, finish, new_consumer
 from test_kafka_edsim import unique, watermarks
 
 from edsim.live.kafka import READ_TOPICS, read_run
@@ -33,11 +33,21 @@ def committed(admin, group_id: str) -> dict[tuple[str, int], int]:
     return {(tp.topic, tp.partition): tp.offset for tp in result.topic_partitions}
 
 
-def test_consumidor_en_vivo_igual_a_batch(bootstrap, edsim_topics, admin):
+MODELS = {
+    # modelo: (argumentos de lanzar, centro, perfiles)
+    "hito4": (LAUNCH, "centro_sala_ejemplo.toml", "perfiles_ejemplo.toml"),
+    "hito5": (LAUNCH_H5, "centro_h5_ejemplo.toml", "perfiles_h5_ejemplo.toml"),
+}
+"""El del hito 5 (tarea 5.4) lleva el catálogo 4: abandonos, camas y pasillo por Kafka."""
+
+
+@pytest.mark.parametrize("model", sorted(MODELS))
+def test_consumidor_en_vivo_igual_a_batch(bootstrap, edsim_topics, admin, model):
+    launch, center, profiles = MODELS[model]
     run_id = unique("test")
-    expected = expected_of(run_id)
+    expected = expected_of(run_id, center, profiles)
     process = subprocess.Popen(
-        [EDSIM, *LAUNCH, "--velocidad", SPEED, "--run-id", run_id, "--kafka", bootstrap],
+        [EDSIM, *launch, "--velocidad", SPEED, "--run-id", run_id, "--kafka", bootstrap],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -56,6 +66,11 @@ def test_consumidor_en_vivo_igual_a_batch(bootstrap, edsim_topics, admin):
     assert tracker.distinct == len(expected) == tracker.run_end.published
     assert tracker.states == fold_states(expected)
     assert tracker.episode_order_errors == 0
+    if model == "hito5":  # guarda: los abandonos y las camas viajan por Kafka
+        kinds = {e.event_type for e in tracker.events}
+        assert {"patient_left_wbs", "bed_requested", "bed_assigned"} <= kinds
+        assert {e.schema_version for e in tracker.events} == {4}
+        assert tracker.occupancy().left > 0
 
     summary = tracker.latency_summary()
     assert summary.count == tracker.distinct

@@ -211,10 +211,14 @@ class SteppedEngine:
     def alive_episodes(self) -> frozenset[str]:
         """Episodes whose patient process is still alive in SimPy now.
 
-        A process ends in the same step that emits its ``patient_departed``,
-        and starts in the instant of its arrival; so, after ``advance_until(t)``,
-        these are the episodes with events before ``t`` and no departure
-        before ``t``. Counted from SimPy, not from the log.
+        A process ends in the same step that emits its terminal event (one of
+        ``TERMINAL_EVENTS`` of the version of the log: ``patient_departed`` or,
+        with version 4, ``patient_left_wbs``), and starts in the instant of its
+        arrival; so, after ``advance_until(t)``, these are the episodes with
+        events before ``t`` and no terminal event before ``t``. A deadline of
+        the patience that is due after the patient was seen stays in the queue
+        of SimPy as an event without effect, not as a process. Counted from
+        SimPy, not from the log.
         """
         return frozenset(episode_id(i) for i, process in self._patients if process.is_alive)
 

@@ -44,23 +44,38 @@ MODEL = [
 ]
 LAUNCH = ["directo", "lanzar", *MODEL, "--dias", "2", "--calentamiento", "1"]
 """Un directo de tests/data con sala: 2 días, W = 1 día, semilla 2026."""
+MODEL_H5 = [
+    "--centro",
+    str(DATA / "centro_h5_ejemplo.toml"),
+    "--llegadas",
+    str(DATA / "llegadas_ejemplo.toml"),
+    "--perfiles",
+    str(DATA / "perfiles_h5_ejemplo.toml"),
+]
+LAUNCH_H5 = ["directo", "lanzar", *MODEL_H5, "--dias", "2", "--calentamiento", "1"]
+"""El mismo directo con los ejemplos del hito 5: un log de la versión 4 (tarea 5.4)."""
 
 PAUSE_SETTLE = 0.5
 PAUSE_SILENCE = 2.0
 STOP_TO_END_MS = 1000
 
 
-def expected_of(run_id: str) -> list:
-    """El batch filtrado del directo de LAUNCH con ese run_id."""
+def expected_of(
+    run_id: str,
+    center: str = "centro_sala_ejemplo.toml",
+    profiles: str = "perfiles_ejemplo.toml",
+) -> list:
+    """El batch filtrado del directo de LAUNCH (o, con los ficheros del hito 5, de
+    LAUNCH_H5) con ese run_id."""
     sink = MemorySink()
     simulate_ed(
-        load_center(DATA / "centro_sala_ejemplo.toml"),
+        load_center(DATA / center),
         load_profile(DATA / "llegadas_ejemplo.toml"),
         2,
         2026,
         sink=sink,
         run_id=run_id,
-        profiles=load_profiles(DATA / "perfiles_ejemplo.toml"),
+        profiles=load_profiles(DATA / profiles),
         warmup_days=1,
     )
     return filtered_batch(sink.events, 1440)

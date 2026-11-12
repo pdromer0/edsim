@@ -110,7 +110,13 @@ def test_handwritten_states_expiry_empty_hours_and_horizon(tiny_log):
     assert at(90).patients[0].box == 2 and at(90).staff["medicos"] == 1
     assert at(89.999).displacements and not at(90).displacements
     assert not at(105).patients
-    assert at(105).departures_by_destination == {"alta": 0, "ingreso": 1}
+    # Los cuatro destinos desde la tarea 5.4; traslado y exitus, 0 en este log.
+    assert at(105).departures_by_destination == {
+        "alta": 0,
+        "ingreso": 1,
+        "traslado": 0,
+        "exitus": 0,
+    }
     assert at(164.999).departures and not at(165).departures
     assert at(239).last_events == events[1:16]
     assert at(240).patients[0].state == "waiting_triage"

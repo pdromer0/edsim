@@ -115,8 +115,21 @@ def test_sin_sala_la_espera_inicial_es_la_total():
     assert all(r.initial_box_wait == r.box_wait for r in plain)
     assert all(r.results_box_wait == 0.0 for r in done)
     # Los campos nuevos van al final de EpisodeRecord: runs/ y la app leen los de antes.
+    # Los de la 4.6a siguen a los del hito 3, y los del hito 5 (tarea 5.4) van detrás.
     names = [f.name for f in dataclasses.fields(done[0])]
-    assert names[-2:] == ["initial_box_wait", "results_box_wait"]
+    after_milestone_3 = names.index("classified_to_doctor") + 1
+    assert names[after_milestone_3 : after_milestone_3 + 2] == [
+        "initial_box_wait",
+        "results_box_wait",
+    ]
+    assert names[after_milestone_3 + 2 :] == [
+        "left",
+        "left_from",
+        "bed_requested",
+        "bed_assigned",
+        "bed_wait",
+        "hallway",
+    ]
 
 
 # --- Replay y Episodios: runs/_location y episode_segments --------------------------

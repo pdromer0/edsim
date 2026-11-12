@@ -13,6 +13,29 @@ from edsim.engine.center import (
 from edsim.engine.events import TIMEZONE, Event
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
+from edsim.engine.outcome_metrics import (
+    ADMITTED_LONG_STAY,
+    BED_WAIT_THRESHOLDS,
+    BedOccupancy,
+    BedWait,
+    CensoredValue,
+    DestinationShares,
+    LeftWithoutBeingSeen,
+    LevelCount,
+    LevelDestinations,
+    OverThreshold,
+    StayByDestination,
+    StaySummary,
+    WindowOutcome,
+    bed_occupancy,
+    bed_wait_quantiles,
+    censored_mean,
+    censored_quantile,
+    destination_shares,
+    left_without_being_seen_shares,
+    stay_by_destination,
+    window_outcome,
+)
 from edsim.engine.report import MAX_VIOLATIONS_SHOWN, SUMMARY_MEASURES
 from edsim.engine.shifts import shift_at
 from edsim.engine.targets import Compliance
@@ -91,6 +114,7 @@ from edsim.runs.offered import (
     offered_work_from_load,
 )
 from edsim.runs.replay import (
+    ReplayAbandonment,
     ReplayCounts,
     ReplayDeparture,
     ReplayDisplacement,
@@ -118,14 +142,20 @@ from edsim.runs.summary import (
     summarize_profiles,
 )
 from edsim.runs.truth import (
+    SEVERE_LEVELS,
     TRUTH_ABS_TOL_MINUTES,
     ClinicalTruthView,
     DiagnosticTestTruth,
+    OutcomeTruthView,
+    TrueLevelAbandonment,
+    TrueLevelLeft,
     TruthComparison,
     TruthStatus,
     compare_episode_truth,
     episode_clinical_truth,
+    episode_outcome_truth,
     read_run_episode_truth,
+    true_level_abandonment,
     true_level_window_compliance,
 )
 from edsim.runs.variants import (
@@ -137,6 +167,34 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "ADMITTED_LONG_STAY",
+    "BED_WAIT_THRESHOLDS",
+    "BedOccupancy",
+    "BedWait",
+    "CensoredValue",
+    "DestinationShares",
+    "LeftWithoutBeingSeen",
+    "LevelCount",
+    "LevelDestinations",
+    "OverThreshold",
+    "StayByDestination",
+    "StaySummary",
+    "WindowOutcome",
+    "bed_occupancy",
+    "bed_wait_quantiles",
+    "censored_mean",
+    "censored_quantile",
+    "destination_shares",
+    "left_without_being_seen_shares",
+    "stay_by_destination",
+    "window_outcome",
+    "SEVERE_LEVELS",
+    "OutcomeTruthView",
+    "TrueLevelAbandonment",
+    "TrueLevelLeft",
+    "episode_outcome_truth",
+    "true_level_abandonment",
+    "ReplayAbandonment",
     "ReplayCounts",
     "ReplayDeparture",
     "ReplayDisplacement",

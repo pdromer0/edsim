@@ -39,22 +39,23 @@ from edsim.arrivals.validation import ValidationResult
 from edsim.engine.analysis import (
     SHIFTS,
     LevelMetrics,
-    OutcomeCounts,
     RunAnalysis,
     StepCurves,
     WindowMetrics,
 )
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical_sampler import ClinicalTruth
-from edsim.engine.events import ARRIVAL_MODES, LWBS_WAITS, SEXES, episode_id
+from edsim.engine.events import ARRIVAL_MODES, SEXES, episode_id
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
+from edsim.engine.outcome_metrics import CensoredValue, OverThreshold, WindowOutcome
 from edsim.engine.targets import (
     CLOCKS,
     COMPLIANCE_TARGET,
     PRETRIAGE_LONG_WAIT,
     PRETRIAGE_MAX_WAIT,
     PRETRIAGE_TARGET,
+    Compliance,
     clock_quantiles,
     manchester_compliance,
     pretriage,
@@ -268,10 +269,11 @@ def _share(value: float) -> str:
     return f"{100 * value:.1f} %"
 
 
-def _clock_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
+def _clock_lines(
+    table: Sequence, first_day: int, end_day: int, compliance: Compliance
+) -> list[str]:
     """Median / p90 of the three clocks by level, with the Manchester compliance (C)."""
     clocks = clock_quantiles(table, first_day, end_day)
-    compliance = manchester_compliance(table, first_day, end_day)
     lines = [
         "Relojes hasta el médico por nivel, en minutos (mediana / p90)",
         "A desde la llegada, B desde el inicio del triaje, C desde la clasificación",
@@ -287,7 +289,9 @@ def _clock_lines(table: Sequence, first_day: int, end_day: int) -> list[str]:
             "—" if c.median[name] is None else f"{c.median[name]:.1f} / {c.p90[name]:.1f}"
             for name in CLOCKS
         ]
-        if c.level == 1 or not c.n:
+        # With the abandonment, a level may count in the compliance (who left after its
+        # maximum) without anybody seen: its cells follow the compliance, not the clocks.
+        if c.level == 1 or not compliance.n[:, k].sum():
             within = out = "—"
         else:
             within = _share(compliance.pooled_within[k])
@@ -334,7 +338,11 @@ def _violation_lines(violations: Sequence[Violation]) -> list[str]:
     return lines
 
 
-def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -> str:
+def format_run_summary(
+    analysis: RunAnalysis,
+    violations: Sequence[Violation],
+    outcome: WindowOutcome | None = None,
+) -> str:
     """Summarize one run: patients, waits by level, occupancy, Little and invariants.
 
     - Patients over the whole log: arrived, departed and still inside; and the
@@ -350,18 +358,29 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
     - Little's law for the system and the triage and box queues.
     - The invariants: 0 violations, or how many by check and the first ten.
 
+    With ``outcome`` (milestone 5, task 5.4), the patients over the whole log
+    tell apart those who left without being seen, and a section after the
+    pretriage gives the abandonment, the censored compliance, the destinations,
+    the wait for a bed, the stay by destination and the boxes blocked. Without
+    it, the summary of before.
+
     Args:
         analysis: The analysis of the run, from ``analyze_run``.
         violations: The result of ``check_invariants`` on the same log.
+        outcome: The indicators of the outcome of the same window, from
+            ``window_outcome``, with a log of version 4.
     """
     m = analysis.metrics
     table = analysis.table
     departed = sum(e.departure is not None for e in table)
+    left = sum(e.left is not None for e in table)
     per_day = m.arrivals / (m.end - m.start) * MINUTES_PER_DAY
     window = f"[día {m.start / MINUTES_PER_DAY:g}, día {m.end / MINUTES_PER_DAY:g})"
+    # Whoever left is never counted as inside; the logs of versions 1 to 3 have none.
+    gone = f" {left} se van sin ser vistos," if left or outcome is not None else ""
     lines = [
-        f"Pacientes en todo el log: {len(table)} llegados, {departed} salidos,"
-        f" {len(table) - departed} dentro al final",
+        f"Pacientes en todo el log: {len(table)} llegados, {departed} salidos,{gone}"
+        f" {len(table) - departed - left} dentro al final",
         f"Ventana {window}: {m.arrivals} llegadas en la ventana, {per_day:.1f} al día",
         "",
         "Esperas y estancia por nivel, en minutos (media / p90; episodios que llegan"
@@ -373,8 +392,11 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
     lines.append(_level_row("total", m.overall))
 
     first_day, end_day = int(m.start // MINUTES_PER_DAY), int(m.end // MINUTES_PER_DAY)
-    lines += ["", *_clock_lines(table, first_day, end_day)]
+    compliance = manchester_compliance(table, first_day, end_day)
+    lines += ["", *_clock_lines(table, first_day, end_day, compliance)]
     lines += ["", *_pretriage_lines(table, first_day, end_day)]
+    if outcome is not None:
+        lines += ["", *_outcome_lines(outcome, compliance)]
 
     lines += [
         "",
@@ -400,38 +422,90 @@ def format_run_summary(analysis: RunAnalysis, violations: Sequence[Violation]) -
     return "\n".join(lines)
 
 
-METRICS_WITH_ABANDONMENT = "Las métricas con abandono y espera de cama llegan con la tarea 5.4."
-"""What the summary of a run of milestone 5 says instead of its metrics (task 5.3)."""
-
 _WAIT_LABELS = {"triaje": "triaje", "box": "box", "medico": "médico"}
 
 
-def format_outcome_counts(counts: OutcomeCounts, violations: Sequence[Violation]) -> str:
-    """Summarize a run of milestone 5: how its episodes end, and the invariants.
+def _censored(value: CensoredValue | None) -> str:
+    """A statistic with censoring: ``≥`` if it is a lower bound, ``—`` without patients."""
+    if value is None:
+        return "—"
+    return f"{value.value:.1f}" if value.exact else f"≥ {value.value:.1f}"
 
-    The metrics of ``format_run_summary`` count a patient who left as still
-    inside; until task 5.4 the summary of milestone 5 gives the counts of
-    ``outcome_counts`` and says so.
 
-    Args:
-        counts: The counts of the episodes that arrive in the window.
-        violations: The result of ``check_invariants`` on the same log.
-    """
-    share = counts.left_total / counts.arrivals if counts.arrivals else 0.0
-    left = ", ".join(f"{_WAIT_LABELS[w]} {n}" for w, n in zip(LWBS_WAITS, counts.left, strict=True))
-    departed = ", ".join(f"{d} {n}" for d, n in zip(DESTINATIONS, counts.departed, strict=True))
+def _maybe_share(value: float | None) -> str:
+    return "—" if value is None else _share(value)
+
+
+def _over(o: OverThreshold, label: str) -> str:
+    unknown = f", {o.unknown} sin saber" if o.unknown else ""
+    return f"{label} {o.over} de {o.known} ({_maybe_share(o.share)}{unknown})"
+
+
+def _outcome_lines(outcome: WindowOutcome, compliance: Compliance) -> list:
+    """The section of the outcome of milestone 5 (task 5.4): abandonment, censored
+    compliance, destinations, wait for a bed, stay by destination and boxes blocked."""
+    left, destinations, bed, stay = (
+        outcome.left,
+        outcome.destinations,
+        outcome.bed_wait,
+        outcome.stay,
+    )
+    sites = ", ".join(f"{_WAIT_LABELS[w]} {n}" for w, n in left.by_wait.items())
     lines = [
         "Desenlace de los episodios que llegan en la ventana (modelo del hito 5)",
-        f"Llegadas: {counts.arrivals}",
-        f"Se van sin ser vistos: {counts.left_total} ({_share(share)}): {left}",
-        f"Salidas: {departed}",
-        f"Siguen dentro al final: {counts.inside}",
+        "Las esperas y los relojes de arriba son de los atendidos; el cumplimiento cuenta como"
+        " incumplimiento a quien se va con su reloj C en el máximo o por encima, y quien se va"
+        " antes queda censurado",
+        f"Se van sin ser vistos: {left.left} de {left.arrivals} ({_maybe_share(left.share)}):"
+        f" antes del triaje {left.before_triage} ({_maybe_share(left.before_triage_share)}),"
+        f" después {left.after_triage} ({_maybe_share(left.after_triage_share)}); {sites}",
+        f"Cumplimiento con C: {int(compliance.left_late.sum())} se van después de su máximo"
+        f" (incumplen) y {int(compliance.censored.sum())} antes (censurados)",
         "",
-        METRICS_WITH_ABANDONMENT,
-        "",
-        *_violation_lines(violations),
+        "Por nivel asignado, sobre los clasificados de cada nivel",
+        f"{'':<{_CLOCK_LABEL_WIDTH}}{'n':>6}{'se van':>10}"
+        + "".join(f"{d:>10}" for d in DESTINATIONS),
     ]
-    return "\n".join(lines)
+    for gone, level in zip(left.by_level, destinations.by_level, strict=True):
+        cells = [_maybe_share(gone.share)] + [_maybe_share(level.share(d)) for d in DESTINATIONS]
+        lines.append(
+            f"{f'nivel {level.level}':<{_CLOCK_LABEL_WIDTH}}{level.classified:>6}"
+            + "".join(f"{c:>10}" for c in cells)
+        )
+    totals = [_maybe_share(left.share)] + [
+        _maybe_share(destinations.share(d)) for d in DESTINATIONS
+    ]
+    lines.append(
+        f"{'llegadas':<{_CLOCK_LABEL_WIDTH}}{destinations.arrivals:>6}"
+        + "".join(f"{c:>10}" for c in totals)
+    )
+    over = ", ".join(_over(o, f"> {o.minutes / 60:g} h") for o in bed.over)
+    lines += [
+        "",
+        f"Espera de cama, en minutos: {bed.requests} pedidos, {bed.completed} con cama,"
+        f" {bed.censored} esperando al final; mediana {_censored(bed.median)},"
+        f" p90 {_censored(bed.p90)} (≥: cota con los que siguen esperando)",
+        f"    {over}",
+        "",
+        "Estancia por destino, en minutos (media / mediana / p90; ≥: cota con los que siguen"
+        " dentro)",
+        f"{'':<{_CLOCK_LABEL_WIDTH}}{'n':>6}{'dentro':>8}{'media':>12}{'mediana':>12}{'p90':>12}",
+    ]
+    rows = [(d, stay.by_destination[d]) for d in DESTINATIONS] + [("se van", stay.left)]
+    for label, s in rows:
+        lines.append(
+            f"{label:<{_CLOCK_LABEL_WIDTH}}{s.n:>6}{s.censored:>8}"
+            + "".join(f"{_censored(v):>12}" for v in (s.mean, s.median, s.p90))
+        )
+    beds = outcome.beds
+    lines += [
+        f"Dentro sin destino al final: {stay.inside_without_destination};"
+        f" {_over(stay.admitted_over, 'ingresados > 4 h:')}",
+        f"Boxes con ingresados esperando cama: media {beds.boxes_mean:.2f}, máximo"
+        f" {beds.boxes_max}; en el pasillo: media {beds.hallway_mean:.2f}, máximo"
+        f" {beds.hallway_max}",
+    ]
+    return lines
 
 
 # --- Validation table -------------------------------------------------------------------

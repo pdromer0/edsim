@@ -20,9 +20,10 @@ from edsim.engine.analysis import (
     hourly_means_by_day,
 )
 from edsim.engine.center import CenterConfig, load_center
-from edsim.engine.events import read_events
+from edsim.engine.events import OUTCOME_SCHEMA_VERSION, read_events
 from edsim.engine.ground_truth import GroundTruth
 from edsim.engine.invariants import Violation, check_invariants
+from edsim.engine.outcome_metrics import WindowOutcome, window_outcome
 from edsim.profiles.config import ClinicalProfiles, load_profiles
 from edsim.runs._truth_csv import read_clinical_episodes, read_days
 from edsim.runs.episodes import ObservedProfile, observed_profiles
@@ -49,6 +50,8 @@ class RunResults:
     the run's own copy (``perfiles.toml``), or None with the provisional model.
     observed holds the observable profile of each episode, read from the log
     and never from the ground truth (None with the provisional model).
+    outcome holds the indicators of the abandonment, the destinations and the
+    wait for a bed of the window (task 5.4), only with a log of version 4.
     """
 
     info: RunInfo
@@ -62,6 +65,7 @@ class RunResults:
     model: Literal["provisional", "clinico"]
     profiles: ClinicalProfiles | None
     observed: Mapping[str, ObservedProfile] | None
+    outcome: WindowOutcome | None = None
 
 
 def read_run_header(store: RunStore, run_id: str) -> tuple[RunInfo, str]:
@@ -152,4 +156,9 @@ def read_run_results(store: RunStore, run_id: str) -> RunResults:
         model=info.model,
         profiles=profiles,
         observed=None if profiles is None else observed_profiles(events, profiles.population),
+        outcome=(
+            window_outcome(analysis.table, analysis.curves, start, end)
+            if info.catalog_version == OUTCOME_SCHEMA_VERSION
+            else None
+        ),
     )

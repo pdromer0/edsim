@@ -427,6 +427,8 @@ class RunSummaryComparison:
 
     Time measures are minutes, census is patients, arrivals are patients/day,
     counts are integers and admission/exceedance shares are fractions.
+    ``unfinished`` counts the arrivals of the window still inside at the end;
+    whoever left without being seen ended (task 5.4).
     """
 
     metadata_differences: tuple[MetadataDifference, ...]
@@ -553,7 +555,7 @@ def compare_run_summary(a: RunResults, b: RunResults) -> RunSummaryComparison:
     def unfinished(result: RunResults) -> int:
         metrics = result.analysis.metrics
         return sum(
-            metrics.start <= e.arrival < metrics.end and e.departure is None
+            metrics.start <= e.arrival < metrics.end and e.end is None
             for e in result.analysis.table
         )
 

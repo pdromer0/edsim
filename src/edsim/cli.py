@@ -80,7 +80,6 @@ from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose
 from edsim.engine.engine import check_horizon, default_run_id
 from edsim.engine.report import (
     format_engine_validation,
-    format_outcome_counts,
     format_run_summary,
     plot_census,
     plot_hourly_census,
@@ -461,10 +460,7 @@ def _simulate_engine(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         )
     except FileExistsError:
         parser.error(f"--salida {out_dir}: ya existe; elige otro --run-id o --salida")
-    if result.outcome_counts is None:
-        print(format_run_summary(result.analysis, result.violations))
-    else:
-        print(format_outcome_counts(result.outcome_counts, result.violations))
+    print(format_run_summary(result.analysis, result.violations, result.outcome))
     print(
         f"\nLog: {out_dir / EVENTS_FILE}\nCSV: {out_dir / EPISODES_CSV}"
         f"\nCSV: {out_dir / GROUND_TRUTH_DAYS_CSV}"

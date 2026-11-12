@@ -39,6 +39,14 @@ census; with the results it joins the box queue (``waiting_box``) until its
 ``box_assigned``. ``box_wait`` stays the total wait for a box, so Little's law
 of the box queue still holds; ``initial_box_wait`` and ``results_box_wait``
 split out the first wait and the one after the room.
+
+**Version 4** (milestone 5, task 5.4). An episode ends with ``patient_departed``
+or with ``patient_left_wbs``: who leaves without being seen leaves the census
+and the queue or the box it held, and counts in Little's law with its time
+until it leaves (``ended_in_window``). An admitted patient keeps its box while
+it waits for a bed (``boxes_waiting_bed``); displaced, it waits in the hallway
+(``hallway``), out of the box queue. The per-episode means of the window stay
+those of the episodes that depart: the patients seen by a doctor (H5-8).
 """
 
 import math
@@ -102,6 +110,18 @@ class EpisodeRecord:
             ``test_resulted`` to the ``box_assigned`` of the reassessment; 0 if
             the patient did not wait outside. Final only at the departure,
             ``None`` before (task 4.6a).
+        left: ``patient_left_wbs``, the instant the patient left without being
+            seen (milestone 5, task 5.4). Its clocks A, B and C stay ``None``,
+            as those of whoever is still inside at the end; ``box_wait``,
+            ``doctor_wait`` and ``results_box_wait`` are final at it.
+        left_from: Where it waited when it left: ``triaje``, ``box`` or
+            ``medico`` (``espera`` of ``patient_left_wbs``).
+        bed_requested: ``bed_requested``, in the instant of an admission.
+        bed_assigned: ``bed_assigned``, the end of the wait for a bed.
+        bed_wait: From ``bed_requested`` to ``bed_assigned``; ``None`` until
+            the bed arrives.
+        hallway: Whether a level 1 displaced it while it waited for a bed, so
+            that it waited for it in the hallway, without a box.
     """
 
     episode_id: str
@@ -124,11 +144,28 @@ class EpisodeRecord:
     classified_to_doctor: float | None
     initial_box_wait: float | None
     results_box_wait: float | None
+    left: float | None = None
+    left_from: str | None = None
+    bed_requested: float | None = None
+    bed_assigned: float | None = None
+    bed_wait: float | None = None
+    hallway: bool = False
 
     @property
     def stay(self) -> float | None:
-        """From the arrival to the departure; ``None`` if still inside."""
+        """From the arrival to the departure; ``None`` if still inside or gone without
+        being seen (its time is ``time_to_leave``)."""
         return None if self.departure is None else self.departure - self.arrival
+
+    @property
+    def end(self) -> float | None:
+        """The terminal event: the departure or the abandonment; ``None`` if still inside."""
+        return self.departure if self.departure is not None else self.left
+
+    @property
+    def time_to_leave(self) -> float | None:
+        """From the arrival to ``patient_left_wbs``; ``None`` if the patient did not leave."""
+        return None if self.left is None else self.left - self.arrival
 
 
 @dataclass(slots=True)
@@ -157,6 +194,11 @@ class _Episode:
     results_box_wait: float = 0.0
     in_room: bool = False  # waiting for the results outside the box
     back_from_room: bool = False  # waiting for a box after the results room
+    left: float | None = None
+    left_from: str | None = None
+    bed_requested: float | None = None
+    bed_assigned: float | None = None
+    hallway: bool = False
 
     def close_doctor_wait(self, now: float) -> None:
         if self.waiting_doctor_since is not None:
@@ -170,7 +212,9 @@ class _Episode:
         return self.first_assessment - start
 
     def record(self) -> EpisodeRecord:
-        departed = self.departure is not None
+        # The waits are final at the terminal event: the departure or, in version 4,
+        # the abandonment.
+        departed = self.departure is not None or self.left is not None
         return EpisodeRecord(
             episode_id=self.episode_id,
             arrival=self.arrival,
@@ -192,6 +236,16 @@ class _Episode:
             classified_to_doctor=self.since(self.triage_end),
             initial_box_wait=self.initial_box_wait,
             results_box_wait=self.results_box_wait if departed else None,
+            left=self.left,
+            left_from=self.left_from,
+            bed_requested=self.bed_requested,
+            bed_assigned=self.bed_assigned,
+            bed_wait=(
+                None
+                if self.bed_assigned is None or self.bed_requested is None
+                else self.bed_assigned - self.bed_requested
+            ),
+            hallway=self.hallway,
         )
 
 
@@ -260,13 +314,30 @@ def episode_table(events: Sequence[Event]) -> tuple[EpisodeRecord, ...]:
                 ep.close_doctor_wait(now)
                 ep.has_box = False
                 ep.displacements += 1
-                ep.waiting_box_since = now
+                if ep.bed_requested is None:
+                    ep.waiting_box_since = now
+                else:
+                    # An admitted patient waits for its bed in the hallway, without
+                    # asking for a box again (H5-7): it is not in the box queue.
+                    ep.hallway = True
             case "disposition_decided":
                 ep.decision = now
             case "patient_departed":
                 ep.departure = now
                 ep.destination = e.payload["destino"]
                 ep.has_box = False
+            case "patient_left_wbs":
+                ep.close_doctor_wait(now)
+                if ep.waiting_box_since is not None:
+                    ep.box_wait += now - ep.waiting_box_since
+                    ep.waiting_box_since = None
+                ep.left = now
+                ep.left_from = e.payload["espera"]
+                ep.has_box = False
+            case "bed_requested":
+                ep.bed_requested = now
+            case "bed_assigned":
+                ep.bed_assigned = now
     return tuple(ep.record() for ep in episodes.values())
 
 
@@ -373,6 +444,29 @@ CURVES = (
 )
 """Names of the step curves, as keys of ``StepCurves.values``."""
 
+OUTCOME_CURVES = ("boxes_waiting_bed", "hallway")
+"""The curves of the wait for a bed (milestone 5, task 5.4), also keys of
+``StepCurves.values``: admitted patients waiting for their bed in a box, and in
+the hallway after a displacement. Apart from ``CURVES``, whose readers (the time
+averages of ``WindowMetrics``, ``ReplayCounts``) stay as they were; both are 0
+with the logs of versions 1 to 3."""
+
+# The abandonment frees what the patient held while waiting (H5-3), by its ``espera``.
+_LEFT_DELTAS: dict[str, dict[str, int]] = {
+    "triaje": {"census": -1, "waiting_triage": -1},
+    "box": {"census": -1, "waiting_box": -1},
+    "medico": {"census": -1, "boxes_busy": -1},
+}
+
+# The wait for a bed (H5-7): the admitted patient keeps its box until it departs; a
+# displacement sends it to the hallway, without a box and out of the box queue.
+_BED_DELTAS: dict[str, dict[str, int]] = {
+    "bed_requested": {"boxes_waiting_bed": 1},
+    "displaced": {"boxes_busy": -1, "boxes_waiting_bed": -1, "hallway": 1},
+    "departed_from_box": {"census": -1, "boxes_busy": -1, "boxes_waiting_bed": -1},
+    "departed_from_hallway": {"census": -1, "hallway": -1},
+}
+
 
 @dataclass(frozen=True)
 class StepCurves:
@@ -384,7 +478,7 @@ class StepCurves:
 
     Attributes:
         times: Instants at which some curve may change, from 0.
-        values: One integer array per name of ``CURVES``.
+        values: One integer array per name of ``CURVES`` and of ``OUTCOME_CURVES``.
         horizon: End of the log.
     """
 
@@ -443,16 +537,40 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
     Returns:
         The curves.
 
+    With version 4 (task 5.4), ``patient_left_wbs`` takes the patient out of
+    the census and out of the queue or the box it waited in, and an admitted
+    patient counts in ``boxes_waiting_bed`` from its ``bed_requested`` and in
+    ``hallway`` from a displacement until it departs; a displaced admitted
+    patient does not join the box queue, and its departure frees no box.
+
     Raises:
         ValueError: If an event happens after ``horizon``.
     """
-    index = {name: i for i, name in enumerate(CURVES)}
+    names = CURVES + OUTCOME_CURVES
+    index = {name: i for i, name in enumerate(names)}
     times = [0.0]  # the instants, with 0 so that every curve starts there
     changes: list[tuple[int, int, int]] = []  # (position in times, curve, delta)
     at_the_door: set[str] = set()
     in_room: set[str] = set()
+    waiting_bed: set[str] = set()  # admitted, waiting for a bed in their box
+    in_hallway: set[str] = set()  # admitted, displaced, waiting in the hallway
     for e in events:
-        if e.event_type == "box_released":
+        if e.event_type == "patient_left_wbs":
+            change = _LEFT_DELTAS[e.payload["espera"]]
+        elif e.event_type == "bed_requested":
+            waiting_bed.add(e.episode_id)
+            change = _BED_DELTAS["bed_requested"]
+        elif e.event_type == "patient_displaced" and e.episode_id in waiting_bed:
+            waiting_bed.discard(e.episode_id)
+            in_hallway.add(e.episode_id)
+            change = _BED_DELTAS["displaced"]
+        elif e.event_type == "patient_departed" and e.episode_id in waiting_bed:
+            waiting_bed.discard(e.episode_id)
+            change = _BED_DELTAS["departed_from_box"]
+        elif e.event_type == "patient_departed" and e.episode_id in in_hallway:
+            in_hallway.discard(e.episode_id)
+            change = _BED_DELTAS["departed_from_hallway"]
+        elif e.event_type == "box_released":
             in_room.add(e.episode_id)
             change = _ROOM_DELTAS["box_released"]
         elif e.event_type == "test_resulted" and e.episode_id in in_room:
@@ -478,7 +596,7 @@ def step_curves(events: Sequence[Event], horizon: float) -> StepCurves:
     unique, group = np.unique(np.array(times), return_inverse=True)
     if unique[-1] > horizon:
         raise ValueError(f"an event happens at {unique[-1]}, after the horizon {horizon}")
-    per_instant = np.zeros((unique.size, len(CURVES)), dtype=np.int64)
+    per_instant = np.zeros((unique.size, len(names)), dtype=np.int64)
     if changes:
         position, curve, delta = np.array(changes).T
         np.add.at(per_instant, (group[position], curve), delta)
@@ -601,6 +719,14 @@ def completed_in_window(
     return [e for e in table if start <= e.arrival < end and e.departure is not None]
 
 
+def ended_in_window(
+    table: Sequence[EpisodeRecord], start: float, end: float
+) -> list[EpisodeRecord]:
+    """Episodes that arrived in ``[start, end)`` and ended: they departed or, in version 4,
+    left without being seen. With the logs of versions 1 to 3, ``completed_in_window``."""
+    return [e for e in table if start <= e.arrival < end and e.end is not None]
+
+
 def _level_metrics(level: int | None, episodes: Sequence[EpisodeRecord]) -> LevelMetrics:
     mean: dict[str, float | None] = {}
     p90: dict[str, float | None] = {}
@@ -696,10 +822,12 @@ class LittleLaw:
         l: Time average of the number inside (census or queue).
         lam: Observed arrival rate in the window (``throughput``).
         w: Mean time per episode inside, over the episodes that arrived in the
-            window and departed. For the box queue, the total time waiting
-            for a box, after the triage and after every displacement: Little
-            holds with the total time a customer spends in a queue, however
-            many times it enters it.
+            window and ended (``ended_in_window``): those who leave without
+            being seen count with their time until they leave, as they count
+            in the census and the queues until then (task 5.4). For the box
+            queue, the total time waiting for a box, after the triage and
+            after every displacement: Little holds with the total time a
+            customer spends in a queue, however many times it enters it.
         relative_error: ``|L - λ·W| / L``; 0 if both are 0.
     """
 
@@ -719,6 +847,21 @@ _LITTLE = {
 }
 
 
+def _time_inside(e: EpisodeRecord, measure: str) -> float:
+    """The time of an ended episode in the system or a queue of ``_LITTLE``.
+
+    Whoever leaves without being seen spends in the system the time until it
+    leaves and, if it leaves before its triage, all of it in the triage queue;
+    ``box_wait`` is already final at the abandonment.
+    """
+    if e.left is not None:
+        if measure == "stay":
+            return e.left - e.arrival
+        if measure == "triage_wait" and e.triage_wait is None:
+            return e.left - e.arrival
+    return getattr(e, measure)
+
+
 def _relative_error(reference: float, other: float) -> float:
     if reference == other:
         return 0.0
@@ -736,17 +879,17 @@ def little_laws(
 
     Raises:
         ValueError: If the window is not inside ``[0, horizon]`` or no
-            episode arrived and departed inside it.
+            episode arrived and ended inside it.
     """
     _check_window(start, end, curves.horizon)
-    done = completed_in_window(table, start, end)
+    done = ended_in_window(table, start, end)
     if not done:
-        raise ValueError("no episode arrived and departed inside the window")
+        raise ValueError("no episode arrived and ended inside the window")
     lam = sum(start <= e.arrival < end for e in table) / (end - start)
     out = []
     for name, (curve, measure) in _LITTLE.items():
         l = curves.mean(curve, start, end)  # noqa: E741
-        w = float(np.mean([getattr(e, measure) for e in done]))
+        w = float(np.mean([_time_inside(e, measure) for e in done]))
         out.append(LittleLaw(name, l, lam, w, _relative_error(l, lam * w)))
     return tuple(out)
 
@@ -778,8 +921,8 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
     - Triage nurses: ``triage_started`` to ``triage_completed``, except the
       triages at the door, which take no nurse.
     - Doctors: ``assessment_started`` to ``assessment_ended``.
-    - Boxes: ``box_assigned`` to ``patient_departed``, ``patient_displaced``
-      or ``box_released``.
+    - Boxes: ``box_assigned`` to ``patient_departed``, ``patient_displaced``,
+      ``box_released`` or, in version 4, ``patient_left_wbs`` from the box.
 
     Intervals still open at the end of the log end at ``horizon``.
     """
@@ -795,7 +938,12 @@ def busy_intervals(events: Sequence[Event], horizon: float) -> dict[str, list[tu
             open_since[(opening[kind], episode)] = e.sim_time
         elif kind == "box_assigned":
             open_since[("boxes", episode)] = e.sim_time
-        elif kind in closing or kind in ("patient_departed", "patient_displaced", "box_released"):
+        elif kind in closing or kind in (
+            "patient_departed",
+            "patient_displaced",
+            "box_released",
+            "patient_left_wbs",
+        ):
             pool = closing.get(kind, "boxes")
             start = open_since.pop((pool, episode), None)
             if start is not None:

@@ -8,7 +8,9 @@ and broker timestamp). It keeps:
 - **The state of each episode**, with the ``LocationState`` reducer of the Replay of the
   app (``edsim.runs._location``): the open episodes and how many are in each location, now
   or at any simulated instant. The census and the live stream go through the same code
-  (H6-11, event sourcing).
+  (H6-11, event sourcing). With version 4 (task 5.4, H5-11), ``waiting_bed`` with the mark
+  of the hallway, and the abandonment as a closing counted apart from the departures; an
+  episode is closed by any event of ``TERMINAL_EVENTS`` of its version.
 - **Idempotence** (H6-8): an ``event_id`` already seen is counted as repeated and changes
   nothing. With at-least-once delivery, a repeated event is normal, not an error.
 - **The end**: the ``fin`` of ``ed.runs`` says how many events were published; the run is
@@ -72,12 +74,20 @@ class Occupancy:
         by_location: Open episodes by location, every one of ``LOCATIONS``.
         results_room: Those of them in the results room (out of their box between their
             two box stays): a subset, not one more location.
+        hallway: Those of them waiting for a bed in the hallway, after a displacement
+            (version 4): a subset of ``waiting_bed``, not one more location.
+        departed: Episodes closed by ``patient_departed`` until then.
+        left: Episodes closed by ``patient_left_wbs`` until then: the abandonment,
+            counted apart (H5-11).
     """
 
     at: float | None
     open: int
     by_location: Mapping[str, int]
     results_room: int
+    hallway: int = 0
+    departed: int = 0
+    left: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,12 +113,16 @@ def _occupancy(
     at: float | None, states: Mapping[str, LocationState], closed: set[str]
 ) -> Occupancy:
     still_open = [state for episode, state in states.items() if episode not in closed]
+    ended = [states[episode] for episode in closed]
     counts = Counter(state.location() for state in still_open)
     return Occupancy(
         at=at,
         open=len(still_open),
         by_location=MappingProxyType({place: counts.get(place, 0) for place in LOCATIONS}),
         results_room=sum(state.results_room for state in still_open),
+        hallway=sum(state.hallway for state in still_open),
+        departed=sum(state.departed for state in ended),
+        left=sum(state.left for state in ended),
     )
 
 
