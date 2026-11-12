@@ -53,6 +53,7 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Una función «inocua» de la biblioteca estándar puede volver a ejecutar una normalización: se compara bit a bit con la fuente antes de usarla (6.3).
 - Una equivalencia que el diseño da por hecha se comprueba en el código de la biblioteca antes de apoyarse en ella (6.2). Antes de cambiar un parámetro, se lee en ese código de dónde sale el comportamiento (6.6).
 - Estado persistente y widgets son capas distintas; los formatos compartidos viven en un solo sitio; la clave de una caché es lo que cambia la respuesta (app).
+- Antes de cambiar un fichero que leen muchos, como `config/`, primero el inventario de sus lectores y las copias congeladas de lo antiguo. Los lectores que afirman el significado antiguo pasan a las copias, y el diff demuestra que sus cifras no cambian. Los notebooks también son lectores (5.4, 5.6).
 
 ## Tiempo real y servicios
 
@@ -83,5 +84,8 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Números con el mismo formato se confunden: issues y decisiones necesitan notación distinta (P.2).
 - Lo que vale más allá de una sesión no se pasa como argumento: va al issue (P.2).
 - Una regla que dice que algo se repite tiene que decir cuándo: «si las correcciones tocan código, repite la N3» se leyó como «tras cada corrección» (5.2).
+- Los errores de los planes están en lo que interpretan sin que lo diga la especificación, no en la aritmética. Los tests no los ven, porque nacen de la misma interpretación: la ven Pedro y el chat al revisar el plan (5.4 a 5.7).
+- En una sesión en la nube, GitHub solo responde por REST: `gh issue view` y `gh project` usan GraphQL y el proxy los rechaza. El issue se lee con `gh api` y el tablero lo mueve Pedro o el workflow (5.7).
+- Dos skills con un número cada una se confunden: `/tarea-edsim` lleva el del issue y `/sincronizar`, el del PR (5.7).
 
-El porqué de las seis que van antes de la última está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la última, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md).
+El porqué de las seis lecciones de la P.2 está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la lección de la 5.2, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md); el de las del hito 5, en el [balance del hito](../specs/hito-5.md#balance-del-hito).

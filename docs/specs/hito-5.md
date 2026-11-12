@@ -933,6 +933,67 @@ Consultadas el 9 y el 10 de noviembre de 2026. Las de «para aprender más» est
 
 **Cálculos propios de esta especificación.** El ingreso de adultos (9,90 %), los ejemplos a mano de la paciencia, del destino, de Gumbel-max y de la espera de cama, la ley de Little (7,55 boxes) y los escenarios M y C, calculados en Python en el chat. Las estimaciones de la estancia (130 a 150 min sin la cama) son órdenes de magnitud sin simular.
 
+## Balance del hito
+
+Escrito en la tarea 5.8. El hito dejó el modelo v0 cerrado: los pacientes se van sin ser vistos, salen con uno de cuatro destinos y los ingresados esperan cama, todo calibrado contra el SAS.
+
+### Qué se entregó y dónde
+
+| Pieza | Dónde |
+| --- | --- |
+| Abandono, destinos y espera de cama en el motor, catálogo versión 4 | `src/edsim/engine/`, [ADR 0069](../decisiones/0069-abandono-antes-del-primer-medico.md) a [0073](../decisiones/0073-catalogo-version-4.md) |
+| El modelo elegido por los ficheros, con el del hito 4 intacto | [ADR 0068](../decisiones/0068-bloque-del-hito-5-de-todo-o-nada.md), `tests/data/*_h4.toml` |
+| Métricas con censura e indicadores del desenlace | `src/edsim/runs/`, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md) |
+| Ground truth con el contrafactual | [ADR 0076](../decisiones/0076-ground-truth-con-lo-sorteado-y-el-contrafactual.md) |
+| Calibración: cinco objetivos, k = 4, [210, 630] y 36 boxes | `config/`, [registro](../calibracion/registro.md), [ADR 0075](../decisiones/0075-calibracion-en-orden-con-un-mando-por-objetivo.md) |
+| La app con el hito 5 (`app-v0.3.0`) | [incrementos](../../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama), [ADR 0078](../decisiones/0078-la-app-ensena-el-hito-5.md) |
+| Notebook 05 | `notebooks/05_cierre_del_flujo.ipynb` |
+| Lo aprendido | [diario](../diario/hito-5.md), [lecciones](../proceso/lecciones.md) |
+| Proceso: `mutante`, una sola N3, la nube, el chat en GitHub, `cerrar-hito` | [ADR 0079](../decisiones/0079-ocho-tareas-en-orden-y-etiqueta-v0-5-hito5.md), [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md), [portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba) §14 |
+
+### Cifras
+
+- **Tiempo:** del primer PR, abierto el 11 de noviembre a las 13:42 UTC, al de la 5.7, fusionado el 12 a las 17:21 UTC. Son ocho issues (#68 a #75) y ocho PR, uno por tarea.
+- **Los PR de la 5.1 a la 5.7**, con sus commits y los minutos de la apertura a la fusión, sacados de `gh pr view`:
+
+  | Tarea | PR | Commits | Apertura → fusión |
+  | --- | --- | --- | --- |
+  | 5.1 | #98 | 11 | 19 min |
+  | 5.2 | #99 | 14 | 19 min |
+  | 5.3 | #102 | 18 | 131 min |
+  | 5.4 | #104 | 16 | 24 min |
+  | 5.5 | #106 | 20 | 64 min |
+  | 5.6 | #107 | 15 | 25 min |
+  | 5.7 | #111 | 6 | 17 min |
+
+- **Issues que salieron del hito:**
+  - **#105**, las filas «no usado» de quien se va: cerrado en la 5.5.
+  - **Abiertos:** #103 (la carga prevista del hito 5), #108 (recalibrar k con el refuerzo de invierno), #109 (la forma de la espera de cama), #110 (subagente «revisor del plan») y #112 (web de la documentación).
+- **N3:**
+  - en la 5.2, dos en verde (32 min en total, el 43,7 % perdido en la primera), lo que llevó a la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md);
+  - en la 5.6, 13 min 52 s en el portátil;
+  - en la 5.7, 10 min 41 s en la nube.
+- **Paradas para decidir con Pedro:** dos, las dos en la 5.6: los boxes de cuello de botella y k ≥ 4. El resto de las decisiones nuevas llegaron como ajustes de Pedro al plan, anotados en el anexo de cada tarea.
+
+### Propuestas de velocidad
+
+Salen de lo que costó tiempo en el hito. Ninguna se implanta aquí: cada una, si se aprueba, va en su tarea.
+
+1. **Un subagente «revisor del plan»** (#110): lee el plan contra la especificación y las notas del chat antes de presentarlo, en las tareas complejas.
+2. **El formato del plan:**
+   - una sección «Lo que el plan interpreta»;
+   - otra, «Diferencias con las notas del chat»;
+   - los valores a mano con su cálculo ejecutable;
+   - el detalle en el PR, no en el plan.
+
+   Los errores del hito estaban en lo que el plan interpretaba, no en la aritmética ([lecciones](../proceso/lecciones.md#proceso-y-agentes)).
+3. **`/tarea-edsim` y `/sincronizar` con `gh api` REST**, para que funcionen también en la nube. El tablero, que solo existe en GraphQL, lo seguirían moviendo Pedro o el workflow.
+4. **La nube por defecto** para las tareas de núcleo, tests, notebooks y calibración: la N3 tardó 10 min 41 s allí, frente a 13 min 52 s en el portátil. En local, las de la app en el navegador, Kafka con Docker y lo que viva solo en el portátil.
+5. **El chat escribe en GitHub**, como desde la 5.4: notas en los issues, revisiones y métricas en los PR, issues del Backlog. Queda documentado como práctica ([flujo.md](../proceso/flujo.md#papeles), [portabilidad.md](../proceso/portabilidad.md#7-github-como-gestor-de-trabajo-implantado) §7).
+6. **La revisión del chat, a la medida:**
+   - el plan, en las tareas críticas o con conceptos nuevos;
+   - el PR, ligera: el CI y lo que el plan interpretaba, que es lo que hizo falta en todo el hito.
+
 ## Anexo: guía de referencia del hito 5
 
 Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión, lecciones y pendientes.

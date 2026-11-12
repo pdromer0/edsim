@@ -297,7 +297,8 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
   - las reglas que valen toda la tarea van **arriba**, porque tras compactar puede quedar solo el principio de la skill;
   - una skill puede lanzar `/code-review` con la herramienta Skill; se le pasa siempre el nivel, porque si no reutiliza el último tecleado;
   - **los id del tablero se leen en cada uso** (`gh project field-list`), nunca de memoria.
-- **`cerrar-hito`** [piloto 5.8] y **`crear-tareas`**, de la especificación a los issues [pendiente, hito 7].
+- **`/cerrar-hito N`** [escrita en la 5.8, con lo que hizo esa tarea; su primer uso será el cierre del hito 7]: del issue de cierre al PR (ADR con «Qué cambió al implementarla», diario, diseño, manual de la app, balance, lecciones, README y `AGENTS.md`) y, tras la etiqueta, la Release.
+- **`crear-tareas`**, de la especificación a los issues [pendiente, hito 7].
 - **Subagente `mutante`** para las versiones incorrectas en worktree [piloto 5.2].
 - **Plugins:** solo el LSP del lenguaje (pyright en Python) [implantado, A5]. Superpowers y feature-dev quedan descartados porque chocan con la metodología propia. Para GitHub se usa `gh` en lugar del MCP de GitHub.
 
@@ -365,7 +366,14 @@ Si el proyecto empezó con la documentación en un documento online (en EDsim, u
 - **Cuidado con los números:** los issues y los PR comparten numeración, y pueden coincidir con los de las decisiones (en EDsim, issues #63 a #94 y decisiones 67 a 79). Las decisiones se escriben siempre «decisión 69 (H5-3)», sin almohadilla, porque con ella GitHub enlaza un issue.
 - **Crear issues por script, de forma idempotente:** se comprueba por título que no existe, y para el tablero se busca la ficha antes de añadirla, porque el añadido automático compite con `gh project item-add`.
 
-**Versiones:** etiqueta por hito y `gh release create <etiqueta> --generate-notes` [piloto 5.8].
+**El chat en GitHub** [probado en el hito 5]: desde la 5.4, el chat (claude.ai) trabaja sobre el repositorio con `add_repo` y escribe en GitHub por `gh api` REST:
+- las «Notas del chat» como comentario de cada issue;
+- su revisión y las métricas en los PR;
+- los issues nuevos del Backlog.
+
+GraphQL no está disponible ahí, así que el tablero lo mueven la persona, los workflows o las skills de Claude Code en local.
+
+**Versiones:** la persona crea la etiqueta de cada hito tras fusionar su cierre, y el agente publica la Release con `gh release create <etiqueta> --title … --notes-file …`, con las notas sacadas del balance del hito [skill `cerrar-hito`, 5.8].
 
 **Mantenimiento:** Dependabot para las dependencias [pendiente: comprobar que entiende `uv.lock`].
 
@@ -466,15 +474,15 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | Migración de la documentación al repositorio | P.2, A1 | Probado: diff normalizado limpio, original archivado |
 | Instrucciones coherentes y `/doctor prompt-audit` | P.2, A2 | Probado: segundo audit limpio |
 | GitHub como gestor (issues, tablero, dependencias) | P.2, A3 | Implantado: 32 issues; falta su uso en una tarea |
-| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | A5, `/tarea-edsim`: probada de punta a punta. Seis hallazgos en [p2.md](p2.md); los de más peso: la tarea sin fichero de especificación (arreglado), cómo presentar el plan fuera del modo plan y si los scripts de los hooks cuentan para repetir la N3 (los dos, resueltos en la A6). `/sincronizar` ya funcionó con los PR #95 y #96. Falta 5.1 |
+| `/tarea-edsim` y `/sincronizar` | Prueba en seco (P.2), A5 (prueba de humo) y 5.1 | A5, `/tarea-edsim`: probada de punta a punta. Seis hallazgos en [p2.md](p2.md); los de más peso: la tarea sin fichero de especificación (arreglado), cómo presentar el plan fuera del modo plan y si los scripts de los hooks cuentan para repetir la N3 (los dos, resueltos en la A6). `/sincronizar` ya funcionó con los PR #95 y #96. Hito 5: las tareas salieron de `/tarea-edsim`; en la nube (5.7), sin el tablero, que usa GraphQL |
 | Aviso de Windows y línea de estado (en `~/.claude`) | P.2, A6 | Probado por Pedro en una sesión nueva: suena al pedir permiso y la línea muestra modelo, rama y % de contexto |
 | Plugin LSP de Python (pyright) | — | Pendiente: `/plugin` es interactivo y no lo lanza el agente |
 | Subagentes para las versiones incorrectas | 5.2 | Probado con cinco versiones incorrectas (cuatro en paralelo), con predicción frente a observado. El worktree parte del `HEAD` local (`worktree.baseRef = "head"`), con su `uv sync --offline --frozen` y `edsim.__file__` comprobado dentro, sin tocar el árbol principal. Claude Code borra los worktrees limpios. Dos avisos: `.claude/agents/` se carga al abrir la sesión (un subagente creado a mitad de sesión no existe hasta la siguiente), y un worktree cuyo subagente deja trabajo en segundo plano sigue bloqueado. Detalle en el anexo de la 5.2 de [hito-5.md](../specs/hito-5.md) |
-| `@claude` en el PR | Pospuesto al cierre del hito 5 | — |
-| El chat lee el PR y el CI | 5.4 | — |
+| `@claude` en el PR | Pospuesto a después de la 5.8 | — |
+| El chat lee el PR y el CI | 5.4 | Probado: con `add_repo` y `gh api` REST. Desde la 5.4 el chat también escribe en GitHub (notas en los issues, revisiones y métricas en los PR, issues del Backlog; §7) |
 | Codex desde el issue | 5.5 | Sin hacer: la 5.5 pasó a Claude Code (cambio de Pedro del 12 de noviembre). Codex sigue en el hito con `@codex review` en la 5.6 |
 | Sesión en la nube | 5.7 | Probado de punta a punta, con tres salvedades. Funcionó: el push a `feat/h5-notebook`, los hooks, las skills y el subagente `mutante` (dos worktrees en paralelo), `uv sync --all-packages` en 35 s y la N3 en segundo plano: 10 min 41 s (núcleo 6:13, app 3:23, notebooks 1:05) frente a 13 min 52 s en el portátil. Falló: `gh issue view` y todo `gh project` (GraphQL, 403 del proxy), así que el issue se lee con la herramienta de GitHub de la sesión y la ficha del tablero la mueve Pedro; el script del entorno falló porque se ejecutaba fuera del repositorio (corregido buscándolo con `find`); y la sesión limitaba la rama a `claude/*` frente a la del issue (Pedro eligió la del issue). Detalle en el anexo de la 5.7 de [hito-5.md](../specs/hito-5.md) |
-| `cerrar-hito`, Release y web | 5.8 | — |
+| `cerrar-hito`, Release y web | 5.8 | La skill, escrita en la 5.8 con lo que hizo esa tarea; su primera prueba, el cierre del hito 7. La Release de `v0.5-hito5`, con `gh release create` después de la etiqueta de Pedro. La web de la documentación sale del piloto: #112 |
 
 ## Referencias
 
