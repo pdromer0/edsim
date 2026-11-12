@@ -247,6 +247,14 @@ def test_recuentos_de_la_replica(values):
     assert values.censored_admitted_share == pytest.approx(0.5)
 
 
+def test_esperando_cama_por_la_ley_de_little(values):
+    # B espera cama 450 min (de 60 a 510); E sigue esperando: cota 2880 − 90 = 2790. Con la
+    # ventana de un día, L = Σ W / T = (450 + 2790) / 1440 = 2,25.
+    assert values.bed_wait_minutes == pytest.approx(3240.0)
+    assert values.window_minutes == DAY
+    assert values.boxes_waiting_bed == pytest.approx(2.25)
+
+
 def test_cuello_de_botella_con_los_atendidos_de_los_niveles_2_a_5(values):
     # A, B y H: box (10 + 1 + 40) / 3 = 17; médico (13 + 0 + 48) / 3 = 20,333.
     assert values.box_wait == pytest.approx(17.0)

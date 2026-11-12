@@ -214,6 +214,10 @@ class ReplicaValues:
         box_wait: Mean of ``initial_box_wait`` of the patients of levels 2 to 5
             who depart; ``nan`` without them.
         doctor_wait: Mean of ``initial_doctor_wait`` of the same patients.
+        bed_wait_minutes: The waits for a bed of the patients of the window who
+            asked for one, added up: the complete ones and, of those still
+            waiting at the horizon, ``horizon - bed_requested`` (a bound).
+        window_minutes: Length of the window, in minutes.
     """
 
     targets: Mapping[str, TargetValues]
@@ -227,11 +231,20 @@ class ReplicaValues:
     censored_admitted: int = 0
     box_wait: float = math.nan
     doctor_wait: float = math.nan
+    bed_wait_minutes: float = 0.0
+    window_minutes: float = math.nan
 
     @property
     def censored_share(self) -> float:
         """Censored over the arrivals of the window; 0 without arrivals."""
         return self.censored / self.arrivals if self.arrivals else 0.0
+
+    @property
+    def boxes_waiting_bed(self) -> float:
+        """Mean number of patients waiting for a bed, by Little's law: L = λ · W =
+        (N / T) · (Σ W / N) = Σ W / T, with the patients of the window (task 5.6). Almost
+        all of them wait in their box; those displaced to the hallway are rare."""
+        return self.bed_wait_minutes / self.window_minutes
 
     @property
     def censored_admitted_share(self) -> float:
@@ -456,6 +469,14 @@ def replica_values(
         censored_admitted=sum(e.bed_requested is not None for e in inside),
         box_wait=_mean_or_nan([e.initial_box_wait for e in attended]),
         doctor_wait=_mean_or_nan([e.initial_doctor_wait for e in attended]),
+        bed_wait_minutes=float(
+            sum(
+                e.bed_wait if e.bed_wait is not None else horizon - e.bed_requested
+                for e in arrived
+                if e.bed_requested is not None
+            )
+        ),
+        window_minutes=float(end - start),
     )
 
 
@@ -623,6 +644,12 @@ def level_breakdown(replicas: Sequence[ReplicaValues], target: Target) -> tuple[
             contributions.append(100 * over / total if total else math.nan)
         out.append(LevelShare(level, float(np.mean(percentages)), float(np.mean(contributions))))
     return tuple(out)
+
+
+def boxes_waiting_bed(replicas: Sequence[ReplicaValues]) -> float:
+    """Mean between replications of the patients waiting for a bed (Little's law), the boxes
+    that the wait for a bed takes from the others (task 5.6)."""
+    return float(np.mean([r.boxes_waiting_bed for r in replicas]))
 
 
 def mean_compliance_out(replicas: Sequence[ReplicaValues]) -> tuple[float, ...]:
