@@ -213,6 +213,11 @@ def waits_frame(result: RunResults) -> pd.DataFrame:
                 "Días fuera de objetivo": compliance.share_out,
             }
         )
+        if result.outcome is not None:
+            # With abandonment (H5-8): those who left after the maximum are in
+            # "Pacientes que superan el máximo"; those who left before, out of n.
+            row["Se van después del máximo"] = compliance.left_late
+            row["Censurados (se van antes)"] = compliance.censored
         rows.append(row)
     return pd.DataFrame(rows)
 

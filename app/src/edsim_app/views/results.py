@@ -12,7 +12,10 @@ from edsim.runs import (
     RunReadError,
     RunResults,
     RunStore,
+    WindowOutcome,
     read_run_header,
+    true_level_abandonment,
+    true_level_window_compliance,
 )
 from edsim_app.charts import curve_chart, hourly_census_chart, occupancy_chart, waits_chart
 from edsim_app.frames import (
@@ -34,7 +37,17 @@ from edsim_app.frames import (
     wall_times,
 )
 from edsim_app.help import render_results_help
-from edsim_app.results import cached_run_results
+from edsim_app.outcome_frames import (
+    OUTCOME_CURVE_LABELS,
+    destination_frames,
+    format_censored,
+    left_frames,
+    stay_frame,
+    threshold_frame,
+    true_level_abandonment_frames,
+    true_level_compliance_frame,
+)
+from edsim_app.results import cached_episode_truth, cached_run_results
 from edsim_app.state import catalog_store
 
 
@@ -122,7 +135,10 @@ def render_analysis(result: RunResults) -> None:
     st.subheader("Curvas por semana")
     weeks = list(range((result.info.days + 6) // 7))
     st.session_state.results_week = min(st.session_state.get("results_week", 0), weeks[-1])
-    st.session_state.setdefault("results_curve", "census")
+    # The curves of the beds exist only with a log of version 4 (task 5.4).
+    curves = CURVE_LABELS | (OUTCOME_CURVE_LABELS if result.outcome is not None else {})
+    if st.session_state.get("results_curve") not in curves:
+        st.session_state.results_curve = "census"
     for field, label, options, formatter in (
         (
             "results_week",
@@ -132,7 +148,7 @@ def render_analysis(result: RunResults) -> None:
                 f"Semana {week + 1} · [día {week * 7}, día {min((week + 1) * 7, result.info.days)})"
             ),
         ),
-        ("results_curve", "Curva", list(CURVE_LABELS), CURVE_LABELS.get),
+        ("results_curve", "Curva", list(curves), curves.get),
     ):
         widget = f"{field}_widget"
         st.session_state[widget] = st.session_state[field]
@@ -152,6 +168,85 @@ def render_analysis(result: RunResults) -> None:
     st.altair_chart(hourly_census_chart(hourly_census_frame(result)), width="stretch")
     st.subheader("Ley de Little")
     st.dataframe(style_little(little_frame(result)), hide_index=True, width="stretch")
+
+
+def render_outcome(outcome: WindowOutcome) -> None:
+    """The observable indicators of milestone 5, from the log of the window (H5-8)."""
+    st.subheader("Desenlace: abandono, destinos y espera de cama")
+    st.caption(
+        "Sobre las llegadas de la ventana; por nivel, sobre los clasificados con ese nivel. "
+        "«≥» es una cota inferior: hay pacientes que siguen esperando al final."
+    )
+    overall, by_wait, by_level = left_frames(outcome)
+    st.dataframe(overall, hide_index=True)
+    st.dataframe(by_wait, hide_index=True)
+    st.dataframe(by_level, hide_index=True)
+    overall, by_level = destination_frames(outcome)
+    st.dataframe(overall, hide_index=True)
+    st.dataframe(by_level, hide_index=True)
+    bed = outcome.bed_wait
+    st.markdown("**Espera de cama de los ingresados**")
+    for column, (label, value) in zip(
+        st.columns(5),
+        (
+            ("Pedidos de cama", str(bed.requests)),
+            ("Con cama", str(bed.completed)),
+            ("Siguen esperando", str(bed.censored)),
+            ("Mediana", f"{format_censored(bed.median)} min"),
+            ("p90", f"{format_censored(bed.p90)} min"),
+        ),
+        strict=True,
+    ):
+        column.metric(label, value)
+    st.dataframe(threshold_frame(bed.over), hide_index=True)
+    st.markdown("**Estancia en urgencias por destino**")
+    st.dataframe(stay_frame(outcome), hide_index=True, width="stretch")
+    st.caption(
+        f"Ingresados con más de {format_number(outcome.stay.admitted_over.minutes / 60, 0)} h:"
+    )
+    st.dataframe(threshold_frame((outcome.stay.admitted_over,)), hide_index=True)
+    beds = outcome.beds
+    for column, (label, value) in zip(
+        st.columns(4),
+        (
+            ("Boxes con ingresados esperando cama (media)", format_number(beds.boxes_mean, 2)),
+            ("Boxes con ingresados esperando cama (máximo)", str(beds.boxes_max)),
+            ("Pacientes en el pasillo (media)", format_number(beds.hallway_mean, 4)),
+            ("Pacientes en el pasillo (máximo)", str(beds.hallway_max)),
+        ),
+        strict=True,
+    ):
+        column.metric(label, value)
+
+
+def render_truth(result: RunResults, root: str, fingerprint: str) -> None:
+    """Indicators that only the ground truth gives, never next to the observable ones."""
+    st.subheader("Ver la verdad")
+    if not result.info.is_clinical:
+        st.caption("Las ejecuciones del modelo provisional no tienen nivel real.")
+        return
+    if not st.toggle("Ver la verdad", key="results_truth_widget"):
+        st.caption("Indicadores del ground truth: nunca forman parte de los KPI observables.")
+        return
+    try:
+        truth = cached_episode_truth(root, result.info.run_id, fingerprint)
+    except RunReadError as error:
+        st.error(str(error))
+        return
+    st.markdown("**Cumplimiento Manchester por nivel real (reloj C)**")
+    compliance = true_level_window_compliance(
+        result.analysis.table, truth, result.info.warmup_days, result.info.days
+    )
+    st.dataframe(true_level_compliance_frame(compliance), hide_index=True, width="stretch")
+    if result.outcome is not None:
+        st.markdown("**Abandono por nivel real**")
+        by_level, harm = true_level_abandonment_frames(
+            true_level_abandonment(
+                result.analysis.table, truth, result.outcome.start, result.outcome.end
+            )
+        )
+        st.dataframe(by_level, hide_index=True)
+        st.dataframe(harm, hide_index=True)
 
 
 def render_downloads(store: RunStore, run_id: str, clinical: bool = False) -> None:
@@ -197,6 +292,8 @@ except (RunReadError, RunAnalysisError) as error:
 render_results_help()
 render_invariants(result)
 render_kpis_and_waits(result)
+if result.outcome is not None:
+    render_outcome(result.outcome)
 render_analysis(result)
 st.subheader("Los tres relojes · niveles asignados 2–5")
 st.dataframe(clocks_frame(result), hide_index=True)
@@ -217,4 +314,5 @@ if result.model == "clinico":
     )
     for frame in observed_distribution_frames(result):
         st.dataframe(frame.style.format({"Proporción": "{:.1%}"}, decimal=","), hide_index=True)
+render_truth(result, str(store.root), fingerprint)
 render_downloads(store, selected, result.info.is_clinical)
