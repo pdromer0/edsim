@@ -29,8 +29,18 @@ def render_plan(
         (p for p in state.patients if p.results_room and p.state == "waiting_tests"),
         key=lambda p: (p.arrival, p.episode_id),
     )
+    hallway = sorted(
+        (p for p in state.patients if p.hallway),
+        key=lambda p: (p.arrival, p.episode_id),
+    )
+
+    def section_height(patients):
+        """A heading, its patients (at most 30) and the «+n más» line."""
+        return 0 if not patients else 50 + 38 * min(30, len(patients)) + 15 * (len(patients) > 30)
+
+    right_column = 240 + section_height(hallway) + section_height(results_room)
     height = max(
-        260 + 38 * min(30, len(results_room)),
+        right_column + 40,
         450,
         130 + 38 * min(30, max(len(waiting_triage), len(waiting_box))),
         130 + 76 * ceil(counts.boxes / 4),
@@ -170,12 +180,27 @@ def render_plan(
     text(1130, 26, "Salidas · última hora", "heading")
     for i, (destination, count) in enumerate(state.departures_by_destination.items()):
         text(1130, 66 + i * 32, f"{destination.capitalize()}: {count}")
-    if results_room:
-        text(1130, 210, "Sala de resultados · espera de pruebas", "heading")
-        for index, p in enumerate(results_room[:30]):
-            patient(p, 1130, 230 + 38 * index, width=280)
-        if len(results_room) > 30:
-            text(1130, 245 + 38 * 30, f"+{len(results_room) - 30} más")
+    text(
+        1130,
+        194,
+        f"Se van sin ser vistos (última hora): {len(state.abandonments)}",
+        attributes='data-count="left"',
+    )
+
+    def side_section(patients, y, title, role):
+        if not patients:
+            return y
+        text(1130, y, title, "heading")
+        svg.append(f'<g data-role="{role}">')
+        for index, p in enumerate(patients[:30]):
+            patient(p, 1130, y + 20 + 38 * index, width=280)
+        svg.append("</g>")
+        if len(patients) > 30:
+            text(1130, y + 35 + 38 * 30, f"+{len(patients) - 30} más")
+        return y + section_height(patients)
+
+    y = side_section(hallway, 240, "Pasillo · esperando cama", "hallway-queue")
+    side_section(results_room, y, "Sala de resultados · espera de pruebas", "results-room")
     text(
         14,
         height - 37,

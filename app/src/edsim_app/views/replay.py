@@ -213,6 +213,11 @@ def render_live(result, identity, index, position):
         f" · Triaje: {counts.nurses_busy} / {counts.nurses_staff}"
         f" · Médicos: {counts.doctors_busy} / {counts.doctors_staff}"
     )
+    if result.outcome is not None:
+        status += (
+            f" · Boxes con ingresados esperando cama: {counts.boxes_waiting_bed}"
+            f" · Pasillo: {counts.hallway}"
+        )
     if position.time < result.info.warmup_days * 1440:
         status += " · Calentamiento"
     if position.time == index.horizon:

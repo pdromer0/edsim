@@ -4,7 +4,13 @@ from dataclasses import replace
 from datetime import date
 from xml.etree import ElementTree as ET
 
-from edsim.runs import ReplayCounts, ReplayDisplacement, ReplayPatient, ReplayState
+from edsim.runs import (
+    ReplayAbandonment,
+    ReplayCounts,
+    ReplayDisplacement,
+    ReplayPatient,
+    ReplayState,
+)
 from edsim_app.palette import LEVEL_COLORS
 from edsim_app.plan import render_plan
 
@@ -177,3 +183,25 @@ def test_waiting_bed_in_a_box_and_the_four_destinations():
     text = " ".join(svg.itertext())
     for line in ("Alta: 3", "Ingreso: 1", "Traslado: 1", "Exitus: 0"):
         assert line in text
+
+
+def test_hallway_patients_and_the_abandonments_the_state_brings():
+    """The hallway has its own zone; the plan counts the abandonments the core supplies.
+
+    The core keeps only those of (t - 60, t]; the plan does not filter them again.
+    """
+    in_hallway = replace(patient(7, 3, "waiting_bed"), hallway=True)
+    left = (
+        ReplayAbandonment("EP-000020", "PT-000020", 500.0, 4, 550.0, "box"),
+        ReplayAbandonment("EP-000021", "PT-000021", 510.0, None, 590.0, "triaje"),
+    )
+    svg = draw(replace(state([in_hallway], t=600), abandonments=left))
+    zone = elements(svg, "hallway-queue")
+    assert len(zone) == 1
+    (group,) = zone[0].findall('.//*[@data-role="patient"]', NS)
+    assert group.attrib["data-episode"] == "EP-000007"
+    assert "Pasillo · esperando cama" in group.find("s:title", NS).text
+    count = svg.find('.//*[@data-count="left"]', NS)
+    assert count.text == "Se van sin ser vistos (última hora): 2"
+    # Not a box patient: the hallway patient has no box.
+    assert all("EP-000007" not in " ".join(b.itertext()) for b in elements(svg, "box"))

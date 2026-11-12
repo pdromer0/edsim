@@ -19,14 +19,17 @@ from edsim.runs import (
     EpisodeFilters,
     RunStore,
     build_episode_event_index,
+    build_replay_index,
     compare_episode_truth,
     episode_segments,
     filter_episodes,
     read_center_values,
     read_episode_events,
+    read_replay_state,
     read_run_episode_truth,
     read_run_header,
     read_run_results,
+    replay_counts,
     true_level_abandonment,
     true_level_window_compliance,
 )
@@ -343,3 +346,33 @@ def test_episode_card_of_a_hallway_patient_shows_its_bed_wait(h5_catalog):
     )
     assert metrics["Espera de cama"] == expected
     assert any(m.value.startswith("**Pasillo:** sí") for m in app.markdown)
+
+
+# --- Replay --------------------------------------------------------------------------------
+
+
+def svg_of(app):
+    return " ".join(item.proto.body for item in app.get("html"))
+
+
+@pytest.mark.slow
+def test_replay_plan_draws_the_hallway_and_counts_the_core_abandonments(h5_catalog):
+    record, segment = hallway_case(h5_catalog)
+    result = results(h5_catalog)
+    store = RunStore(h5_catalog)
+    index = build_replay_index(store, "h5")
+    app = open_page("views/replay.py")
+    t = (segment.start + segment.end) / 2
+    seek(app, h5_catalog, t)
+    counts = replay_counts(result, t)
+    assert counts.hallway >= 1
+    assert f"Pasillo: {counts.hallway}" in " ".join(m.value for m in app.markdown)
+    svg = svg_of(app)
+    zone = svg[svg.index('data-role="hallway-queue"') :]
+    assert record.episode_id in zone[: zone.index("</g></g>") + 8]
+    # An instant just after an abandonment: the plan shows what the core's state brings.
+    left = next(e for e in result.analysis.table if e.left is not None and e.left > 1440)
+    seek(app, h5_catalog, left.left)
+    expected = len(read_replay_state(store, "h5", index, left.left).abandonments)
+    assert expected >= 1
+    assert f"Se van sin ser vistos (última hora): {expected}" in svg_of(app)
