@@ -13,6 +13,7 @@ from edsim_app.frames import FIELDS, format_change_value, format_created_at, for
 
 METADATA_LABELS = {
     "model": "Modelo",
+    "catalog_version": "Versión del catálogo",
     "clinical_profiles_path": "Ruta de perfiles clínicos",
     "clinical_profiles_fingerprint": "Huella de perfiles clínicos",
     "format_version": "Versión del formato",

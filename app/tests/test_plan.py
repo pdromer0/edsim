@@ -166,3 +166,14 @@ def test_results_room_has_its_own_patients_without_duplicating_the_box_queue():
     for glyph in people:
         expected = 4 if glyph.attrib["data-episode"] == outside.episode_id else 5
         assert glyph.find("s:rect", NS).attrib["fill"] == LEVEL_COLORS[expected]
+
+
+def test_waiting_bed_in_a_box_and_the_four_destinations():
+    four = {"alta": 3, "ingreso": 1, "traslado": 1, "exitus": 0}
+    value = replace(state([patient(1, 3, "waiting_bed", 3)], t=600), departures_by_destination=four)
+    svg = draw(value)
+    box = next(e for e in elements(svg, "box") if e.attrib["data-box"] == "3")
+    assert "Esperando cama" in " ".join(box.itertext())
+    text = " ".join(svg.itertext())
+    for line in ("Alta: 3", "Ingreso: 1", "Traslado: 1", "Exitus: 0"):
+        assert line in text

@@ -91,7 +91,7 @@ def render_filters(result: RunResults) -> EpisodeFilters:
             (
                 "destination",
                 "Destino",
-                [None, "alta", "ingreso"],
+                [None, "alta", "ingreso", "traslado", "exitus"],
                 lambda value: "Todos" if value is None else value.capitalize(),
             ),
             (
@@ -228,6 +228,7 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
             truth[record.episode_id],
             profiles=result.profiles,
             start_date=result.start_date,
+            center=result.center,
         )
         st.subheader("Lo sorteado frente a lo observado")
         st.dataframe(episode_truth_frame(rows), hide_index=True, width="stretch")

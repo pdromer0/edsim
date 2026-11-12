@@ -297,15 +297,22 @@ EPISODE_STATE_LABELS = {
     "assessment": "Valoración",
     "waiting_tests": "En box esperando pruebas",
     "reassessment": "Reevaluación",
+    "waiting_bed": "Esperando cama",
 }
 
 
-def episode_state_label(state: str, *, results_room: bool = False) -> str:
-    """Present the physical location while preserving the core's state names."""
+def episode_state_label(state: str, *, results_room: bool = False, hallway: bool = False) -> str:
+    """Present the physical location while preserving the core's state names.
+
+    The state says what the patient does; the marks, where it is (H5-11): the
+    results room or, for an admitted patient displaced from its box, the hallway.
+    """
     if results_room:
         return "Sala de resultados · " + (
             "espera de box" if state == "waiting_box" else "espera de pruebas"
         )
+    if hallway:
+        return "Pasillo · " + EPISODE_STATE_LABELS[state].lower()
     return EPISODE_STATE_LABELS[state]
 
 
@@ -327,7 +334,9 @@ def episode_timeline_frames(
         {
             "Inicio": segment.start,
             "Fin": segment.end,
-            "Estado": episode_state_label(segment.state, results_room=segment.results_room),
+            "Estado": episode_state_label(
+                segment.state, results_room=segment.results_room, hallway=segment.hallway
+            ),
             "Box": segment.box,
             "Duración (min)": segment.end - segment.start,
             "Carril": "Recorrido",
@@ -396,6 +405,8 @@ def episode_truth_frame(comparisons: Sequence[TruthComparison]) -> pd.DataFrame:
         "reassessment_time": "Reevaluación",
         "test_turnaround": "Respuesta de pruebas",
         "destination": "Destino",
+        "patience": "Paciencia",
+        "bed_wait": "Espera de cama",
     }
     statuses = {
         "match": "Coincide",

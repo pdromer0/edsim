@@ -156,7 +156,9 @@ def render_details(result, identity, index, t):
             {
                 "Episodio": p.episode_id,
                 "Nivel": p.level,
-                "Estado": episode_state_label(p.state, results_room=p.results_room),
+                "Estado": episode_state_label(
+                    p.state, results_room=p.results_room, hallway=p.hallway
+                ),
                 "Box": p.box,
                 "Llegada (UTC+1)": wall_times(result, [p.arrival])[0],
             }
