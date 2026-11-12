@@ -8,6 +8,7 @@ true level. What the hospital observes comes from the log.
 
 import csv
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -20,6 +21,7 @@ from edsim.engine.clinical import BedWaitFactors
 from edsim.engine.clinical_sampler import TurnaroundShifts
 from edsim.engine.events import DOOR, Event, episode_id
 from edsim.engine.ground_truth import EpisodeTruth, GroundTruth
+from edsim.engine.outcome_metrics import ADMISSION, KaplanMeier, kaplan_meier
 from edsim.engine.report import EPISODE_COLUMNS, PARAMETER_COLUMNS
 from edsim.engine.targets import (
     COMPLIANCE_MEASURE,
@@ -28,7 +30,7 @@ from edsim.engine.targets import (
     compliance_from_cases,
     true_levels,
 )
-from edsim.profiles.config import TEST_TYPES, ClinicalProfiles
+from edsim.profiles.config import DESTINATIONS, TEST_TYPES, ClinicalProfiles
 from edsim.runs._truth_csv import read_clinical_episodes
 from edsim.runs.episodes import EpisodeSegments
 from edsim.runs.metrics import WindowCompliance, _pooled_levels
@@ -696,4 +698,293 @@ def true_level_abandonment(
         left=len(left),
         severe=sum(t.clinical.triage.true_level in SEVERE_LEVELS for t in left),
         would_be_admitted=sum(t.outcome.destination == "ingreso" for t in left),
+    )
+
+
+# --- The closing of the flow: patience, counterfactual and G (task 5.7) -------------------
+
+LATE_LEAVE_TOLERANCE = 1e-9
+"""Minutes: whoever leaves later than its patience by more than this had its deadline
+overdue during the triage and leaves when it ends (H5-4)."""
+
+PatienceGrouping = Literal["true_level", "assigned_level"]
+
+
+def _outcome_truth(truth: Mapping[str, EpisodeTruth], episode_id: str) -> EpisodeTruth:
+    t = truth.get(episode_id)
+    if t is None:
+        raise ValueError(f"{episode_id} is not in the ground truth")
+    if t.clinical is None or t.outcome is None:
+        raise ValueError(f"{episode_id} has no clinical truth or no outcome")
+    return t
+
+
+@dataclass(frozen=True, slots=True)
+class PatienceGroup:
+    """The Kaplan–Meier estimate of the patience of one level, with the truth beside it.
+
+    Attributes:
+        level: The level of the group, 1 to 5.
+        km: The estimate: the event is leaving, in minutes since the arrival;
+            seeing a doctor or still waiting at the horizon censor.
+        left: Events: patients who left without being seen.
+        seen: Censored because a doctor saw them: the end of the risk of leaving.
+        waiting: Censored because they still waited at the horizon.
+        late_leavers: Of those who left, the ones whose deadline was overdue
+            during the triage: they leave when it ends, later than their
+            patience, so the estimate takes their time as the patience.
+        patiences: The true patiences of all the patients of the group, increasing:
+            the ground truth knows them, also those of whoever saw a doctor.
+    """
+
+    level: int
+    km: KaplanMeier
+    left: int
+    seen: int
+    waiting: int
+    late_leavers: int
+    patiences: tuple[float, ...]
+
+    @property
+    def n(self) -> int:
+        """Patients of the group."""
+        return self.km.n
+
+    def truth_survival(self, minutes: float) -> float | None:
+        """Share of the group whose true patience is longer than ``minutes``.
+
+        ``None`` without patients. It is the survival the estimate looks for.
+        """
+        if not self.patiences:
+            return None
+        return (len(self.patiences) - bisect_right(self.patiences, minutes)) / len(self.patiences)
+
+
+@dataclass(frozen=True, slots=True)
+class PatienceSurvival:
+    """The patience of the patients that arrive in a window, by level.
+
+    Attributes:
+        by: ``true_level`` (the one the patience depends on) or
+            ``assigned_level`` (what the hospital would see).
+        groups: One per level, 1 to 5.
+        unclassified: With ``assigned_level``, the patients without a level
+            (they left before their triage) that are left out; 0 with
+            ``true_level``.
+    """
+
+    by: PatienceGrouping
+    groups: tuple[PatienceGroup, ...]
+    unclassified: int
+
+
+def patience_survival(
+    table: Sequence[EpisodeRecord],
+    truth: Mapping[str, EpisodeTruth],
+    start: float,
+    end: float,
+    horizon: float,
+    by: PatienceGrouping,
+) -> PatienceSurvival:
+    """Kaplan–Meier of the patience of the patients that arrive in ``[start, end)``.
+
+    The time of each patient is counted from its arrival, as its patience. It is
+    an event if it left without being seen (``left``); it is censored at the
+    moment a doctor sees it (``first_assessment``, the end of the risk of
+    leaving) or, if it still waits, at the ``horizon``.
+
+    Raises:
+        ValueError: If ``by`` is not valid, the window is not inside
+            ``[0, horizon]``, an episode is not in the truth or lacks its
+            clinical truth or outcome, or the log breaks H5-3: one departed
+            without being seen, or left after being seen. Both are errors of the
+            log (the invariants forbid them), not data to censor.
+    """
+    if by not in ("true_level", "assigned_level"):
+        raise ValueError(f"by must be 'true_level' or 'assigned_level', got {by!r}")
+    if not 0 <= start < end <= horizon or not math.isfinite(horizon):
+        raise ValueError(f"need 0 <= start < end <= horizon, got {start=}, {end=}, {horizon=}")
+    rows: list[list[tuple[float, bool, float, bool, bool]]] = [[] for _ in range(N_LEVELS)]
+    unclassified = 0
+    for e in table:
+        if not start <= e.arrival < end:
+            continue
+        t = _outcome_truth(truth, e.episode_id)
+        level = t.clinical.triage.true_level if by == "true_level" else e.level
+        if level is None:
+            unclassified += 1
+            continue
+        if e.left is not None and e.first_assessment is not None:
+            raise ValueError(f"{e.episode_id} left after being seen: the log breaks H5-3")
+        if e.left is not None:
+            minutes, event, seen = e.left - e.arrival, True, False
+        elif e.first_assessment is not None:
+            minutes, event, seen = e.first_assessment - e.arrival, False, True
+        elif e.departure is not None:
+            raise ValueError(f"{e.episode_id} departed without being seen")
+        else:
+            minutes, event, seen = horizon - e.arrival, False, False
+        late = event and minutes > t.outcome.patience + LATE_LEAVE_TOLERANCE
+        rows[level - 1].append((minutes, event, t.outcome.patience, seen, late))
+    groups = []
+    for level, group in enumerate(rows, start=1):
+        km = kaplan_meier([r[0] for r in group], [r[1] for r in group])
+        groups.append(
+            PatienceGroup(
+                level=level,
+                km=km,
+                left=sum(r[1] for r in group),
+                seen=sum(r[3] for r in group),
+                waiting=sum(not r[1] and not r[3] for r in group),
+                late_leavers=sum(r[4] for r in group),
+                patiences=tuple(sorted(r[2] for r in group)),
+            )
+        )
+    return PatienceSurvival(by, tuple(groups), unclassified)
+
+
+@dataclass(frozen=True, slots=True)
+class LevelCounterfactual:
+    """What the patients of one assigned level did, and what those who left would have done.
+
+    Attributes:
+        level: Assigned level, 1 to 5, or ``None`` for whoever left before its
+            triage, who has none.
+        stayed: Patients of the window who departed (the log gives their destination).
+        stayed_admitted: Of them, those admitted.
+        left: Patients who left without being seen.
+        left_would_admit: Of them, those whose drawn destination was admission
+            (the counterfactual: only the ground truth knows it).
+        inside: Patients still inside at the horizon, in neither group.
+    """
+
+    level: int | None
+    stayed: int
+    stayed_admitted: int
+    left: int
+    left_would_admit: int
+    inside: int
+
+    @property
+    def stayed_share(self) -> float | None:
+        """Share of those who stayed that was admitted; ``None`` if none stayed."""
+        return self.stayed_admitted / self.stayed if self.stayed else None
+
+    @property
+    def left_share(self) -> float | None:
+        """Share of those who left that would have been admitted; ``None`` if none left."""
+        return self.left_would_admit / self.left if self.left else None
+
+
+def abandonment_counterfactual(
+    table: Sequence[EpisodeRecord],
+    truth: Mapping[str, EpisodeTruth],
+    start: float,
+    end: float,
+) -> tuple[LevelCounterfactual, ...]:
+    """The admission of those who stayed against that of those who left, by assigned level.
+
+    Six rows: levels 1 to 5 and ``None`` (left before the triage). The admission
+    of those who stayed is observed in the log; that of those who left is the
+    destination they drew, which no hospital knows (piece 7).
+
+    Raises:
+        ValueError: If someone who left is not in the truth or has no outcome.
+    """
+    keys: tuple[int | None, ...] = (*range(1, N_LEVELS + 1), None)
+    rows = []
+    arrived = [e for e in table if start <= e.arrival < end]
+    for key in keys:
+        group = [e for e in arrived if e.level == key]
+        left = [e for e in group if e.left is not None]
+        stayed = [e for e in group if e.departure is not None]
+        would = sum(
+            _outcome_truth(truth, e.episode_id).outcome.destination == ADMISSION for e in left
+        )
+        rows.append(
+            LevelCounterfactual(
+                level=key,
+                stayed=len(stayed),
+                stayed_admitted=sum(e.destination == ADMISSION for e in stayed),
+                left=len(left),
+                left_would_admit=would,
+                inside=len(group) - len(left) - len(stayed),
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True, slots=True)
+class SeverityDestinations:
+    """The destinations of the patients in one interval of the true severity G.
+
+    Attributes:
+        interval: Position of the interval, 0 the most severe, as the rows of
+            ``OutcomeModel.by_severity``.
+        arrivals: Patients of the window in it.
+        left: Of them, those who left without being seen.
+        drawn: Patients by drawn destination, all of them (the sampler's draw,
+            also of those who left): what the exact shares are compared with
+            when the sampler is checked.
+        observed: Patients by destination in the log: only those who departed.
+    """
+
+    interval: int
+    arrivals: int
+    left: int
+    drawn: Mapping[str, int]
+    observed: Mapping[str, int]
+
+
+def destinations_by_severity(
+    table: Sequence[EpisodeRecord],
+    truth: Mapping[str, EpisodeTruth],
+    edges: Sequence[float],
+    start: float,
+    end: float,
+) -> tuple[SeverityDestinations, ...]:
+    """Drawn and observed destinations by interval of G, for the patients of a window.
+
+    Args:
+        table: The episodes of the log.
+        truth: The ground truth by ``episode_id``.
+        edges: Decreasing edges from ``+inf`` to ``-inf``, such as
+            ``OutcomeModel.workup.severity_edges(5)``. Interval ``i`` is
+            ``(edges[i + 1], edges[i]]``, the convention of ``interval_nodes``,
+            so that the rows are those of ``OutcomeModel.by_severity``.
+        start: Start of the window.
+        end: End of the window.
+
+    Raises:
+        ValueError: If the edges are not decreasing from ``+inf`` to ``-inf``, or
+            an episode of the window is not in the truth or lacks its outcome.
+    """
+    bounds = [float(x) for x in edges]
+    if len(bounds) < 2 or bounds[0] != math.inf or bounds[-1] != -math.inf:
+        raise ValueError("edges must go from +inf to -inf")
+    if any(not a > b for a, b in zip(bounds, bounds[1:], strict=False)):
+        raise ValueError("edges must be strictly decreasing")
+    rising = bounds[::-1]
+    n_intervals = len(bounds) - 1
+    zero = {d: 0 for d in DESTINATIONS}
+    arrivals = [0] * n_intervals
+    left = [0] * n_intervals
+    drawn = [dict(zero) for _ in range(n_intervals)]
+    observed = [dict(zero) for _ in range(n_intervals)]
+    for e in table:
+        if not start <= e.arrival < end:
+            continue
+        t = _outcome_truth(truth, e.episode_id)
+        i = n_intervals - bisect_left(rising, t.clinical.triage.severity)
+        arrivals[i] += 1
+        drawn[i][t.outcome.destination] += 1
+        if e.left is not None:
+            left[i] += 1
+        elif e.departure is not None:
+            observed[i][e.destination] += 1
+    return tuple(
+        SeverityDestinations(
+            i, arrivals[i], left[i], MappingProxyType(drawn[i]), MappingProxyType(observed[i])
+        )
+        for i in range(n_intervals)
     )

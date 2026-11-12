@@ -1512,3 +1512,95 @@ El plan predecía para V20 que `test_sin_veto_la_comprobacion_no_cambia_la_elecc
 - **5.7:** el notebook 05 con el `config/` calibrado. El 04 lee las copias del hito 4.
 - **5.8:** los ADR, con la decisión de los boxes y la discrepancia de k.
 - **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada, sin tarea.
+
+### Tarea 5.7: Notebook 05_cierre_del_flujo
+
+**Qué se hizo**
+
+Issue #74, rama `feat/h5-notebook`, Claude Code (sesión en la nube; Sonnet), sin `@codex review` (tarea no crítica). Son cinco commits más el de esta entrada: las funciones del paquete, el error típico de Greenwood, el notebook, y dos de la revisión propia (documentación; guardas y un test con una ejecución real).
+
+- **Seis análisis, cada uno una función pública de `edsim.runs`** (en `__all__`, aditivas, sin dependencias nuevas), con el notebook solo llamando y dibujando:
+  - `abandonment_by_arrival_hour` (`engine/outcome_metrics.py`): abandono, espera de los atendidos y tiempo en cola de todos, por hora de llegada;
+  - `destinations_by_severity` (`runs/truth.py`): destino sorteado y observado por tramo de G, junto a `OutcomeModel.by_severity` y `destination_probabilities`, que no se copian;
+  - `bed_little` (`engine/outcome_metrics.py`): λ, W, λ·W y las curvas de boxes y pasillo;
+  - `clock_mean` (`engine/targets.py`): media de un reloj de unos niveles, para la semana de enero;
+  - `abandonment_counterfactual` (`runs/truth.py`): el ingreso de los que se quedaron frente al de los que se fueron, por nivel asignado;
+  - `kaplan_meier` (con su error típico de Greenwood y `at_risk_at`) y `patience_survival` (por nivel real o asignado, con las paciencias verdaderas al lado).
+- **`notebooks/05_cierre_del_flujo.ipynb`:** 30 celdas, versionado sin resultados. Modo rápido (`EDSIM_NB_RAPIDO=1`): 9 días y «la semana» en los días 1 a 7, con el mismo código. En el 04 solo cambia la línea que decía que el hito 5 tendría su notebook.
+- **No cambian** `engine/timeline.py` ni el notebook 03: el 05 no usa `episode_timeline` ni `gantt`.
+
+**Decisiones del diff**
+
+- **La saturación de una hora se define de dos maneras** (nota del chat 5): la espera media de los atendidos (reloj A), que es el ejercicio de la pieza 1 pero deja fuera a quien se fue, y el tiempo en cola de todos (hasta ser visto o irse). Se enseñan las dos: se separan justo en las horas de más abandono.
+- **El KM trata como censura al que ve al médico y al que sigue esperando en el horizonte.** Quien tenía el plazo vencido durante el triaje (H5-4) se va al acabarlo, con un tiempo mayor que su paciencia; el estimador lo toma como evento en ese tiempo, sin corregirlo, y `late_leavers` los cuenta: 7 de 1.061 (0,7 %).
+- **La comparación es contra la supervivencia empírica de las paciencias del ground truth del grupo**, no contra una lognormal: con `paciencia_edad` la de un nivel es una mezcla.
+- **El rango que identifica el KM** (ajuste de Pedro al plan): por encima del mayor tiempo observado no estima nada y con pocos en riesgo es ruidoso. `at_risk_at(t)` lo dice, el notebook dibuja en gris el tramo con menos de 10 en riesgo y no compara ahí. Con k = 4 la mediana de la paciencia del nivel 4 es de 600 min y casi nadie espera tanto: el abandono informa de la cola izquierda, y por eso la 5.6 necesitó k = 4.
+- **`bed_little.by_curves` suma cajas y pasillo** (ajuste de Pedro): todos los que esperan cama, que es lo que cuenta λ·W; da también las dos partes. Sin parámetro `horizonte`: lo trae `curves.horizon`.
+- **Tramos de G con la convención de `interval_nodes`** (`(borde de abajo, borde de arriba]`), probada con una G exactamente en un borde, para que lo observado y lo exacto se comparen en los mismos tramos.
+- **Error típico de Greenwood** (fuera del plan): con él, la comparación del KM con la verdad dice cuándo un desvío no es azar (1 celda de 13 a más de 2 errores típicos).
+- **Guardas de la revisión:** `patience_survival` rechaza (error del log) a quien se va después de ser visto o sale sin ser visto; `clock_mean` acepta solo los tres relojes.
+- **Sustitutos del ground truth en los tests con pacientes a mano** (`tests/episode_factory.py`): solo lo que las funciones leen. Cada función de `runs` tiene además un test con la ejecución real del ejemplo del hito 5, que los cruza entre sí y con `true_level_abandonment`.
+
+**Medidas**
+
+Notebook en modo normal (91 días desde el 5 de enero de 2026, semilla 2026, 2 de calentamiento y un día de vaciado), con las cifras que cita el texto:
+
+- **La semana del 19 al 25 de enero reproduce el registro de la 5.6 al decimal:**
+
+  | | Hito 4 | Hito 5 |
+  | --- | --- | --- |
+  | Reloj A, niveles 2 a 5 | 306,0 min | 101,0 min |
+  | Reloj A, nivel 5 | 3.897,3 min | 434,7 min |
+  | Abandonos | 0 | 240 de 2.549 (9,42 %) |
+  | Boxes con ingresados | 0 | 7,65 de media, máximo 16 |
+
+- **Ventana de 89 días:** 28.493 llegados, 1.061 se van (3,72 %): 26 antes del triaje, 555 esperando box y 480 esperando médico.
+- **Abandono por hora:** correlación con la espera de los atendidos 0,93 y con el tiempo en cola de todos 0,96; el máximo, las 22 h (15,1 %, cola de 169 min) y el mínimo, las 9 h (0,1 %, 11 min).
+- **Ingreso por quintil de G** (de más a menos grave), exacto / sorteado / observado: 25,5 / 26,6 / 26,7; 11,0 / 11,5 / 11,5; 6,4 / 6,8 / 6,8; 4,0 / 4,4 / 4,3; 2,5 / 2,1 / 2,1 %. Se van de 5 (tramo más grave) a 433 (menos grave).
+- **Little:** 2.940 peticiones (33 al día), W = 326,2 min, λ = 0,02294; λ·W = 7,484 frente a 7,495 por las curvas (7,494 en su box y 0,0008 en el pasillo); el 20,8 % de los 36 boxes. En la ventana anual de la 5.6: 6,44 y 6,50.
+- **Contrafactual:** de los 1.061 que se fueron, 55 habrían ingresado (5,2 %); 1 era grave de verdad. Ingreso de los que se quedaron / habrían ingresado, por nivel asignado: 3: 12,5 / 10,3 %; 4: 4,2 / 5,2 %; 5: 2,1 / 2,3 %; antes del triaje, 2 de 26. En la ventana anual de la 5.6: 23 de 729.
+- **KM, nivel real 4** (14.157 pacientes, 927 que se van): S(120) = 0,956 ± 0,003 frente a 0,955; S(240) = 0,830 ± 0,007 frente a 0,822; S(480) = 0,525 ± 0,015 frente a 0,549. Mediana de espera de los que se fueron 228 min, mediana del KM 504, paciencia verdadera 534. Una celda de 13 a más de 2 errores típicos: el nivel 3 a los 480 min (−2,5, 61 en riesgo).
+- **Tiempos del notebook:** modo normal 44 s (las dos simulaciones de 91 días, 16 s y 22 s; pico de 655 MB); modo rápido 8 s.
+- **Tiempos de la N3:** 10 min 41 s en la nube (lint 0 s, formato 0 s, núcleo 6:13, app 3:23, notebooks 1:05; 4 CPU), frente a 13 min 52 s en el portátil (5.6). Un solo lanzamiento, en verde.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en dos worktrees del `HEAD` (7416e67), una a una y deshechas.
+
+| # | Versión incorrecta | Predicción (afinada antes de aplicar) | Observado |
+| --- | --- | --- | --- |
+| V37 | El KM trata «ve al médico» como evento | Fallan 2, de `patience_survival` (los seis a mano y el de nivel asignado); el KM puro y el resto pasan | Como se predijo |
+| V38 | El KM quita a los que siguen esperando en el horizonte | Fallan 6, todos de `patience_survival` (los seis a mano, las paciencias de todos, el horizonte, el nivel asignado, el nivel real y el asignado, la ventana); el KM puro pasa | Como se predijo |
+| V39 | En el empate evento–censura, la censura va antes | Falla solo el del empate (0,375 en vez de 0,5) | Como se predijo |
+| V40 | Little sin los que siguen pidiendo cama | Falla solo el de `bed_little` con tres ingresados (λ = 0,002, W = 150 y λ·W = 0,3 en vez de 0,003, 133,33 y 0,4) | Como se predijo |
+| V41 | La hora de llegada sin el módulo del día | Fallan 3: la hora 0 de dos días, el minuto 1470 y la ejecución real | Como se predijo |
+| V42 | El contrafactual con el destino del log | Fallan 5: el de a mano, la suma contra el ground truth, el destino sorteado, la verdad de quien se fue y la ejecución real | Como se predijo |
+| V43 | El «observado» por tramo de G con el destino sorteado de quien se fue | Fallan 2: el de a mano y el de la ejecución real | Como se predijo |
+
+La predicción del plan para V37 era que fallaban también los valores a mano del KM puro y no es así: la versión vive en `patience_survival`, no en el estimador, y el KM puro no puede verla. Se afinó antes de aplicar. Las de V38 y V41 a V43 se concretaron con los tests ya escritos.
+
+**Revisión**
+
+`/code-review medium main...feat/h5-notebook`, con ocho hallazgos.
+
+- **Corregidos** (`2a4d4f1` y `5eee65a`):
+  - `bed_little`: el docstring explica el efecto de borde (la espera entera de los pacientes de la ventana frente a las curvas dentro de ella);
+  - la hora de llegada pide días enteros;
+  - `patience_survival` rechaza a quien se va después de ser visto;
+  - `clock_mean` solo acepta relojes e ignora los vacíos;
+  - un test con la ejecución real de `patience_survival`, la única función de cierre que solo se probaba con sustitutos del ground truth.
+- **Explicados:**
+  - `patience_survival` falla con una salida sin valoración: es un error del log (las invariantes lo prohíben), con su test;
+  - el KM más allá del último tiempo es plano y `at_risk_at` es 0: está documentado y el notebook marca el tramo con pocos en riesgo;
+  - `truth.py` importa de `engine/outcome_metrics.py` (`ADMISSION`, el KM): ya importaba de `engine/*`, sin ciclo.
+
+**Nube** (primera tarea en una sesión en la nube; resumen en [portabilidad.md](../proceso/portabilidad.md), §14)
+
+- **Funcionó:** el push a `feat/h5-notebook`, los hooks, las skills y el subagente `mutante` del repositorio, `uv sync --all-packages` (35 s), la N3 en segundo plano y las herramientas REST de GitHub.
+- **Falló:** `gh issue view` y todo `gh project` (GraphQL, 403 del proxy): el issue se leyó con la herramienta de GitHub de la sesión y la ficha del tablero no se movió (la mueve Pedro). El script del entorno falló al construir el contenedor porque se ejecutaba fuera del repositorio; Pedro lo corrigió buscando el repositorio con `find`.
+- **Rama:** la sesión la limitaba a `claude/hopeful-edison-8vimfe` y el issue fija `feat/h5-notebook`; Pedro eligió la del issue.
+
+**Pendiente**
+
+- **5.8:** los ADR y la entrada del diario; el contrafactual y el KM son material de «Pedro sabe explicar» (el KM no es la paciencia; qué dice Little de los boxes bloqueados).
+- **Sin tarea:** el error típico de Greenwood solo existe para el KM; una banda de confianza en el gráfico queda para quien la pida.
