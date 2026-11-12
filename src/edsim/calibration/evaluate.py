@@ -99,6 +99,7 @@ from edsim.calibration.targets import (
     DEPARTURE,
     FIT,
     LEFT,
+    PERCENTAGE,
     STAY,
     Target,
 )
@@ -595,10 +596,13 @@ def level_breakdown(replicas: Sequence[ReplicaValues], target: Target) -> tuple[
     breakdown shows how much of the overall figure comes from each level.
 
     Raises:
-        ValueError: If the target is a mean.
+        ValueError: If the target is not a percentage above a threshold.
     """
-    if not target.is_percentage:
-        raise ValueError(f"objetivos.{target.name} is a mean: it has no breakdown by level")
+    if target.statistic != PERCENTAGE:
+        raise ValueError(
+            f"objetivos.{target.name} is not a percentage above a threshold: it has no"
+            " breakdown by level"
+        )
     out = []
     for i, level in enumerate(target.levels):
         percentages, contributions = [], []

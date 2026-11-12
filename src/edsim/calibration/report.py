@@ -15,6 +15,8 @@ from datetime import date
 from pathlib import Path
 
 from edsim.calibration.evaluate import (
+    ADMITTED_CENSORED_WARNING,
+    BOTTLENECK_LEVELS,
     CENSORED_WARNING,
     COMPLIANCE_LEVELS,
     COMPLIANCE_SHARE_OUT,
@@ -29,7 +31,7 @@ from edsim.calibration.evaluate import (
     pooled_value,
 )
 from edsim.calibration.staffing import DOCTORS
-from edsim.calibration.targets import FIT, Target
+from edsim.calibration.targets import FIT, PERCENTAGE, Target
 
 PARAMETER_COLUMNS = (
     "centro",
@@ -54,6 +56,7 @@ EVALUATION_COLUMNS = (
     "niveles",
     "estadistico",
     "umbral",
+    "destino",
     "uso",
     "referencia",
     "horquilla_min",
@@ -67,6 +70,7 @@ EVALUATION_COLUMNS = (
     "ic_estrecho",
     "resultado",
     "media_por_paciente",
+    "cota",
     *PARAMETER_COLUMNS,
 )
 
@@ -75,8 +79,15 @@ REPLICA_COLUMNS = (
     "fecha_inicio",
     "llegados_ventana",
     "censurados",
+    "se_van",
+    "atendidos_dentro",
+    "ingresados",
+    "ingresados_esperando_cama",
+    "espera_box",
+    "espera_medico",
     "objetivo",
     "valor",
+    "acotados",
     "dias_fuera",
     *PARAMETER_COLUMNS,
 )
@@ -126,6 +137,21 @@ def _optional(value: object) -> object:
     return "" if value is None else value
 
 
+def is_bound(replicas: Sequence[ReplicaValues], target: Target) -> bool:
+    """Whether the mean of ``target`` is a lower bound: some replication has a patient
+    still inside at the horizon in it (``TargetValues.bounded``)."""
+    return any(r.targets[target.name].bounded for r in replicas)
+
+
+def _mean_text(replicas: Sequence[ReplicaValues], target: Target, mean: float) -> str:
+    return f"{'≥' if is_bound(replicas, target) else ''}{mean:.2f}"
+
+
+def _nanmean(values: Sequence[float]) -> float:
+    known = [v for v in values if v == v]
+    return sum(known) / len(known) if known else float("nan")
+
+
 # --- Evaluation -------------------------------------------------------------------------------
 
 _NAME_WIDTH = 30
@@ -144,7 +170,55 @@ def _censored_lines(replicas: Sequence[ReplicaValues]) -> list[str]:
             f"AVISO: alguna réplica pasa del {100 * CENSORED_WARNING:g} % de censurados: las "
             "esperas pueden estar sesgadas a la baja"
         )
+    left = sum(r.left for r in replicas)
+    admitted = sum(r.admitted for r in replicas)
+    if not left and not admitted:
+        return lines  # without the milestone 5 block: nobody leaves nor asks for a bed
+    seen = max(replicas, key=lambda r: r.censored_seen)
+    lines.append(
+        f"Se van sin ser vistos: {left} en total. Atendidos dentro al final del vaciado"
+        f" (fuera de los relojes y del cumplimiento): {sum(r.censored_seen for r in replicas)}"
+        f" en total, máximo {seen.censored_seen} en una réplica"
+    )
+    bed = max(replicas, key=lambda r: r.censored_admitted_share)
+    lines.append(
+        f"Ingresados esperando cama al final del vaciado (su estancia entra con su cota, ≥):"
+        f" máximo {bed.censored_admitted} de {bed.admitted}"
+        f" ({100 * bed.censored_admitted_share:.2f} %) en una réplica;"
+        f" {sum(r.censored_admitted for r in replicas)} de {admitted} en total"
+    )
+    if bed.censored_admitted_share > ADMITTED_CENSORED_WARNING:
+        lines.append(
+            f"AVISO: alguna réplica pasa del {100 * ADMITTED_CENSORED_WARNING:g} % de"
+            " ingresados esperando cama al final: la estancia de los ingresados es una cota"
+            " que puede quedarse corta"
+        )
     return lines
+
+
+def bottleneck_line(replicas: Sequence[ReplicaValues]) -> str:
+    """The wait for a box against the wait for a doctor of the attended patients of levels
+    2 to 5, mean between replications (task 5.6): the boxes are the bottleneck when the
+    first is larger."""
+    box = _nanmean([r.box_wait for r in replicas])
+    doctor = _nanmean([r.doctor_wait for r in replicas])
+    levels = f"{BOTTLENECK_LEVELS[0]} a {BOTTLENECK_LEVELS[-1]}"
+    line = (
+        f"Cuello de botella (atendidos de los niveles {levels}, media entre réplicas):"
+        f" espera de box {box:.2f} min, espera de médico en el box {doctor:.2f} min"
+    )
+    if box > doctor:
+        line += " · AVISO: los boxes son el cuello de botella"
+    return line
+
+
+def _not_applicable_lines(not_applicable: Sequence[Target]) -> list[str]:
+    if not not_applicable:
+        return []
+    return [
+        "No aplican (el modelo no tiene el bloque del hito 5: sin abandono ni sus destinos;"
+        " no se miden, no son un 0 %): " + ", ".join(t.name for t in not_applicable)
+    ]
 
 
 def _breakdown_lines(target: Target, shares: Sequence[LevelShare]) -> list[str]:
@@ -208,7 +282,11 @@ def _pooled_lines(
     ]
     for r in results:
         pooled = pooled_value(replicas, r.target)
-        lines.append(f"{r.target.name:<{_NAME_WIDTH}}{r.mean:>16.2f}{pooled:>14.2f}")
+        mark = "≥" if is_bound(replicas, r.target) else ""
+        lines.append(
+            f"{r.target.name:<{_NAME_WIDTH}}{_mean_text(replicas, r.target, r.mean):>16}"
+            f"{f'{mark}{pooled:.2f}':>14}"
+        )
     return lines
 
 
@@ -218,15 +296,19 @@ def format_evaluation(
     start_dates: Sequence[date],
     *,
     annual: bool = False,
+    not_applicable: Sequence[Target] = (),
 ) -> str:
     """The table of ``calibracion evaluar``: one row per target, then the censored
-    patients, the value of each replication (with the annual window, the profile
-    by month), the mean per patient, the breakdown by level of each percentage
-    and the outcome.
+    patients, the bottleneck, the value of each replication (with the annual window,
+    the profile by month), the mean per patient, the breakdown by level of each
+    percentage above a threshold and the outcome. A mean with patients still inside
+    at the horizon is a bound, marked ``≥``.
 
     Args:
         start_dates: The date on which each replication starts.
         annual: Whether the replications are those of the annual window.
+        not_applicable: The targets that do not apply to the model
+            (``split_targets``), listed by name.
     """
     lines = [
         f"{'objetivo':<{_NAME_WIDTH}}{'uso':<14}{'media':>8}  {'IC al 95 %':<20}"
@@ -237,14 +319,18 @@ def format_evaluation(
         interval = f"[{r.summary.ci_low:.2f}, {r.summary.ci_high:.2f}]"
         band = f"[{t.band[0]:g}, {t.band[1]:g}]"
         lines.append(
-            f"{t.name:<{_NAME_WIDTH}}{t.use:<14}{r.mean:>8.2f}  {interval:<20}{band:<12}"
-            f"{100 * r.share_days_out:>9.1f} %  {_outcome(r.passed)}"
+            f"{t.name:<{_NAME_WIDTH}}{t.use:<14}{_mean_text(replicas, t, r.mean):>8}"
+            f"  {interval:<20}{band:<12}{100 * r.share_days_out:>9.1f} %  {_outcome(r.passed)}"
         )
+    if not_applicable:
+        lines += ["", *_not_applicable_lines(not_applicable)]
     lines += ["", *_censored_lines(replicas)]
+    if any(r.left or r.admitted for r in replicas):
+        lines += ["", bottleneck_line(replicas)]
     lines += ["", *_replica_lines(results, replicas, start_dates, annual)]
     lines += ["", *_pooled_lines(results, replicas, annual)]
     for r in results:
-        if r.target.is_percentage:
+        if r.target.statistic == PERCENTAGE:
             lines += ["", *_breakdown_lines(r.target, level_breakdown(replicas, r.target))]
     failed = [r.target.name for r in results if r.target.use == FIT and not r.passed]
     checks = [r.target.name for r in results if r.target.use != FIT and not r.passed]
@@ -281,6 +367,7 @@ def write_evaluation_csv(
                     _levels(t),
                     t.statistic,
                     _optional(t.threshold),
+                    _optional(t.destination),
                     t.use,
                     _optional(t.reference),
                     t.band[0],
@@ -294,6 +381,7 @@ def write_evaluation_csv(
                     r.narrow,
                     "pasa" if r.passed else "falla",
                     repr(pooled_value(replicas, t)),
+                    is_bound(replicas, t),
                     *_params(parameters),
                 ]
             )
@@ -306,8 +394,9 @@ def write_replicas_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per replication and target: its start date, its value, its days out
-    and its censored."""
+    """One row per replication and target: its start date, its counts (censored, gone
+    without being seen, attended inside, admitted and still waiting for a bed), its
+    bottleneck, its value, how many patients enter it at a bound and its days out."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(REPLICA_COLUMNS)
@@ -319,8 +408,15 @@ def write_replicas_csv(
                         start_dates[i].isoformat(),
                         rep.arrivals,
                         rep.censored,
+                        rep.left,
+                        rep.censored_seen,
+                        rep.admitted,
+                        rep.censored_admitted,
+                        repr(rep.box_wait),
+                        repr(rep.doctor_wait),
                         r.target.name,
                         repr(r.values[i]),
+                        rep.targets[r.target.name].bounded,
                         repr(r.days_out[i]),
                         *_params(parameters),
                     ]
@@ -333,12 +429,13 @@ def write_levels_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per percentage target and level: its percentage and its contribution."""
+    """One row per target of a percentage above a threshold and level: its percentage and
+    its contribution."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(LEVEL_COLUMNS)
         for r in results:
-            if not r.target.is_percentage:
+            if r.target.statistic != PERCENTAGE:
                 continue
             for s in level_breakdown(replicas, r.target):
                 writer.writerow(

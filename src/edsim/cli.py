@@ -50,6 +50,7 @@ from edsim.calibration.evaluate import (
     evaluate_staffings,
     sensitivity,
     simulate_replicas,
+    split_targets,
     summarize_targets,
 )
 from edsim.calibration.report import (
@@ -605,9 +606,21 @@ def _calibration_header(args: argparse.Namespace) -> str:
     )
 
 
+def _split_targets(args: argparse.Namespace, parser: argparse.ArgumentParser, *loaded):
+    """The targets that apply to the model of the two files, and those that do not (task
+    5.6); a block of milestone 5 in only one of them is code 2, before simulating."""
+    center, _, profiles, targets = loaded
+    try:
+        choose_model(center, profiles, center_file=args.centro, profiles_file=args.perfiles)
+    except ModelChoiceError as error:
+        parser.error(str(error))
+    return split_targets(targets, center, profiles)
+
+
 def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     out_dir = _output_dir(args, parser)
-    center, profile, profiles, targets = _load_calibration(args, parser)
+    center, profile, profiles, targets = loaded = _load_calibration(args, parser)
+    targets, not_applicable = _split_targets(args, parser, *loaded)
     print(f"{_calibration_header(args)}\n", flush=True)
     replicas = simulate_replicas(
         center,
@@ -621,7 +634,15 @@ def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentPar
         start_dates=args.fechas,
     )
     results = summarize_targets(replicas, targets)
-    print(format_evaluation(results, replicas, args.fechas_replicas, annual=args.ventana == ANNUAL))
+    print(
+        format_evaluation(
+            results,
+            replicas,
+            args.fechas_replicas,
+            annual=args.ventana == ANNUAL,
+            not_applicable=not_applicable,
+        )
+    )
 
     # The files are written even if a target fails: they help to find out why.
     out_dir.mkdir(parents=True, exist_ok=True)
