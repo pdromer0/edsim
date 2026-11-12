@@ -39,6 +39,12 @@ def format_censored(value: CensoredValue | None, digits: int = 1) -> str:
     return number if value.exact else f"≥ {number}"
 
 
+def format_censored_minutes(value: CensoredValue | None) -> str:
+    """``format_censored`` with its unit; «—» alone when there is no value."""
+    text = format_censored(value)
+    return text if text == "—" else f"{text} min"
+
+
 def format_share(value: float | None) -> str:
     return format_number(value, percentage=True)
 

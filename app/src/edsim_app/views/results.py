@@ -40,7 +40,7 @@ from edsim_app.help import render_results_help
 from edsim_app.outcome_frames import (
     OUTCOME_CURVE_LABELS,
     destination_frames,
-    format_censored,
+    format_censored_minutes,
     left_frames,
     stay_frame,
     threshold_frame,
@@ -192,8 +192,8 @@ def render_outcome(outcome: WindowOutcome) -> None:
             ("Pedidos de cama", str(bed.requests)),
             ("Con cama", str(bed.completed)),
             ("Siguen esperando", str(bed.censored)),
-            ("Mediana", f"{format_censored(bed.median)} min"),
-            ("p90", f"{format_censored(bed.p90)} min"),
+            ("Mediana", format_censored_minutes(bed.median)),
+            ("p90", format_censored_minutes(bed.p90)),
         ),
         strict=True,
     ):
