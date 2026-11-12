@@ -18,13 +18,13 @@ Con abandono, los pacientes que más esperan son los que se van. Quitarlos de la
 
 ## Alternativas consideradas
 
-- **Quitar a todos los que se van del cumplimiento:** con tres pacientes de nivel 4 (máximo 120 min) vistos a los 30 y a los 90 y uno que se va a los 150, el cumplimiento saldría 2 de 2, un 100 %, en lugar de 2 de 3, el 66,7 %.
-- **Contar a todos los que se van como incumplimiento:** quien se va a los 20 min quizá habría sido visto antes de los 120; contarlo inventaría un incumplimiento.
+- **Quitar a todos los que se van del cumplimiento.** Tres pacientes de nivel 4 (máximo 120 min) se clasifican en el minuto 10. El primero ve al médico en el 40 (reloj C = 30), el segundo en el 100 (C = 90) y el tercero se va en el 160 (C = 150). Quitando al tercero, el cumplimiento saldría 2 de 2, un 100 %, en lugar de 2 de 3, el 66,7 %.
+- **Contar a todos los que se van como incumplimiento:** quien se va con C = 20 quizá habría sido visto antes de llegar a 120; contarlo inventaría un incumplimiento.
 
 ## Consecuencias
 
 - **Lo que garantiza la regla:** irse nunca esconde un incumplimiento seguro. Quien se va con su reloj en su máximo o por encima habría esperado más que el máximo, y cuenta como incumplimiento.
-- **Lo que no garantiza:** que más abandono nunca mejore el cumplimiento. Si el tercer paciente se va a los 20 min, queda censurado y el cumplimiento sube del 66,7 % al 100 % (2 de 2): un censurado que se habría visto tarde puede subir el porcentaje.
+- **Lo que no garantiza:** que más abandono nunca mejore el cumplimiento. Si el tercer paciente se va en el minuto 30 (C = 20), queda censurado y el cumplimiento sube del 66,7 % al 100 % (2 de 2): un censurado que se habría visto tarde puede subir el porcentaje.
 - Con el modelo del hito 4 (sin abandono), las funciones dan exactamente lo de antes.
 
 ## Qué cambió al implementarla

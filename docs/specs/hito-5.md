@@ -277,7 +277,7 @@ Media de espera de los atendidos: 60 min. Cumplimiento: 2 de 3, el 66,7 %. Quita
 | --- | --- | --- |
 | Medias de los relojes A, B y C | Solo los atendidos | Como el TPAM del SAS, que mide a los que vio un médico: la calibración compara lo mismo con lo mismo |
 | Pretriaje medio y porcentaje > 5 min | Solo los triados | Como el indicador del SAS |
-| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Irse nunca esconde un incumplimiento seguro. No garantiza más: si el paciente 3 se fuera a los 20 min, quedaría censurado y el cumplimiento subiría al 100 % (corregido en la 5.8, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md)) |
+| Cumplimiento Manchester (reloj C) | Quien se va después de su máximo, incumplimiento; quien se va antes, censurado (no cuenta) | Irse nunca esconde un incumplimiento seguro. No garantiza más: si el paciente 3 se fuera con 20 min de espera, quedaría censurado y el cumplimiento subiría al 100 % (corregido en la 5.8, [ADR 0074](../decisiones/0074-metricas-con-censura-del-abandono.md)) |
 | Estancia en urgencias | Por destino; los que se van, aparte, con su tiempo hasta irse | Como el TPU del SAS por tipo de alta |
 
 Para el cumplimiento con el reloj C hace falta la clasificación: quien se va antes del triaje no tiene nivel y no entra, con ningún reloj y tampoco en el cumplimiento por nivel real, aunque el ground truth le dé nivel. Su abandono cuenta en el indicador de «antes del triaje».

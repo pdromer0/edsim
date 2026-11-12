@@ -9,8 +9,9 @@ incremento del hito 5 (`app-v0.3.0`), también abre y simula el modelo del hito 
 pacientes que se van sin ser vistos, cuatro destinos (alta, ingreso, traslado y
 exitus) y la espera de cama de los ingresados, en su box o en el pasillo. Lo elige
 el centro (`[camas]` en lugar de `[destino]`) junto con sus perfiles, y desde la
-tarea 5.6 es el de `config/`. El incremento del hito 5 se cerró con el hito
-(`app-v0.3.0`).
+tarea 5.6 es el de `config/`. La etiqueta del incremento del hito 5, `app-v0.3.0`,
+marca las páginas de la 5.5; los retoques del cierre del hito (5.8: la versión del
+catálogo en la columna Modelo y una sola ayuda en Replay) llegaron después.
 
 El alcance inicial está en la
 [especificación de la fase 1](docs/specs/fase-1.md#objetivo-y-alcance-de-la-fase-1)
@@ -49,10 +50,12 @@ solo el núcleo y retira la app y sus dependencias exclusivas. El arranque con
 La ejecución seleccionada se comparte entre páginas y aparece en `?run=…`.
 Cada página incluye «¿Qué estoy viendo?» con los conceptos de su vista.
 
-Con el abandono, el cumplimiento Manchester no quita a quien se va: si se va después
-de su máximo, incumple; si se va antes, no cuenta (está censurado). Con tres pacientes
-de nivel 4 (máximo 120 min) vistos a los 30 y a los 90 y uno que se va a los 150, el
-cumplimiento es 2 de 3, el 66,7 %; quitar al tercero daría un 100 %.
+Con el abandono, el cumplimiento Manchester no quita a quien se va: si se va con su
+reloj C (desde la clasificación) en su máximo o por encima, incumple; si se va antes,
+no cuenta (está censurado). Ejemplo con tres pacientes de nivel 4 (máximo 120 min)
+clasificados en el minuto 10: el primero ve al médico en el 40 (C = 30), el segundo
+en el 100 (C = 90) y el tercero se va en el 160 (C = 150). El cumplimiento es 2 de 3,
+el 66,7 %; quitar al tercero daría un 100 %.
 
 ## Primeros pasos con el hito 5
 
