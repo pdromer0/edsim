@@ -671,7 +671,9 @@ def abandonment_by_arrival_hour(
     """The abandonment and the wait by hour of arrival, 24 rows (piece 1, exercise).
 
     The hour is ``int(arrival % 1440 // 60)``: the clock of the simulation starts
-    at 0:00, so all the days of the window are folded onto one.
+    at 0:00, so all the days of the window are folded onto one. Use a window of
+    whole days (``start`` and ``end`` multiples of 1440): otherwise some hours add
+    more days than others and their counts are not comparable.
     """
     if not 0 <= start < end:
         raise ValueError(f"need 0 <= start < end, got {start=} and {end=}")
@@ -728,8 +730,15 @@ def bed_little(
     """Both sides of the law of Little for the wait for a bed in one run.
 
     ``λ`` and ``W`` are those of the patients that arrive in ``[start, end)`` and
-    ask for a bed; the curves count whoever waits in the window, wherever they
-    arrived. The two agree up to the edges of the window.
+    ask for a bed, with their whole wait (cut only at the horizon of the curves);
+    the curves count whoever waits inside the window, wherever they asked for the
+    bed. So ``λ · W`` is the sum of the whole waits of the patients of the window
+    over its length, and the two sides agree up to the edges: a wait that starts
+    before the window counts in the curves and not in ``λ · W``, and one that ends
+    after it, the other way round. The error is of the order of ``W`` over the
+    length of the window, so the window must be much longer than the wait (the
+    89 days of the notebook against 5 hours of wait), and ``end`` should be the
+    horizon or days before it.
 
     Raises:
         ValueError: If the window is not inside ``[0, horizon]``.
