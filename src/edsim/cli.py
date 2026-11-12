@@ -42,17 +42,21 @@ from edsim.arrivals.report import (
 from edsim.arrivals.thinning import simulate_arrivals
 from edsim.arrivals.validation import check_validation_counts, validate_arrivals
 from edsim.calibration.evaluate import (
+    ALL_KNOBS,
     DRAIN_DAYS,
     FIT_SEED,
+    check_knob_model,
     check_knob_targets,
     choose_staffing,
     compliant_staffing,
     evaluate_staffings,
+    knob_settings,
     sensitivity,
     simulate_replicas,
     split_targets,
     summarize_targets,
 )
+from edsim.calibration.knobs import BED_WAIT, DEFAULT_GRIDS
 from edsim.calibration.report import (
     format_check,
     format_choice,
@@ -656,12 +660,58 @@ def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentPar
     return 1 if any(r.target.use == FIT and not r.passed for r in results) else 0
 
 
+def _knob_grid_options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    """The options of the candidates of the knob: the grid of u for a knob of staff, the
+    values for one of one number; the others are a usage error."""
+    u_options = {"--u-min": args.u_min, "--u-max": args.u_max, "--paso": args.paso}
+    if args.mando in KNOBS:
+        if args.valores is not None:
+            parser.error(f"--valores es de espera_cama y paciencia, no de {args.mando}")
+        options = {
+            "u_min": U_MIN if args.u_min is None else args.u_min,
+            "u_max": U_MAX if args.u_max is None else args.u_max,
+            "step": U_STEP if args.paso is None else args.paso,
+        }
+        try:
+            u_grid(options["u_min"], options["u_max"], options["step"])
+        except ValueError as error:
+            parser.error(str(error))
+        return options
+    given = [name for name, value in u_options.items() if value is not None]
+    if given:
+        parser.error(
+            f"{', '.join(given)}: la rejilla de u es de los mandos de plantilla; con"
+            f" {args.mando}, --valores"
+        )
+    return {"values": args.valores}
+
+
+def _candidates_text(args: argparse.Namespace, options: dict) -> str:
+    if args.mando in KNOBS:
+        return (
+            f"con u de {options['u_min']:g} a {options['u_max']:g} en pasos de"
+            f" {options['step']:g}; el otro mando, como en el centro"
+        )
+    grid = DEFAULT_GRIDS[args.mando] if options["values"] is None else options["values"]
+    what = (
+        "mediana de la espera de cama (min; p90 = 3 · mediana)"
+        if args.mando == BED_WAIT
+        else "factor de la paciencia sobre los perfiles"
+    )
+    return f"({what}) en {', '.join(f'{v:g}' for v in grid)}; el resto, como en los ficheros"
+
+
 def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     out_dir = _output_dir(args, parser)
-    center, profile, profiles, targets = _load_calibration(args, parser)
+    center, profile, profiles, targets = loaded = _load_calibration(args, parser)
+    targets, not_applicable = _split_targets(args, parser, *loaded)
+    options = _knob_grid_options(args, parser)
     try:
+        # The model first: with milestone 4, the fit target of a knob of milestone 5 is
+        # left out as not applicable, and its absence would hide the cause.
+        check_knob_model(args.mando, center, profiles)
         check_knob_targets(targets, args.mando)
-        u_grid(args.u_min, args.u_max, args.paso)
+        knob_settings(args.mando, center, profiles, profile, **options)
     except ValueError as error:
         parser.error(str(error))
     if args.comprobacion == args.semilla:
@@ -669,32 +719,42 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
             f"la semilla de comprobación ({args.comprobacion}) tiene que ser distinta de la de"
             f" ajuste ({args.semilla}) (regla 3)"
         )
+    outcome = choose_model(center, profiles) is PatientModel.MILESTONE_5
     check_text = (
         ""
         if args.comprobacion is None
         else f"; comprobación con la semilla {args.comprobacion}, que puede vetar la elección"
     )
+    absent = (
+        f"\nNo aplican (el modelo no tiene el bloque del hito 5): "
+        f"{', '.join(t.name for t in not_applicable)}"
+        if not_applicable
+        else ""
+    )
     print(
-        f"{_calibration_header(args)}\nSensibilidad del mando {args.mando} con u de"
-        f" {args.u_min:g} a {args.u_max:g} en pasos de {args.paso:g}; el otro mando, como en"
-        f" el centro{check_text}\n\n{sensitivity_header(targets, args.mando)}",
+        f"{_calibration_header(args)}\nSensibilidad del mando {args.mando}"
+        f" {_candidates_text(args, options)}{check_text}{absent}\n\n"
+        f"{sensitivity_header(targets, args.mando, outcome=outcome)}",
         flush=True,
     )
+    common = {
+        "replicas": args.replicas,
+        "days": args.dias,
+        "warmup_days": args.calentamiento,
+        "start_dates": args.fechas,
+    }
     rows = sensitivity(
         center,
         profile,
         profiles,
         targets,
         args.mando,
-        replicas=args.replicas,
-        days=args.dias,
-        warmup_days=args.calentamiento,
         seed=args.semilla,
-        u_min=args.u_min,
-        u_max=args.u_max,
-        step=args.paso,
-        start_dates=args.fechas,
-        on_row=lambda row: print(format_sensitivity_row(row, args.mando), flush=True),
+        on_row=lambda row: print(
+            format_sensitivity_row(row, args.mando, outcome=outcome), flush=True
+        ),
+        **options,
+        **common,
     )
     if args.comprobacion is None:
         chosen = choose_staffing(rows, args.mando)
@@ -703,7 +763,7 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         checked = []
 
         def check(row):
-            # The same staffing with the check seed, the same window and the rest of the
+            # The same candidate with the check seed, the same window and the rest of the
             # options; asked only for the candidates the choice needs, in its order.
             (row_checked,) = evaluate_staffings(
                 center,
@@ -711,12 +771,9 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
                 profiles,
                 targets,
                 args.mando,
-                [row.staffing],
-                replicas=args.replicas,
-                days=args.dias,
-                warmup_days=args.calentamiento,
+                [row.setting],
                 seed=args.comprobacion,
-                start_dates=args.fechas,
+                **common,
             )
             checked.append(row_checked)
             return row_checked
@@ -725,7 +782,7 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
         seeds = (args.semilla, args.comprobacion)
         print(f"\n{format_check(args.mando, args.comprobacion, checked)}")
     compliant = compliant_staffing(rows) if args.mando == DOCTORS else None
-    print(f"\n{format_choice(args.mando, chosen, compliant, seeds=seeds)}")
+    print(f"\n{format_choice(args.mando, chosen, compliant, seeds=seeds, rows=rows)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / SENSITIVITY_CSV.format(knob=args.mando)
@@ -735,6 +792,17 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
 
 
 # --- edsim directo -------------------------------------------------------------------
+
+
+def parse_values(text: str) -> tuple[float, ...]:
+    """The values of ``--valores``: numbers separated by commas."""
+    try:
+        values = tuple(float(x) for x in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"«{text}» no son números separados por comas, como 120,135,150"
+        ) from None
+    return values
 
 
 def parse_speed(text: str) -> float | str:
@@ -1411,20 +1479,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     sensitivity_parser = calibration_actions.add_parser(
         "sensibilidad",
-        help="evalúa las plantillas de la regla para un mando",
-        description="Evalúa todos los objetivos con cada plantilla distinta que da la regla de "
-        "la plantilla equivalente (⌈carga del turno / u⌉) para un mando, con el otro mando "
-        "como en el centro, e indica la elección (la más cercana a la referencia entre las "
-        "que pasan; con --comprobacion, la primera que pasa también con esa semilla) y, para "
-        "los médicos, el centro cumplidor. Guarda "
-        f"{SENSITIVITY_CSV.format(knob='<mando>')}. Termina con código 1 si ninguna plantilla "
+        help="evalúa los candidatos de un mando: plantillas de la regla o valores",
+        description="Evalúa todos los objetivos con cada candidato de un mando, con el resto "
+        "como en el centro y los perfiles: para enfermeria_triaje y medicos, cada plantilla "
+        "distinta que da la regla de la plantilla equivalente (⌈carga del turno / u⌉); para "
+        "espera_cama (la mediana de [camas] espera, con p90 = 3 · mediana) y paciencia (un "
+        "factor común sobre las medianas y los p90 de [abandono] paciencia), los valores de "
+        "su rejilla (hito 5, tarea 5.6). Indica la elección (la más cercana a la referencia "
+        "entre los que pasan; con --comprobacion, el primero que pasa también con esa "
+        "semilla) y, para los médicos, el centro cumplidor. Guarda "
+        f"{SENSITIVITY_CSV.format(knob='<mando>')}. Termina con código 1 si ningún candidato "
         "pasa los objetivos del mando.",
     )
     sensitivity_parser.add_argument(
         "--mando",
         required=True,
-        choices=KNOBS,
-        help="mando que se mueve: enfermeria_triaje o medicos",
+        choices=ALL_KNOBS,
+        help="mando que se mueve: enfermeria_triaje, medicos, espera_cama o paciencia (los dos"
+        " últimos, solo con el modelo del hito 5)",
     )
     sensitivity_parser.add_argument(
         "--comprobacion",
@@ -1439,23 +1511,32 @@ def build_parser() -> argparse.ArgumentParser:
     sensitivity_parser.add_argument(
         "--u-min",
         type=float,
-        default=U_MIN,
+        default=None,
         metavar="U",
-        help="u más bajo de la rejilla (por defecto: %(default)s)",
+        help=f"u más bajo de la rejilla, solo con los mandos de plantilla (por defecto: {U_MIN})",
     )
     sensitivity_parser.add_argument(
         "--u-max",
         type=float,
-        default=U_MAX,
+        default=None,
         metavar="U",
-        help="u más alto de la rejilla (por defecto: %(default)s)",
+        help=f"u más alto de la rejilla, solo con los mandos de plantilla (por defecto: {U_MAX})",
     )
     sensitivity_parser.add_argument(
         "--paso",
         type=float,
-        default=U_STEP,
+        default=None,
         metavar="P",
-        help="paso de la rejilla de u (por defecto: %(default)s)",
+        help=f"paso de la rejilla de u, solo con los mandos de plantilla (por defecto: {U_STEP})",
+    )
+    sensitivity_parser.add_argument(
+        "--valores",
+        type=parse_values,
+        default=None,
+        metavar="V1,V2,…",
+        help="valores de espera_cama (mediana, en minutos) o de paciencia (factor), separados"
+        " por comas (por defecto, su rejilla: espera_cama de 120 a 360 de 15 en 15; paciencia"
+        " geométrica de 1 a 8, 2^(i/4))",
     )
     _add_calibration_options(sensitivity_parser)
     sensitivity_parser.set_defaults(handler=_calibration_sensitivity, subparser=sensitivity_parser)

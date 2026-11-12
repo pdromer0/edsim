@@ -641,3 +641,61 @@ def test_evaluar_con_el_bloque_del_hito_5_en_un_solo_fichero_es_un_error_de_uso(
         )
     assert exit_info.value.code == 2
     assert "missing [abandono], [destinos] and ingreso in the reasons" in capsys.readouterr().err
+
+
+# --- sensibilidad de los mandos del hito 5 (tarea 5.6) -------------------------------------
+
+
+def test_sensibilidad_de_la_espera_de_cama_con_sus_valores(tmp_path, capsys):
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    out_dir = tmp_path / "salida"
+    code = main(
+        ["calibracion", "sensibilidad", "--mando", "espera_cama", "--valores", "180,240"]
+        + [*H5, "--objetivos", str(targets), *SHORT, "--salida", str(out_dir)]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (
+        "Sensibilidad del mando espera_cama (mediana de la espera de cama (min; p90 = 3 ·"
+        " mediana)) en 180, 240"
+    ) in out
+    assert "mediana (min)" in out and "box / médico (2 a 5)" in out
+    assert "Elección (entre los que pasan estancia_ingresados" in out
+    rows = read_rows(out_dir / "sensibilidad_espera_cama.csv")
+    assert {r["valor"] for r in rows} == {"180.0", "240.0"}
+    assert {r["manana"] for r in rows} == {""}
+    # Más espera de cama, más estancia de los ingresados, con los mismos pacientes.
+    stay = {r["valor"]: float(r["media"]) for r in rows if r["objetivo"] == "estancia_ingresados"}
+    assert stay["240.0"] > stay["180.0"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["--mando", "paciencia", *EXAMPLE],
+            "the knob paciencia needs the milestone 5 model",
+        ),
+        (
+            ["--mando", "espera_cama", "--u-min", "0.6", *H5],
+            "--u-min: la rejilla de u es de los mandos de plantilla; con espera_cama, --valores",
+        ),
+        (["--mando", "medicos", "--valores", "2", *H5], "--valores es de espera_cama y paciencia"),
+        (["--mando", "paciencia", "--valores", "0", *H5], "a value of paciencia must be in"),
+        (["--mando", "paciencia", "--valores", "1,x", *H5], "no son números separados por comas"),
+    ],
+    ids=["hito_4", "u_con_un_valor", "valores_con_plantilla", "valor_cero", "no_numeros"],
+)
+def test_sensibilidad_de_los_mandos_del_hito_5_errores_de_uso(
+    argv, message, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(evaluate, "simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            ["calibracion", "sensibilidad", *argv, "--objetivos", str(targets), *SHORT]
+            + ["--salida", str(tmp_path / "salida")]
+        )
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err

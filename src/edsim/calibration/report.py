@@ -26,11 +26,13 @@ from edsim.calibration.evaluate import (
     ReplicaValues,
     SensitivityRow,
     TargetResult,
+    candidate_key,
     level_breakdown,
     passes_fit,
     pooled_value,
 )
-from edsim.calibration.staffing import DOCTORS
+from edsim.calibration.knobs import BED_P90_RATIO, BED_WAIT, VALUE_KNOBS, KnobValue
+from edsim.calibration.staffing import DOCTORS, RuleStaffing
 from edsim.calibration.targets import FIT, PERCENTAGE, Target
 
 PARAMETER_COLUMNS = (
@@ -96,12 +98,16 @@ LEVEL_COLUMNS = ("objetivo", "nivel", "porcentaje", "contribucion", *PARAMETER_C
 
 SENSITIVITY_COLUMNS = (
     "mando",
+    "valor",
     "manana",
     "tarde",
     "noche",
     "u_min",
     "u_max",
     "censurados_max",
+    "ingresados_esperando_cama_max",
+    "espera_box",
+    "espera_medico",
     *(f"fuera_manchester_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
     *(f"dias_fuera_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
     *(f"dias_medidos_c_nivel_{level}" for level in COMPLIANCE_LEVELS),
@@ -111,6 +117,7 @@ SENSITIVITY_COLUMNS = (
     "ic_max",
     "dias_fuera",
     "resultado",
+    "cota",
     "elegida",
     "cumplidor",
     *PARAMETER_COLUMNS,
@@ -456,23 +463,48 @@ def _cell_width(target: Target) -> int:
     return max(len(target.name), 12) + 2
 
 
-def sensitivity_header(targets: Sequence[Target], knob: str) -> str:
-    """The header of the table of ``calibracion sensibilidad``."""
-    head = f"{'plantilla':<14}{'u':<17}"
+def setting_text(setting: RuleStaffing | KnobValue) -> str:
+    """A candidate as the tables show it: ``[3, 2, 1]``, or its value."""
+    if isinstance(setting, RuleStaffing):
+        return _staff(setting.staff)
+    return f"{setting.value:g}"
+
+
+def sensitivity_header(targets: Sequence[Target], knob: str, *, outcome: bool = False) -> str:
+    """The header of the table of ``calibracion sensibilidad``; with ``outcome`` (the
+    milestone 5 model, always with its knobs), the columns of the admitted still waiting
+    for a bed and of the bottleneck."""
+    if knob in VALUE_KNOBS:
+        head = f"{'mediana (min)' if knob == BED_WAIT else 'factor k':<15}"
+    else:
+        head = f"{'plantilla':<14}{'u':<17}"
     head += "".join(f"{t.name:<{_cell_width(t)}}" for t in targets)
     head += f"{'censurados':>11}"
+    if outcome or knob in VALUE_KNOBS:
+        head += f"{'ingr. cama':>12}{'box / médico (2 a 5)':>24}"
     if knob == DOCTORS:
         head += "  días fuera de Manchester (C) / días medidos, sumados; niveles 2 a 5"
     return head
 
 
-def format_sensitivity_row(row: SensitivityRow, knob: str) -> str:
-    """One row of the table: each target as ``mean pasa`` or ``mean FALLA``."""
-    s = row.staffing
-    line = f"{_staff(s.staff):<14}{f'{s.u_low:.4f}–{s.u_high:.4f}':<17}"
+def format_sensitivity_row(row: SensitivityRow, knob: str, *, outcome: bool = False) -> str:
+    """One row of the table: each target as ``mean pasa`` or ``mean FALLA``, with ``≥`` when
+    the mean is a bound; with ``outcome`` (as in ``sensitivity_header``), also the admitted
+    still waiting for a bed at the end and the bottleneck."""
+    s = row.setting
+    if isinstance(s, RuleStaffing):
+        line = f"{_staff(s.staff):<14}{f'{s.u_low:.4f}–{s.u_high:.4f}':<17}"
+    else:
+        line = f"{setting_text(s):<15}"
     for r in row.results:
-        line += f"{f'{r.mean:.2f} {_outcome(r.passed)}':<{_cell_width(r.target)}}"
+        mean = _mean_text(row.replicas, r.target, r.mean)
+        line += f"{f'{mean} {_outcome(r.passed)}':<{_cell_width(r.target)}}"
     line += f"{100 * row.max_censored_share:>9.2f} %"
+    if outcome or knob in VALUE_KNOBS:
+        bed = max(r.censored_admitted_share for r in row.replicas)
+        box = _nanmean([r.box_wait for r in row.replicas])
+        doctor = _nanmean([r.doctor_wait for r in row.replicas])
+        line += f"{100 * bed:>10.2f} %{f'{box:.1f} / {doctor:.1f}':>24}"
     if knob == DOCTORS:
         days = row.compliance_days
         line += "  " + " ".join(
@@ -497,7 +529,7 @@ def format_check(knob: str, seed: int, checked: Sequence[SensitivityRow]) -> str
             for r in (row.result(name),)
         )
         verdict = "elegida" if passes_fit(row, knob) else "vetada"
-        lines.append(f"  {_staff(row.staffing.staff):<13} {cells} → {verdict}")
+        lines.append(f"  {setting_text(row.setting):<13} {cells} → {verdict}")
     if not checked:
         lines.append("  ninguna candidata pasa con la semilla de ajuste: no hay nada que comprobar")
     return "\n".join(lines)
@@ -509,21 +541,27 @@ def format_choice(
     compliant: SensitivityRow | None = None,
     *,
     seeds: tuple[int, int] | None = None,
+    rows: Sequence[SensitivityRow] = (),
 ) -> str:
-    """The lines below the table: the staffing chosen and, for the doctors, the compliant one.
+    """The lines below the table: the candidate chosen and, for the doctors, the compliant
+    one. For a knob of one number, a warning when the chosen value is at an edge of the
+    values evaluated (``rows``): the best one might be beyond it.
 
     Args:
         seeds: The fit seed and the check seed, when the check seed may veto the choice
             (``choose_staffing`` with ``check``); without them, the choice is the one of
             the fit seed, and the line says that the check seed may veto it.
+        rows: Every candidate evaluated, for the warning of the edge.
     """
     names, chooser = KNOB_TARGETS[knob]
     passing = ", ".join(names)
     if seeds is not None:
         passing += f" con las semillas {seeds[0]} y {seeds[1]}"
     lines = []
+    value_knob = knob in VALUE_KNOBS
     if chosen is None:
-        lines.append(f"Elección: ninguna plantilla de la regla pasa {passing}; no se fuerza")
+        what = "ningún valor de la rejilla" if value_knob else "ninguna plantilla de la regla"
+        lines.append(f"Elección: {what} pasa {passing}; no se fuerza")
     else:
         r = chosen.result(chooser)
         aim = "a la referencia" if r.target.reference is not None else "al centro de la horquilla"
@@ -533,12 +571,31 @@ def format_choice(
             else ", con la semilla de ajuste; la de comprobación puede vetarla (--comprobacion,"
             " decisión 41)"
         )
-        lines.append(
-            f"Elección (entre las que pasan {passing}, la más cercana {aim} de"
-            f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
-            f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
-            f" {chooser} {r.mean:.2f}{veto}"
-        )
+        if value_knob:
+            value = chosen.setting.value
+            detail = (
+                f"{value:g} min de mediana (p90 {BED_P90_RATIO * value:g})"
+                if knob == BED_WAIT
+                else f"factor {value:g}"
+            )
+            lines.append(
+                f"Elección (entre los que pasan {passing}, el más cercano {aim} de"
+                f" {chooser}, {r.target.aim:g}): {knob} {detail};"
+                f" {chooser} {_mean_text(chosen.replicas, r.target, r.mean)}{veto}"
+            )
+            values = [candidate_key(row.setting) for row in rows]
+            if values and value in (min(values), max(values)):
+                lines.append(
+                    f"AVISO: {value:g} está en el borde de los valores evaluados"
+                    f" ({min(values):g} a {max(values):g}): el mejor podría estar fuera"
+                )
+        else:
+            lines.append(
+                f"Elección (entre las que pasan {passing}, la más cercana {aim} de"
+                f" {chooser}, {r.target.aim:g}): {_staff(chosen.staffing.staff)}"
+                f" con u de {chosen.staffing.u_low:.4f} a {chosen.staffing.u_high:.4f};"
+                f" {chooser} {r.mean:.2f}{veto}"
+            )
     if knob == DOCTORS:
         if compliant is None:
             lines.append(
@@ -565,22 +622,27 @@ def write_sensitivity_csv(
     path: Path,
     parameters: Mapping[str, object],
 ) -> None:
-    """One row per staffing and target."""
+    """One row per candidate and target: a staff and its interval of u, or a value."""
     with Path(path).open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(SENSITIVITY_COLUMNS)
         for row in rows:
-            s = row.staffing
+            s = row.setting
+            if isinstance(s, RuleStaffing):
+                candidate = ["", *s.staff, s.u_low, s.u_high]
+            else:
+                candidate = [s.value, "", "", "", "", ""]
             out = row.compliance_out
             days = row.compliance_days
             for r in row.results:
                 writer.writerow(
                     [
                         knob,
-                        *s.staff,
-                        s.u_low,
-                        s.u_high,
+                        *candidate,
                         repr(row.max_censored_share),
+                        repr(max(x.censored_admitted_share for x in row.replicas)),
+                        repr(_nanmean([x.box_wait for x in row.replicas])),
+                        repr(_nanmean([x.doctor_wait for x in row.replicas])),
                         *(repr(out[level - 1]) for level in COMPLIANCE_LEVELS),
                         *(days[level - 1][0] for level in COMPLIANCE_LEVELS),
                         *(days[level - 1][1] for level in COMPLIANCE_LEVELS),
@@ -590,6 +652,7 @@ def write_sensitivity_csv(
                         repr(r.summary.ci_high),
                         repr(r.share_days_out),
                         "pasa" if r.passed else "falla",
+                        is_bound(row.replicas, r.target),
                         row is chosen,
                         row is compliant,
                         *_params(parameters),

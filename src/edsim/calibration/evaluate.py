@@ -83,6 +83,15 @@ import numpy as np
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.calibration.knobs import (
+    BED_WAIT,
+    DEFAULT_GRIDS,
+    PATIENCE,
+    VALUE_KNOBS,
+    KnobValue,
+    check_knob_value,
+    knob_inputs,
+)
 from edsim.calibration.staffing import (
     DOCTORS,
     KNOBS,
@@ -770,10 +779,18 @@ def simulate_replicas(
 
 # --- Sensitivity and choice -------------------------------------------------------------------
 
+ALL_KNOBS = (*KNOBS, *VALUE_KNOBS)
+"""The four knobs: the staffs of milestone 4 and the two numbers of milestone 5."""
+
+Setting = RuleStaffing | KnobValue
+"""A candidate of a knob: a staff of the rule, or one value of a knob of one number."""
+
 KNOB_TARGETS: Mapping[str, tuple[tuple[str, ...], str]] = MappingProxyType(
     {
         NURSES: (("pretriaje_medio",), "pretriaje_medio"),
         DOCTORS: (("tiempo_medico_niveles_2_5",), "tiempo_medico_niveles_2_5"),
+        BED_WAIT: (("estancia_ingresados",), "estancia_ingresados"),
+        PATIENCE: (("abandono",), "abandono"),
     }
 )
 """The fit targets of each knob, and the one whose aim (its reference or, without
@@ -784,7 +801,17 @@ The doctors were to be fitted also to clock A of level 3 (59.0 minutes, band
 45-75), but the sensitivity showed that no staffing of the rule takes it above
 23 minutes: with a strict priority in one pool of doctors, level 3 hardly waits
 and the waits fall on levels 4 and 5. ``tiempo_medico_nivel_3`` became a check
-target after measuring it (rule 5), and a check never chooses (task 4.6b)."""
+target after measuring it (rule 5), and a check never chooses (task 4.6b).
+
+The knobs of milestone 5 (task 5.6, H5-9): the wait for a bed fits the stay of the
+admitted and the patience fits the abandonment, one target each."""
+
+
+def _check_knob(knob: str) -> str:
+    if knob not in ALL_KNOBS:
+        raise ValueError(f"knob must be one of {ALL_KNOBS}, got {knob!r}")
+    return knob
+
 
 _CENTER_FIELD = {NURSES: "triage_nurses", DOCTORS: "doctors"}
 
@@ -796,14 +823,34 @@ def candidate_center(center: CenterConfig, knob: str, staff: Sequence[int]) -> C
     return dataclasses.replace(center, **{_CENTER_FIELD[knob]: tuple(staff)})
 
 
+def candidate_inputs(
+    center: CenterConfig, profiles: ClinicalProfiles, knob: str, setting: Setting
+) -> tuple[CenterConfig, ClinicalProfiles]:
+    """The center and the profiles of one candidate of ``knob``: only its knob changes.
+
+    A staff replaces that of its knob in the center (``candidate_center``); a value of
+    the bed changes the wait for a bed of the center, and one of the patience the
+    patience of the profiles (``calibration.knobs``).
+
+    Raises:
+        ValueError: If the knob is unknown, or the setting is not of its kind.
+    """
+    if _check_knob(knob) in KNOBS:
+        if not isinstance(setting, RuleStaffing):
+            raise ValueError(f"the knob {knob} takes a staff of the rule, got {setting!r}")
+        return candidate_center(center, knob, setting.staff), profiles
+    if not isinstance(setting, KnobValue):
+        raise ValueError(f"the knob {knob} takes one value, got {setting!r}")
+    return knob_inputs(center, profiles, knob, setting.value)
+
+
 def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
     """Check that the targets have the fit targets of ``knob`` before simulating anything.
 
     Raises:
         ValueError: If a target is missing or is not of fit.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    _check_knob(knob)
     by_name = {t.name: t for t in targets}
     names, _ = KNOB_TARGETS[knob]
     for name in names:
@@ -813,21 +860,53 @@ def check_knob_targets(targets: Sequence[Target], knob: str) -> None:
             raise ValueError(f"objetivos.{name} must be of use {FIT!r} to fit {knob}")
 
 
+def check_knob_model(knob: str, center: CenterConfig, profiles: ClinicalProfiles) -> None:
+    """Check that the model of the two files has ``knob`` before simulating anything:
+    the wait for a bed and the patience only exist in the milestone 5 model.
+
+    Raises:
+        ValueError: If the knob is unknown or of milestone 5 with another model.
+        ModelChoiceError: If the two files do not choose one model.
+    """
+    model = choose_model(center, profiles)
+    if _check_knob(knob) in VALUE_KNOBS and model is not PatientModel.MILESTONE_5:
+        raise ValueError(
+            f"the knob {knob} needs the milestone 5 model ([camas] in the center and"
+            f" [abandono] in the profiles), got the {model.label} model"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SensitivityRow:
-    """One staffing of the rule, evaluated.
+    """One candidate of a knob, evaluated.
 
     Attributes:
-        staffing: The staff and its interval of u.
-        center: The center simulated, with that staff.
+        setting: The candidate: a staff of the rule and its interval of u, or a
+            value of a knob of one number.
+        center: The center simulated, with that candidate.
         results: One result per target.
         replicas: The reduced replications.
+        profiles: The profiles simulated, with that candidate (``None`` when
+            they are those of the knob's sensitivity unchanged and the row was
+            built by hand).
     """
 
-    staffing: RuleStaffing
+    setting: Setting
     center: CenterConfig
     results: tuple[TargetResult, ...]
     replicas: tuple[ReplicaValues, ...]
+    profiles: ClinicalProfiles | None = None
+
+    @property
+    def staffing(self) -> RuleStaffing:
+        """The staff of a knob of staff.
+
+        Raises:
+            ValueError: If the row is of a knob of one number.
+        """
+        if not isinstance(self.setting, RuleStaffing):
+            raise ValueError(f"{self.setting!r} is not a staff of the rule")
+        return self.setting
 
     def result(self, name: str) -> TargetResult:
         for r in self.results:
@@ -850,13 +929,13 @@ class SensitivityRow:
         return max(r.censored_share for r in self.replicas)
 
 
-def evaluate_staffings(
+def evaluate_settings(
     center: CenterConfig,
     arrival_profile: ArrivalProfile,
     profiles: ClinicalProfiles,
     targets: Sequence[Target],
     knob: str,
-    staffings: Sequence[RuleStaffing],
+    settings: Sequence[Setting],
     *,
     replicas: int,
     days: int,
@@ -865,31 +944,31 @@ def evaluate_staffings(
     start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
-    """Evaluate the given staffings of ``knob``, in their order, the other knob fixed.
+    """Evaluate the given candidates of ``knob``, in their order, the rest fixed.
 
     Each one is simulated with the same replications (the same seed and the
     same ``start_dates``, as in ``simulate_replicas``), so the rows differ only
-    in the staff. ``sensitivity`` gives it every staffing of
-    the rule; a subset, such as the staffings around the chosen one, costs
-    less.
+    in the knob: the common random numbers of the calibration. ``sensitivity``
+    gives it every candidate of the knob; a subset, such as the candidates
+    around the chosen one, costs less.
 
     Args:
-        staffings: The staffings to evaluate, such as some of ``rule_staffings``.
+        settings: The candidates: staffs such as some of ``rule_staffings``, or
+            values (``KnobValue``) of a knob of one number.
         on_row: Called with each row as soon as it is evaluated, such as a
             progress line of the CLI.
 
     Raises:
-        ValueError: If ``knob`` is unknown.
+        ValueError: If ``knob`` is unknown, or a candidate is not of its kind.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
+    _check_knob(knob)
     rows = []
-    for staffing in staffings:
-        candidate = candidate_center(center, knob, staffing.staff)
+    for setting in settings:
+        candidate, candidate_profiles = candidate_inputs(center, profiles, knob, setting)
         reduced = simulate_replicas(
             candidate,
             arrival_profile,
-            profiles,
+            candidate_profiles,
             targets,
             replicas=replicas,
             days=days,
@@ -897,11 +976,56 @@ def evaluate_staffings(
             seed=seed,
             start_dates=start_dates,
         )
-        row = SensitivityRow(staffing, candidate, summarize_targets(reduced, targets), reduced)
+        row = SensitivityRow(
+            setting, candidate, summarize_targets(reduced, targets), reduced, candidate_profiles
+        )
         rows.append(row)
         if on_row is not None:
             on_row(row)
     return tuple(rows)
+
+
+def evaluate_staffings(
+    center: CenterConfig,
+    arrival_profile: ArrivalProfile,
+    profiles: ClinicalProfiles,
+    targets: Sequence[Target],
+    knob: str,
+    staffings: Sequence[Setting],
+    **options,
+) -> tuple[SensitivityRow, ...]:
+    """``evaluate_settings``, by its name of milestone 4: the staffings of a knob of staff
+    (or the values of a knob of one number)."""
+    return evaluate_settings(center, arrival_profile, profiles, targets, knob, staffings, **options)
+
+
+def knob_settings(
+    knob: str,
+    center: CenterConfig,
+    profiles: ClinicalProfiles,
+    arrival_profile: ArrivalProfile,
+    *,
+    u_min: float = U_MIN,
+    u_max: float = U_MAX,
+    step: float = U_STEP,
+    values: Sequence[float] | None = None,
+) -> tuple[Setting, ...]:
+    """The candidates of the sensitivity of ``knob``: every staff of the rule on the grid
+    of u, or the values of a knob of one number (``values``, or its default grid).
+
+    Raises:
+        ValueError: If the knob is unknown, ``values`` is given to a knob of staff,
+            or is empty or has an invalid value.
+    """
+    if _check_knob(knob) in KNOBS:
+        if values is not None:
+            raise ValueError(f"the knob {knob} takes the grid of u, not values")
+        loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
+        return rule_staffings(loads, u_min, u_max, step)
+    grid = DEFAULT_GRIDS[knob] if values is None else tuple(values)
+    if not grid:
+        raise ValueError(f"the knob {knob} needs at least one value")
+    return tuple(KnobValue(check_knob_value(knob, v)) for v in grid)
 
 
 def sensitivity(
@@ -918,29 +1042,35 @@ def sensitivity(
     u_min: float = U_MIN,
     u_max: float = U_MAX,
     step: float = U_STEP,
+    values: Sequence[float] | None = None,
     start_dates: Sequence[date] | None = None,
     on_row: Callable[[SensitivityRow], None] | None = None,
 ) -> tuple[SensitivityRow, ...]:
-    """Evaluate every staffing of the rule for ``knob``, the other knob fixed.
+    """Evaluate every candidate of ``knob`` (``knob_settings``), the rest fixed.
 
-    The staffings come from ``rule_staffings`` with the loads of the knob and
-    the shifts of ``center``, and ``evaluate_staffings`` simulates each one
-    with the same replications (the same seed and ``start_dates``), so the
-    rows differ only in the staff. The loads are those of the mean day of the
-    profile, which do not depend on its ``start_date``.
+    For a knob of staff, the staffings come from ``rule_staffings`` with the loads
+    of the knob and the shifts of ``center``; the loads are those of the mean day of
+    the profile, which do not depend on its ``start_date``. For a knob of one number,
+    its values (``values``, or the default grid of ``calibration.knobs``).
+    ``evaluate_settings`` simulates each one with the same replications (the same
+    seed and ``start_dates``), so the rows differ only in the knob.
 
     Args:
+        values: The values of a knob of one number; ``None`` is its default grid.
         on_row: Called with each row as soon as it is evaluated, such as a
             progress line of the CLI.
     """
-    loads = knob_loads(knob, profiles, arrival_profile, center.shift_starts)
-    return evaluate_staffings(
+    settings = knob_settings(
+        knob, center, profiles, arrival_profile, u_min=u_min, u_max=u_max, step=step,
+        values=values,
+    )  # fmt: skip
+    return evaluate_settings(
         center,
         arrival_profile,
         profiles,
         targets,
         knob,
-        rule_staffings(loads, u_min, u_max, step),
+        settings,
         replicas=replicas,
         days=days,
         warmup_days=warmup_days,
@@ -952,25 +1082,31 @@ def sensitivity(
 
 def passes_fit(row: SensitivityRow, knob: str) -> bool:
     """Whether ``row`` passes every fit target of ``knob`` (rule 4)."""
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    names, _ = KNOB_TARGETS[knob]
+    names, _ = KNOB_TARGETS[_check_knob(knob)]
     return all(row.result(name).passed for name in names)
+
+
+def candidate_key(setting: Setting) -> tuple[int, ...] | float:
+    """What identifies a candidate: its staff, or its value (not its interval of u)."""
+    return setting.staff if isinstance(setting, RuleStaffing) else setting.value
+
+
+def _size(setting: Setting) -> float:
+    """What a tie is broken by: the smaller staff, or the smaller value."""
+    return sum(setting.staff) if isinstance(setting, RuleStaffing) else setting.value
 
 
 def choice_order(rows: Sequence[SensitivityRow], knob: str) -> tuple[SensitivityRow, ...]:
     """The rows that pass every fit target of ``knob``, in the order of the choice:
     the mean of the choosing target closest to its aim (``Target.aim``: the
     reference, or the centre of the band without one) first; on a tie, the smaller
-    staff first.
+    staff, or the smaller value, first.
     """
-    if knob not in KNOBS:
-        raise ValueError(f"knob must be one of {KNOBS}, got {knob!r}")
-    _, chooser = KNOB_TARGETS[knob]
+    _, chooser = KNOB_TARGETS[_check_knob(knob)]
 
-    def distance(row: SensitivityRow) -> tuple[float, int]:
+    def distance(row: SensitivityRow) -> tuple[float, float]:
         r = row.result(chooser)
-        return abs(r.mean - r.target.aim), sum(row.staffing.staff)
+        return abs(r.mean - r.target.aim), _size(row.setting)
 
     return tuple(sorted((row for row in rows if passes_fit(row, knob)), key=distance))
 
@@ -1003,8 +1139,10 @@ def choose_staffing(
         if check is None:
             return row
         checked = check(row)
-        if checked.staffing.staff != row.staffing.staff:
-            raise ValueError(f"the check of {row.staffing.staff} is of {checked.staffing.staff}")
+        if candidate_key(checked.setting) != candidate_key(row.setting):
+            raise ValueError(
+                f"the check of {candidate_key(row.setting)} is of {candidate_key(checked.setting)}"
+            )
         if passes_fit(checked, knob):
             return row
     return None
