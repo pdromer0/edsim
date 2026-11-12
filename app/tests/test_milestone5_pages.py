@@ -122,6 +122,23 @@ def test_runs_table_tells_the_two_clinical_models_apart(h5_catalog):
     frame = app.dataframe[0].value.set_index("Ejecución")
     assert frame.loc["h4", "Modelo"] == "Clínico · hito 4 (v3)"
     assert frame.loc["h5", "Modelo"] == "Clínico · hito 5 (v4)"
+    assert "versión del catálogo" in help_text(app)
+
+
+def help_text(app):
+    box = next(item for item in app.expander if item.label == "¿Qué estoy viendo?")
+    return " ".join(item.value for item in box.markdown)
+
+
+def test_simulate_help_explains_the_derived_boxes_and_the_missing_load(h5_catalog):
+    app = open_page("views/simulate.py")
+    assert app.title[0].value == "Simular"
+    # config/ is the milestone 5 model since task 5.6: the page takes the branch without load.
+    assert "La carga prevista del modelo del hito 5 llega con el issue #103." in [
+        i.value for i in app.info
+    ]
+    text = help_text(app)
+    assert "36 boxes" in text and "#103" in text
 
 
 # --- Simular with a center with [camas] (task 5.5) -----------------------------------------

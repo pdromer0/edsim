@@ -297,6 +297,8 @@ Aprobado en el código. La descripción del PR no se pudo leer desde el chat (l�
 
 Especificación del hito: [Hito 5 — Cierre del flujo](../../../docs/specs/hito-5.md). Incremento de la app: tareas 5.4 (núcleo en `runs/`) y 5.5 (páginas), las dos de Claude Code (la 5.5 era de Codex hasta el cambio de Pedro del 12 de noviembre), con la etiqueta `app-v0.3.0` al terminar.
 
+**Estado: cerrado.** `app-v0.3.0` apunta a la fusión de la 5.5 (`f3cca25`, PR #106). La 5.6 hizo del hito 5 el modelo de `config/` (36 boxes en el centro base y el cumplidor), y el cierre del hito (5.8) añadió el manual y tres retoques de la app, sin etiqueta propia (entrada de la 5.8 en el anexo).
+
 ### Objetivo y alcance
 
 Al terminar el incremento, EDsim Lab abre y simula el modelo del hito 5 y enseña lo que trae (decisiones 77 y 78, H5-11 y H5-12): quién se va sin ser visto y desde dónde, el destino de cada paciente entre cuatro (alta, ingreso, traslado y exitus), y la espera de cama de los ingresados, en su box o en el pasillo. Las ejecuciones del hito 4 se abren igual que antes.
@@ -366,3 +368,14 @@ La entrada completa (decisiones del diff, medidas, versiones incorrectas y revis
 | Comparar sin diferencias de perfiles clave a clave | Cerrado: `profiles_diff` y su tabla |
 | El cumplidor como variante | Cerrado: «Centro cumplidor» entre los orígenes de Simular |
 | La copia redundante del reloj C en `cached_run_results` | Cerrado: `cached_run_results` devuelve `read_run_results` tal cual |
+
+#### Tarea 5.8: cierre del hito 5 en la app
+
+Issue #75, rama `docs/h5-cierre`, Claude Code. Lo que la 5.8 cambió en la app:
+
+| Cambio | Dónde | Test |
+| --- | --- | --- |
+| La columna Modelo de Ejecuciones distingue el hito 4 del 5 por la versión del catálogo («Clínico · hito 4 (v3)», «Clínico · hito 5 (v4)»); antes decía «Clínico» en los dos | `frames.model_label` | `test_model_column_tells_milestone_4_from_milestone_5_by_the_catalog`, `test_runs_table_tells_the_two_clinical_models_apart` |
+| Replay tenía dos «¿Qué estoy viendo?»; queda uno, `render_replay_help()` | `help.py`, `views/replay.py` | `test_replay_has_a_single_help_with_the_plan_and_the_bed` |
+| Ayudas de Ejecuciones (la versión del catálogo), Simular (36 boxes derivados y #103) y Resultados (qué enseña el interruptor «Ver la verdad») | `help.py` | `test_simulate_help_explains_the_derived_boxes_and_the_missing_load` y la aserción de Ejecuciones |
+| El manual: el recorrido «Primeros pasos con el hito 5», la censura del cumplimiento, Comparar entre catálogos, la probabilidad de ingreso solo con el hito 4, los 36 boxes y «Ver la verdad» en Resultados | `app/README.md` | Revisión de Pedro |
