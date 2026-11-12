@@ -878,6 +878,26 @@ def test_medico_para_quien_tiene_la_clave_menor(center):
     assert "doctor" in v.message and "EP-000002" in v.message
 
 
+def test_dos_concesiones_del_mismo_instante_no_son_un_salto(center):
+    # Dos médicos, ocupados por A hasta 25 y libres de golpe (un cambio de turno). B
+    # (nivel 4) espera desde 6 y C (nivel 2) desde 7; en 25 los dos reciben médico. SimPy
+    # los concede por la clave, pero en la versión 4 quien espera con su paciencia se
+    # reanuda un paso después que una reevaluación, y su assessment_started puede salir
+    # detrás en el fichero (tarea 5.6). Nadie esperó por el otro.
+    small = dataclasses.replace(center, boxes=3, triage_nurses=(5, 5, 5), doctors=(2, 2, 2))
+    events = build(
+        journey(0, 0.0, tests=False),
+        stay_in_box(1, 1.0, 4, 6.0, 2, start=25.0),
+        stay_in_box(2, 2.0, 2, 7.0, 3, start=25.0),
+    )
+    order = [(e.episode_id, e.event_type) for e in events if e.sim_time == 25.0]
+    assert order.index(("EP-000001", "assessment_started")) < order.index(
+        ("EP-000002", "assessment_started")
+    )
+
+    assert violations(events, small, "nobody_jumps_the_queue") == []
+
+
 def test_espera_que_empieza_en_el_mismo_instante_no_cuenta(center):
     # El caso del desalojo con médicos escasos: en 25 A suelta el médico y SimPy se lo da
     # a B (nivel 4, esperando desde 6). En ese mismo instante C (nivel 2) recibe un box y
