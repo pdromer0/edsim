@@ -46,6 +46,7 @@ from edsim.engine.analysis import (
     EpisodeRecord,
     completed_in_window,
     ended_in_window,
+    triaged_in_window,
 )
 from edsim.engine.center import N_LEVELS
 from edsim.engine.ground_truth import GroundTruth
@@ -103,9 +104,7 @@ def _by_day_and_level(
     ]
     start, end = first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY
     done = (
-        [e for e in ended_in_window(table, start, end) if e.level is not None]
-        if triaged
-        else completed_in_window(table, start, end)
+        triaged_in_window(table, start, end) if triaged else completed_in_window(table, start, end)
     )
     for e in done:
         value = getattr(e, measure)
