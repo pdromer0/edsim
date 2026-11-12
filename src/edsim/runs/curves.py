@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from edsim.engine.analysis import CURVES, StepCurves
+from edsim.engine.analysis import StepCurves
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +27,8 @@ class CurveSteps:
 
 
 def _check(curves: StepCurves, name: str, start: float, end: float) -> None:
-    if name not in CURVES:
+    # Any curve of the analysis: those of CURVES and, since task 5.4, OUTCOME_CURVES.
+    if name not in curves.values:
         raise ValueError(f"unknown curve: {name!r}")
     if not 0 <= start < end <= curves.horizon:
         raise ValueError("need 0 <= start < end <= horizon")
