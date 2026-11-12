@@ -1415,3 +1415,100 @@ Las aplicó el subagente `mutante` sobre `d2a0dbb`, dos por worktree y cuatro wo
 - **QA de `app/tests`:** `default_timeout` en los `AppTest` antiguos. Con la máquina cargada fallan por el límite de 3 s (V5).
 - **5.6:** con los bloques en `config/`, las páginas del hito 5 dejan de necesitar los ficheros de `tests/data`.
 - **Pedro:** la revisión en el navegador y la etiqueta `app-v0.3.0` tras la fusión.
+
+### Tarea 5.6: Calibración del abandono y la espera de cama
+
+**Qué se hizo**
+
+Issue #73, rama `feat/h5-calibracion`, Claude Code, con `@codex review` (tarea crítica). Son catorce commits más el de esta entrada: los del plan, la corrección de la invariante, la ley de Little (fuera del plan, por la decisión de los boxes) y uno con las correcciones de la revisión propia. Desde esta tarea, `config/` es el modelo del hito 5 y `edsim motor simular` sin opciones lo simula (catálogo versión 4). El registro completo, con cada tabla y su comando, está en [docs/calibracion/registro.md](../calibracion/registro.md), «Tarea 5.6».
+
+- **Las copias del hito 4, antes de tocar `config/`:**
+  - `tests/data/centro_h4.toml`, `centro_cumplidor_h4.toml`, `perfiles_h4.toml` y `objetivos_h4.toml`, iguales byte a byte al `config/` de antes, en un commit propio;
+  - los lectores que afirman el significado del hito 4 pasan a ellas: el registro de la 4.6c, los valores del centro, el bloque provisional, la carga ofrecida, el cumplimiento por nivel real, la sala de resultados, `perfiles validar` rápido, el notebook 04 y, en la app, las ejecuciones clínicas de plantilla, el editor de `[destino]` y la carga prevista;
+  - siguen a `config/` la derivación («escritos = recalculados»), los objetivos, la ejecución por defecto (ahora versión 4 y sin invariantes violadas), el motor de 14 días y el notebook 06.
+- **`calibration/` con las reglas de la 5.4** (pendiente de la 5.4):
+  - censurado es quien sigue dentro, no quien no tiene salida;
+  - el pretriaje, de los triados (`triaged_in_window`, que sale de `engine/targets.py`);
+  - las medias de los relojes, de los atendidos; sus porcentajes, con la censura del cumplimiento (`compliance_cases`);
+  - la estancia, con la cota de quien sigue dentro;
+  - recuentos de los que se van, los atendidos dentro, los ingresados esperando cama (aviso por encima del 1 %), el cuello de botella y la ley de Little de la espera de cama.
+- **El esquema de `objetivos.toml`:** `porcentaje_de_llegadas` (medidas `left` y `departure`), `destino`, y «no aplican» para el abandono y los destinos con otro modelo. Los cinco objetivos nuevos del SAS.
+- **Los mandos `espera_cama` y `paciencia`** (`calibration/knobs.py`), con la sensibilidad, la elección y el veto generalizados a los cuatro mandos (`SensitivityRow.setting`, `candidate_inputs`, `evaluate_settings`, `knob_settings`); CLI con `--valores`.
+- **La calibración**, con la plantilla de la 4.6c fija:
+  - la cama, m = 210 (p90 630);
+  - la paciencia, k = 4 sobre la de partida;
+  - 36 boxes, derivados por decisión de Pedro;
+  - la plantilla y el cumplidor no cambian.
+- **Una corrección del motor de validación** (fuera del plan): `nobody_jumps_the_queue` ya no cuenta como salto dos concesiones del mismo recurso en el mismo instante.
+
+**Decisiones del diff**
+
+- **Las copias del hito 4 congeladas** (nota del chat): con ellas, el diff demuestra que ninguna huella ni cifra del hito 4 cambia; los slow de la 4.6c pasan a `rel=1e-12`.
+- **El pretriaje es de los triados, no de los atendidos** (ajuste de Pedro al plan): la regla de la 5.4, reutilizada con `triaged_in_window` en vez de reescrita.
+- **Los porcentajes de los relojes reutilizan `compliance_cases`** con el umbral de cada nivel como máximo: «exceeded» es «por encima» y los censurados no cuentan; la regla del máximo exacto es la de la 5.4.
+- **`estancia_atendidos` se mide también con el hito 4**: es la estancia de los que salen, que existe en los dos modelos. Solo el abandono y los destinos «no aplican».
+- **Los boxes, un derivado** (decisión de Pedro del 12 de noviembre, tras la parada del cuello de botella): 30 + λ · W redondeado = 36. Con 30 boxes ningún k de la rejilla pasaba el abandono y la espera de box llegaba a 52 min frente a 16 de médico.
+- **k = 4, discrepancia estructural** (decisión de Pedro tras la parada de k ≥ 4 y un diagnóstico): medianas de 10 h en el nivel 4 y 8 h en el 5, frente a las 2 h de Shaikh. El diagnóstico (en `docs/calibracion/tarea-5-6/`) muestra que se van las esperas largas, no la cola izquierda, y que la forma (σ) no lo explica.
+- **La invariante del salto de cola:** con el hito 5, quien espera con su paciencia (`request | deadline`) se reanuda un paso después que una reevaluación, y en el mismo instante su `assessment_started` puede salir detrás aunque SimPy se lo concediera antes (comprobado en el orden de concesión). Pedro eligió corregir la invariante y no el motor, cuyas huellas no cambian.
+- **`DRAIN_DAYS` sigue en 1**: cambiarlo movería las cifras del hito 4. Con el centro calibrado, los ingresados que esperan cama al final no pasan del 0,62 % de una réplica.
+- **Los mandos de plantilla no cambian de forma**: `SensitivityRow.staffing` sigue como propiedad, y `evaluate_staffings` y `sensitivity` como las costuras de siempre de la CLI y sus tests.
+
+**Medidas**
+
+- Objetivos con su IC por semilla, perfil por mes, sensibilidades y cumplidor: el registro.
+- **Semana del 19 al 25 de enero de 2026:**
+  - reloj A de los niveles 2 a 5: 101,0 min, frente a 306,0 en la 4.6c;
+  - del nivel 5: 434,7, frente a 3897,3;
+  - abandonos: 240 de 2549 (9,42 %);
+  - boxes con ingresados: 7,65 de media, máximo 16.
+- **Abandono del año** (2026):
+  - por nivel asignado: 0 / 0 / 0,08 / 2,87 / 10,92 %;
+  - por nivel real: 0 / 0 / 0,31 / 3,04 / 9,03 %;
+  - ningún grave de verdad se fue; 23 de los 729 que se fueron habrían ingresado.
+- **Boxes con ingresados:** 6,50 por las curvas y 6,44 por Little (λ · W).
+- **Cuello de botella:** los médicos (box 8,69 frente a médico 14,89 min).
+- **Censurados al final del vaciado:** 3, todos atendidos (28 en la 5.4 sin vaciado), y 3 ingresados esperando cama.
+- **Tiempos:**
+  - evaluación anual, 30 s;
+  - sensibilidades: cama de 8 min 30 s a 10 min 50 s; paciencia, 6 a 7 min; médicos, 12 min 26 s.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en un worktree del `HEAD` (719dd52), una a una y deshechas.
+
+| # | Versión incorrecta | Predicción (afinada antes de aplicar) | Observado |
+| --- | --- | --- | --- |
+| V19 | El factor de paciencia se aplica a σ | Fallan 5: el factor y σ, la rejilla, el candidato que solo cambia su mando, la paciencia de `config/` y «más paciencia, menos abandono» | Fallan 4: «más paciencia, menos abandono» pasa. Elevar el cociente a k estira las dos colas y, en esa réplica corta, el abandono también baja; el test solo mira el sentido. V19 la ven los otros cuatro |
+| V20 | La elección ignora el veto | Fallan 13: los 3 nuevos, 5 de la sensibilidad, 4 de la CLI y el veto de la 4.6c | Fallan los 13. Pasa la comprobación impresa |
+| V32 | Los censurados de la cama, fuera de `estancia_ingresados` | La estancia a mano (500 en vez de 1670), los de más de 4 h (recuentos) y las dos filas del registro | Como se predijo |
+| V33 | El abandono sobre los atendidos | El abandono a mano (100 % en vez de 37,5 %), los días, la comprobación cruzada y las dos filas | Como se predijo, más `test_evaluar_el_hito_5_…` de la CLI: el abandono de la fila corta pasa a 2,19 % y no pasa la regla 4 (código 1) |
+| V34 | Censurado = sin salida | Solo el recuento a mano (5 en vez de 2); los slow de la 4.6c pasan | Como se predijo |
+| V35 | El porcentaje de un reloj sin los que se van | El del nivel 4 a mano (0 % en vez de 66,7 %) y la fila anual; los slow de la 4.6c pasan | Como se predijo |
+| V36 | El pretriaje solo con los atendidos | El pretriaje a mano (4,333 en vez de 5,667), su porcentaje y la fila anual; la 4.6c y `test_targets.py` pasan | Como se predijo |
+
+El plan predecía para V20 que `test_sin_veto_la_comprobacion_no_cambia_la_eleccion` seguiría pasando, pero comprueba las llamadas a la comprobación y falla. La predicción se afinó antes de aplicar la versión. Para V34, el test del aviso que preveía el plan no se escribió: el recuento a mano lo cubre.
+
+**Revisión**
+
+`/code-review high main...feat/h5-calibracion`, con diez hallazgos.
+
+- **Corregidos** (`f3aa43f`):
+  - el porcentaje de una medida sin regla para quien se va se rechaza antes de simular (código 2);
+  - el docstring de «bit a bit»;
+  - `waiting_for_bed`, para no confundirse con la curva `boxes_waiting_bed`;
+  - el horizonte, explícito;
+  - en la sensibilidad, el modelo antes que la rejilla;
+  - `evaluate_staffings`, alias.
+- **Explicados:**
+  - λ · W cuenta el pasillo (raro: las curvas dan 6,50 frente a 6,44 y el mismo redondeo);
+  - la regla de la censura duplica la de `stay_by_destination` porque la calibración la necesita por día y por nivel, y la comprobación cruzada con el motor vigila que no se separen;
+  - los candidatos se validan antes de simular;
+  - las pasadas por la tabla y `_nanmean` cuestan poco frente a la simulación.
+
+**Pendiente**
+
+- **#103:** la carga ofrecida del hito 5. Simular la avisa, y con `config/` en el hito 5 es lo que ve Pedro por defecto.
+- **Recalibrar k si llega el refuerzo de invierno:** issue para el Backlog, redactado en el PR.
+- **5.7:** el notebook 05 con el `config/` calibrado. El 04 lee las copias del hito 4.
+- **5.8:** los ADR, con la decisión de los boxes y la discrepancia de k.
+- **Los ingresados de más de 4 h** (78,7 % frente al 49,69 % del SAS): la forma de la espera de cama es por criterio. Queda informada, sin tarea.
