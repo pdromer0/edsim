@@ -20,7 +20,7 @@ Al cerrar el hito 5, `edsim motor simular` sin opciones simula el modelo del hit
 - **Métricas con abandono** (H5-8) y **ground truth** con todo lo sorteado, también lo que no llegó a usarse (H5-10).
 - **Calibración** (H5-9): ingreso, traslado y exitus derivados; abandono y estancia de los ingresados ajustados; plantilla de la 4.6c medida de nuevo; la semana del 19 al 25 de enero, revisada.
 - **Directo** (H5-11): el consumidor y «directo = batch» con la versión 4.
-- **App** (H5-12): el núcleo en `runs/` (Claude Code) y las páginas (Codex).
+- **App** (H5-12): el núcleo en `runs/` y las páginas, los dos de Claude Code (cambio de Pedro del 12 de noviembre; antes, Codex).
 - **Notebook** `05_cierre_del_flujo.ipynb`, ADR 0067 a 0079 y etiqueta `v0.5-hito5`.
 
 **Fuera del alcance**
@@ -36,7 +36,7 @@ Al cerrar el hito 5, `edsim motor simular` sin opciones simula el modelo del hit
 | Rendimiento de la app (doble lectura del Replay, tabla de Episodios) | Tarea de proceso |
 | Editar los perfiles desde la app | Fase 2 de la app |
 
-Las tareas con código empiezan con `v0.6-hito6`. El núcleo lo implementa Claude Code y las páginas de la app, Codex. Los dos ejecutan git (rama, commits, push y PR) y Pedro siempre fusiona.
+Las tareas con código empiezan con `v0.6-hito6`. El núcleo y las páginas de la app los implementa Claude Code; las páginas eran de Codex hasta el cambio de Pedro del 12 de noviembre. Codex sigue en el hito con `@codex review` en las tareas críticas (la 5.6). Claude Code ejecuta git (rama, commits, push y PR) y Pedro siempre fusiona.
 
 ## Cómo encajan las piezas
 
@@ -702,7 +702,7 @@ edsim/
 │   └── cli.py                   # modelo por bloques, perfiles validar, calibración (5.3, 5.6)
 ├── config/                      # bloques del hito 5 y objetivos nuevos (5.6)
 ├── tests/data/                  # perfiles_h5_ejemplo.toml (5.2) y centro_h5_ejemplo.toml (5.3)
-├── app/                         # páginas (5.5, Codex)
+├── app/                         # páginas (5.5, Claude Code)
 └── notebooks/05_cierre_del_flujo.ipynb   # nuevo (5.7)
 ```
 
@@ -829,7 +829,7 @@ Trece decisiones candidatas, tomadas con Pedro en la sesión conceptual del 9 y 
 | 75 (H5-9) | Ingreso, traslado y exitus derivados y escritos; abandono (mando: paciencia) y estancia de los ingresados (mando: espera de cama) de ajuste; el resto, de comprobación; en orden, con la plantilla de la 4.6c fija y medida de nuevo, y cambiada solo si sale de su horquilla, con una vuelta como máximo | Un mando por objetivo (identificabilidad); las duraciones siguen fijas; los mandos están acoplados |
 | 76 (H5-10) | El ground truth guarda todo lo sorteado, también lo que no se usó, con el destino contrafactual de quien se fue; CSV con columnas nuevas y `run.json` que registra el modelo, con los antiguos leídos como hoy | Reconstruir cada paciente bit a bit; medir el daño oculto del abandono; validar modelos con una verdad completa |
 | 77 (H5-11) | En el consumidor y el Replay, un estado nuevo «esperando cama» con una marca de pasillo y el abandono como cierre contado aparte | La misma solución que la sala de resultados (4.8a): el estado dice qué hace el paciente; la marca, dónde está |
-| 78 (H5-12) | La app enseña el hito 5 entero (estados, filtros, indicadores, «ver la verdad», espera de cama editable) y resuelve los pendientes pequeños del hito 4; el núcleo lo hace Claude Code y las páginas, Codex; rendimiento y edición de perfiles, fuera | Ver el modelo en la app; una tarea con dos temas se revisa peor |
+| 78 (H5-12) | La app enseña el hito 5 entero (estados, filtros, indicadores, «ver la verdad», espera de cama editable) y resuelve los pendientes pequeños del hito 4; el núcleo y las páginas los hace Claude Code (las páginas eran de Codex hasta el cambio de Pedro del 12 de noviembre); rendimiento y edición de perfiles, fuera | Ver el modelo en la app; una tarea con dos temas se revisa peor |
 | 79 (H5-13) | Ocho tareas (5.1 a 5.8) en orden: motor con pacientes a mano, perfiles, el modelo en el motor, núcleo de la app, páginas, calibración (que pone los bloques en `config/`), notebook y cierre; `@codex review` en la 5.1, la 5.3 y la 5.6; etiqueta `v0.5-hito5` | Lo exacto y aislado antes que lo que lo junta; el modelo nuevo no es el de por defecto hasta que la app lo soporta (decisión 44) |
 
 ## Tareas, ramas y orden de ejecución
@@ -842,7 +842,7 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 | 5.2 | `perfiles.toml` (`[abandono]`, `[destinos]`, `ingreso` por motivo) y `centro.toml` (`[camas]`, `[destino]` opcional) con sus reglas; `profiles/outcome.py` exacto; derivados escritos en la cascada; `OutcomeSampler`; `check_patience` y `check_destinations`; valores orientativos del destino. Sin el motor | Claude Code | `feat/h5-perfiles` | No |
 | 5.3 | El modelo del hito 5 en el motor, elegido por los bloques; `child_streams(seed, 10)`; ground truth del desenlace, CSV y `run.json`; CLI (`motor simular`, `perfiles validar`); `tests/data` del hito 5 con sus huellas; las invariantes con el ground truth. `config/` sin los bloques | Claude Code | `feat/h5-muestreador` | Sí (motor y formatos) |
 | 5.4 | Núcleo de la app en `runs/`: métricas con censura, indicadores nuevos, filtros, `_location` con «esperando cama» y pasillo, «ver la verdad». Directo: «directo = batch» v4, consumidor y `LiveTracker`. `scripts/tests-integracion.sh` antes del push | Claude Code | `feat/h5-app-nucleo` | No |
-| 5.5 | Páginas de la app (H5-12) y pendientes pequeños del hito 4, probadas con ejecuciones de `tests/data` del hito 5; manual y ayudas «¿Qué estoy viendo?»; etiqueta `app-v0.3.0` | Codex | `feat/app-h5-paginas` | No |
+| 5.5 | Páginas de la app (H5-12) y pendientes pequeños del hito 4, probadas con ejecuciones de `tests/data` del hito 5; manual y ayudas «¿Qué estoy viendo?»; etiqueta `app-v0.3.0` | Claude Code (cambio de Pedro del 12 de noviembre; antes, Codex) | `feat/app-h5-paginas` | No |
 | 5.6 | Calibración (H5-9): objetivos nuevos, mandos de paciencia y espera de cama, medición de la plantilla, cumplidor y registro; escribe los bloques en `config/`, así que el modelo por defecto pasa a ser el del hito 5; semana del 19 al 25 de enero | Claude Code | `feat/h5-calibracion` | Sí (cambia el modelo por defecto) |
 | 5.7 | Notebook `05_cierre_del_flujo.ipynb`: abandono frente a saturación, destinos frente a G, boxes bloqueados y ley de Little, la semana de enero antes y después, el contrafactual y Kaplan–Meier de la paciencia; modo rápido para el CI | Claude Code | `feat/h5-notebook` | No |
 | 5.8 | Cierre: ADR 0067 a 0079, diario `docs/diario/hito-5.md` con «Reflexiones de Pedro» vacía, ajustes de `docs/diseno.md` (catálogo de eventos, objetivos, hoja de ruta, registro de decisiones) con el visto bueno de Pedro, README y `AGENTS.md`. Pedro crea `v0.5-hito5` | Claude Code | `docs/h5-cierre` | No |
@@ -853,12 +853,12 @@ Ocho tareas en orden estricto, con una sola rama abierta a la vez. Cada una deja
 
 - La 5.1 inyecta los sorteos a mano (`engine/scenarios.py`), así que no necesita los perfiles de la 5.2: el motor se prueba con instantes calculados, no con el muestreador.
 - La 5.3 no cambia `config/`: las ejecuciones del hito 5 de sus tests salen de `tests/data`.
-- La 5.5 es de Codex con las reglas de `app/AGENTS.md`; si una tarea del núcleo rompe un test de `app/tests`, para y lo explica en lugar de arreglarlo.
+- La 5.5 es de Claude Code (cambio de Pedro del 12 de noviembre; antes, Codex), con las reglas de `app/AGENTS.md`. Si una función nueva del núcleo hace falta para una página, va antes, con sus tests, en un commit propio.
 - La 5.6 puede pararse en los puntos de «Cuándo parar y preguntar» de su especificación; el plan trae antes las sensibilidades y Pedro decide con las tablas delante, como en la 4.6c.
 
 ## Flujo de git y reparto entre agentes
 
-El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) lo implementa Claude Code; las páginas de la app (`app/`), Codex, con las reglas de `app/AGENTS.md`. Ninguno toca la zona del otro.
+El núcleo (`src/edsim/`, `tests/`, `tests_integracion/`, `config/`, `schemas/`, `notebooks/`, `docs/`) y las páginas de la app (`app/`, con las reglas de `app/AGENTS.md`) los implementa Claude Code. Las páginas eran de Codex hasta el cambio de Pedro del 12 de noviembre; Codex sigue con `@codex review` en la 5.6.
 
 Cada tarea sale de su issue de GitHub y sigue el ciclo de [docs/proceso/tarea.md](../proceso/tarea.md): arranque desde el issue y sus comentarios, plan con sus seis apartados (con las predicciones firmes de las versiones incorrectas), un commit por paso lógico con los niveles de tests N1 y N2, la revisión adversaria del propio diff y una sola N3 antes del push, la entrada del anexo de esta especificación en el mismo PR y la fusión, siempre de Pedro. El manual del flujo para personas (tablero, papeles y diagramas) está en [docs/proceso/flujo.md](../proceso/flujo.md).
 
