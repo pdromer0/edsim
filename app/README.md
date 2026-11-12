@@ -61,8 +61,9 @@ la página Ejecuciones muestra la ruta utilizada. Esta variable cambia el catál
 de la app. Para las configuraciones y variantes, arranca desde la raíz del
 repositorio: se usan `config/` y `resultados/variantes/`.
 
-`config/perfiles.toml` contiene los perfiles clínicos por defecto. Desde Simular
-puedes elegir otra ruta. Una ejecución clínica guarda una copia de sus perfiles
+`config/perfiles.toml` contiene los perfiles clínicos por defecto; desde la tarea
+5.6, con `config/centro.toml`, son el modelo del hito 5 (abandono, destinos y espera
+de cama editable en Simular). Desde Simular puedes elegir otra ruta. Una ejecución clínica guarda una copia de sus perfiles
 y su huella para poder reproducirla.
 
 La CLI y la app comparten el

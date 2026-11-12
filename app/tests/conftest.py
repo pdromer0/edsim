@@ -132,6 +132,21 @@ def provisional_block_center(simulation_files):
 
 
 @pytest.fixture
+def milestone_4_files(simulation_files):
+    """The isolated config with the milestone 4 center, compliant center and profiles.
+
+    Since task 5.6, ``config/`` is the milestone 5 model, with ``[camas]`` instead of
+    ``[destino]``. The pages still edit ``[destino]`` in milestone 4 centers; these
+    tests use the frozen copies of the old ``config/`` (``tests/data/*_h4.toml``).
+    Request it before ``center_template``, so that the template reads them.
+    """
+    for name in ("centro", "centro_cumplidor", "perfiles"):
+        frozen = Path("tests/data") / f"{name}_h4.toml"
+        (simulation_files / f"{name}.toml").write_bytes(frozen.read_bytes())
+    return simulation_files
+
+
+@pytest.fixture
 def center_template(simulation_files):
     """Read the actual isolated center independently of the application loader."""
     with (simulation_files / "centro.toml").open("rb") as source:
@@ -179,7 +194,10 @@ def clinical_run_templates(tmp_path_factory):
     from edsim.runs import read_center_values, write_variant
 
     root = tmp_path_factory.mktemp("clinical-run-templates")
-    source = Path("config/centro.toml")
+    # The clinical runs of milestone 4: config/ before task 5.6, frozen in tests/data. The
+    # milestone 5 pages have their own runs from the tests/data examples.
+    source = Path("tests/data/centro_h4.toml")
+    h4_profiles = "tests/data/perfiles_h4.toml"
     values = read_center_values(source)
     values["recursos.medicos"][2] += 1
     staff = root / "staff.toml"
@@ -193,15 +211,15 @@ def clinical_run_templates(tmp_path_factory):
     values["pruebas.probabilidad"] = [0] * 5
     absurd = root / "absurd.toml"
     write_variant(with_block, values, absurd)
-    document = tomlkit.parse(Path("config/perfiles.toml").read_text())
+    document = tomlkit.parse(Path(h4_profiles).read_text())
     document["motivos"]["disnea"]["peso_base"] *= 1.5
     flu = root / "flu.toml"
     flu.write_text(tomlkit.dumps(document))
     for run_id, center, profiles in (
-        ("clinical", source, "config/perfiles.toml"),
-        ("staff", staff, "config/perfiles.toml"),
+        ("clinical", source, h4_profiles),
+        ("staff", staff, h4_profiles),
         ("flu", source, flu),
-        ("absurd", absurd, "config/perfiles.toml"),
+        ("absurd", absurd, h4_profiles),
         # The provisional model needs the provisional block, which config/centro.toml lacks
         # since task 4.9: its center is tests/data/centro_ejemplo.toml.
         ("provisional", Path("tests/data/centro_ejemplo.toml"), None),

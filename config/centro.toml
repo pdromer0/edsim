@@ -2,13 +2,18 @@
 # La plantilla (enfermería de triaje y médicos) está calibrada en la tarea 4.6c con la
 # ventana anual.
 #
-# Qué lee cada modelo (tarea 4.9, decisiones 36 y 44):
-# - El modelo clínico, el de por defecto: turnos, plantilla, boxes, los niveles que esperan
-#   los resultados fuera y el destino provisional. Cada paciente sale de config/perfiles.toml.
-# - El modelo provisional del hito 3 necesita además [triaje], [duraciones] y [pruebas], que
-#   este fichero no tiene: su centro es tests/data/centro_ejemplo.toml (edsim motor simular
-#   --provisional --centro tests/data/centro_ejemplo.toml, y edsim motor validar).
-# [destino] es el provisional del hito 3 con los dos modelos hasta el hito 5.
+# Qué lee cada modelo (tareas 4.9 y 5.6, decisiones 36, 44 y 68):
+# - El modelo del hito 5, el de por defecto desde la tarea 5.6: turnos, plantilla, boxes,
+#   los niveles que esperan los resultados fuera y la espera de cama ([camas]). Cada
+#   paciente, su paciencia y su destino salen de config/perfiles.toml, con su bloque del
+#   hito 5. Un centro lleva [camas] (hito 5) o [destino] (modelos provisional y del hito 4),
+#   nunca los dos.
+# - El modelo clínico del hito 4, con [destino] y sin [camas]: este fichero hasta la tarea
+#   5.6, congelado en tests/data/centro_h4.toml.
+# - El modelo provisional del hito 3 necesita además [triaje], [duraciones], [pruebas] y
+#   [destino], que este fichero no tiene: su centro es tests/data/centro_ejemplo.toml
+#   (edsim motor simular --provisional --centro tests/data/centro_ejemplo.toml, y edsim
+#   motor validar).
 
 [turnos]
 # Hora de inicio de los turnos de mañana, tarde y noche
@@ -45,6 +50,12 @@ boxes = 30
 # de una ejecución anterior a la 4.6a sigue significando lo que significaba.
 espera_resultados_fuera = [4, 5]
 
-[destino]
-# Probabilidad de ingreso por nivel, del 1 al 5; el resto, alta
-probabilidad_ingreso = [0.80, 0.45, 0.15, 0.04, 0.01]
+[camas]
+# Espera de cama de los ingresados, en su box (decisión 72, H5-6): [mediana, p90] en
+# minutos, con factor 1. Valores de partida (docs/specs/hito-5.md, «Valores orientativos»):
+# la mediana la calibra la tarea 5.6 contra la estancia de los ingresados; el cociente
+# p90 / mediana = 3, por criterio.
+espera = [240, 720]
+# Factor por el turno del pedido de cama: mañana, tarde, noche, con los turnos de [turnos]
+# (las altas de planta salen por la mañana). factor_estacion, opcional, vale 1.
+factor_turno = [0.8, 1.0, 1.5]

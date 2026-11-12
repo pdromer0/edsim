@@ -48,7 +48,9 @@ MORNING = (ArrivalContext(0, 0, 0),)  # mañana laborable de invierno, OPPOSITE[
 
 @pytest.fixture(scope="module")
 def profiles():
-    return load_profiles(CONFIG / "perfiles.toml")
+    # Las cuatro comprobaciones del hito 4 con sus cifras: los perfiles de config/ hasta la
+    # tarea 5.6, congelados. Con el bloque del hito 5 son seis (tarea 5.2).
+    return load_profiles(CONFIG.parent / "tests" / "data" / "perfiles_h4.toml")
 
 
 @pytest.fixture(scope="module")

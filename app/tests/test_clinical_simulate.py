@@ -63,7 +63,7 @@ def test_default_clinical_summary_and_saved_one_day_run(catalog_root):
     assert app.title[0].value == "Resultados" and app.metric and not app.exception
 
 
-def test_staff_changes_reuse_sample_and_profiles_and_room_invalidate_it():
+def test_staff_changes_reuse_sample_and_profiles_and_room_invalidate_it(milestone_4_files):
     values = read_center_values(defaults.CENTER_PATH)
     spy = Mock(wraps=preview.offered_load)
     original = preview.offered_load
@@ -194,7 +194,7 @@ def test_local_profile_path_survives_navigation_updates_summary_and_is_simulated
     assert (catalog_root / info.run_id / "perfiles.toml").read_bytes() == path.read_bytes()
 
 
-def test_spinner_is_shown_only_when_a_new_clinical_sample_is_needed(monkeypatch):
+def test_spinner_is_shown_only_when_a_new_clinical_sample_is_needed(milestone_4_files, monkeypatch):
     import streamlit as st
 
     spinner = Mock(wraps=st.spinner)
@@ -217,7 +217,7 @@ def test_spinner_is_shown_only_when_a_new_clinical_sample_is_needed(monkeypatch)
     )
 
 
-def test_load_values_match_public_offered_work():
+def test_load_values_match_public_offered_work(milestone_4_files):
     import numpy as np
 
     from edsim.runs import center_from_values, offered_work

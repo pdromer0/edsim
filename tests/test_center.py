@@ -122,11 +122,13 @@ def test_carga_del_toml_de_ejemplo(center):
 
 def test_config_de_produccion_es_valida():
     # Los valores a mano usan el centro de ejemplo, que no se recalibra; este test solo
-    # comprueba que el centro base carga y es válido. Sus valores, a mano, más abajo.
+    # comprueba que el centro base carga y es válido. Desde la tarea 5.6 es del hito 5:
+    # [camas] en lugar de [destino]. Los valores del hito 4, a mano, más abajo.
     c = load_center(CONFIG)
 
     assert isinstance(c, CenterConfig)
-    assert sum(c.admission_probability) > 0
+    assert c.has_beds and c.admission_probability is None
+    assert c.bed_shift_factors == (0.8, 1.0, 1.5)
 
 
 def test_toml_escrito_por_el_test_igual_que_el_de_ejemplo(tmp_path, center):

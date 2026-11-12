@@ -26,7 +26,7 @@ def data() -> dict:
         return tomllib.load(file)
 
 
-def test_carga_los_cinco_objetivos_reales_con_su_fuente():
+def test_carga_los_diez_objetivos_reales_con_su_fuente():
     targets = {t.name: t for t in load_targets(CONFIG)}
 
     assert list(targets) == [
@@ -35,6 +35,12 @@ def test_carga_los_cinco_objetivos_reales_con_su_fuente():
         "tiempo_medico_nivel_3",
         "porcentaje_sobre_manchester",
         "porcentaje_pretriaje_mas_5",
+        # Los del hito 5 (tarea 5.6).
+        "abandono",
+        "estancia_ingresados",
+        "ingresados_mas_4h",
+        "estancia_atendidos",
+        "ingreso_observado",
     ]
     pretriage = targets["pretriaje_medio"]
     assert (pretriage.measure, pretriage.levels, pretriage.reference, pretriage.band) == (
@@ -49,7 +55,48 @@ def test_carga_los_cinco_objetivos_reales_con_su_fuente():
     assert targets["porcentaje_sobre_manchester"].threshold == MANCHESTER
     assert targets["porcentaje_pretriaje_mas_5"].threshold == 5.0
     # El nivel 3 es de comprobación desde la tarea 4.6b, después de medir la sensibilidad.
-    assert [t.use for t in targets.values()] == [FIT, FIT, CHECK, CHECK, CHECK]
+    # Del hito 5, de ajuste solo los de sus dos mandos: el abandono y la estancia de los
+    # ingresados.
+    assert [t.use for t in targets.values()] == [FIT, FIT, CHECK, CHECK, CHECK] + [
+        FIT,
+        FIT,
+        CHECK,
+        CHECK,
+        CHECK,
+    ]
+    abandonment = targets["abandono"]
+    assert (abandonment.measure, abandonment.statistic, abandonment.levels) == (
+        "left",
+        ARRIVALS_PERCENTAGE,
+        (),
+    )
+    assert (abandonment.reference, abandonment.band) == (1.82, (1.0, 4.0))
+    admitted = targets["estancia_ingresados"]
+    assert (admitted.measure, admitted.destination, admitted.reference, admitted.band) == (
+        "stay",
+        "ingreso",
+        472.5,
+        (360.0, 600.0),
+    )
+    assert targets["ingresados_mas_4h"].threshold == 240.0
+    assert targets["ingresados_mas_4h"].reference == 49.69
+    assert (targets["estancia_atendidos"].reference, targets["estancia_atendidos"].band) == (
+        162.2,
+        (120.0, 210.0),
+    )
+    observed = targets["ingreso_observado"]
+    assert (observed.measure, observed.destination, observed.reference, observed.band) == (
+        "departure",
+        "ingreso",
+        9.9,
+        (8.0, 13.0),
+    )
+    assert [t.name for t in targets.values() if t.needs_outcome] == [
+        "abandono",
+        "estancia_ingresados",
+        "ingresados_mas_4h",
+        "ingreso_observado",
+    ]
     assert targets["tiempo_medico_nivel_3"].note.startswith("Discrepancia estructural")
     assert all(
         t.source.startswith("SAS") and t.link.startswith("https://") for t in targets.values()

@@ -1,7 +1,8 @@
 # Centro cumplidor: el centro base (config/centro.toml) con los médicos que cumplen
 # Manchester. Ver docs/specs/hito-4.md («Calibración») y docs/calibracion/registro.md.
-# Solo cambian los médicos; el resto es igual que el centro base. Es un centro del modelo
-# clínico: como el base, no tiene [triaje], [duraciones] ni [pruebas] (tarea 4.9).
+# Solo cambian los médicos; el resto es igual que el centro base, también [camas] desde la
+# tarea 5.6 (el del hito 4, en tests/data/centro_cumplidor_h4.toml). Como el base, no tiene
+# [triaje], [duraciones] ni [pruebas] (tarea 4.9).
 
 [turnos]
 # Hora de inicio de los turnos de mañana, tarde y noche
@@ -30,6 +31,12 @@ boxes = 30
 # de una ejecución anterior a la 4.6a sigue significando lo que significaba.
 espera_resultados_fuera = [4, 5]
 
-[destino]
-# Probabilidad de ingreso por nivel, del 1 al 5; el resto, alta
-probabilidad_ingreso = [0.80, 0.45, 0.15, 0.04, 0.01]
+[camas]
+# Espera de cama de los ingresados, en su box (decisión 72, H5-6): [mediana, p90] en
+# minutos, con factor 1. Valores de partida (docs/specs/hito-5.md, «Valores orientativos»):
+# la mediana la calibra la tarea 5.6 contra la estancia de los ingresados; el cociente
+# p90 / mediana = 3, por criterio.
+espera = [240, 720]
+# Factor por el turno del pedido de cama: mañana, tarde, noche, con los turnos de [turnos]
+# (las altas de planta salen por la mañana). factor_estacion, opcional, vale 1.
+factor_turno = [0.8, 1.0, 1.5]

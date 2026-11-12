@@ -152,7 +152,8 @@ def test_simulate_edits_the_wait_for_a_bed_and_explains_the_missing_load():
 
 @pytest.mark.slow
 def test_simulate_shows_the_core_error_when_the_files_do_not_agree():
-    app, _ = open_simulation(str(defaults.CLINICAL_PROFILES_PATH))
+    # A milestone 5 center with the milestone 4 profiles (config/ before task 5.6, frozen).
+    app, _ = open_simulation("tests/data/perfiles_h4.toml")
     assert not app.exception
     assert any("camas" in e.value or "milestone 5" in e.value for e in app.error)
     assert "Corrige la configuración para calcular la carga prevista." in [

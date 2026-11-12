@@ -66,7 +66,7 @@ def named_variant(name="night", *, comment=False):
     return path
 
 
-def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
+def test_all_widget_types_are_fixed_and_base_numbers_visible(milestone_4_files, center_template):
     app = open_simulation()
     for widget in app.number_input:
         integer = widget.key.startswith(("edit_turnos.", "edit_recursos.")) or widget.key in (
@@ -96,7 +96,7 @@ def test_all_widget_types_are_fixed_and_base_numbers_visible(center_template):
     )
 
 
-def test_multiple_errors_disable_saving_and_show_each_diagnostic():
+def test_multiple_errors_disable_saving_and_show_each_diagnostic(milestone_4_files):
     app = open_simulation()
     edit(app, "recursos.medicos", 0, 0)
     edit(app, "destino.probabilidad_ingreso", 1, 1.1)
@@ -227,7 +227,7 @@ def test_invalid_or_reserved_variant_name_blocks_save(name):
 
 
 def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
-    monkeypatch, center_template
+    milestone_4_files, monkeypatch, center_template
 ):
     import os
     from unittest.mock import Mock
@@ -279,7 +279,7 @@ def test_preview_displays_core_table_caches_edits_and_profile_fingerprint(
     assert app.dataframe[-1].value.equals(utilization_frame(changed))
 
 
-def test_preview_explains_multiple_prior_days(monkeypatch):
+def test_preview_explains_multiple_prior_days(milestone_4_files, monkeypatch):
     from dataclasses import replace
 
     from edsim.runs import load_center, load_profile, load_profiles
@@ -405,7 +405,7 @@ def test_reducing_days_adjusts_warmup_and_settings_survive_navigation():
     assert app.number_input(key="warmup_widget").value == 0
 
 
-def test_unsaved_destination_changes_block_simulation():
+def test_unsaved_destination_changes_block_simulation(milestone_4_files):
     app = open_simulation()
     edit(app, "destino.probabilidad_ingreso", 0, 0.5)
     assert any("destino.probabilidad_ingreso" in x.value for x in app.markdown)
@@ -534,7 +534,10 @@ def test_unreadable_or_invalid_profile_blocks_simulation(kind):
 
 
 @pytest.mark.parametrize("error_type", [ValueError, RuntimeError, OSError])
-def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_type):
+def test_offered_calculation_does_not_hide_internal_errors(
+    milestone_4_files, monkeypatch, error_type
+):
+    # The offered load of the milestone 4 model: Simular disables it with milestone 5 (#103).
     from edsim_app import preview
 
     def fail(*args, **kwargs):
@@ -560,7 +563,9 @@ def test_offered_calculation_does_not_hide_internal_errors(monkeypatch, error_ty
         ("probabilidad_ingreso", 0, "true", "destino.probabilidad_ingreso[0]"),
     ],
 )
-def test_unrepresentable_raw_values_stop_before_widgets(key, index, replacement, error):
+def test_unrepresentable_raw_values_stop_before_widgets(
+    milestone_4_files, key, index, replacement, error
+):
     source = defaults.CENTER_PATH.read_bytes()
     changed = replace_raw_value(source, key, replacement, index)
     defaults.CENTER_PATH.write_bytes(changed)
@@ -572,7 +577,9 @@ def test_unrepresentable_raw_values_stop_before_widgets(key, index, replacement,
     assert defaults.CENTER_PATH.read_bytes() == changed
 
 
-def test_change_list_names_fields_and_formats_staff_and_destination(center_template):
+def test_change_list_names_fields_and_formats_staff_and_destination(
+    milestone_4_files, center_template
+):
     doctors = center_template["recursos"]["medicos"]
     edited_doctors = doctors.copy()
     edited_doctors[1] += 3

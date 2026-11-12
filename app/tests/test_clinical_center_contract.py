@@ -14,8 +14,10 @@ from edsim_app import defaults
 
 @pytest.mark.slow
 def test_center_without_provisional_sections_can_save_preview_and_simulate(
-    tmp_path, monkeypatch, catalog_root
+    milestone_4_files, tmp_path, monkeypatch, catalog_root
 ):
+    # The milestone 4 center: it edits [destino] and previews the offered load, which the
+    # milestone 5 model does not have yet (#103).
     document = tomlkit.parse(defaults.CENTER_PATH.read_text())
     for section in ("triaje", "duraciones", "pruebas"):
         document.pop(section, None)

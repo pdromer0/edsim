@@ -405,14 +405,17 @@ def box_waits_by_hand(events, horizon):
 
 
 def test_catorce_dias_con_la_sala():
-    # config/ (espera_resultados_fuera = [4, 5]), 14 días con 2 de calentamiento: cero
-    # violaciones, utilización exacta y la cola de box contada por dos caminos.
+    # El centro base del hito 4 (espera_resultados_fuera = [4, 5]; el config/ de antes de
+    # la tarea 5.6, congelado: sin abandono, más de 1000 pacientes esperan en la sala), 14
+    # días con 2 de calentamiento: cero violaciones, utilización exacta y la cola de box
+    # contada por dos caminos.
     from edsim.engine.analysis import analyze_run
     from edsim.engine.invariants import check_invariants
     from edsim.profiles.config import load_profiles
 
     config = Path(__file__).resolve().parents[1] / "config"
-    center, profiles = load_center(config / "centro.toml"), load_profiles(config / "perfiles.toml")
+    center = load_center(DATA / "centro_h4.toml")
+    profiles = load_profiles(DATA / "perfiles_h4.toml")
     sink = MemorySink()
     result = simulate_ed(
         center,

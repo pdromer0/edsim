@@ -902,9 +902,9 @@ def test_simular_con_perfiles_invalidos_es_un_error_de_uso(kind, tmp_path, capsy
 # --- Modelo clínico por defecto y --provisional (tarea 4.9) ----------------------------
 
 
-def test_simular_sin_opciones_escribe_una_ejecucion_clinica(monkeypatch, tmp_path, capsys):
-    # Sin --perfiles ni --provisional: el modelo clínico con config/perfiles.toml (copia,
-    # huella y catálogo versión 3), como con --perfiles.
+def test_simular_sin_opciones_escribe_una_ejecucion_del_hito_5(monkeypatch, tmp_path, capsys):
+    # Sin --perfiles ni --provisional: config/, que desde la tarea 5.6 es el modelo del hito
+    # 5 (copia, huella, catálogo versión 4 y run.json versión 3), sin invariantes violadas.
     monkeypatch.chdir(REPO)
     out_dir = tmp_path / "salida"
 
@@ -915,14 +915,44 @@ def test_simular_sin_opciones_escribe_una_ejecucion_clinica(monkeypatch, tmp_pat
 
     assert code == 0
     fingerprint = config_fingerprint("config/perfiles.toml")
-    assert header[1] == f"Modelo clínico · perfiles config/perfiles.toml (huella {fingerprint})"
+    assert header[1] == (
+        "Modelo del hito 5 (abandono, destinos y espera de cama) · perfiles"
+        f" config/perfiles.toml (huella {fingerprint})"
+    )
     metadata = json.loads((out_dir / "run.json").read_text())
-    assert metadata["model"] == "clinico"
+    assert (metadata["model"], metadata["format_version"], metadata["schema_version"]) == (
+        "clinico",
+        3,
+        4,
+    )
     assert metadata["clinical_profiles_path"] == "config/perfiles.toml"
     assert metadata["clinical_profiles_fingerprint"] == fingerprint
+    assert metadata["invariant_violations"] == 0
     assert (out_dir / "perfiles.toml").read_bytes() == (
         REPO / "config" / "perfiles.toml"
     ).read_bytes()
+    events = list(read_events(out_dir / "eventos.jsonl"))
+    assert events and {e.schema_version for e in events} == {4}
+
+
+def test_simular_el_hito_4_con_sus_copias_congeladas(monkeypatch, tmp_path, capsys):
+    # El modelo clínico del hito 4 se sigue pidiendo con sus ficheros: el config/ de antes
+    # de la tarea 5.6, congelado en tests/data (catálogo versión 3, decisión 68).
+    monkeypatch.chdir(REPO)
+    out_dir = tmp_path / "salida"
+    profiles = "tests/data/perfiles_h4.toml"
+
+    code = main(
+        ["motor", "simular", "--dias", "1", "--calentamiento", "0", "--salida", str(out_dir)]
+        + ["--centro", "tests/data/centro_h4.toml", "--perfiles", profiles]
+    )
+    header = capsys.readouterr().out.splitlines()
+
+    assert code == 0
+    fingerprint = config_fingerprint(profiles)
+    assert header[1] == f"Modelo clínico · perfiles {profiles} (huella {fingerprint})"
+    metadata = json.loads((out_dir / "run.json").read_text())
+    assert (metadata["model"], metadata["format_version"]) == ("clinico", 2)
     events = list(read_events(out_dir / "eventos.jsonl"))
     assert events and {e.schema_version for e in events} == {3}
 
@@ -986,6 +1016,7 @@ PROFILE_PLOTS = (
 # exige la CLI y basta también para ese contexto (20 898). Con menos, la CLI responde
 # con el código 2.
 MORNING = (ArrivalContext(0, 0, 0),)
+H4_PROFILES = "tests/data/perfiles_h4.toml"
 
 
 @pytest.fixture
@@ -994,14 +1025,17 @@ def one_context(monkeypatch):
     from edsim.profiles import validation
 
     monkeypatch.chdir(REPO)
-    patients = validation.mixing_minimum(load_profiles(REPO / "config" / "perfiles.toml"))
+    # Los perfiles del hito 4 (config/ hasta la tarea 5.6, congelado): sus cuatro
+    # comprobaciones, sin la paciencia y los destinos del bloque del hito 5, que añaden un
+    # minuto (los valida el test slow con config/).
+    patients = validation.mixing_minimum(load_profiles(REPO / H4_PROFILES))
 
     def use(**overrides):
         monkeypatch.setattr(
             "edsim.cli.validate_profiles",
             partial(validation.validate_profiles, contexts=MORNING, **overrides),
         )
-        return ["--pacientes", str(patients)]
+        return ["--pacientes", str(patients), "--perfiles", H4_PROFILES]
 
     return use, patients
 
@@ -1014,8 +1048,8 @@ def test_perfiles_validar_imprime_la_tabla_y_guarda_las_graficas(one_context, tm
     out = capsys.readouterr().out
 
     assert code == 0
-    huella = config_fingerprint("config/perfiles.toml")
-    assert out.startswith(f"Perfiles · config/perfiles.toml (huella {huella})")
+    huella = config_fingerprint(H4_PROFILES)
+    assert out.startswith(f"Perfiles · {H4_PROFILES} (huella {huella})")
     assert f"{patients} pacientes por contexto en la mezcla · {patients} en la muestra" in out
     for label in ("Mezcla de motivos", "Triaje", "Pruebas", "Duraciones"):
         assert any(line.startswith(label) and line.endswith("pasa") for line in out.splitlines())
@@ -1031,7 +1065,7 @@ def test_perfiles_validar_devuelve_1_si_falla_y_guarda_las_graficas(one_context,
     # con el sesgo del triaje desplazado +1 y la hipótesis es la de los perfiles (el
     # mecanismo de los tests de potencia, sampled_profiles).
     use, _ = one_context
-    profiles = load_profiles(REPO / "config" / "perfiles.toml")
+    profiles = load_profiles(REPO / H4_PROFILES)
     sampled = dataclasses.replace(
         profiles, triage=dataclasses.replace(profiles.triage, bias=profiles.triage.bias + 1.0)
     )
