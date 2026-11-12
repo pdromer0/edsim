@@ -34,5 +34,18 @@ def test_el_modelo_de_los_dos_ficheros(center, profiles, model):
 
 def test_un_bloque_del_hito_5_en_un_solo_fichero_es_un_error():
     center = load_center(DATA / "centro_h5_ejemplo.toml")
-    with pytest.raises(RunConfigurationError):
+    with pytest.raises(RunConfigurationError, match="perfiles.toml"):
         patient_model(center, load_profiles(DATA / "perfiles_ejemplo.toml"))
+
+
+def test_el_error_nombra_los_ficheros_elegidos():
+    """Simular pasa sus rutas: el error dice qué ficheros no casan, no «centro.toml»."""
+    center = load_center(DATA / "centro_h5_ejemplo.toml")
+    with pytest.raises(RunConfigurationError, match="variantes/h5.toml") as error:
+        patient_model(
+            center,
+            load_profiles(DATA / "perfiles_ejemplo.toml"),
+            center_file="variantes/h5.toml",
+            profiles_file="mis_perfiles.toml",
+        )
+    assert "mis_perfiles.toml" in str(error.value)

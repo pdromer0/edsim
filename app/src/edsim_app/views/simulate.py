@@ -490,7 +490,12 @@ with preview_container:
     model = None
     if profile_valid and not validate_center_values(draft.values):
         try:
-            model = patient_model(center_from_values(draft.values), profiles)
+            model = patient_model(
+                center_from_values(draft.values),
+                profiles,
+                center_file=str(draft.source),
+                profiles_file=str(clinical_path),
+            )
         except RunConfigurationError as error:
             st.error(str(error))
     if model is PatientModel.MILESTONE_5:

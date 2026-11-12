@@ -105,18 +105,25 @@ def _check_provisional_center(center: str | Path) -> None:
         raise RunConfigurationError(str(error)) from error
 
 
-def patient_model(center: CenterConfig, profiles: ClinicalProfiles | None) -> PatientModel:
+def patient_model(
+    center: CenterConfig,
+    profiles: ClinicalProfiles | None,
+    *,
+    center_file: str = "centro.toml",
+    profiles_file: str = "perfiles.toml",
+) -> PatientModel:
     """The model of the patients that a center and its profiles choose (H5-2, task 5.5).
 
     The app asks it before computing the offered load, which does not exist
-    yet for milestone 5 (issue #103).
+    yet for milestone 5 (issue #103). ``center_file`` and ``profiles_file``
+    name the two files in the error.
 
     Raises:
         RunConfigurationError: If the two files do not choose one model, with
             the message of ``choose_model``.
     """
     try:
-        return choose_model(center, profiles)
+        return choose_model(center, profiles, center_file=center_file, profiles_file=profiles_file)
     except ModelChoiceError as error:
         raise RunConfigurationError(str(error)) from error
 
@@ -132,12 +139,9 @@ def _check_model(center: str | Path, profiles: str | Path) -> None:
         center_config, clinical_profiles = load_center(center), load_profiles(profiles)
     except (OSError, ValueError):
         return
-    try:
-        choose_model(
-            center_config, clinical_profiles, center_file=str(center), profiles_file=str(profiles)
-        )
-    except ModelChoiceError as error:
-        raise RunConfigurationError(str(error)) from error
+    patient_model(
+        center_config, clinical_profiles, center_file=str(center), profiles_file=str(profiles)
+    )
 
 
 def simulate_run(
