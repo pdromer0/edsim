@@ -86,6 +86,13 @@ def render_filters(result: RunResults) -> EpisodeFilters:
             "bed": ("Pide cama", yes_no),
             "hallway": ("Espera la cama en el pasillo", yes_no),
         }
+    # Transfers and deaths exist only with the milestone 5 model (H5-5).
+    destinations = [None, "alta", "ingreso"] + (
+        ["traslado", "exitus"] if result.outcome is not None else []
+    )
+    if values["destination"] not in destinations:
+        values["destination"] = None
+        st.info("Se ha quitado el filtro de destino: esta ejecución solo tiene alta e ingreso.")
     for field in ("left", "left_from", "bed", "hallway"):
         if values[field] is not None and field not in outcome_choices:
             values[field] = None
@@ -109,7 +116,7 @@ def render_filters(result: RunResults) -> EpisodeFilters:
             (
                 "destination",
                 "Destino",
-                [None, "alta", "ingreso", "traslado", "exitus"],
+                destinations,
                 lambda value: "Todos" if value is None else value.capitalize(),
             ),
             (

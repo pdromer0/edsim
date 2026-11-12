@@ -288,13 +288,21 @@ def test_episodes_filters_of_the_outcome_match_the_core(h5_catalog):
 def test_episodes_outcome_filter_is_removed_for_a_milestone_4_run(h5_catalog):
     app = open_page("views/episodes.py")
     app.selectbox(key="episode_filter_left_widget").set_value(True).run()
+    app.selectbox(key="episode_filter_destination_widget").set_value("exitus").run()
     app.query_params["run"] = "h4"
     app.session_state["selected_run_id"] = "h4"
     app.run()
     assert not app.exception
-    assert any("filtro del desenlace" in i.value for i in app.info)
-    assert app.session_state["episode_filters"]["left"] is None
+    notices = " ".join(i.value for i in app.info)
+    assert "filtro del desenlace" in notices and "filtro de destino" in notices
+    filters = app.session_state["episode_filters"]
+    assert filters["left"] is None and filters["destination"] is None
     assert not any(s.key == "episode_filter_left_widget" for s in app.selectbox)
+    assert app.selectbox(key="episode_filter_destination_widget").options == [
+        "Todos",
+        "Alta",
+        "Ingreso",
+    ]
 
 
 @pytest.mark.slow
