@@ -233,18 +233,27 @@ def render_truth(result: RunResults, root: str, fingerprint: str) -> None:
     except RunReadError as error:
         st.error(str(error))
         return
-    st.markdown("**Cumplimiento Manchester por nivel real (reloj C)**")
-    compliance = true_level_window_compliance(
-        result.analysis.table, truth, result.info.warmup_days, result.info.days
-    )
-    st.dataframe(true_level_compliance_frame(compliance), hide_index=True, width="stretch")
-    if result.outcome is not None:
-        st.markdown("**Abandono por nivel real**")
-        by_level, harm = true_level_abandonment_frames(
-            true_level_abandonment(
+    try:
+        compliance = true_level_window_compliance(
+            result.analysis.table, truth, result.info.warmup_days, result.info.days
+        )
+        abandonment = (
+            None
+            if result.outcome is None
+            else true_level_abandonment(
                 result.analysis.table, truth, result.outcome.start, result.outcome.end
             )
         )
+    except ValueError as error:
+        # The truth lacks an episode of the window, or its clinical part or outcome:
+        # the folder was changed outside the app (simulate_run always writes it whole).
+        st.error(f"ground_truth_episodios.csv no casa con el log: {error}")
+        return
+    st.markdown("**Cumplimiento Manchester por nivel real (reloj C)**")
+    st.dataframe(true_level_compliance_frame(compliance), hide_index=True, width="stretch")
+    if abandonment is not None:
+        st.markdown("**Abandono por nivel real**")
+        by_level, harm = true_level_abandonment_frames(abandonment)
         st.dataframe(by_level, hide_index=True)
         st.dataframe(harm, hide_index=True)
 

@@ -414,3 +414,18 @@ def test_compare_explains_the_catalog_block_and_lists_profile_keys(h5_catalog):
 def test_compare_a_run_with_itself_has_identical_profiles(h5_catalog):
     app = open_compare("h5", "h5")
     assert "Perfiles clínicos idénticos." in [c.value for c in app.caption]
+
+
+@pytest.mark.slow
+def test_results_truth_that_lacks_an_episode_is_an_error_not_an_exception(h5_catalog):
+    result = results(h5_catalog)
+    victim = next(e.episode_id for e in result.analysis.table if e.arrival >= 1440)
+    path = h5_catalog / "h5" / "ground_truth_episodios.csv"
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith(f"{victim},")]
+    assert len(kept) == len(lines) - 1
+    path.write_text("".join(kept), encoding="utf-8")
+    app = open_page("views/results.py")
+    app.toggle(key="results_truth_widget").set_value(True).run()
+    assert not app.exception
+    assert any(victim in e.value and "no casa con el log" in e.value for e in app.error)
