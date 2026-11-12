@@ -172,8 +172,18 @@ def render_replay_help() -> None:
     """Explain the plan's zones, the hallway mark and the abandonment as a separate closure."""
     with st.expander("¿Qué estoy viendo?"):
         st.write(
-            "El plano reconstruye el servicio en el instante elegido: colas, triaje, boxes, "
-            "médicos y las salidas de la última hora. Los colores son el nivel asignado."
+            "El plano reconstruye el log hasta el instante elegido, incluidos sus eventos: "
+            "colas, triaje, boxes, médicos y las salidas de la última hora. Los contadores "
+            "usan las mismas curvas que Resultados. El triaje atiende por llegada y la cola "
+            "de box por nivel y llegada; solo el nivel 1 puede desalojar."
+        )
+        st.write(
+            "La edad y el motivo de la ficha solo aparecen cuando ya constan en el log. "
+            "Los colores muestran el nivel asignado, nunca el real. La sala de resultados "
+            "está fuera del box; su etiqueta distingue espera de pruebas y vuelta al box. "
+            "El laboratorio sigue trabajando si el paciente pierde su box. Los bordes "
+            "marcan desalojos de los últimos 60 minutos. Ocupados / plantilla puede "
+            "superar 1 al bajar la plantilla: nadie se interrumpe. Horas UTC+1 fijo."
         )
         st.write(
             "Con el modelo del hito 5, un ingresado espera la cama en su box («Esperando "

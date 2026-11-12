@@ -95,6 +95,15 @@ def test_replay_shows_the_wait_for_a_bed_in_the_hallway(h5_catalog):
     assert patients.loc[record.episode_id, "Estado"] == "Pasillo · esperando cama"
 
 
+def test_replay_has_a_single_help_with_the_plan_and_the_bed(h5_catalog):
+    app = open_page("views/replay.py")
+    assert app.header[0].value == "h5"  # a run is chosen: the page below the selector ran
+    helps = [box for box in app.expander if box.label == "¿Qué estoy viendo?"]
+    assert len(helps) == 1
+    text = " ".join(item.value for item in helps[0].markdown)
+    assert "Esperando cama" in text and "UTC+1 fijo" in text
+
+
 def test_episodes_opens_the_card_of_a_hallway_patient(h5_catalog):
     record, _ = hallway_case(h5_catalog)
     app = open_page("views/episodes.py", episode=record.episode_id)

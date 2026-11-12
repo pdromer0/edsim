@@ -262,20 +262,6 @@ except (RunReadError, RunAnalysisError) as error:
     st.stop()
 identity = (str(store.root), selected, fingerprint)
 position = replay_position(identity)
-with st.expander("¿Qué estoy viendo?"):
-    st.write(
-        "El plano reconstruye el log hasta el instante elegido, incluidos sus eventos. "
-        "Los contadores usan las mismas curvas que Resultados. El triaje atiende por "
-        "llegada y la cola de box por nivel y llegada; solo el nivel 1 puede desalojar."
-    )
-    st.write(
-        "La edad y el motivo de la ficha solo aparecen cuando ya constan en el log. "
-        "Los colores muestran el nivel asignado, nunca el real. La sala de resultados "
-        "está fuera del box; su etiqueta distingue espera de pruebas y vuelta al box. "
-        "El laboratorio sigue trabajando si el paciente pierde su box. Los bordes "
-        "marcan desalojos de los últimos 60 minutos. Ocupados / plantilla puede "
-        "superar 1 al bajar la plantilla: nadie se interrumpe. Horas UTC+1 fijo."
-    )
 render_controls(position, info.days, index.horizon)
 st.fragment(run_every=1.0 if position.playing else None, key="replay_live")(render_live)(
     result, identity, index, position
