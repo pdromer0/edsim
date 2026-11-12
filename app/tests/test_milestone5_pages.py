@@ -8,8 +8,10 @@ instant or episode from the data. Displayed figures are compared with what
 ``edsim.runs`` returns, never recomputed here.
 """
 
+import shutil
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import edsim_app
@@ -17,10 +19,12 @@ from edsim.runs import (
     RunStore,
     build_episode_event_index,
     episode_segments,
+    read_center_values,
     read_episode_events,
     read_run_header,
     read_run_results,
 )
+from edsim_app import defaults
 
 MAIN = Path(edsim_app.__file__).with_name("main.py")
 TIMEOUT = 30
@@ -81,3 +85,59 @@ def test_episodes_opens_the_card_of_a_hallway_patient(h5_catalog):
     assert any(f"Ficha del episodio {record.episode_id}" in s.value for s in app.subheader)
     destinations = app.selectbox(key="episode_filter_destination_widget").options
     assert destinations == ["Todos", "Alta", "Ingreso", "Traslado", "Exitus"]
+
+
+# --- Simular with a center with [camas] (task 5.5) -----------------------------------------
+
+
+def open_simulation(profiles):
+    """Simular with a milestone 5 variant copied into the temporary variants folder."""
+    variants = Path(defaults.VARIANTS_DIR)
+    variants.mkdir(parents=True, exist_ok=True)
+    variant = variants / "h5.toml"
+    shutil.copyfile("tests/data/centro_h5_ejemplo.toml", variant)
+    app = AppTest.from_file(MAIN, default_timeout=TIMEOUT)
+    app.session_state["simulation_settings"] = {
+        "clinical_path": profiles,
+        "days": defaults.SIMULATION_DAYS,
+        "warmup_days": defaults.SIMULATION_WARMUP_DAYS,
+        "seed": "2026",
+        "run_id": "",
+        "run_id_mode": "automatic",
+    }
+    app.run().switch_page("views/simulate.py").run()
+    app.selectbox(key="source_widget").set_value(str(variant)).run()
+    assert not app.exception
+    return app, variant
+
+
+@pytest.mark.slow
+def test_simulate_edits_the_wait_for_a_bed_and_explains_the_missing_load():
+    app, variant = open_simulation("tests/data/perfiles_h5_ejemplo.toml")
+    assert not app.error
+    values = read_center_values(variant)
+    shown = {
+        key: [app.number_input(key=f"edit_{key}_{i}").value for i in range(n)]
+        for key, n in (("camas.espera", 2), ("camas.factor_turno", 3))
+    }
+    assert shown == {key: values[key] for key in shown}
+    keys = {widget.key for widget in app.number_input}
+    # The file has no seasonal factor, and a center with [camas] has no admission probability.
+    assert not any(k.startswith(("edit_camas.factor_estacion", "edit_destino.")) for k in keys)
+    assert "La carga prevista del modelo del hito 5 llega con el issue #103." in [
+        i.value for i in app.info
+    ]
+    app.number_input(key="edit_camas.espera_0").set_value(300.0).run()
+    assert not app.exception
+    changes = " ".join(m.value for m in app.markdown)
+    assert "Espera de cama (min)" in changes and "camas.espera" in changes
+
+
+@pytest.mark.slow
+def test_simulate_shows_the_core_error_when_the_files_do_not_agree():
+    app, _ = open_simulation(str(defaults.CLINICAL_PROFILES_PATH))
+    assert not app.exception
+    assert any("camas" in e.value or "milestone 5" in e.value for e in app.error)
+    assert "Corrige la configuración para calcular la carga prevista." in [
+        i.value for i in app.info
+    ]

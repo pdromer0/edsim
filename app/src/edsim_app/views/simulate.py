@@ -7,11 +7,13 @@ import streamlit as st
 
 from edsim.runs import (
     MAX_VARIANT_NAME_LENGTH,
+    PatientModel,
     RunConfigurationError,
     center_diff,
     center_from_values,
     list_variants,
     load_center,
+    patient_model,
     simulate_run,
     summarize_profiles,
     validate_center_values,
@@ -53,16 +55,32 @@ def decimal(value: float, digits: int = 1) -> str:
     return f"{value:.{digits}f}".replace(".", ",")
 
 
-def editor_fields():
-    """Expose only the center fields used by clinical simulations."""
+CLINICAL_KEYS = frozenset(
+    key for key, *_ in FIELDS if key.startswith(("turnos.", "recursos.", "destino.", "camas."))
+)
+
+
+def editor_fields(values: dict[str, object]):
+    """Expose the center fields of the clinical models that the draft has.
+
+    A milestone 5 center has ``[camas]`` instead of ``[destino]`` (decision 72):
+    its keys replace the admission probability, and the optional seasonal
+    factor is shown only when the file has it. Without either table, the
+    milestone 4 field stays, so the core's missing-key error is shown with it.
+    """
+    beds = any(key.startswith("camas.") for key in values)
     return tuple(
-        field for field in FIELDS if field[0].startswith(("turnos.", "recursos.", "destino."))
+        field
+        for field in FIELDS
+        if field[0].startswith(("turnos.", "recursos."))
+        or (field[0].startswith("destino.") and not beds)
+        or (field[0].startswith("camas.") and field[0] in values)
     )
 
 
 def has_editable_values(values: dict[str, object]) -> bool:
     """Check widget representations; semantic validation stays in the core."""
-    for key, _, integer, labels in editor_fields():
+    for key, _, integer, labels in editor_fields(values):
         if key not in values:
             return False
         value = values[key]
@@ -141,6 +159,14 @@ def save_draft(draft: CenterDraft, destination: Path, overwrite: bool = False) -
     st.rerun()
 
 
+def source_label(path: str) -> str:
+    """Name the two centers of config/ apart from the saved variants."""
+    return {
+        defaults.CENTER_PATH: "Centro base",
+        defaults.COMPLIANT_CENTER_PATH: "Centro cumplidor",
+    }.get(Path(path), Path(path).stem)
+
+
 def render_center() -> tuple[CenterDraft, bool]:
     """Render the durable raw draft and return its current blocking state."""
     st.header("1. El centro")
@@ -151,7 +177,11 @@ def render_center() -> tuple[CenterDraft, bool]:
             st.error(f"No se puede leer el centro base: {error}")
             st.stop()
     draft = st.session_state.center_draft
-    sources = [defaults.CENTER_PATH, *list_variants(defaults.VARIANTS_DIR)]
+    sources = [
+        defaults.CENTER_PATH,
+        *([defaults.COMPLIANT_CENTER_PATH] if defaults.COMPLIANT_CENTER_PATH.is_file() else []),
+        *list_variants(defaults.VARIANTS_DIR),
+    ]
     if draft.source not in sources:
         sources.append(draft.source)
     st.session_state.source_widget = str(draft.source)
@@ -159,7 +189,7 @@ def render_center() -> tuple[CenterDraft, bool]:
         "Origen del centro",
         [str(p) for p in sources],
         key="source_widget",
-        format_func=lambda p: "Centro base" if Path(p) == defaults.CENTER_PATH else Path(p).stem,
+        format_func=source_label,
         on_change=choose_source,
     )
     if pending := st.session_state.get("pending_source"):
@@ -198,7 +228,7 @@ def render_center() -> tuple[CenterDraft, bool]:
             "y vuelve a cargar su origen."
         )
         st.stop()
-    for key, label, integer, labels in editor_fields():
+    for key, label, integer, labels in editor_fields(draft.values):
         if key == "recursos.enfermeria_triaje":
             render_staff(draft, errors)
             continue
@@ -218,7 +248,7 @@ def render_center() -> tuple[CenterDraft, bool]:
                 )
         if key in errors:
             st.error(errors[key])
-    noneditable_errors = errors.keys() - {field[0] for field in editor_fields()}
+    noneditable_errors = errors.keys() - {field[0] for field in editor_fields(draft.values)}
     for key in sorted(noneditable_errors):
         st.error(f"{key}: {errors[key]}")
     if noneditable_errors:
@@ -233,7 +263,7 @@ def render_center() -> tuple[CenterDraft, bool]:
             differences = tuple(
                 change
                 for change in center_diff(base, center_from_values(draft.values))
-                if change.key in {field[0] for field in editor_fields()}
+                if change.key in CLINICAL_KEYS
             )
             if differences:
                 field_labels = {key: label for key, label, _, _ in FIELDS}
@@ -457,7 +487,16 @@ with execution_container:
     render_execution(draft, blocked, profile_valid)
 with preview_container:
     st.header("2. La carga prevista")
+    model = None
     if profile_valid and not validate_center_values(draft.values):
+        try:
+            model = patient_model(center_from_values(draft.values), profiles)
+        except RunConfigurationError as error:
+            st.error(str(error))
+    if model is PatientModel.MILESTONE_5:
+        st.info("La carga prevista del modelo del hito 5 llega con el issue #103.")
+        render_simulate_help()
+    elif model is not None:
         work = preview_work(draft.values, defaults.PROFILE_PATH, clinical_path)
         st.caption(
             f"Perfil: {defaults.PROFILE_PATH}. Ventana prevista: 7 días; medias de 15 minutos."

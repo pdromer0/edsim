@@ -91,9 +91,10 @@ def simulation_files(tmp_path, monkeypatch):
     st.cache_resource.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
-    for name in ("centro.toml", "llegadas.toml", "perfiles.toml"):
+    for name in ("centro.toml", "centro_cumplidor.toml", "llegadas.toml", "perfiles.toml"):
         (config / name).write_bytes((Path("config") / name).read_bytes())
     monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")
+    monkeypatch.setattr(defaults, "COMPLIANT_CENTER_PATH", config / "centro_cumplidor.toml")
     monkeypatch.setattr(defaults, "PROFILE_PATH", config / "llegadas.toml")
     monkeypatch.setattr(defaults, "CLINICAL_PROFILES_PATH", config / "perfiles.toml")
     monkeypatch.setattr(defaults, "VARIANTS_DIR", tmp_path / "variants")

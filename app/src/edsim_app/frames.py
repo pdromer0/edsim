@@ -42,6 +42,14 @@ FIELDS = (
     ("duraciones.respuesta_pruebas", "Respuesta de pruebas (min)", False, ("mediana", "p90")),
     ("pruebas.probabilidad", "Probabilidad de pruebas", False, LEVELS),
     ("destino.probabilidad_ingreso", "Probabilidad de ingreso", False, LEVELS),
+    ("camas.espera", "Espera de cama (min)", False, ("mediana", "p90")),
+    ("camas.factor_turno", "Factor de la espera de cama por turno", False, SHIFTS),
+    (
+        "camas.factor_estacion",
+        "Factor de la espera de cama por estación",
+        False,
+        ("invierno", "primavera", "verano", "otoño"),
+    ),
 )
 
 
