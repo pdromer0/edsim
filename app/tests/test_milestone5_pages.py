@@ -246,6 +246,7 @@ def test_results_show_the_outcome_with_its_lower_bounds(h5_catalog):
 @pytest.mark.slow
 def test_results_of_milestone_4_have_no_outcome(h5_catalog):
     app = open_page("views/results.py", run_id="h4")
+    assert "Modelo: Clínico · hito 4 (v3)" in [c.value for c in app.caption]
     assert "Desenlace: abandono, destinos y espera de cama" not in [s.value for s in app.subheader]
     options = app.selectbox(key="results_curve_widget").options
     assert "Boxes con ingresados esperando cama" not in options
@@ -446,6 +447,9 @@ def test_compare_explains_the_catalog_block_and_lists_profile_keys(h5_catalog):
     app = open_compare("h4", "h5")
     notice = " ".join(i.value for i in app.info)
     assert "Versión del catálogo: 3 → 4" in notice
+    captions = [c.value for c in app.caption]
+    assert "Modelo: Clínico · hito 4 (v3)" in captions
+    assert "Modelo: Clínico · hito 5 (v4)" in captions
     expected = profiles_diff(
         read_run_profiles_values(store, "h4"), read_run_profiles_values(store, "h5")
     )

@@ -33,7 +33,7 @@ from edsim_app.comparison_frames import (
     profiles_differences_frame,
 )
 from edsim_app.episodes import open_comparison_episode
-from edsim_app.frames import format_number, kpis_frame
+from edsim_app.frames import format_number, kpis_frame, model_label
 from edsim_app.help import render_compare_help
 from edsim_app.results import cached_run_results
 from edsim_app.state import catalog_store
@@ -70,7 +70,7 @@ def render_side(store: RunStore, side: str, choices: list[str]) -> tuple[RunResu
             f"Variante: {info.variant} · Semilla: {info.seed} · "
             f"Días: {info.days} · Calentamiento: {info.warmup_days}"
         )
-        st.caption(f"Modelo: {'Clínico' if info.is_clinical else 'Provisional'}")
+        st.caption(f"Modelo: {model_label(info)}")
         if info.is_clinical:
             st.caption(f"Perfiles: {info.clinical_profiles_path}")
             st.caption(f"Huella de perfiles clínicos: {info.clinical_profiles_fingerprint}")
