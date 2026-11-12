@@ -25,6 +25,7 @@ from edsim_app.frames import (
     observed_profile_row,
     wall_times,
 )
+from edsim_app.help import render_replay_help
 from edsim_app.plan import render_plan
 from edsim_app.replay import (
     advance_playback,
@@ -234,6 +235,7 @@ def render_live(result, identity, index, position):
 
 
 st.title("Replay")
+render_replay_help()
 store = catalog_store()
 choices = [None, *[info.run_id for info in store.list()]]
 st.session_state.replay_run_widget = st.session_state.selected_run_id
