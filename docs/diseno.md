@@ -88,7 +88,7 @@ Un paciente puede estar en la sala de espera mientras tiene una analítica en cu
 
 ### Destinos y límites
 
-Destinos finales: alta a domicilio, observación, ingreso, traslado, abandono sin ser visto y exitus. Quedan fuera del sistema lo prehospitalario y lo que ocurre en planta tras el ingreso.
+Destinos finales: alta a domicilio, observación, ingreso, traslado, abandono sin ser visto y exitus. Quedan fuera del sistema lo prehospitalario y lo que ocurre en planta tras el ingreso. En la v0 (hito 5) hay cuatro destinos tras la decisión (alta, ingreso, traslado y exitus) más el abandono sin ser visto, que cierra el episodio sin decisión; la observación llega con la v2.
 
 Marco temporal: turnos 8–15, 15–22 y 22–8; reloj en minutos; horizonte de simulación configurable.
 
@@ -198,6 +198,18 @@ Hay dos tipos de parámetros. Los directos (mezcla de motivos, triaje, ingresos)
 
 **Calibración del hito 4.** `config/objetivos.toml` guarda cada objetivo con su horquilla y su fuente (SAS, CMBD de 2013, con menores). De ajuste, uno por mando: el pretriaje medio de los niveles 2 a 5 (6–15 min, referencia 12,4) para la enfermería de triaje y el tiempo puerta-médico medio de los niveles 2 a 5 (reloj A, 35–70 min) para los médicos. De comprobación, que nunca eligen: el reloj A del nivel 3 (45–75 min, discrepancia estructural escrita), el porcentaje por encima del máximo de Manchester con el reloj A (10–30 %) y el porcentaje con más de 5 minutos de pretriaje (30–60 %). Los boxes quedan fijos (30). Con la ventana anual (una réplica de 14 días por mes), el centro base queda con la enfermería de triaje `[3, 2, 1]` y los médicos `[12, 11, 4]` (pretriaje 6,8 min y reloj A 42,1 min con la semilla 2026). `config/centro_cumplidor.toml` (médicos `[14, 14, 6]`) es la variante que cumple Manchester. Detalle en [docs/specs/hito-4.md](specs/hito-4.md) y en `docs/calibracion/registro.md`.
 
+**Calibración del hito 5** (tarea 5.6, decisión 75). Cinco objetivos nuevos del SAS (CMBD de 2013, sin observación) en `config/objetivos.toml`:
+
+| Objetivo | Horquilla | Uso | Mando |
+| --- | --- | --- | --- |
+| Abandono sobre las llegadas | 1–4 % (referencia 1,82) | Ajuste | Paciencia: un factor k sobre medianas y p90 |
+| Estancia media de los ingresados | 360–600 min (472,5) | Ajuste | Espera de cama: la mediana; el p90, 3 veces la mediana, por criterio |
+| Ingresados con más de 4 h | 35–65 % (49,69) | Comprobación | — |
+| Estancia media de los atendidos | 120–210 min (162,2) | Comprobación | Las duraciones, fijas (decisión 41) |
+| Ingreso observado sobre las llegadas | 8–13 % (9,90) | Comprobación | Derivado en `perfiles.toml`, como traslado y exitus |
+
+Con la plantilla de la 4.6c fija, la espera de cama queda en [210, 630] y la paciencia en k = 4, una discrepancia estructural escrita (medianas de 10 h en el nivel 4 frente a las 2 h que se declaran en las encuestas). Los boxes pasan a ser un derivado: los 30 del hito 4 más los que ocupa de media la espera de cama por la ley de Little, 30 + 6,44 = 36 con la semilla de ajuste. La plantilla y el cumplidor no cambian. Los ingresados con más de 4 h salen al 78,7 %, fuera de su horquilla, porque la forma de la espera es de criterio (#109). Las copias del hito 4 están congeladas en `tests/data/*_h4.toml`. Detalle en [docs/specs/hito-5.md](specs/hito-5.md) y en el registro, «Tarea 5.6».
+
 ## Motor de simulación y reloj
 
 El motor es una simulación de eventos discretos con SimPy que corre siempre en tiempo virtual (minutos); un marcapasos propio lo convierte en tiempo real cuando hace falta.
@@ -282,13 +294,18 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 | `control_command` | Orden desde la API | Comando |
 | `system_snapshot` | Cada 5 minutos | Colas, ocupación, saturación |
 
-**Versiones del catálogo (hito 4).** Cada log lleva una sola versión en el `schema_version` del sobre, una por modelo y no por configuración:
+**Versiones del catálogo (hitos 4 y 5).** Cada log lleva una sola versión en el `schema_version` del sobre, una por modelo y no por configuración:
 
 - **Versión 1**, modelo provisional: los eventos del hito 3 que el motor escribe, con `circuito` en `triage_started` (`puerta` para el nivel 1 o `enfermeria`).
 - **Versión 2**, modelo clínico (tarea 4.5a): `medio` en `patient_arrived`, `edad` y `sexo` en `patient_registered`, `motivo` en `triage_completed`, la lista de pruebas en `test_ordered` y el resultado de cada una en `test_resulted`.
 - **Versión 3**, modelo clínico desde la tarea 4.6a: la versión 2 más `box_released` (`box` y `espera`), cuando un paciente de los niveles de `espera_resultados_fuera` deja el box para esperar los resultados.
+- **Versión 4**, modelo del hito 5 (tarea 5.1, decisión 73), el de `config/` desde la 5.6:
+  - la versión 3 más `patient_left_wbs`, con `espera` (`triaje`, `box` o `medico`), cuando la paciencia vence antes del primer médico; cierra el episodio sin decisión;
+  - `bed_requested` y `bed_assigned`, con `servicio` (`planta`, el único valor por ahora), cuando un ingresado pide la cama y cuando le llega; `bed_assigned` va seguido de `patient_departed` en el mismo instante;
+  - el `destino` de `disposition_decided` y `patient_departed`, con cuatro valores: alta, ingreso, traslado y exitus;
+  - eventos terminales (`TERMINAL_EVENTS[4]`): `patient_departed` y `patient_left_wbs`. Un ingresado desalojado por un nivel 1 espera la cama en el pasillo, sin volver a pedir box.
 
-Lo oculto para el hospital (gravedad real, nivel real, calidad del triaje, banda de edad y tiempos de respuesta de las pruebas) no está en ningún catálogo: va al ground truth.
+Lo oculto para el hospital (gravedad real, nivel real, calidad del triaje, banda de edad y tiempos de respuesta de las pruebas; desde el hito 5, también la paciencia, el destino sorteado de quien se fue y la espera de cama base) no está en ningún catálogo: va al ground truth.
 
 ### Topics
 
@@ -520,9 +537,9 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 - **2 · Llegadas:** Poisson no homogéneo, *thinning*, sobredispersión y validación estadística.
 - **3 · Motor y eventos:** paciente, triaje, recursos con prioridad y desalojo, turnos, log de eventos en JSONL y validación del motor.
 - **4 · Perfiles clínicos:** población adulta, 17 motivos, gravedad latente y triaje con error, pruebas por tipo y duraciones por nivel real y motivo, tres relojes, sala de resultados para los niveles 4 y 5 y primera calibración con la ventana anual.
-- **5 · Cierre del flujo:** abandono, destino, boarding simple y ground truth.
+- **5 · Cierre del flujo:** abandono, destino, boarding simple y ground truth. Cerrado con la tarea 5.8 y la etiqueta `v0.5-hito5`, después del 6 (decisión 48).
 - **6 · Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
-- **7 · Persistencia:** consumidor hacia Postgres/Timescale y capa de observación con defectos.
+- **7 · Persistencia:** consumidor hacia Postgres/Timescale y capa de observación con defectos. Es el siguiente, con la fase «motor v0» cerrada (hitos 3 a 5).
 - **8 · Analítica:** dbt (medallón) y Grafana.
 - **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow.
 - **10 · Modelos:** casos de uso de ML, uno a uno.
@@ -536,11 +553,27 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 
 **Aplazado en el hito 4**, con su destino:
 
-- **Hito 5:** destino multinomial, abandono, boarding y su calibración (ingreso, estancia, días punta); ruido de triaje que crece con la saturación.
+- **Hito 5:** destino multinomial, abandono, boarding y su calibración (ingreso, estancia, días punta). Hecho en el hito 5, salvo el ruido de triaje que crece con la saturación, que pasó a la v2 (decisión 67).
 - **v1 (circuitos):** triaje dentro del box y equipo propio para el nivel 1, con desalojo de médicos; circuitos separados para los niveles 4 y 5 (consultas o vía rápida), lo que permitiría calibrar el reloj A del nivel 3.
 - **v3 (perfiles de centro):** pediatría y centros mixtos.
 - **Fase 2 de la app:** editar los perfiles desde la app.
 - **Versiones posteriores o por decidir:** un `test_ordered` y un `test_resulted` por tipo de prueba; reconocimiento en la puerta por la gravedad real; turnos escalonados por mando (pretriaje de noche); plantilla por temporada (refuerzo de invierno); la regla de la plantilla equivalente con la carga prevista por turno en lugar de la tasa de llegadas.
+
+**Aplazado en el hito 5**, con su destino ([especificación](specs/hito-5.md#para-versiones-posteriores)):
+
+| Qué | Adónde | Nota |
+| --- | --- | --- |
+| Ruido de triaje que crece con la saturación, re-triaje | v2 | Decisión 67: sin coeficiente publicado; exige fijar el nivel al empezar el triaje y no al llegar |
+| Alta voluntaria (irse después de ver al médico) | v2 | En el Aljarafe, de 0,7 a 1,7 por 1.000 urgencias |
+| Camas de planta finitas, UCI con camas propias, espera de la ambulancia del traslado | v2 (boarding realista) | Necesita semanas de calentamiento, ingresos programados y la hora de las altas de planta |
+| Observación y reconsultas en 72 h | v2 | Las cifras «con observación» del SAS quedan para entonces |
+| Ingresos defensivos y valoraciones más cortas con la saturación | v2 | Necesitan un índice de saturación en el paciente |
+| Irse al ver la sala llena sin registrarse (*balking*) | Por decidir | No deja rastro en los datos del hospital |
+| Factor de estación de la espera de cama distinto de 1 | Cuando haya fuente | Existe en el fichero para escenarios |
+| Refuerzo de invierno (plantilla por temporada) | Versiones posteriores | Pendiente del hito 4; con él, recalibrar la paciencia (#108) |
+| La forma de la espera de cama: estancia media y ingresados de más de 4 h a la vez | Backlog (#109) | Con [210, 630], el 78,7 % de los ingresados pasa más de 4 h, frente al 49,69 % del SAS |
+| Carga prevista del modelo del hito 5 | Backlog (#103) | Simular avisa de que no existe |
+| Rendimiento de la app | Tarea de proceso | Doble lectura del Replay, tabla de Episodios, límite de `AppTest` |
 
 ### App web
 
@@ -549,6 +582,8 @@ La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al ce
 Fase 1 cerrada el 5 de noviembre de 2026 con la etiqueta `app-v0.1.0`: EDsim Lab, seis páginas (tareas A.0 a A.8) y las ADR 0031 a 0033 y APP-0001 a APP-0003.
 
 Incremento del hito 4 (tareas 4.8a, 4.8b y 4.8c): la app simula y muestra el modelo clínico, con las etiquetas `app-v0.2.0` y `app-v0.2.1` y las ADR APP-0004 (perfiles de solo lectura) y APP-0005 (Simular solo crea ejecuciones clínicas). Especificación y anexo: App web — incrementos.
+
+Incremento del hito 5 (tareas 5.4 y 5.5, las dos de Claude Code): la app abre y simula el modelo del hito 5, con el abandono, los cuatro destinos, la espera de cama y el pasillo, «Ver la verdad» con el desenlace sorteado y la espera de cama editable en Simular. Etiqueta `app-v0.3.0` y decisión 78; el cierre del hito (5.8) añadió el manual y la versión del catálogo en Ejecuciones. Especificación y anexo: [App web — incrementos](../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama).
 
 ## Metodología de trabajo con Claude Code y Cursor
 
@@ -779,7 +814,7 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), y las 80 a 82, de la tarea de proceso P.2, ya con su ADR (las 67 a 79 quedan reservadas al hito 5); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), las 67 a 79, del hito 5 (H5-1 a H5-13, sesión conceptual del 9 y el 10 de noviembre, con sus ADR desde la tarea 5.8), y las 80 a 83, de las tareas de proceso, ya con su ADR; cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -849,6 +884,19 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 64 | Etiqueta de cierre `v0.6-hito6`; la `v0.5-hito5` llegará después | La etiqueta nombra el hito, no el orden |
 | 65 | El simulador no va en un contenedor en este hito: corre en WSL2 con `uv` y entra por el listener `EXTERNAL`; Compose levanta solo Kafka y la consola | Ciclo de desarrollo y tests igual que hoy; el contenedor del simulador llega con la API |
 | 66 | `run_id` del directo = `r`, semilla, `_` y hora de arranque (o `--run-id`); el replay conserva el `run_id` y los `event_id` originales | Dos directos con la misma semilla no comparten `event_id`; reemitir la misma ejecución publica los mismos hechos |
+| 67 | El ruido de triaje que crece con la saturación y el re-triaje van a la v2 ([ADR 0067](decisiones/0067-ruido-de-triaje-y-re-triaje-a-la-v2.md)) | Sin coeficiente publicado no se calibraría, se decidiría; cambia cuándo se fija el nivel; el hito se queda con los dos bucles que tienen dato |
+| 68 | Bloque del hito 5 de todo o nada en `perfiles.toml` y `centro.toml`: sin él, el modelo del hito 4 byte a byte (versión 3); con él, el del hito 5 (versión 4); a medias, un error ([ADR 0068](decisiones/0068-bloque-del-hito-5-de-todo-o-nada.md)) | Lo antiguo se lee con su significado: huellas, ejecuciones guardadas y variantes siguen valiendo |
+| 69 | Abandono solo antes del primer médico, desde tres sitios (triaje, box, médico), con el box liberado; el nivel 1 asignado nunca abandona; el alta voluntaria, a la v2 ([ADR 0069](decisiones/0069-abandono-antes-del-primer-medico.md)) | SEMES mide las fugas antes y después del triaje; con los médicos de cuello de botella, la cola está dentro del box |
+| 70 | Paciencia lognormal `[mediana, p90]` por nivel real, desde la llegada, en el flujo 8; en el empate se queda; con el plazo vencido en el triaje, se va al acabarlo. Calibrada con k = 4, discrepancia estructural escrita ([ADR 0070](decisiones/0070-paciencia-lognormal-por-nivel-real.md)) | Se van los leves y los jóvenes; el nivel real existe antes del triaje; números comunes |
+| 71 | Cuatro destinos con una logística multinomial sobre G, mayor, motivo (en el ingreso) y pruebas alteradas, sorteada con Gumbel-max en el flujo 4; `[destino]` fuera de `config/centro.toml` ([ADR 0071](decisiones/0071-cuatro-destinos-con-logistica-multinomial.md)) | El médico atiende la gravedad real; las pruebas por fin tienen efecto; la UCI necesitaría camas propias (v2) |
+| 72 | Espera de cama lognormal `[mediana, p90]` por un factor del turno del pedido (y uno opcional de estación), en `[camas]`, como `timeout` del propio paciente; calibrada a [210, 630] ([ADR 0072](decisiones/0072-espera-de-cama-lognormal-con-factor-de-turno.md)) | Boarding simple y calibrable; las camas finitas pedirían semanas de calentamiento (v2) |
+| 73 | Catálogo versión 4: `patient_left_wbs`, `bed_requested`, `bed_assigned` y cuatro destinos; `TERMINAL_EVENTS[4]` con el abandono; el ingresado desalojado espera en el pasillo ([ADR 0073](decisiones/0073-catalogo-version-4.md)) | Un evento por hecho; el censo del directo funciona sin tocarlo |
+| 74 | Medias de los atendidos; cumplimiento con censura (quien se va en su máximo o después incumple; antes, no cuenta); indicadores propios del abandono, la cama y el destino; los de nivel real, con el ground truth ([ADR 0074](decisiones/0074-metricas-con-censura-del-abandono.md)) | Cada métrica como su fuente; irse nunca esconde un incumplimiento seguro |
+| 75 | Destinos derivados y escritos; abandono (paciencia) y estancia de los ingresados (espera de cama) de ajuste; el resto, de comprobación; en orden, con la plantilla de la 4.6c fija; los boxes, un derivado: 30 + λ·W = 36 ([ADR 0075](decisiones/0075-calibracion-en-orden-con-un-mando-por-objetivo.md)) | Un mando por objetivo (identificabilidad); los mandos están acoplados; el hito 4 se calibró sin boxes ocupados por ingresados |
+| 76 | El ground truth guarda todo lo sorteado, también el destino contrafactual de quien se fue; CSV con columnas nuevas y `run.json` versión 3 ([ADR 0076](decisiones/0076-ground-truth-con-lo-sorteado-y-el-contrafactual.md)) | Reconstruir cada paciente; medir el daño oculto del abandono; validar modelos con una verdad completa |
+| 77 | Estado «esperando cama» con marca de pasillo y el abandono como cierre contado aparte ([ADR 0077](decisiones/0077-estado-esperando-cama-con-marca-de-pasillo.md)) | Como la sala de resultados: el estado dice qué hace el paciente; la marca, dónde está |
+| 78 | La app enseña el hito 5 entero y cierra los pendientes del hito 4; núcleo y páginas de Claude Code; `app-v0.3.0` ([ADR 0078](decisiones/0078-la-app-ensena-el-hito-5.md)) | Ver el modelo en la app; una tarea con dos temas se revisa peor |
+| 79 | Ocho tareas (5.1 a 5.8) en orden, `@codex review` en la 5.1, la 5.3 y la 5.6, etiqueta `v0.5-hito5` ([ADR 0079](decisiones/0079-ocho-tareas-en-orden-y-etiqueta-v0-5-hito5.md)) | Lo exacto antes que lo que lo junta; el modelo nuevo no es el de por defecto hasta que la app lo soporta |
 | 80 | El repositorio es la fuente de verdad de la documentación (diseño, especificaciones, anexos, decisiones y diario); el documento online queda como archivo ([ADR 0080](decisiones/0080-repositorio-fuente-de-verdad-de-la-documentacion.md)) | Una sola copia que los agentes pueden escribir: nada que exportar ni comparar (tarea P.2) |
 | 81 | GitHub gestor del trabajo: un issue por tarea, etiquetas, milestones, tablero «EDsim», dependencias nativas que mandan sobre el cuerpo del issue y notas del chat como comentario ([ADR 0081](decisiones/0081-github-como-gestor-del-trabajo.md)) | El estado se actualiza solo, junto al código, y las dependencias se pueden comprobar (tarea P.2) |
 | 82 | El ciclo de cada tarea se escribe una vez en `docs/proceso/tarea.md` y lo ejecutan las skills `/tarea-edsim` y `/sincronizar`, con la N3 y `/code-review` en paralelo ([ADR 0082](decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md); matizada por la decisión 83) | Un cambio de proceso se toca una vez, no en cada prompt (tarea P.2) |
