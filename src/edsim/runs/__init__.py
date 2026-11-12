@@ -113,6 +113,11 @@ from edsim.runs.offered import (
     offered_work,
     offered_work_from_load,
 )
+from edsim.runs.profiles_diff import (
+    ProfilesDifference,
+    profiles_diff,
+    read_run_profiles_values,
+)
 from edsim.runs.replay import (
     ReplayAbandonment,
     ReplayCounts,
@@ -167,6 +172,9 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "ProfilesDifference",
+    "profiles_diff",
+    "read_run_profiles_values",
     "ADMITTED_LONG_STAY",
     "BED_WAIT_THRESHOLDS",
     "BedOccupancy",
