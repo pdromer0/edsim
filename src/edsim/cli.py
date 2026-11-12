@@ -47,6 +47,7 @@ from edsim.calibration.evaluate import (
     FIT_SEED,
     check_knob_model,
     check_knob_targets,
+    check_targets_apply,
     choose_staffing,
     compliant_staffing,
     evaluate_staffings,
@@ -618,7 +619,12 @@ def _split_targets(args: argparse.Namespace, parser: argparse.ArgumentParser, *l
         choose_model(center, profiles, center_file=args.centro, profiles_file=args.perfiles)
     except ModelChoiceError as error:
         parser.error(str(error))
-    return split_targets(targets, center, profiles)
+    applicable, not_applicable = split_targets(targets, center, profiles)
+    try:
+        check_targets_apply(applicable, center, profiles)
+    except ValueError as error:
+        parser.error(str(error))
+    return applicable, not_applicable
 
 
 def _evaluate_calibration(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -705,11 +711,15 @@ def _calibration_sensitivity(args: argparse.Namespace, parser: argparse.Argument
     out_dir = _output_dir(args, parser)
     center, profile, profiles, targets = loaded = _load_calibration(args, parser)
     targets, not_applicable = _split_targets(args, parser, *loaded)
-    options = _knob_grid_options(args, parser)
     try:
         # The model first: with milestone 4, the fit target of a knob of milestone 5 is
-        # left out as not applicable, and its absence would hide the cause.
+        # left out as not applicable, and its absence (or a grid option of a knob of
+        # staff) would hide the cause.
         check_knob_model(args.mando, center, profiles)
+    except ValueError as error:
+        parser.error(str(error))
+    options = _knob_grid_options(args, parser)
+    try:
         check_knob_targets(targets, args.mando)
         knob_settings(args.mando, center, profiles, profile, **options)
     except ValueError as error:

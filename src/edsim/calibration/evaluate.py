@@ -22,8 +22,9 @@ of the horizon are counted as censored, per replication: inside, not merely
 without a departure, since whoever leaves without being seen has none either
 (milestone 5).
 
-**Who counts, with the abandonment** (the rules of task 5.4, H5-8; without it,
-every rule gives the values of before bit for bit):
+**Who counts, with the abandonment** (the rules of task 5.4, H5-8; without it, the
+targets of milestone 4 give the values of before bit for bit; a stay without ``destino``
+takes the seen patients still inside at their bound with any model):
 
 - the pretriage (``triage_wait``), of the triaged patients that end in the
   window, also those who leave after the triage (``triaged_in_window``);
@@ -240,10 +241,11 @@ class ReplicaValues:
         return self.censored / self.arrivals if self.arrivals else 0.0
 
     @property
-    def boxes_waiting_bed(self) -> float:
+    def waiting_for_bed(self) -> float:
         """Mean number of patients waiting for a bed, by Little's law: L = λ · W =
         (N / T) · (Σ W / N) = Σ W / T, with the patients of the window (task 5.6). Almost
-        all of them wait in their box; those displaced to the hallway are rare."""
+        all of them wait in their box; those displaced to the hallway, rare, count too
+        (the curve ``boxes_waiting_bed`` of the analysis leaves them out)."""
         return self.bed_wait_minutes / self.window_minutes
 
     @property
@@ -592,10 +594,16 @@ def evaluate_targets(
     first_day: int,
     end_day: int,
     confidence: float = CONFIDENCE,
+    *,
+    horizon: float | None = None,
 ) -> tuple[TargetResult, ...]:
-    """``summarize_targets`` of the ``replica_values`` of each table: a pure function."""
+    """``summarize_targets`` of the ``replica_values`` of each table: a pure function.
+
+    ``horizon`` is the end of every log, as in ``replica_values``."""
     return summarize_targets(
-        [replica_values(t, targets, first_day, end_day) for t in tables], targets, confidence
+        [replica_values(t, targets, first_day, end_day, horizon=horizon) for t in tables],
+        targets,
+        confidence,
     )
 
 
@@ -646,10 +654,10 @@ def level_breakdown(replicas: Sequence[ReplicaValues], target: Target) -> tuple[
     return tuple(out)
 
 
-def boxes_waiting_bed(replicas: Sequence[ReplicaValues]) -> float:
-    """Mean between replications of the patients waiting for a bed (Little's law), the boxes
-    that the wait for a bed takes from the others (task 5.6)."""
-    return float(np.mean([r.boxes_waiting_bed for r in replicas]))
+def waiting_for_bed(replicas: Sequence[ReplicaValues]) -> float:
+    """Mean between replications of the patients waiting for a bed (Little's law): the
+    boxes that the wait for a bed takes from the others (task 5.6), the hallway apart."""
+    return float(np.mean([r.waiting_for_bed for r in replicas]))
 
 
 def mean_compliance_out(replicas: Sequence[ReplicaValues]) -> tuple[float, ...]:
@@ -695,9 +703,23 @@ def split_targets(
     )
 
 
-def _check_targets_apply(
+LEFT_RULE_MEASURES = ("triage_wait", STAY, *CLOCKS)
+"""The measures whose percentage above a threshold has a rule for whoever leaves without
+being seen: the pretriage of the triaged, the stay of those who depart, and the clocks with
+the censoring of the compliance (module docstring)."""
+
+
+def check_targets_apply(
     targets: Sequence[Target], center: CenterConfig, profiles: ClinicalProfiles
 ) -> None:
+    """Check, before simulating, that every target can be measured with the model.
+
+    Raises:
+        ValueError: If a target does not apply to the model (``split_targets``), or, with
+            the milestone 5 model, it is a percentage above a threshold of a measure with
+            no rule for whoever leaves (outside ``LEFT_RULE_MEASURES``).
+        ModelChoiceError: If the two files do not choose one model.
+    """
     _, out = split_targets(targets, center, profiles)
     if out:
         names = ", ".join(f"objetivos.{t.name}" for t in out)
@@ -705,6 +727,15 @@ def _check_targets_apply(
             f"{names}: only the milestone 5 model has abandonment and its destinations;"
             " leave them out with split_targets"
         )
+    if choose_model(center, profiles) is not PatientModel.MILESTONE_5:
+        return
+    for t in targets:
+        if t.statistic == PERCENTAGE and t.measure not in LEFT_RULE_MEASURES:
+            raise ValueError(
+                f"objetivos.{t.name}: the measure {t.measure!r} has no clock for the patients"
+                " who leave without being seen, so its percentage is not defined with the"
+                f" milestone 5 model (it is with {LEFT_RULE_MEASURES})"
+            )
 
 
 # --- Simulating -----------------------------------------------------------------------------
@@ -785,7 +816,7 @@ def simulate_replicas(
     """
     replicas = check_count("replicas", replicas, 2)
     days, warmup_days = check_horizon(days, warmup_days)
-    _check_targets_apply(targets, center, profiles)
+    check_targets_apply(targets, center, profiles)
     if start_dates is None:
         profiles_by_replica = [arrival_profile] * replicas
     else:
@@ -799,7 +830,13 @@ def simulate_replicas(
     for child, profile in zip(child_streams(seed, replicas), profiles_by_replica, strict=True):
         run = clinical_run(center, profile, profiles, child, warmup_days)
         out.append(
-            replica_values(replica_table(run, days, warmup_days), targets, warmup_days, days)
+            replica_values(
+                replica_table(run, days, warmup_days),
+                targets,
+                warmup_days,
+                days,
+                horizon=(days + DRAIN_DAYS) * MINUTES_PER_DAY,
+            )
         )
     return tuple(out)
 
@@ -1012,18 +1049,9 @@ def evaluate_settings(
     return tuple(rows)
 
 
-def evaluate_staffings(
-    center: CenterConfig,
-    arrival_profile: ArrivalProfile,
-    profiles: ClinicalProfiles,
-    targets: Sequence[Target],
-    knob: str,
-    staffings: Sequence[Setting],
-    **options,
-) -> tuple[SensitivityRow, ...]:
-    """``evaluate_settings``, by its name of milestone 4: the staffings of a knob of staff
-    (or the values of a knob of one number)."""
-    return evaluate_settings(center, arrival_profile, profiles, targets, knob, staffings, **options)
+evaluate_staffings = evaluate_settings
+"""``evaluate_settings`` by its name of milestone 4, with the same signature: the
+staffings of a knob of staff (or the values of a knob of one number)."""
 
 
 def knob_settings(

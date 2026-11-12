@@ -252,7 +252,7 @@ def test_esperando_cama_por_la_ley_de_little(values):
     # ventana de un día, L = Σ W / T = (450 + 2790) / 1440 = 2,25.
     assert values.bed_wait_minutes == pytest.approx(3240.0)
     assert values.window_minutes == DAY
-    assert values.boxes_waiting_bed == pytest.approx(2.25)
+    assert values.waiting_for_bed == pytest.approx(2.25)
 
 
 def test_cuello_de_botella_con_los_atendidos_de_los_niveles_2_a_5(values):
@@ -348,4 +348,18 @@ def test_simular_un_objetivo_que_no_aplica_es_un_error_antes_de_simular(monkeypa
             days=2,
             warmup_days=1,
             seed=2026,
+        )
+
+
+def test_un_porcentaje_sin_regla_para_quien_se_va_se_rechaza_antes_de_simular(monkeypatch, h5):
+    # Con el modelo del hito 5, el porcentaje de una espera de box no tiene regla para quien
+    # se va: el error sale antes de simular, no a mitad de la ventana anual (revisión propia).
+    monkeypatch.setattr(
+        "edsim.calibration.evaluate.simulate_ed", lambda *a, **k: pytest.fail("simuló")
+    )
+    center, profile, profiles = h5
+    box = target("box", "box_wait", PERCENTAGE, levels=(4,), threshold=30)
+    with pytest.raises(ValueError, match="objetivos.box: the measure 'box_wait' has no clock"):
+        simulate_replicas(
+            center, profile, profiles, (box,), replicas=2, days=2, warmup_days=1, seed=2026
         )

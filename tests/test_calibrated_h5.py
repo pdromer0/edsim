@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from edsim.arrivals.profile import load_profile
-from edsim.calibration.evaluate import boxes_waiting_bed, simulate_replicas, summarize_targets
+from edsim.calibration.evaluate import simulate_replicas, summarize_targets, waiting_for_bed
 from edsim.calibration.knobs import BED_P90_RATIO, scaled_patience
 from edsim.calibration.targets import load_targets
 from edsim.calibration.window import ANNUAL, window_start_dates
@@ -100,7 +100,7 @@ def test_reproduce_la_fila_anual_del_registro_y_los_boxes_por_little(inputs):
         },
         rel=1e-12,
     )
-    little = boxes_waiting_bed(replicas)
+    little = waiting_for_bed(replicas)
     assert little == pytest.approx(6.44, abs=0.005)
     assert center.boxes == H4_BOXES + round(little)
 

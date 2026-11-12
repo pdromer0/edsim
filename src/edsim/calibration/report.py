@@ -194,7 +194,7 @@ def _censored_lines(replicas: Sequence[ReplicaValues]) -> list[str]:
         f" ({100 * bed.censored_admitted_share:.2f} %) en una réplica;"
         f" {sum(r.censored_admitted for r in replicas)} de {admitted} en total"
     )
-    little = [r.boxes_waiting_bed for r in replicas]
+    little = [r.waiting_for_bed for r in replicas]
     lines.append(
         f"Esperando cama (ley de Little, λ · W = Σ esperas / minutos de la ventana): media"
         f" {_nanmean(little):.2f} entre réplicas, de {min(little):.2f} a {max(little):.2f};"

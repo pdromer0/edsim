@@ -684,8 +684,20 @@ def test_sensibilidad_de_la_espera_de_cama_con_sus_valores(tmp_path, capsys):
         (["--mando", "medicos", "--valores", "2", *H5], "--valores es de espera_cama y paciencia"),
         (["--mando", "paciencia", "--valores", "0", *H5], "a value of paciencia must be in"),
         (["--mando", "paciencia", "--valores", "1,x", *H5], "no son números separados por comas"),
+        # El modelo antes que la rejilla: con el hito 4, la causa es el modelo (revisión).
+        (
+            ["--mando", "espera_cama", "--u-min", "0.6", *EXAMPLE],
+            "the knob espera_cama needs the milestone 5 model",
+        ),
     ],
-    ids=["hito_4", "u_con_un_valor", "valores_con_plantilla", "valor_cero", "no_numeros"],
+    ids=[
+        "hito_4",
+        "u_con_un_valor",
+        "valores_con_plantilla",
+        "valor_cero",
+        "no_numeros",
+        "hito_4_con_u",
+    ],
 )
 def test_sensibilidad_de_los_mandos_del_hito_5_errores_de_uso(
     argv, message, tmp_path, capsys, monkeypatch
@@ -699,3 +711,31 @@ def test_sensibilidad_de_los_mandos_del_hito_5_errores_de_uso(
         )
     assert exit_info.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_evaluar_un_porcentaje_sin_regla_para_quien_se_va_es_un_error_de_uso(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(evaluate, "simulate_ed", lambda *a, **k: pytest.fail("simuló"))
+    targets = h5_targets_file(tmp_path / "objetivos.toml")
+    with targets.open("a", encoding="utf-8") as f:
+        f.write(
+            """
+[objetivos.box_mas_30]
+medida = "box_wait"
+niveles = [4]
+estadistico = "porcentaje_sobre_umbral"
+umbral = 30
+horquilla = [0, 100]
+uso = "comprobacion"
+fuente = "a mano"
+enlace = "https://example.org"
+"""
+        )
+    with pytest.raises(SystemExit) as exit_info:
+        main(
+            ["calibracion", "evaluar", *H5, "--objetivos", str(targets), *SHORT]
+            + ["--salida", str(tmp_path / "salida")]
+        )
+    assert exit_info.value.code == 2
+    assert "objetivos.box_mas_30: the measure 'box_wait' has no clock" in capsys.readouterr().err
