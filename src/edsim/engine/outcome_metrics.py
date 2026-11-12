@@ -18,6 +18,11 @@ and the step curves of a log of version 4, like ``analysis.py``:
   patients in the hallway;
 - ``window_outcome``: all of them for one window.
 
+The closing of the flow (task 5.7) adds what the notebook 05 teaches:
+``kaplan_meier`` (the survival estimate with censoring), ``abandonment_by_arrival_hour``
+(the abandonment against the wait of each hour of arrival) and ``bed_little`` (both
+sides of ``L = λ · W`` for the wait for a bed).
+
 **Censoring.** A patient still waiting for a bed at the horizon, or still
 inside, only tells that its wait is at least what it has waited until then.
 Leaving it out would make the waits shorter than they are. The statistics take
@@ -40,12 +45,14 @@ they are in ``edsim.runs.truth``, never here.
 """
 
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
 import numpy as np
 
+from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.engine.analysis import EpisodeRecord, StepCurves
 from edsim.engine.center import N_LEVELS
 from edsim.engine.events import LWBS_WAITS
@@ -520,6 +527,211 @@ def bed_occupancy(curves: StepCurves, start: float, end: float) -> BedOccupancy:
         boxes_max=_window_max(curves, "boxes_waiting_bed", start, end),
         hallway_mean=curves.mean("hallway", start, end),
         hallway_max=_window_max(curves, "hallway", start, end),
+    )
+
+
+# --- Survival of the patience, the arrival hour and the law of Little (task 5.7) -----------
+
+
+@dataclass(frozen=True, slots=True)
+class KaplanMeier:
+    """The Kaplan–Meier estimate of a survival function from right-censored times.
+
+    Attributes:
+        times: The distinct times with at least one event, increasing.
+        at_risk: At each of them, the observations whose time is at least it:
+            a censoring at the same time still counts (the event goes first).
+        events: Events at each of them.
+        survival: ``S(t)`` after each of them: the product of ``1 - d / n``.
+        n: Observations, events and censored.
+        observed: Times of all the observations, increasing: the risk set at
+            any ``t`` is read from them (``at_risk_at``).
+
+    Above the largest observed time the estimate says nothing: ``at`` stays at
+    its last value and ``at_risk_at`` is 0.
+    """
+
+    times: tuple[float, ...]
+    at_risk: tuple[int, ...]
+    events: tuple[int, ...]
+    survival: tuple[float, ...]
+    n: int
+    observed: tuple[float, ...]
+
+    def at(self, t: float) -> float:
+        """``S(t)``: 1 before the first event, a step function continuous on the right."""
+        _check_time(t)
+        i = bisect_right(self.times, t)
+        return 1.0 if i == 0 else self.survival[i - 1]
+
+    def at_risk_at(self, t: float) -> int:
+        """The observations whose time is at least ``t``: 0 above the largest."""
+        _check_time(t)
+        return self.n - bisect_left(self.observed, t)
+
+
+def _check_time(t: float) -> None:
+    if not math.isfinite(t):
+        raise ValueError(f"t must be finite, got {t!r}")
+
+
+def kaplan_meier(times: Sequence[float], events: Sequence[bool]) -> KaplanMeier:
+    """Estimate ``S(t) = P(T > t)`` from times that may be right-censored.
+
+    A censored time says only that the event had not happened by then. The
+    convention for a tie of an event and a censoring is the usual one: the
+    event goes first, so the censored observation is still at risk at that time.
+    Done with sorting alone (``O(n log n)``), without a loop over the observations.
+
+    Args:
+        times: The time of each observation, finite and not negative.
+        events: Whether each observation is an event (``True``) or censored.
+
+    Raises:
+        ValueError: If the lists have different lengths, or a time is NaN,
+            infinite or negative.
+    """
+    t = np.asarray(times, dtype=float)
+    d = np.asarray(events, dtype=bool)
+    if t.ndim != 1 or d.shape != t.shape:
+        raise ValueError(f"times and events need the same length, got {t.shape} and {d.shape}")
+    if not np.all(np.isfinite(t)) or np.any(t < 0):
+        raise ValueError("times must be finite numbers >= 0")
+    order = np.argsort(t, kind="stable")
+    t, d = t[order], d[order]
+    n = len(t)
+    event_times = t[d]
+    distinct = np.unique(event_times)
+    at_risk = n - np.searchsorted(t, distinct, side="left")
+    counts = np.searchsorted(event_times, distinct, side="right") - np.searchsorted(
+        event_times, distinct, side="left"
+    )
+    survival = np.cumprod(1.0 - counts / at_risk) if len(distinct) else np.empty(0)
+    return KaplanMeier(
+        times=tuple(float(x) for x in distinct),
+        at_risk=tuple(int(x) for x in at_risk),
+        events=tuple(int(x) for x in counts),
+        survival=tuple(float(x) for x in survival),
+        n=int(n),
+        observed=tuple(float(x) for x in t),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HourlyAbandonment:
+    """The patients that arrive in one hour of the day, over the whole window.
+
+    Attributes:
+        hour: Hour of the day of the arrival, 0 to 23.
+        arrivals: Patients that arrived in that hour.
+        left: Of them, those who left without being seen.
+        attended: Of them, those who saw a doctor.
+        mean_wait_attended: Mean of clock A (arrival to first doctor) of the
+            attended; ``None`` if there are none. It leaves out whoever left,
+            who waited more: a survivor bias.
+        mean_queue_time: Mean time until being seen or leaving, of everyone
+            who did either; ``None`` if there are none. Whoever still waits at
+            the horizon is left out.
+    """
+
+    hour: int
+    arrivals: int
+    left: int
+    attended: int
+    mean_wait_attended: float | None
+    mean_queue_time: float | None
+
+    @property
+    def left_share(self) -> float | None:
+        """``left / arrivals``; ``None`` without arrivals."""
+        return _share(self.left, self.arrivals)
+
+
+def abandonment_by_arrival_hour(
+    table: Sequence[EpisodeRecord], start: float, end: float
+) -> tuple[HourlyAbandonment, ...]:
+    """The abandonment and the wait by hour of arrival, 24 rows (piece 1, exercise).
+
+    The hour is ``int(arrival % 1440 // 60)``: the clock of the simulation starts
+    at 0:00, so all the days of the window are folded onto one.
+    """
+    if not 0 <= start < end:
+        raise ValueError(f"need 0 <= start < end, got {start=} and {end=}")
+    rows = []
+    arrived = _arrived(table, start, end)
+    for hour in range(24):
+        group = [e for e in arrived if int(e.arrival % MINUTES_PER_DAY // 60) == hour]
+        waits = [e.door_to_doctor for e in group if e.door_to_doctor is not None]
+        queue = waits + [e.time_to_leave for e in group if e.time_to_leave is not None]
+        rows.append(
+            HourlyAbandonment(
+                hour=hour,
+                arrivals=len(group),
+                left=sum(e.left is not None for e in group),
+                attended=len(waits),
+                mean_wait_attended=float(np.mean(waits)) if waits else None,
+                mean_queue_time=float(np.mean(queue)) if queue else None,
+            )
+        )
+    return tuple(rows)
+
+
+@dataclass(frozen=True, slots=True)
+class BedLittle:
+    """The law of Little for the patients waiting for a bed: ``L = λ · W``.
+
+    Attributes:
+        requests: Patients of the window who asked for a bed.
+        rate: ``λ``: requests per minute of the window.
+        mean_wait: ``W``: mean wait of those patients, with whoever still waits
+            at the horizon cut there (a lower bound); ``None`` without requests.
+        by_little: ``λ · W``, the mean number waiting, which equals the sum of
+            the waits over the length of the window.
+        boxes_mean: Mean of the curve ``boxes_waiting_bed`` over the window.
+        hallway_mean: Mean of the curve ``hallway`` over the window.
+    """
+
+    requests: int
+    rate: float
+    mean_wait: float | None
+    by_little: float
+    boxes_mean: float
+    hallway_mean: float
+
+    @property
+    def by_curves(self) -> float:
+        """Everybody waiting for a bed by the curves: in a box and in the hallway."""
+        return self.boxes_mean + self.hallway_mean
+
+
+def bed_little(
+    table: Sequence[EpisodeRecord], curves: StepCurves, start: float, end: float
+) -> BedLittle:
+    """Both sides of the law of Little for the wait for a bed in one run.
+
+    ``λ`` and ``W`` are those of the patients that arrive in ``[start, end)`` and
+    ask for a bed; the curves count whoever waits in the window, wherever they
+    arrived. The two agree up to the edges of the window.
+
+    Raises:
+        ValueError: If the window is not inside ``[0, horizon]``.
+    """
+    horizon = curves.horizon
+    _check_window(start, end, horizon)
+    waits = [
+        e.bed_wait if e.bed_wait is not None else horizon - e.bed_requested
+        for e in _arrived(table, start, end)
+        if e.bed_requested is not None
+    ]
+    rate = len(waits) / (end - start)
+    mean_wait = float(np.mean(waits)) if waits else None
+    return BedLittle(
+        requests=len(waits),
+        rate=rate,
+        mean_wait=mean_wait,
+        by_little=rate * mean_wait if mean_wait is not None else 0.0,
+        boxes_mean=curves.mean("boxes_waiting_bed", start, end),
+        hallway_mean=curves.mean("hallway", start, end),
     )
 
 

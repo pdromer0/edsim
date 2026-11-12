@@ -657,6 +657,47 @@ def clock_quantiles(
     return tuple(out)
 
 
+@dataclass(frozen=True, slots=True)
+class ClockMean:
+    """The mean of one clock over the attended patients of some levels.
+
+    Attributes:
+        n: Episodes that arrived in the days, departed and have one of the levels.
+        mean: Their mean; ``None`` if ``n`` is 0.
+    """
+
+    n: int
+    mean: float | None
+
+
+def clock_mean(
+    table: Sequence[EpisodeRecord],
+    first_day: int,
+    end_day: int,
+    levels: Sequence[int],
+    measure: str = "door_to_doctor",
+) -> ClockMean:
+    """Mean of a clock of the patients of ``levels`` that arrive in days ``[first_day, end_day)``.
+
+    The patients are those that depart (the ones seen by a doctor, H5-8), with
+    their assigned level, as the means of the calibration. A week of January is
+    ``first_day = 14, end_day = 21`` of the run of 91 days from the 5th.
+
+    Raises:
+        ValueError: If the days are not valid, a level is not 1 to 5, or
+            ``measure`` is not one of ``MEASURES``.
+    """
+    first_day, end_day = _check_days(first_day, end_day)
+    if measure not in MEASURES:
+        raise ValueError(f"measure must be one of {MEASURES}, got {measure!r}")
+    wanted = set(levels)
+    if not wanted or not wanted <= set(range(1, N_LEVELS + 1)):
+        raise ValueError(f"levels must be a non-empty subset of 1 to {N_LEVELS}, got {levels!r}")
+    done = completed_in_window(table, first_day * MINUTES_PER_DAY, end_day * MINUTES_PER_DAY)
+    values = [getattr(e, measure) for e in done if e.level in wanted]
+    return ClockMean(len(values), float(np.mean(values)) if values else None)
+
+
 # --- Pretriage ---------------------------------------------------------------------------
 
 PRETRIAGE_MAX_WAIT = 10.0
