@@ -123,17 +123,20 @@ def test_el_clinico_ignora_el_bloque_y_las_dos_se_emparejan_como_plantilla(tmp_p
     from edsim.runs.compare import pairing_category
 
     config = Path(__file__).parents[1] / "config"
-    # La plantilla de config/centro.toml más el bloque de centro_ejemplo.toml.
+    # La plantilla del centro base del hito 4 (config/centro.toml hasta la tarea 5.6,
+    # congelado en centro_h4.toml) más el bloque de centro_ejemplo.toml: el provisional
+    # necesita [destino], que el centro del hito 5 no tiene.
+    base = DATA / "centro_h4.toml"
     example = (DATA / "centro_ejemplo.toml").read_text(encoding="utf-8")
     block = example[example.index("[triaje]") : example.index("[destino]")]
     with_block = tmp_path / "con_bloque.toml"
-    with_block.write_text((config / "centro.toml").read_text(encoding="utf-8") + "\n" + block)
+    with_block.write_text(base.read_text(encoding="utf-8") + "\n" + block)
     assert load_center(with_block).has_provisional
-    assert not load_center(config / "centro.toml").has_provisional
+    assert not load_center(base).has_provisional
 
     # Un catálogo por centro, con el mismo run_id: el log lo lleva en cada evento.
     stores = {}
-    for name, center in (("sin", config / "centro.toml"), ("con", with_block)):
+    for name, center in (("sin", base), ("con", with_block)):
         stores[name] = RunStore(tmp_path / name)
         simulate_run(
             center,
@@ -143,7 +146,7 @@ def test_el_clinico_ignora_el_bloque_y_las_dos_se_emparejan_como_plantilla(tmp_p
             output_dir=stores[name].root / "r2026",
             warmup_days=1,
             origin="cli",
-            profiles=config / "perfiles.toml",
+            profiles=DATA / "perfiles_h4.toml",
         )
 
     # El mismo log byte a byte: con el modelo clínico, el bloque no cambia nada.

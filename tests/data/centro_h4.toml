@@ -1,0 +1,50 @@
+# Centro base para el motor. Ver docs/specs/hito-3.md y docs/specs/hito-4.md («Calibración»).
+# La plantilla (enfermería de triaje y médicos) está calibrada en la tarea 4.6c con la
+# ventana anual.
+#
+# Qué lee cada modelo (tarea 4.9, decisiones 36 y 44):
+# - El modelo clínico, el de por defecto: turnos, plantilla, boxes, los niveles que esperan
+#   los resultados fuera y el destino provisional. Cada paciente sale de config/perfiles.toml.
+# - El modelo provisional del hito 3 necesita además [triaje], [duraciones] y [pruebas], que
+#   este fichero no tiene: su centro es tests/data/centro_ejemplo.toml (edsim motor simular
+#   --provisional --centro tests/data/centro_ejemplo.toml, y edsim motor validar).
+# [destino] es el provisional del hito 3 con los dos modelos hasta el hito 5.
+
+[turnos]
+# Hora de inicio de los turnos de mañana, tarde y noche
+inicio = [8, 15, 22]
+
+[recursos]
+# Plantilla por turno: mañana, tarde, noche. Calibrada en la tarea 4.6c con la regla de
+# la plantilla equivalente, ⌈carga del turno / u⌉, un u por mando, y la ventana anual:
+# 12 réplicas de 14 días, la m desde el primer lunes del mes m+1, semilla 2026 (registro
+# en docs/calibracion/registro.md; antes, [3, 2, 1] y [12, 11, 5] en la tarea 4.6b, con
+# la quincena de enero, y [3, 3, 2] y [12, 12, 7] en el hito 3):
+# - enfermería de triaje, contra el pretriaje medio (6-15 min): la regla eligió
+#   [2, 2, 1] (13,21 min, la más cercana a 12,4), pero la semilla 2027 la vetó (15,16:
+#   fuera de la horquilla) y se tomó la siguiente, [3, 2, 1] (6,78 con 2026 y 7,86 con
+#   2027): u de 0,795 a 0,8325 (decisión 41, revisada en la tarea 4.6c);
+#   uv run edsim calibracion sensibilidad --mando enfermeria_triaje --comprobacion 2027
+# - médicos, con esa enfermería, contra el reloj A de los niveles 2 a 5 (35-70 min):
+#   [12, 11, 4], la única que pasa (42,10 min), con u de 0,85; con 2027, 43,29, pasa;
+#   uv run edsim calibracion sensibilidad --mando medicos --comprobacion 2027
+# Comprobación independiente, después del veto de 2027 (pretriaje 7,76 y reloj A 41,20):
+#   uv run edsim calibracion evaluar --semilla 2028
+# Es una plantilla para todo el año: enero queda cerca de la saturación (reloj A de
+# 105 min con 2026) y el refuerzo de invierno queda para versiones posteriores.
+enfermeria_triaje = [3, 2, 1]
+medicos = [12, 11, 4]
+# Capacidad física, igual en todos los turnos
+boxes = 30
+# Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
+# los resultados fuera, en una sala sin límite de capacidad; con los resultados
+# vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
+# tarea 4.6a). Niveles 2 a 5, en orden creciente; el 1 nunca sale del box. Solo
+# la usa el modelo clínico: el provisional la ignora y no cambia. Es opcional y,
+# si falta, vale [] (nadie espera fuera), no [4, 5]: así la copia de centro.toml
+# de una ejecución anterior a la 4.6a sigue significando lo que significaba.
+espera_resultados_fuera = [4, 5]
+
+[destino]
+# Probabilidad de ingreso por nivel, del 1 al 5; el resto, alta
+probabilidad_ingreso = [0.80, 0.45, 0.15, 0.04, 0.01]

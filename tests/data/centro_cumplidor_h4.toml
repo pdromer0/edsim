@@ -1,0 +1,35 @@
+# Centro cumplidor: el centro base (config/centro.toml) con los médicos que cumplen
+# Manchester. Ver docs/specs/hito-4.md («Calibración») y docs/calibracion/registro.md.
+# Solo cambian los médicos; el resto es igual que el centro base. Es un centro del modelo
+# clínico: como el base, no tiene [triaje], [duraciones] ni [pruebas] (tarea 4.9).
+
+[turnos]
+# Hora de inicio de los turnos de mañana, tarde y noche
+inicio = [8, 15, 22]
+
+[recursos]
+# Plantilla por turno: mañana, tarde, noche. La enfermería de triaje es la del centro
+# base (calibrada en la tarea 4.6c). Los médicos salen de la misma regla, ⌈carga del
+# turno / u⌉, con el u más alto (menos médicos) con el que cada nivel 2 a 5 tiene como
+# mucho un 10 % de días fuera del cumplimiento Manchester con el reloj C, con los días
+# fuera y los días medidos sumados en las 12 réplicas de la ventana anual (con 144 días,
+# 14 fuera pasan): u de 0,67 a 0,6775 (en el centro base, 0,85). Días fuera / medidos de
+# los niveles 2 a 5: 1/144, 0/144, 2/144 y 6/142; la siguiente, [14, 14, 5], tiene
+# 22/142 en el nivel 5 y no pasa.
+#   uv run edsim calibracion sensibilidad --mando medicos
+enfermeria_triaje = [3, 2, 1]
+medicos = [14, 14, 6]
+# Capacidad física, igual en todos los turnos
+boxes = 30
+# Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
+# los resultados fuera, en una sala sin límite de capacidad; con los resultados
+# vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
+# tarea 4.6a). Niveles 2 a 5, en orden creciente; el 1 nunca sale del box. Solo
+# la usa el modelo clínico: el provisional la ignora y no cambia. Es opcional y,
+# si falta, vale [] (nadie espera fuera), no [4, 5]: así la copia de centro.toml
+# de una ejecución anterior a la 4.6a sigue significando lo que significaba.
+espera_resultados_fuera = [4, 5]
+
+[destino]
+# Probabilidad de ingreso por nivel, del 1 al 5; el resto, alta
+probabilidad_ingreso = [0.80, 0.45, 0.15, 0.04, 0.01]

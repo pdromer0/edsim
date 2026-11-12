@@ -17,6 +17,8 @@ from edsim.engine.center import (
 
 EXAMPLE = Path(__file__).parent / "data" / "centro_ejemplo.toml"
 CONFIG = Path(__file__).parents[1] / "config" / "centro.toml"
+# El config/centro.toml del hito 4, byte a byte, congelado en la tarea 5.6 (decisión 68).
+CENTER_H4 = Path(__file__).parent / "data" / "centro_h4.toml"
 
 # Los valores de tests/data/centro_ejemplo.toml, por sección, para construir variantes.
 DEFAULT = {
@@ -579,11 +581,12 @@ def test_construccion_directa_con_parte_del_bloque_nombra_lo_que_falta(center):
     assert not sin.has_provisional
 
 
-def test_el_centro_base_sin_el_bloque_y_con_sus_valores():
-    # config/centro.toml desde la tarea 4.9: valores a mano, sin el bloque provisional.
-    values = read_center_values(CONFIG)
+def test_el_centro_base_del_hito_4_sin_el_bloque_y_con_sus_valores():
+    # config/centro.toml de las tareas 4.9 a 5.5, congelado en centro_h4.toml: valores a
+    # mano, sin el bloque provisional.
+    values = read_center_values(CENTER_H4)
     assert not {k for k in values if k.split(".")[0] in PROVISIONAL_TABLES}
-    c = load_center(CONFIG)
+    c = load_center(CENTER_H4)
 
     assert c.shift_starts == (8, 15, 22)
     assert c.triage_nurses == (3, 2, 1)

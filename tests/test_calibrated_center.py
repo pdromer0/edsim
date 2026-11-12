@@ -1,4 +1,9 @@
-"""Centro base calibrado y centro cumplidor (tareas 4.6b y 4.6c)."""
+"""Centro base calibrado y centro cumplidor (tareas 4.6b y 4.6c).
+
+El modelo del hito 4 en las copias congeladas de tests/data (centro_h4.toml,
+centro_cumplidor_h4.toml, perfiles_h4.toml y objetivos_h4.toml): son el config/ de antes de
+la tarea 5.6, byte a byte, y el registro de la 4.6c se recalcula con ellas (decisión 68).
+"""
 
 import dataclasses
 from pathlib import Path
@@ -34,7 +39,7 @@ from edsim.profiles.config import load_profiles
 CONFIG = Path(__file__).resolve().parents[1] / "config"
 DATA = Path(__file__).resolve().parent / "data"
 
-# Los intervalos de u del comentario de config/centro.toml y config/centro_cumplidor.toml.
+# Los intervalos de u del comentario de centro_h4.toml y centro_cumplidor_h4.toml.
 NURSES_U = (0.795, 0.8325)
 DOCTORS_U = (0.85, 0.85)
 COMPLIANT_U = (0.67, 0.6775)
@@ -43,12 +48,12 @@ STEP = 0.0025
 
 @pytest.fixture(scope="module")
 def centers():
-    return load_center(CONFIG / "centro.toml"), load_center(CONFIG / "centro_cumplidor.toml")
+    return load_center(DATA / "centro_h4.toml"), load_center(DATA / "centro_cumplidor_h4.toml")
 
 
 @pytest.fixture(scope="module")
 def loads(centers):
-    profiles = load_profiles(CONFIG / "perfiles.toml")
+    profiles = load_profiles(DATA / "perfiles_h4.toml")
     arrivals = load_profile(CONFIG / "llegadas.toml")
     starts = centers[0].shift_starts
     return nurse_loads(profiles, arrivals, starts), doctor_loads(profiles, arrivals, starts)
@@ -95,11 +100,11 @@ def test_reproduce_la_fila_corta_del_registro():
     # 1 de calentamiento (y el de vaciado), semilla 2026, todas desde fecha_inicio (sin
     # fechas, simulate_replicas da lo mismo que antes de la ventana anual). Con tan pocas
     # réplicas el IC de los niveles 2 a 5 es más ancho que la horquilla: código 1.
-    targets = load_targets(CONFIG / "objetivos.toml")
+    targets = load_targets(DATA / "objetivos_h4.toml")
     replicas = simulate_replicas(
         load_center(DATA / "centro_4_6b.toml"),
         load_profile(CONFIG / "llegadas.toml"),
-        load_profiles(CONFIG / "perfiles.toml"),
+        load_profiles(DATA / "perfiles_h4.toml"),
         targets,
         replicas=3,
         days=5,
@@ -121,7 +126,7 @@ def test_reproduce_la_fila_corta_del_registro():
     assert [r.censored for r in replicas] == [0, 0, 0]
 
 
-# --- Lo escrito en config/ y en el registro, recalculado (tarea 4.6c) -------------------------
+# --- Lo que la 4.6c escribió en config/ (hoy, las copias h4) y en el registro, recalculado ---
 # Cada evaluación anual (12 réplicas de 14 días) tarda unos 25 s. La sensibilidad entera no
 # cabe en la suite: se recalculan la plantilla elegida, la vetada y las vecinas del cumplidor.
 
@@ -130,10 +135,10 @@ def test_reproduce_la_fila_corta_del_registro():
 def inputs():
     arrivals = load_profile(CONFIG / "llegadas.toml")
     return (
-        load_center(CONFIG / "centro.toml"),
+        load_center(DATA / "centro_h4.toml"),
         arrivals,
-        load_profiles(CONFIG / "perfiles.toml"),
-        load_targets(CONFIG / "objetivos.toml"),
+        load_profiles(DATA / "perfiles_h4.toml"),
+        load_targets(DATA / "objetivos_h4.toml"),
         window_start_dates(ANNUAL, arrivals),
     )
 
@@ -172,10 +177,10 @@ def nurses_fit(inputs):
 
 @pytest.mark.slow
 def test_reproduce_la_fila_del_registro_del_centro(nurses_fit):
-    # docs/calibracion/registro.md, tarea 4.6c: el centro de config/ con la ventana anual y
+    # docs/calibracion/registro.md, tarea 4.6c: el centro del hito 4 con la ventana anual y
     # la semilla 2026 (uv run edsim calibracion evaluar). Los 8 censurados son de enero.
     base = nurses_fit[0]
-    assert base.center == load_center(CONFIG / "centro.toml")
+    assert base.center == load_center(DATA / "centro_h4.toml")
     assert means(base) == pytest.approx(
         {
             "pretriaje_medio": 6.775383837987635,
@@ -207,7 +212,7 @@ def test_la_semilla_2027_veta_2_2_1_y_queda_3_2_1(inputs, nurses_fit):
     )
     chosen = choose_staffing(nurses_fit, NURSES, check=lambda r: checked[r.staffing.staff])
     assert chosen is nurses_fit[0]
-    # Los médicos de config/ pasan también con 2027 (43,29): no hay veto de médicos.
+    # Los médicos del hito 4 pasan también con 2027 (43,29): no hay veto de médicos.
     assert means(checked[(3, 2, 1)])["tiempo_medico_niveles_2_5"] == pytest.approx(
         43.290854567363205, rel=1e-12
     )
