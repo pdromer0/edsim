@@ -20,8 +20,9 @@ inicio = [8, 15, 22]
 #   uv run edsim calibracion sensibilidad --mando medicos
 enfermeria_triaje = [3, 2, 1]
 medicos = [14, 14, 6]
-# Capacidad física, igual en todos los turnos
-boxes = 30
+# Capacidad física, igual en todos los turnos: la del centro base (36 desde la tarea 5.6,
+# derivada con la ley de Little; ver config/centro.toml)
+boxes = 36
 # Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
 # los resultados fuera, en una sala sin límite de capacidad; con los resultados
 # vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
@@ -33,10 +34,9 @@ espera_resultados_fuera = [4, 5]
 
 [camas]
 # Espera de cama de los ingresados, en su box (decisión 72, H5-6): [mediana, p90] en
-# minutos, con factor 1. Valores de partida (docs/specs/hito-5.md, «Valores orientativos»):
-# la mediana la calibra la tarea 5.6 contra la estancia de los ingresados; el cociente
-# p90 / mediana = 3, por criterio.
-espera = [240, 720]
+# minutos, con factor 1: la del centro base, calibrada en la tarea 5.6 (ver
+# config/centro.toml).
+espera = [210, 630]
 # Factor por el turno del pedido de cama: mañana, tarde, noche, con los turnos de [turnos]
 # (las altas de planta salen por la mañana). factor_estacion, opcional, vale 1.
 factor_turno = [0.8, 1.0, 1.5]

@@ -37,10 +37,18 @@ inicio = [8, 15, 22]
 #   uv run edsim calibracion evaluar --semilla 2028
 # Es una plantilla para todo el año: enero queda cerca de la saturación (reloj A de
 # 105 min con 2026) y el refuerzo de invierno queda para versiones posteriores.
+# Con el modelo del hito 5 (tarea 5.6), medida de nuevo con la cama y la paciencia
+# elegidas, la plantilla pasa y no cambia: pretriaje 6,73 y reloj A de los niveles 2 a 5
+# 35,31 con 2026 (7,77 y 36,63 con 2027);
+#   uv run edsim calibracion evaluar (y --semilla 2027)
 enfermeria_triaje = [3, 2, 1]
 medicos = [12, 11, 4]
-# Capacidad física, igual en todos los turnos
-boxes = 30
+# Capacidad física, igual en todos los turnos. Derivada en la tarea 5.6 (decisión de
+# Pedro del 12 de noviembre de 2026): los 30 del hito 4, calibrado sin boxes ocupados
+# por ingresados, más los que ocupa de media la espera de cama, por la ley de Little,
+# redondeados al entero más cercano: λ · W = 6,44 con 2026 (6,56 con 2027), 30 + 6 = 36.
+#   uv run edsim calibracion evaluar  (línea «Esperando cama (ley de Little …)»)
+boxes = 36
 # Niveles asignados cuyos pacientes dejan el box al pedir las pruebas y esperan
 # los resultados fuera, en una sala sin límite de capacidad; con los resultados
 # vuelven a pedir box con su misma prioridad para la reevaluación (decisión 45,
@@ -52,10 +60,13 @@ espera_resultados_fuera = [4, 5]
 
 [camas]
 # Espera de cama de los ingresados, en su box (decisión 72, H5-6): [mediana, p90] en
-# minutos, con factor 1. Valores de partida (docs/specs/hito-5.md, «Valores orientativos»):
-# la mediana la calibra la tarea 5.6 contra la estancia de los ingresados; el cociente
-# p90 / mediana = 3, por criterio.
-espera = [240, 720]
+# minutos, con factor 1. El cociente p90 / mediana = 3, por criterio; la mediana,
+# calibrada en la tarea 5.6 contra la estancia de los ingresados (360-600 min, SAS
+# 472,5), con la regla de siempre (la más cercana a la referencia de las que pasan, con
+# el veto de 2027), antes y después de la paciencia: 210 (de 240), con 470,8 y 473,3
+# (paciencia de partida) y 479,9 y 481,1 (paciencia calibrada) con 2026 y 2027;
+#   uv run edsim calibracion sensibilidad --mando espera_cama --comprobacion 2027
+espera = [210, 630]
 # Factor por el turno del pedido de cama: mañana, tarde, noche, con los turnos de [turnos]
 # (las altas de planta salen por la mañana). factor_estacion, opcional, vale 1.
 factor_turno = [0.8, 1.0, 1.5]

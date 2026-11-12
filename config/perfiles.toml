@@ -330,9 +330,17 @@ alterado = { base = 35, or_gravedad = 2.0 }
 # Bloque del hito 5 (decisiones 68 a 72; docs/specs/hito-5.md, «Valores orientativos»).
 
 [abandono]
-# Paciencia por nivel real: [mediana, p90] en minutos (decisión 70). Forma orientativa,
-# con p90 = 3 × mediana; la 5.6 calibra un factor común contra el abandono.
-paciencia = [[1440, 4320], [480, 1440], [240, 720], [150, 450], [120, 360]]
+# Paciencia por nivel real: [mediana, p90] en minutos (decisión 70). La forma, orientativa
+# (p90 = 3 × mediana, σ = 0,857), y el orden de los niveles son los de partida:
+# [[1440, 4320], [480, 1440], [240, 720], [150, 450], [120, 360]]. Su nivel, calibrado en
+# la tarea 5.6 con un factor común k = 4 sobre medianas y p90 contra el abandono (1-4 %,
+# SAS 1,82): 1,68 % con 2026 y 2,00 % con 2027, con la cama y los 36 boxes de
+# config/centro.toml (rejilla 2^(i/4) de 1 a 8: k = 3,364 da 2,13 %);
+#   uv run edsim calibracion sensibilidad --mando paciencia --comprobacion 2027
+# Discrepancia estructural (docs/calibracion/registro.md, tarea 5.6): la mediana del nivel
+# 4 es de 600 min y la del 5 de 480, frente a las 2 h que declaran los pacientes en la
+# encuesta de Shaikh; la piden el abandono y el reloj A con la plantilla anual.
+paciencia = [[5760, 17280], [1920, 5760], [960, 2880], [600, 1800], [480, 1440]]
 paciencia_edad = [0.8, 1.0, 1.0, 1.0]   # orientativo: los jóvenes se van antes
 
 [destinos]
