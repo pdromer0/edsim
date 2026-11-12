@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from edsim.calibration.targets import (
+    ARRIVALS_PERCENTAGE,
     CHECK,
     FIT,
     MANCHESTER,
@@ -166,3 +167,113 @@ def test_claves_de_primer_nivel(data):
         targets_from_data({})
     with pytest.raises(ValueError, match="objetivos.x must be a table"):
         targets_from_data({"objetivos": {"x": 3}})
+
+
+# --- Los objetivos del hito 5: porcentaje de llegadas y destino (tarea 5.6) -----------------
+
+SAS = {"fuente": "SAS", "enlace": "https://example.org", "uso": "ajuste"}
+ABANDONO = {
+    "medida": "left",
+    "estadistico": "porcentaje_de_llegadas",
+    "referencia": 1.82,
+    "horquilla": [1, 4],
+    **SAS,
+}
+ESTANCIA_INGRESADOS = {
+    "medida": "stay",
+    "destino": "ingreso",
+    "niveles": [1, 2, 3, 4, 5],
+    "estadistico": "media",
+    "referencia": 472.5,
+    "horquilla": [360, 600],
+    **SAS,
+}
+
+
+def _one(table: dict) -> Target:
+    (target,) = targets_from_data({"objetivos": {"x": table}})
+    return target
+
+
+def test_el_porcentaje_de_llegadas_no_lleva_niveles():
+    target = _one(ABANDONO)
+    assert (target.measure, target.levels, target.statistic) == (
+        "left",
+        (),
+        ARRIVALS_PERCENTAGE,
+    )
+    assert target.is_percentage and target.needs_outcome
+    assert target.aim == 1.82
+
+
+def test_la_estancia_con_destino():
+    target = _one(ESTANCIA_INGRESADOS)
+    assert (target.measure, target.destination, target.levels) == (
+        "stay",
+        "ingreso",
+        (1, 2, 3, 4, 5),
+    )
+    assert not target.is_percentage and target.needs_outcome
+
+
+@pytest.mark.parametrize(
+    ("table", "needs"),
+    [
+        (ABANDONO, True),
+        ({**ABANDONO, "medida": "departure"}, False),
+        ({**ABANDONO, "medida": "departure", "destino": "ingreso"}, True),
+        (ESTANCIA_INGRESADOS, True),
+        ({k: v for k, v in ESTANCIA_INGRESADOS.items() if k != "destino"}, False),
+    ],
+    ids=["abandono", "salidas", "ingreso_observado", "estancia_ingresados", "estancia"],
+)
+def test_que_objetivos_necesitan_el_modelo_del_hito_5(table, needs):
+    # Solo el abandono y los destinos del hito 5; la estancia de todos existe en el hito 4.
+    assert _one(table).needs_outcome is needs
+
+
+@pytest.mark.parametrize(
+    ("table", "message"),
+    [
+        (
+            {**ABANDONO, "niveles": [4, 5]},
+            "objetivos.x.niveles is not allowed with 'porcentaje_de_llegadas'",
+        ),
+        (
+            {**ABANDONO, "umbral": 5},
+            "objetivos.x.umbral is only for 'porcentaje_sobre_umbral', not for"
+            " 'porcentaje_de_llegadas'",
+        ),
+        (
+            {**ABANDONO, "medida": "stay"},
+            "objetivos.x.medida must be one of ('left', 'departure') with 'porcentaje_de_llegadas'",
+        ),
+        ({**ABANDONO, "horquilla": [1, 140]}, "horquilla of a percentage must be within [0, 100]"),
+        (
+            {**ESTANCIA_INGRESADOS, "medida": "triage_wait"},
+            "objetivos.x.destino is only for the measures 'stay' and 'departure'",
+        ),
+        ({**ESTANCIA_INGRESADOS, "destino": "uci"}, "objetivos.x.destino must be one of"),
+        ({**ESTANCIA_INGRESADOS, "medida": "left"}, "objetivos.x.medida must be one of"),
+        (
+            {k: v for k, v in ESTANCIA_INGRESADOS.items() if k != "niveles"},
+            "missing keys: objetivos.x.niveles",
+        ),
+        ({**ESTANCIA_INGRESADOS, "destinos": "ingreso"}, "unknown keys: objetivos.x.destinos"),
+    ],
+    ids=[
+        "niveles",
+        "umbral",
+        "medida_de_suceso",
+        "horquilla",
+        "destino_sin_estancia",
+        "destino_desconocido",
+        "suceso_en_una_media",
+        "faltan_niveles",
+        "clave_desconocida",
+    ],
+)
+def test_errores_de_los_objetivos_del_hito_5_con_la_clave_completa(table, message):
+    with pytest.raises(ValueError) as caught:
+        _one(table)
+    assert message in str(caught.value)
