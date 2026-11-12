@@ -42,6 +42,14 @@ FIELDS = (
     ("duraciones.respuesta_pruebas", "Respuesta de pruebas (min)", False, ("mediana", "p90")),
     ("pruebas.probabilidad", "Probabilidad de pruebas", False, LEVELS),
     ("destino.probabilidad_ingreso", "Probabilidad de ingreso", False, LEVELS),
+    ("camas.espera", "Espera de cama (min)", False, ("mediana", "p90")),
+    ("camas.factor_turno", "Factor de la espera de cama por turno", False, SHIFTS),
+    (
+        "camas.factor_estacion",
+        "Factor de la espera de cama por estación",
+        False,
+        ("invierno", "primavera", "verano", "otoño"),
+    ),
 )
 
 
@@ -205,6 +213,11 @@ def waits_frame(result: RunResults) -> pd.DataFrame:
                 "Días fuera de objetivo": compliance.share_out,
             }
         )
+        if result.outcome is not None:
+            # With abandonment (H5-8): those who left after the maximum are in
+            # "Pacientes que superan el máximo"; those who left before, out of n.
+            row["Se van después del máximo"] = compliance.left_late
+            row["Censurados (se van antes)"] = compliance.censored
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -256,6 +269,21 @@ EPISODE_COLUMNS = {
 }
 
 
+OUTCOME_EPISODE_COLUMNS = {
+    "left": "Se va sin ser visto (min)",
+    "left_from": "Se va desde",
+    "bed_requested": "Pide cama (min)",
+    "bed_assigned": "Recibe cama (min)",
+    "bed_wait": "Espera de cama (min)",
+    "hallway": "Pasillo",
+}
+LEFT_FROM_LABELS = {
+    "triaje": "Esperando el triaje",
+    "box": "Esperando box",
+    "medico": "Esperando médico en el box",
+}
+
+
 def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.DataFrame:
     """Present every record field, final stay and observed lower bound unchanged."""
     frame = pd.DataFrame(
@@ -270,6 +298,12 @@ def episodes_frame(table: Sequence[EpisodeRecord], result: RunResults) -> pd.Dat
         ],
         columns=[*EPISODE_COLUMNS.values(), "Tiempo observado (min)"],
     )
+    if result.outcome is not None:
+        # The outcome of milestone 5 (task 5.4): abandonment, bed and hallway.
+        for field, label in OUTCOME_EPISODE_COLUMNS.items():
+            frame[label] = [getattr(record, field) for record in table]
+        frame["Se va desde"] = frame["Se va desde"].map(LEFT_FROM_LABELS)
+        frame["Pasillo"] = frame["Pasillo"].map({True: "Sí", False: "No"})
     frame["Llegada (UTC+1)"] = wall_times(result, [record.arrival for record in table])
     frame["Nivel"] = frame["Nivel"].astype("Int64")
     if result.observed is not None:
@@ -297,15 +331,22 @@ EPISODE_STATE_LABELS = {
     "assessment": "Valoración",
     "waiting_tests": "En box esperando pruebas",
     "reassessment": "Reevaluación",
+    "waiting_bed": "Esperando cama",
 }
 
 
-def episode_state_label(state: str, *, results_room: bool = False) -> str:
-    """Present the physical location while preserving the core's state names."""
+def episode_state_label(state: str, *, results_room: bool = False, hallway: bool = False) -> str:
+    """Present the physical location while preserving the core's state names.
+
+    The state says what the patient does; the marks, where it is (H5-11): the
+    results room or, for an admitted patient displaced from its box, the hallway.
+    """
     if results_room:
         return "Sala de resultados · " + (
             "espera de box" if state == "waiting_box" else "espera de pruebas"
         )
+    if hallway:
+        return "Pasillo · " + EPISODE_STATE_LABELS[state].lower()
     return EPISODE_STATE_LABELS[state]
 
 
@@ -327,7 +368,9 @@ def episode_timeline_frames(
         {
             "Inicio": segment.start,
             "Fin": segment.end,
-            "Estado": episode_state_label(segment.state, results_room=segment.results_room),
+            "Estado": episode_state_label(
+                segment.state, results_room=segment.results_room, hallway=segment.hallway
+            ),
             "Box": segment.box,
             "Duración (min)": segment.end - segment.start,
             "Carril": "Recorrido",
@@ -396,6 +439,8 @@ def episode_truth_frame(comparisons: Sequence[TruthComparison]) -> pd.DataFrame:
         "reassessment_time": "Reevaluación",
         "test_turnaround": "Respuesta de pruebas",
         "destination": "Destino",
+        "patience": "Paciencia",
+        "bed_wait": "Espera de cama",
     }
     statuses = {
         "match": "Coincide",

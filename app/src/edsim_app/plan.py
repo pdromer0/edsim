@@ -8,16 +8,6 @@ from edsim.runs import TIMEZONE, ReplayCounts, ReplayPatient, ReplayState
 from edsim_app.frames import episode_state_label
 from edsim_app.palette import LEVEL_COLORS, UNKNOWN_LEVEL_COLOR
 
-STATE_LABELS = {
-    "waiting_triage": "Espera triaje",
-    "triage": "Triaje",
-    "waiting_box": "Espera box",
-    "waiting_doctor": "Espera médico",
-    "assessment": "Valoración",
-    "waiting_tests": "Espera pruebas",
-    "reassessment": "Reevaluación",
-}
-
 
 def render_plan(
     state: ReplayState,
@@ -25,8 +15,14 @@ def render_plan(
     *,
     start_date: date,
     highlighted_episode: str | None = None,
+    outcome: bool = False,
 ) -> str:
-    """Draw bounded queues and one cell per physical box; totals are supplied curves."""
+    """Draw bounded queues and one cell per physical box; totals are supplied curves.
+
+    With ``outcome`` (a log of version 4, task 5.5) the plan shows the four
+    destinations and the abandonments of the last hour; without it, discharge
+    and admission only, as the older models have no others.
+    """
     waiting_triage = sorted(
         (p for p in state.patients if p.state == "waiting_triage"),
         key=lambda p: (p.arrival, p.episode_id),
@@ -39,8 +35,18 @@ def render_plan(
         (p for p in state.patients if p.results_room and p.state == "waiting_tests"),
         key=lambda p: (p.arrival, p.episode_id),
     )
+    hallway = sorted(
+        (p for p in state.patients if p.hallway),
+        key=lambda p: (p.arrival, p.episode_id),
+    )
+
+    def section_height(patients):
+        """A heading, its patients (at most 30) and the «+n más» line."""
+        return 0 if not patients else 50 + 38 * min(30, len(patients)) + 15 * (len(patients) > 30)
+
+    right_column = 240 + section_height(hallway) + section_height(results_room)
     height = max(
-        200 + 38 * min(30, len(results_room)),
+        right_column + 40,
         450,
         130 + 38 * min(30, max(len(waiting_triage), len(waiting_box))),
         130 + 76 * ceil(counts.boxes / 4),
@@ -72,6 +78,8 @@ def render_plan(
     recent = tuple(d for d in state.displacements if state.time - 60 < d.time <= state.time)
 
     def patient(p: ReplayPatient, x, y, width=180, height=32, *, label=None):
+        name = label or p.episode_id
+        label = episode_state_label(p.state, results_room=p.results_room, hallway=p.hallway)
         svg.append(f'<g data-role="patient" data-episode="{escape(p.episode_id, quote=True)}">')
         displaced = tuple(d for d in recent if d.episode_id == p.episode_id)
         stroke = "#c62828" if displaced else "#596773"
@@ -84,13 +92,10 @@ def render_plan(
         if displaced:
             svg.append(title_for(displaced))
         else:
-            svg.append(
-                f"<title>{escape(p.episode_id)} · "
-                f"{escape(episode_state_label(p.state, results_room=p.results_room))}</title>"
-            )
-        text(x + 5, y + 15, label or p.episode_id)
+            svg.append(f"<title>{escape(p.episode_id)} · {escape(label)}</title>")
+        text(x + 5, y + 15, name)
         if height >= 45:
-            text(x + 5, y + 32, episode_state_label(p.state, results_room=p.results_room))
+            text(x + 5, y + 32, label)
         if p.episode_id == highlighted_episode:
             svg.append(
                 f'<rect data-mark="highlight" x="{x - 3}" y="{y - 3}" '
@@ -179,18 +184,33 @@ def render_plan(
         "doctors",
     )
     text(1130, 26, "Salidas · última hora", "heading")
-    for i, destination in enumerate(("alta", "ingreso")):
+    departures = state.departures_by_destination.items()
+    if not outcome:
+        departures = [(d, n) for d, n in departures if d in ("alta", "ingreso")]
+    for i, (destination, count) in enumerate(departures):
+        text(1130, 66 + i * 32, f"{destination.capitalize()}: {count}")
+    if outcome:
         text(
             1130,
-            66 + i * 32,
-            f"{destination.capitalize()}: {state.departures_by_destination[destination]}",
+            194,
+            f"Se van sin ser vistos (última hora): {len(state.abandonments)}",
+            attributes='data-count="left"',
         )
-    if results_room:
-        text(1130, 150, "Sala de resultados · espera de pruebas", "heading")
-        for index, p in enumerate(results_room[:30]):
-            patient(p, 1130, 170 + 38 * index, width=280)
-        if len(results_room) > 30:
-            text(1130, 185 + 38 * 30, f"+{len(results_room) - 30} más")
+
+    def side_section(patients, y, title, role):
+        if not patients:
+            return y
+        text(1130, y, title, "heading")
+        svg.append(f'<g data-role="{role}">')
+        for index, p in enumerate(patients[:30]):
+            patient(p, 1130, y + 20 + 38 * index, width=280)
+        svg.append("</g>")
+        if len(patients) > 30:
+            text(1130, y + 35 + 38 * 30, f"+{len(patients) - 30} más")
+        return y + section_height(patients)
+
+    y = side_section(hallway, 240, "Pasillo · esperando cama", "hallway-queue")
+    side_section(results_room, y, "Sala de resultados · espera de pruebas", "results-room")
     text(
         14,
         height - 37,

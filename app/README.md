@@ -4,7 +4,11 @@ App local de EDsim para ajustar un centro de urgencias, simularlo por lotes y
 explorar sus ejecuciones guardadas. Desde el incremento del hito 4 (`app-v0.2.0`),
 EDsim Lab simula con el modelo clínico. Cada paciente tiene edad, sexo, medio de
 llegada, motivo, gravedad real oculta y un nivel de triaje con error. Las ejecuciones
-provisionales del hito 3 se siguen abriendo; la app ya no las crea.
+provisionales del hito 3 se siguen abriendo; la app ya no las crea. Desde el
+incremento del hito 5 (`app-v0.3.0`), también abre y simula el modelo del hito 5:
+pacientes que se van sin ser vistos, cuatro destinos (alta, ingreso, traslado y
+exitus) y la espera de cama de los ingresados, en su box o en el pasillo. Lo elige
+el centro (`[camas]` en lugar de `[destino]`) junto con sus perfiles.
 
 El alcance inicial está en la
 [especificación de la fase 1](docs/specs/fase-1.md#objetivo-y-alcance-de-la-fase-1)
@@ -34,11 +38,11 @@ solo el núcleo y retira la app y sus dependencias exclusivas. El arranque con
 | Grupo | Página | Para qué sirve |
 | --- | --- | --- |
 | Ejecutar | Ejecuciones | Ver el modelo y la huella de los perfiles, elegir una ejecución, marcar A/B, descargarla y borrarla con confirmación. |
-| Ejecutar | Simular | Elegir el fichero de perfiles y ver su resumen; editar turnos, plantilla, boxes y destino; guardar una variante, prever la carga y simular. |
-| Analizar | Resultados | Consultar KPIs, los tres relojes, Manchester desde la clasificación, pretriaje, nivel 1 con mediana y p90, reparto observado, ocupación, censo, Little e invariantes. |
-| Analizar | Episodios | Filtrar por perfil, seguir el recorrido y la sala de resultados; consultar gravedad, nivel real y calidad del triaje con «Ver la verdad». |
-| Analizar | Comparar | Contrastar A y B con el tipo de emparejamiento: plantilla, clínico o sin emparejar; ver diferencias paciente a paciente cuando estén emparejadas. |
-| Analizar | Replay | Reconstruir el servicio en el plano, con edad y motivo en la ficha y colores por nivel asignado. |
+| Ejecutar | Simular | Elegir el fichero de perfiles y ver su resumen; partir del centro base, del cumplidor o de una variante; editar turnos, plantilla, boxes y la probabilidad de ingreso o, con un centro del hito 5, la espera de cama; guardar una variante, prever la carga (aún no con el hito 5, #103) y simular. |
+| Analizar | Resultados | Consultar KPIs, los tres relojes, Manchester desde la clasificación con la censura del abandono, pretriaje, nivel 1 con mediana y p90, reparto observado, ocupación, censo, Little e invariantes; con el hito 5, el desenlace (abandono, destinos, espera de cama con sus cotas «≥», estancia por destino, boxes bloqueados y pasillo); con «Ver la verdad», el cumplimiento y el abandono por nivel real. |
+| Analizar | Episodios | Filtrar por perfil y, con el hito 5, por abandono, cama y pasillo; seguir el recorrido y la sala de resultados; consultar gravedad, nivel real, calidad del triaje y el desenlace sorteado (paciencia, destino contrafactual, espera de cama) con «Ver la verdad». |
+| Analizar | Comparar | Contrastar A y B con el tipo de emparejamiento: plantilla, clínico o sin emparejar; ver las diferencias de los perfiles clave a clave y, cuando estén emparejadas, paciente a paciente. |
+| Analizar | Replay | Reconstruir el servicio en el plano, con edad y motivo en la ficha y colores por nivel asignado; con el hito 5, los ingresados esperando cama, el pasillo y los que se van sin ser vistos, aparte de las salidas. |
 
 La ejecución seleccionada se comparte entre páginas y aparece en `?run=…`.
 Cada página incluye «¿Qué estoy viendo?» con los conceptos de su vista.

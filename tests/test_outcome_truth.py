@@ -72,6 +72,33 @@ def test_la_paciencia_de_quien_se_va_y_su_destino_contrafactual(center, profiles
     assert rows(result, scenario, "EP-000000", profiles)["patience"].status == "unused"
 
 
+def test_lo_que_quien_se_va_nunca_alcanza_no_se_usa(center, profiles):
+    """Issue #105: las etapas de después de irse salen `unused`, no `pending` para siempre."""
+    scenario = abandonment(center)
+    result = run_scenario(scenario)
+    # Q2 se tría de 1 a 6 y se va en 26 esperando al médico (Q1 lo tiene de 5 a 45).
+    q2 = rows(result, scenario, "EP-000001", profiles)
+    assert (q2["level"].status, q2["triage_time"].status) == ("match", "match")
+    assert (q2["assessment_time"].drawn, q2["assessment_time"].status) == (20.0, "unused")
+    # Con pruebas en su verdad, la reevaluación y la respuesta tampoco llegan.
+    truth = next(t for t in result.run.episodes if t.episode_id == "EP-000001")
+    with_tests = rows(
+        result, scenario, "EP-000001", profiles, truth=dataclasses.replace(truth, needs_tests=True)
+    )
+    assert with_tests["reassessment_time"].status == "unused"
+    assert with_tests["test_turnaround"].status == "unused"
+    # Q4 llega en 3 y se va en 4 esperando enfermera (ocupadas hasta 5 y 6): ni nivel ni triaje.
+    q4 = rows(result, scenario, "EP-000003", profiles)
+    assert {field: q4[field].status for field in ("level", "triage_time", "assessment_time")} == {
+        "level": "unused",
+        "triage_time": "unused",
+        "assessment_time": "unused",
+    }
+    assert (q4["level"].drawn, q4["triage_time"].drawn) == (5, 5.0)
+    # Q1, visto por el médico: su valoración coincide, como siempre.
+    assert rows(result, scenario, "EP-000000", profiles)["assessment_time"].status == "match"
+
+
 def test_el_plazo_que_vence_en_el_triaje(center, profiles):
     scenario = late_triage(center)
     result = run_scenario(scenario)

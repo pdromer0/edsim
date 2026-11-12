@@ -10,6 +10,7 @@ from edsim.engine.center import (
     read_center_values,
     validate_center_values,
 )
+from edsim.engine.clinical_sampler import PatientModel
 from edsim.engine.events import TIMEZONE, Event
 from edsim.engine.ground_truth import EpisodeTruth
 from edsim.engine.invariants import Violation
@@ -113,6 +114,11 @@ from edsim.runs.offered import (
     offered_work,
     offered_work_from_load,
 )
+from edsim.runs.profiles_diff import (
+    ProfilesDifference,
+    profiles_diff,
+    read_run_profiles_values,
+)
 from edsim.runs.replay import (
     ReplayAbandonment,
     ReplayCounts,
@@ -132,7 +138,12 @@ from edsim.runs.results import (
     read_run_header,
     read_run_results,
 )
-from edsim.runs.service import RunConfigurationError, SimulationResult, simulate_run
+from edsim.runs.service import (
+    RunConfigurationError,
+    SimulationResult,
+    patient_model,
+    simulate_run,
+)
 from edsim.runs.store import RunInfo, RunStore
 from edsim.runs.summary import (
     CenterSummary,
@@ -167,6 +178,11 @@ from edsim.runs.variants import (
 )
 
 __all__ = [
+    "PatientModel",
+    "patient_model",
+    "ProfilesDifference",
+    "profiles_diff",
+    "read_run_profiles_values",
     "ADMITTED_LONG_STAY",
     "BED_WAIT_THRESHOLDS",
     "BedOccupancy",

@@ -5,7 +5,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
-from edsim.engine.analysis import CURVES, StepCurves
+from edsim.engine.analysis import CURVES, OUTCOME_CURVES, StepCurves
 from edsim.runs import curve_blocks, curve_steps
 
 
@@ -85,3 +85,24 @@ def test_steps_drop_redundant_values_without_moving_changes():
     steps = curve_steps(curves, "nurses_staff", 0.5, 3.5)
     np.testing.assert_array_equal(steps.edges, [0.5, 2, 3.5])
     np.testing.assert_array_equal(steps.values, [4, 8])
+
+
+@pytest.mark.parametrize("function", [curve_blocks, curve_steps])
+def test_las_curvas_de_la_cama_se_leen_como_las_demas(function):
+    """Las dos curvas del hito 5 (OUTCOME_CURVES, tarea 5.4) son curvas del análisis."""
+    names = CURVES + OUTCOME_CURVES
+    curves = StepCurves(
+        np.array([0.0, 10.0]),
+        MappingProxyType({name: np.array([0, 2]) for name in names}),
+        20.0,
+    )
+    for name in OUTCOME_CURVES:
+        result = function(curves, name, 0, 20)
+        # De 0 a 10 vale 0 y de 10 a 20 vale 2: media 1 en un bloque de 20, máximo 2.
+        if function is curve_blocks:
+            assert result.edges[-1] == 20.0
+        else:
+            np.testing.assert_array_equal(result.values, [0, 2])
+    blocks = curve_blocks(curves, "hallway", 0, 20, block_minutes=20)
+    np.testing.assert_array_equal(blocks.mean, [1.0])
+    np.testing.assert_array_equal(blocks.maximum, [2])

@@ -15,7 +15,7 @@ from edsim.arrivals.profile import load_profile
 from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.report import config_fingerprint
 from edsim.engine.analysis import OutcomeCounts, RunAnalysis, analyze_run, outcome_counts
-from edsim.engine.center import load_center, require_provisional
+from edsim.engine.center import CenterConfig, load_center, require_provisional
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id, simulate_ed
 from edsim.engine.events import OUTCOME_SCHEMA_VERSION, JsonlSink, read_events
@@ -27,7 +27,7 @@ from edsim.engine.report import (
     write_episodes_csv,
     write_ground_truth_days_csv,
 )
-from edsim.profiles.config import load_profiles
+from edsim.profiles.config import ClinicalProfiles, load_profiles
 from edsim.runs.identifiers import validate_run_id
 from edsim.runs.store import FORMAT_VERSION, OUTCOME_FORMAT_VERSION, RunInfo
 
@@ -105,6 +105,29 @@ def _check_provisional_center(center: str | Path) -> None:
         raise RunConfigurationError(str(error)) from error
 
 
+def patient_model(
+    center: CenterConfig,
+    profiles: ClinicalProfiles | None,
+    *,
+    center_file: str = "centro.toml",
+    profiles_file: str = "perfiles.toml",
+) -> PatientModel:
+    """The model of the patients that a center and its profiles choose (H5-2, task 5.5).
+
+    The app asks it before computing the offered load, which does not exist
+    yet for milestone 5 (issue #103). ``center_file`` and ``profiles_file``
+    name the two files in the error.
+
+    Raises:
+        RunConfigurationError: If the two files do not choose one model, with
+            the message of ``choose_model``.
+    """
+    try:
+        return choose_model(center, profiles, center_file=center_file, profiles_file=profiles_file)
+    except ModelChoiceError as error:
+        raise RunConfigurationError(str(error)) from error
+
+
 def _check_model(center: str | Path, profiles: str | Path) -> None:
     """Fail before writing anything if the two files do not choose one clinical model.
 
@@ -116,12 +139,9 @@ def _check_model(center: str | Path, profiles: str | Path) -> None:
         center_config, clinical_profiles = load_center(center), load_profiles(profiles)
     except (OSError, ValueError):
         return
-    try:
-        choose_model(
-            center_config, clinical_profiles, center_file=str(center), profiles_file=str(profiles)
-        )
-    except ModelChoiceError as error:
-        raise RunConfigurationError(str(error)) from error
+    patient_model(
+        center_config, clinical_profiles, center_file=str(center), profiles_file=str(profiles)
+    )
 
 
 def simulate_run(

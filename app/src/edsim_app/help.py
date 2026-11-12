@@ -31,6 +31,14 @@ def render_episodes_help() -> None:
             "estar pendiente o no usarse. Una etapa parcial no debe superar lo sorteado; "
             "la tolerancia absoluta es 0,00000001 minutos, sin tolerancia relativa."
         )
+        st.write(
+            "Con el modelo del hito 5, un paciente puede irse sin ser visto antes del primer "
+            "médico: esperando el triaje, esperando box o esperando médico en el box. Sus "
+            "relojes quedan vacíos y lo que ya no alcanzará (valoración, pruebas, destino) "
+            "sale como «no usada»: su destino sorteado es el que habría tenido. Un ingresado "
+            "pide cama y la espera en su box, que queda bloqueado; si un nivel 1 lo desaloja, "
+            "la espera en el pasillo. Los filtros del desenlace solo aparecen con esas ejecuciones."
+        )
 
 
 def render_results_help() -> None:
@@ -41,7 +49,25 @@ def render_results_help() -> None:
             "episodios llegados en la ventana y completados. Los niveles son los asignados. "
             "Los tres relojes miden hasta el primer médico: A desde la puerta, B desde el "
             "inicio del triaje y C desde la clasificación. Manchester se mide con C; "
-            "justo en el máximo cumple. Un día está fuera si cumple menos del 90 %."
+            "quien ve al médico justo en el máximo cumple. Un día está fuera si cumple menos "
+            "del 90 %."
+        )
+        st.write(
+            "Con el abandono del hito 5, las medias de los relojes son de los atendidos. En el "
+            "cumplimiento, quien se va después de su máximo (o justo en él) cuenta como "
+            "incumplimiento; quien se va antes no cuenta: está censurado, porque no sabemos si "
+            "lo habrían visto a tiempo. Ejemplo: tres pacientes de nivel 4 (máximo 120 min) "
+            "ven al médico a los 30 y a los 90 y el tercero se va a los 150. El cumplimiento "
+            "es 2 de 3, el 66,7 %; quitarlo daría un 100 %, como si irse mejorara el servicio."
+        )
+        st.write(
+            "El desenlace da el abandono sobre las llegadas (antes y después del triaje, los "
+            "dos indicadores de SEMES), los destinos, la espera de cama y la estancia por "
+            "destino. «≥» marca una cota inferior: hay ingresados que siguen esperando cama al "
+            "final y su espera será mayor. En los umbrales (6, 12 y 24 h) el porcentaje es "
+            "sobre los conocidos; los que siguen esperando sin haber llegado al umbral van "
+            "aparte, «sin saber». «Ver la verdad» enseña lo que solo sabe el simulador: el "
+            "nivel real, los graves que se fueron y los que habrían ingresado."
         )
         st.write(
             "El pretriaje tiene su indicador: 10 minutos o menos (objetivo diario 85 %) "
@@ -89,7 +115,9 @@ def render_simulate_help(prior_days: int | None = None) -> None:
         )
         st.write(
             "Del centro solo cuentan turnos, plantilla, boxes, los niveles que esperan "
-            "los resultados fuera del box y el destino provisional. El resumen de los "
+            "los resultados fuera del box y la probabilidad de ingreso o, con un centro del "
+            "hito 5 ([camas]), la espera de cama: [mediana, p90] y el factor del turno del "
+            "pedido (y de la estación, si el fichero lo trae). El resumen de los "
             "perfiles muestra su expectativa anual, no lo que dará una ejecución."
         )
         st.write(
@@ -124,7 +152,9 @@ def render_compare_help() -> None:
             "Compartir semilla, perfil de llegadas, días, calentamiento y modelo permite "
             "emparejar pacientes. Plantilla conserva los mismos pacientes; el emparejamiento "
             "clínico usa los mismos sorteos estándar con otros perfiles y puede cambiar "
-            "los valores clínicos. Modelos distintos quedan sin emparejar. "
+            "los valores clínicos; la tabla de perfiles dice qué claves cambian. Modelos "
+            "distintos quedan sin emparejar, también un hito 4 frente a un hito 5 (otra "
+            "versión del catálogo). "
             "La verdad comprueba sus llegadas y sorteos: cambiar plantilla conserva los "
             "números aleatorios comunes; cambiar clínica puede cambiar algunos sorteos, "
             "aunque en una muestra pequeña no cambie ninguno."
@@ -135,4 +165,19 @@ def render_compare_help() -> None:
             "pueden sesgar el resultado. Igual significa diferencia absoluta de hasta "
             "0,00000001 minutos. Los histogramas muestran solo a quienes mejoran o empeoran; "
             "los iguales se cuentan aparte."
+        )
+
+
+def render_replay_help() -> None:
+    """Explain the plan's zones, the hallway mark and the abandonment as a separate closure."""
+    with st.expander("¿Qué estoy viendo?"):
+        st.write(
+            "El plano reconstruye el servicio en el instante elegido: colas, triaje, boxes, "
+            "médicos y las salidas de la última hora. Los colores son el nivel asignado."
+        )
+        st.write(
+            "Con el modelo del hito 5, un ingresado espera la cama en su box («Esperando "
+            "cama»), que sigue ocupado. Si un nivel 1 lo desaloja, la espera en el pasillo: "
+            "el estado dice qué hace y la marca, dónde está. Quien se va sin ser visto no es "
+            "una salida: se cuenta aparte, en la última hora."
         )

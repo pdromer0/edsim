@@ -183,7 +183,10 @@ def compare_episode_truth(
     is pending with the slowest base (factor 1).
 
     With the outcome of milestone 5 (task 5.4), the drawn destination of whoever
-    left without being seen is ``unused``: it is the one it would have had.
+    left without being seen is ``unused``: it is the one it would have had. So
+    are its assessment, reassessment and turnaround (issue #105), which it
+    never reached, and, if it left before its triage, its level and triage
+    time.
     With ``center`` (that of the run, with ``[camas]``), two more rows:
 
     - ``patience``: the drawn patience against the time until the patient
@@ -250,6 +253,7 @@ def compare_episode_truth(
         )
         return duration(field, state, started, finished, drawn, unused)
 
+    left = bool(by_type.get("patient_left_wbs"))
     started = by_type.get("triage_started", ())
     at_the_door = any(event.payload["circuito"] == DOOR for event in started)
     triage = by_type.get("triage_completed", ())
@@ -263,7 +267,6 @@ def compare_episode_truth(
         else truth.outcome.destination
     )
     band = segments.tests
-    left = by_type.get("patient_left_wbs", ())
     destination_row = TruthComparison(
         "destination",
         drawn_destination,
@@ -281,7 +284,13 @@ def compare_episode_truth(
             "level",
             truth.level,
             level,
-            "pending" if level is None else "match" if level == truth.level else "mismatch",
+            "unused"
+            if level is None and left
+            else "pending"
+            if level is None
+            else "match"
+            if level == truth.level
+            else "mismatch",
         ),
         duration(
             "triage_time",
@@ -289,15 +298,15 @@ def compare_episode_truth(
             bool(started),
             bool(triage),
             truth.triage_time,
-            at_the_door,
+            at_the_door or (left and not started),
         ),
-        assessment("inicial", "assessment_time", "assessment", truth.assessment_time),
+        assessment("inicial", "assessment_time", "assessment", truth.assessment_time, left),
         assessment(
             "reevaluacion",
             "reassessment_time",
             "reassessment",
             truth.reassessment_time,
-            not truth.needs_tests,
+            left or not truth.needs_tests,
         ),
         duration(
             "test_turnaround",
@@ -305,7 +314,7 @@ def compare_episode_truth(
             band is not None,
             band is not None and band.completed,
             drawn_turnaround,
-            not truth.needs_tests,
+            left or not truth.needs_tests,
             None if band is None else band.end - band.start,
         ),
         destination_row,

@@ -12,6 +12,7 @@ from edsim.runs import (
     compare_episode_truth,
     episode_clinical_truth,
     episode_observed_time,
+    episode_outcome_truth,
     episode_segments,
     filter_episodes,
     read_run_header,
@@ -25,6 +26,7 @@ from edsim_app.episodes import (
     remember_episode_filter,
 )
 from edsim_app.frames import (
+    LEFT_FROM_LABELS,
     clinical_truth_frames,
     episode_events_frame,
     episode_timeline_frames,
@@ -36,6 +38,7 @@ from edsim_app.frames import (
     wall_times,
 )
 from edsim_app.help import render_episodes_help
+from edsim_app.outcome_frames import outcome_truth_frame
 from edsim_app.results import (
     cached_episode_event_index,
     cached_episode_events,
@@ -74,6 +77,28 @@ def render_filters(result: RunResults) -> EpisodeFilters:
                 {t.key: t.key.capitalize() for t in result.profiles.diagnostic_tests},
             ),
         }
+    outcome_choices = {}
+    if result.outcome is not None:
+        yes_no = {True: "Sí", False: "No"}
+        outcome_choices = {
+            "left": ("Se va sin ser visto", yes_no),
+            "left_from": ("Se va desde", LEFT_FROM_LABELS),
+            "bed": ("Pide cama", yes_no),
+            "hallway": ("Espera la cama en el pasillo", yes_no),
+        }
+    # Transfers and deaths exist only with the milestone 5 model (H5-5).
+    destinations = [None, "alta", "ingreso"] + (
+        ["traslado", "exitus"] if result.outcome is not None else []
+    )
+    if values["destination"] not in destinations:
+        values["destination"] = None
+        st.info("Se ha quitado el filtro de destino: esta ejecución solo tiene alta e ingreso.")
+    for field in ("left", "left_from", "bed", "hallway"):
+        if values[field] is not None and field not in outcome_choices:
+            values[field] = None
+            st.info(
+                "Se ha quitado un filtro del desenlace, que solo tienen las ejecuciones del hito 5."
+            )
     for field in ("age_band", "sex", "arrival_mode", "reason", "test"):
         if values[field] is not None and (
             field not in profile_choices or values[field] not in profile_choices[field][1]
@@ -91,7 +116,7 @@ def render_filters(result: RunResults) -> EpisodeFilters:
             (
                 "destination",
                 "Destino",
-                [None, "alta", "ingreso"],
+                destinations,
                 lambda value: "Todos" if value is None else value.capitalize(),
             ),
             (
@@ -128,7 +153,7 @@ def render_filters(result: RunResults) -> EpisodeFilters:
                 on_change=remember_episode_filter,
                 args=(field, widget),
             )
-        for field, (label, choices) in profile_choices.items():
+        for field, (label, choices) in (profile_choices | outcome_choices).items():
             widget = f"episode_filter_{field}_widget"
             st.session_state[widget] = values[field]
             st.selectbox(
@@ -187,7 +212,29 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
             result.observed[record.episode_id], result.profiles
         ).items():
             st.write(f"**{label}:** {value if value is not None else '—'}")
-    if record.departure is None:
+    if record.left is not None:
+        st.metric(
+            "Se va sin ser visto (UTC+1)",
+            wall_times(result, [record.left])[0].strftime("%d/%m/%Y %H:%M:%S"),
+        )
+        st.write(f"**Desde:** {LEFT_FROM_LABELS[record.left_from]}")
+        st.caption(
+            "Se fue antes de ver al médico: sus relojes quedan vacíos y su destino nunca se "
+            "decidió. En el cumplimiento, si ya había pasado su máximo cuenta como incumplimiento; "
+            "si no, queda censurado."
+        )
+    if record.bed_requested is not None:
+        st.metric(
+            "Espera de cama",
+            "Sigue esperando"
+            if record.bed_wait is None
+            else f"{format_number(record.bed_wait)} min",
+        )
+        if record.hallway:
+            st.write(
+                "**Pasillo:** sí; un nivel 1 lo desalojó del box y esperó la cama en el pasillo."
+            )
+    if record.end is None:
         observed = episode_observed_time(record, result.analysis.curves.horizon)
         st.caption(
             f"Sin terminar. Tiempo observado: {format_number(observed)} min; "
@@ -228,9 +275,16 @@ def render_card(record: EpisodeRecord, result: RunResults, root: str, fingerprin
             truth[record.episode_id],
             profiles=result.profiles,
             start_date=result.start_date,
+            center=result.center,
         )
         st.subheader("Lo sorteado frente a lo observado")
         st.dataframe(episode_truth_frame(rows), hide_index=True, width="stretch")
+        if result.outcome is not None and truth[record.episode_id].outcome is not None:
+            st.subheader("Desenlace sorteado")
+            view = episode_outcome_truth(
+                events, truth[record.episode_id], center=result.center, start_date=result.start_date
+            )
+            st.dataframe(outcome_truth_frame(view), hide_index=True, width="stretch")
         if any(row.status == "mismatch" for row in rows):
             st.warning("Hay discrepancias entre lo sorteado y lo observado.")
 

@@ -25,6 +25,7 @@ from edsim_app.frames import (
     observed_profile_row,
     wall_times,
 )
+from edsim_app.help import render_replay_help
 from edsim_app.plan import render_plan
 from edsim_app.replay import (
     advance_playback,
@@ -156,7 +157,9 @@ def render_details(result, identity, index, t):
             {
                 "Episodio": p.episode_id,
                 "Nivel": p.level,
-                "Estado": episode_state_label(p.state, results_room=p.results_room),
+                "Estado": episode_state_label(
+                    p.state, results_room=p.results_room, hallway=p.hallway
+                ),
                 "Box": p.box,
                 "Llegada (UTC+1)": wall_times(result, [p.arrival])[0],
             }
@@ -211,6 +214,11 @@ def render_live(result, identity, index, position):
         f" · Triaje: {counts.nurses_busy} / {counts.nurses_staff}"
         f" · Médicos: {counts.doctors_busy} / {counts.doctors_staff}"
     )
+    if result.outcome is not None:
+        status += (
+            f" · Boxes con ingresados esperando cama: {counts.boxes_waiting_bed}"
+            f" · Pasillo: {counts.hallway}"
+        )
     if position.time < result.info.warmup_days * 1440:
         status += " · Calentamiento"
     if position.time == index.horizon:
@@ -222,11 +230,13 @@ def render_live(result, identity, index, position):
             counts,
             start_date=result.start_date,
             highlighted_episode=position.highlighted_episode,
+            outcome=result.outcome is not None,
         )
     )
 
 
 st.title("Replay")
+render_replay_help()
 store = catalog_store()
 choices = [None, *[info.run_id for info in store.list()]]
 st.session_state.replay_run_widget = st.session_state.selected_run_id

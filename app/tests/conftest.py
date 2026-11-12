@@ -91,9 +91,10 @@ def simulation_files(tmp_path, monkeypatch):
     st.cache_resource.clear()
     config = tmp_path / "simulation-config"
     config.mkdir()
-    for name in ("centro.toml", "llegadas.toml", "perfiles.toml"):
+    for name in ("centro.toml", "centro_cumplidor.toml", "llegadas.toml", "perfiles.toml"):
         (config / name).write_bytes((Path("config") / name).read_bytes())
     monkeypatch.setattr(defaults, "CENTER_PATH", config / "centro.toml")
+    monkeypatch.setattr(defaults, "COMPLIANT_CENTER_PATH", config / "centro_cumplidor.toml")
     monkeypatch.setattr(defaults, "PROFILE_PATH", config / "llegadas.toml")
     monkeypatch.setattr(defaults, "CLINICAL_PROFILES_PATH", config / "perfiles.toml")
     monkeypatch.setattr(defaults, "VARIANTS_DIR", tmp_path / "variants")
@@ -234,4 +235,38 @@ def clinical_run_templates(tmp_path_factory):
 def clinical_catalog(catalog_root, clinical_run_templates):
     for run_id in ("clinical", "staff", "flu", "absurd", "provisional", "legacy"):
         shutil.copytree(clinical_run_templates / run_id, catalog_root / run_id)
+    return catalog_root
+
+
+@pytest.fixture(scope="session")
+def h5_run_templates(tmp_path_factory):
+    """A three-day run of the milestone 5 model and its milestone 4 twin (task 5.5).
+
+    Both use the example files of ``tests/data`` with seed 2026, read and
+    written only in a temporary directory, never in ``tests/data`` or ``config/``.
+    The milestone 5 run has abandonments, beds and the hallway; the tests check it.
+    """
+    root = tmp_path_factory.mktemp("h5-run-templates")
+    for run_id, center, profiles in (
+        ("h5", "tests/data/centro_h5_ejemplo.toml", "tests/data/perfiles_h5_ejemplo.toml"),
+        ("h4", "tests/data/centro_ejemplo.toml", "tests/data/perfiles_ejemplo.toml"),
+    ):
+        simulate_run(
+            center,
+            "tests/data/llegadas_ejemplo.toml",
+            3,
+            2026,
+            output_dir=root / run_id,
+            run_id=run_id,
+            warmup_days=1,
+            origin="app",
+            profiles=profiles,
+        )
+    return root
+
+
+@pytest.fixture
+def h5_catalog(catalog_root, h5_run_templates):
+    for run_id in ("h5", "h4"):
+        shutil.copytree(h5_run_templates / run_id, catalog_root / run_id)
     return catalog_root

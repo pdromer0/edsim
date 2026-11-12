@@ -636,3 +636,24 @@ def test_invalid_noneditable_field_is_visible_and_blocks_saving_and_simulation(
     assert app.button(key="save_variant").disabled
     assert app.button(key="simulate_run").disabled
     assert not (defaults.VARIANTS_DIR / "valid-name.toml").exists()
+
+
+def test_untouched_base_center_says_there_are_no_differences():
+    """Pending item of milestone 4: the notice with the clinical editor's fields."""
+    app = open_simulation()
+    assert "No hay diferencias frente al centro base." in [i.value for i in app.info]
+
+
+def test_compliant_center_is_offered_as_a_source():
+    """Pending item of milestone 4: config/centro_cumplidor.toml as a variant source."""
+    app = open_simulation()
+    source = app.selectbox(key="source_widget")
+    compliant = str(defaults.COMPLIANT_CENTER_PATH)
+    assert compliant in source.options or "Centro cumplidor" in source.options
+    source.set_value(compliant).run()
+    assert not app.exception
+    expected = read_center_values(defaults.COMPLIANT_CENTER_PATH)["recursos.medicos"]
+    shown = [app.number_input(key=f"edit_recursos.medicos_{i}").value for i in range(3)]
+    assert shown == expected
+    differences = " ".join(m.value for m in app.markdown)
+    assert "Médicos" in differences

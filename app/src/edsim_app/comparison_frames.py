@@ -1,11 +1,14 @@
 """Spanish presentation of supplied comparison results, without analytical logic."""
 
+from collections.abc import Sequence
+
 import pandas as pd
 
 from edsim.runs import (
     SUMMARY_MEASURES,
     DifferenceSummary,
     PairingInfo,
+    ProfilesDifference,
     RunComparison,
     RunSummaryComparison,
 )
@@ -13,6 +16,7 @@ from edsim_app.frames import FIELDS, format_change_value, format_created_at, for
 
 METADATA_LABELS = {
     "model": "Modelo",
+    "catalog_version": "Versión del catálogo",
     "clinical_profiles_path": "Ruta de perfiles clínicos",
     "clinical_profiles_fingerprint": "Huella de perfiles clínicos",
     "format_version": "Versión del formato",
@@ -133,11 +137,39 @@ def comparison_configuration_frames(
                 "B": format_change_value(d.after),
             }
             for d in summary.center_differences
-            if not clinical or d.key.startswith(("turnos.", "recursos.", "destino."))
+            if not clinical or d.key.startswith(("turnos.", "recursos.", "destino.", "camas."))
         ],
         columns=["Parámetro", "Clave del centro", "A", "B"],
     )
     return metadata, center
+
+
+def format_profile_value(value: object) -> str:
+    """Present a perfiles.toml value: text as written, numbers with a decimal comma."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "Sí" if value else "No"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, tuple):
+        return "[" + "; ".join(format_profile_value(item) for item in value) + "]"
+    return format_change_value(value)
+
+
+def profiles_differences_frame(differences: Sequence[ProfilesDifference]) -> pd.DataFrame:
+    """The supplied key-by-key differences of the two perfiles.toml, in their order."""
+    return pd.DataFrame(
+        [
+            {
+                "Clave de los perfiles": d.key,
+                "A": format_profile_value(d.a),
+                "B": format_profile_value(d.b),
+            }
+            for d in differences
+        ],
+        columns=["Clave de los perfiles", "A", "B"],
+    )
 
 
 def draw_differences_frame(pairing: PairingInfo) -> pd.DataFrame:

@@ -340,3 +340,11 @@ def test_results_room_labels_preserve_both_physical_states():
     )
     assert episode_state_label("waiting_tests") == "En box esperando pruebas"
     assert episode_state_label("waiting_box") == "Espera de box"
+
+
+def test_waiting_bed_label_and_hallway_mark():
+    """The state says what the patient does; the hallway mark, where it is (H5-11)."""
+    from edsim_app.frames import episode_state_label
+
+    assert episode_state_label("waiting_bed") == "Esperando cama"
+    assert episode_state_label("waiting_bed", hallway=True) == "Pasillo · esperando cama"
