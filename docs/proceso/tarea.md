@@ -6,8 +6,8 @@ Los niveles de tests N1, N2 y N3 son los de la sección «Workflow» de [docs/di
 
 ## 1. Arranque
 
-- Lee el issue con sus comentarios: `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si está cerrado, para.
-- Dependencias: **manda la nativa** (`blockedBy`, la relación «blocked by» de GitHub). Si algún issue que la bloquea sigue abierto, para y dilo. La sección «Depende de» del cuerpo guarda el motivo; si las dos no coinciden, avisa del descuadre, pero decide por la nativa.
+- Lee el issue con sus comentarios, por REST, que funciona en local y en la nube (GraphQL da 403 en la nube): `gh api repos/pdromer0/edsim/issues/N` y `gh api repos/pdromer0/edsim/issues/N/comments --paginate`. Si está cerrado o es un PR (trae la clave `pull_request`), para.
+- Dependencias: **manda la nativa** (`gh api repos/pdromer0/edsim/issues/N/dependencies/blocked_by --paginate`, la relación «blocked by» de GitHub). Si algún issue que la bloquea sigue abierto, para y dilo. La sección «Depende de» del cuerpo guarda el motivo; si las dos no coinciden, avisa del descuadre, pero decide por la nativa.
 - Con el árbol limpio, `git switch main && git pull --ff-only` y crea la rama que indica el issue. Si ya existe (un PR que junta varias tareas), cambia a ella. Si el agente arranca en modo plan, que no deja escribir, la rama se crea al aprobar el plan, como primer paso de la implementación.
 - Lee solo las secciones de la especificación que enlaza el issue, y por secciones: primero los encabezados (`grep -n '^#' fichero`) y después los rangos de líneas que interesan. Ver «Cómo leer las especificaciones grandes» en [docs/README.md](../README.md).
 - Las notas del chat van como comentario «Notas del chat» del issue; el argumento de la skill queda para lo efímero de esa sesión. Si un comentario o el argumento precisan algo del cuerpo, mandan ellos; entre dos comentarios que se contradicen, el más reciente.

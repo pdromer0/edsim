@@ -14,15 +14,18 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 ## Reglas de toda la tarea
 
 - Lee ahora [docs/proceso/tarea.md](../../../docs/proceso/tarea.md) entero y síguelo paso a paso. Esta skill solo añade lo propio de Claude Code.
-- Si un paso necesita algo que no puedes hacer (un permiso denegado, un comando que falla, el tablero inaccesible), para y dilo. No lo rodees.
+- Si un paso necesita algo que no puedes hacer (un permiso denegado, un comando que falla), para y dilo. No lo rodees. La excepción es el tablero: si `gh project` falla, sigue con el aviso de su procedimiento.
+- GitHub, por REST (`gh api repos/pdromer0/edsim/…`), que funciona en local y en la nube; GraphQL (`gh issue view`, `gh pr view`, `gh pr create`) da 403 en la nube. Solo el tablero usa `gh project`, porque en la nube no hay alternativa. En una lectura, la ruta va justo detrás de `gh api` y `--paginate` detrás de la ruta, sin `-f` ni `-F` (con ellos, `gh api` hace un POST). En una escritura, `-X MÉTODO` va delante de la ruta. Así casan las reglas de `.claude/settings.json`.
 - Los id del tablero (proyecto, campo Status y sus opciones) se leen en cada uso con el procedimiento de abajo, nunca de memoria.
-- Nunca `gh pr merge`. El push solo con el plan aprobado y la N3 en verde.
+- Nunca `gh pr merge` ni su ruta REST (`pulls/N/merge`). El push solo con el plan aprobado y la N3 en verde.
 
 ## Fase 1: en modo plan (solo lectura)
 
 0. El modo inicial es `plan` (`.claude/settings.json`), así que normalmente ya estás en él. Si la sesión se cambió a otro modo, pide a Pedro que lo active (Shift+Tab) y no presentes el plan hasta que lo haga: `ExitPlanMode` necesita el fichero de plan, y sin él el plan se presenta como texto y hace falta una segunda ronda.
-1. `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si no existe o está cerrado, para.
-2. Dependencias. Cada nodo de `blockedBy` trae su `state`: si alguno es `OPEN`, para y di cuáles, con su título. No crees el plan ni toques git o el tablero. Compara los números de `blockedBy` con los `#n` de la sección «Depende de» del cuerpo: si no coinciden, avisa del descuadre, pero decide por `blockedBy`.
+1. El issue y sus comentarios:
+   - `gh api repos/pdromer0/edsim/issues/N --jq '{number,title,state,es_pr:has("pull_request"),labels:[.labels[].name],milestone:.milestone.title,body}'`. Si da 404, `state` es `closed` o `es_pr` es `true` (N es un PR, no un issue), para.
+   - `gh api repos/pdromer0/edsim/issues/N/comments --paginate --jq '.[] | {user:.user.login,created_at,body}'`.
+2. Dependencias: `gh api repos/pdromer0/edsim/issues/N/dependencies/blocked_by --paginate --jq '.[] | {number,title,state}'`. Si alguna tiene `state` `open`, para y di cuáles, con su título. No crees el plan ni toques git o el tablero. Compara esos números con los `#n` de la sección «Depende de» del cuerpo: si no coinciden, avisa del descuadre, pero decide por `blocked_by`.
 3. Especificación: la que enlaza la sección «Enlace a la especificación» del issue.
    - Si es un fichero de más de unos 50 KB (`wc -c`), lanza un subagente Explore que, a partir de `grep -n '^#'`, resuma las secciones enlazadas y dé sus rangos de líneas. Después lee tú esos rangos, sobre todo los que dan valores para el plan.
    - Si es más pequeño, léelo por secciones igualmente.
@@ -55,21 +58,27 @@ Primero la revisión y sus correcciones; después, una sola N3 (`tarea.md` §4).
 ## Pull request
 
 1. `git push -u origin <rama>`, en una llamada propia.
-2. `gh pr create --title "…" --body-file <fichero>`, en otra llamada. Anota la hora de apertura en las métricas (`gh pr edit --body-file` si hace falta).
-3. La ficha la lleva a «En revisión» el workflow «Pull request linked to issue» del tablero. Comprueba la columna con `gh issue view N --json projectItems`. Si no está en «En revisión», muévela (procedimiento del tablero) y avisa de que el workflow falló.
+2. En otra llamada, abre el PR: `gh api -X POST repos/pdromer0/edsim/pulls -f title="…" -f head=<rama> -f base=main -F body=@<fichero> --jq '{number,html_url}'`. Anota la hora de apertura en las métricas y, si hace falta, edita la descripción con `gh api -X PATCH repos/pdromer0/edsim/pulls/<PR> -F body=@<fichero> --jq .html_url`.
+3. La ficha la lleva a «En revisión» el workflow «Pull request linked to issue» del tablero. Comprueba la columna con el paso 3 del procedimiento del tablero. Si no está en «En revisión», muévela y avisa de que el workflow falló.
 4. Mensaje final: el enlace del PR; si el plan fijó `high` (tarea crítica), recuerda a Pedro que escriba `@codex review` en el PR; y recuérdale que haga `/clear` antes de la siguiente tarea.
 
 ## Ajustes de la revisión
 
-Como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
+Primero, el estado del PR, por REST:
+
+- `gh api repos/pdromer0/edsim/pulls/<PR> --jq '{state,merged,head_sha:.head.sha}'`; si la punta no es la de la rama local (por ejemplo, `@claude` metió un commit desde GitHub), `git pull --ff-only` antes de tocar nada;
+- el CI de esa punta: `gh api repos/pdromer0/edsim/commits/<head_sha>/check-runs --jq '.check_runs[] | {name,status,conclusion}'`;
+- los comentarios y las revisiones: `gh api repos/pdromer0/edsim/issues/<PR>/comments --paginate`, `gh api repos/pdromer0/edsim/pulls/<PR>/reviews --paginate` y `gh api repos/pdromer0/edsim/pulls/<PR>/comments --paginate`.
+
+Después, como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
 
 ## Procedimiento del tablero
 
-Para mover la ficha del issue N a la columna C:
+Para mover la ficha del issue N a la columna C. El tablero solo se maneja con `gh project` (GraphQL). Si cualquiera de estos comandos falla (en la nube, el proxy da 403), no pares la tarea: di a Pedro «mueve la ficha del #N a C en el tablero» y sigue.
 
 1. `gh project list --owner pdromer0 --format json --jq '.projects[] | select(.title=="EDsim") | {number, id}'`: el número y el id del proyecto. Si no sale exactamente uno, para.
 2. `gh project field-list <número> --owner pdromer0 --format json --jq '.fields[] | select(.name=="Status")'`: el id del campo y el de la opción C, buscada por nombre. Si C no existe, para.
 3. `gh project item-list <número> --owner pdromer0 --format json --limit 500 --jq '.items[] | select(.content.type=="Issue" and .content.number==N and .content.repository=="pdromer0/edsim") | {id, status}'`: la ficha.
 4. Si no sale: `gh project item-add <número> --owner pdromer0 --url https://github.com/pdromer0/edsim/issues/N --format json --jq .id`. Si falla con «Content already exists» (el añadido automático llegó antes), repite el paso 3.
 5. `gh project item-edit --id <ficha> --project-id <id del proyecto> --field-id <campo> --single-select-option-id <opción>`.
-6. Comprueba con `gh issue view N --json projectItems` que la ficha está en C.
+6. Comprueba con el paso 3 que la ficha está en C.

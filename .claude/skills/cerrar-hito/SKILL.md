@@ -79,4 +79,4 @@ Un commit por bloque. Los ficheros de código de la app llevan N1 con sus tests;
 
    Enséñaselas a Pedro.
 4. Con su visto bueno: `gh release create <etiqueta> --title "Hito N — <título>" --notes-file <fichero>`.
-5. Comprueba con `gh release view <etiqueta>` y dale el enlace.
+5. Comprueba con `gh api repos/pdromer0/edsim/releases/tags/<etiqueta> --jq '{tag_name,name,html_url}'` y dale el enlace.

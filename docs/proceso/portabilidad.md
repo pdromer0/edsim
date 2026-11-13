@@ -197,7 +197,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **los ficheros grandes generados o copiados se escriben con un script**: el modelo no reescribe su contenido;
 - avisar antes de un comando largo de qué se ejecuta y cuánto tarda.
 
-**Regla de después de la fusión** [implantado]: antes de actualizar `main` o borrar una rama, se comprueba con `gh pr view N --json state,mergedAt` que el PR está fusionado. Si no lo está, se para.
+**Regla de después de la fusión** [implantado]: antes de actualizar `main` o borrar una rama, se comprueba con `gh api repos/<dueño>/<repo>/pulls/N --jq '{merged,merged_at}'` que el PR está fusionado (`merged` es `true`; `merge_commit_sha` no sirve, porque un PR abierto también lo trae). Si no lo está, se para. Por REST desde la 7.0, para que funcione también en la nube.
 
 ### `.claude/settings.json`: lo que el agente puede hacer
 
@@ -215,17 +215,23 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
       "Bash(git push -u origin docs/*)", "Bash(git push -u origin refactor/*)",
       "Bash(git push -u origin test/*)", "Bash(git push -u origin chore/*)",
       "Bash(git push -u origin ci/*)",
-      "Bash(gh pr create *)", "Bash(gh pr view *)", "Bash(gh pr checks *)", "Bash(gh run view *)",
-      "Bash(gh issue view *)", "Bash(gh issue list *)",
+      "Bash(gh api repos/<dueño>/<repo>/*)",
+      "Bash(gh api -X POST repos/<dueño>/<repo>/pulls *)", "Bash(gh api -X PATCH repos/<dueño>/<repo>/pulls/*)",
+      "Bash(gh pr checks *)", "Bash(gh run view *)", "Bash(gh issue list *)",
       "Bash(gh project list *)", "Bash(gh project field-list *)", "Bash(gh project item-list *)",
       "Bash(gh project item-add *)", "Bash(gh project item-edit *)",
       "Bash(scripts/tests-rapidos.sh*)", "Bash(scripts/tests-completos.sh*)"
     ],
     "ask": [
-      "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)"
+      "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)",
+      "Bash(gh api repos/<dueño>/<repo>/* -X *)", "Bash(gh api repos/<dueño>/<repo>/* --method *)",
+      "Bash(gh api repos/<dueño>/<repo>/* -f *)", "Bash(gh api repos/<dueño>/<repo>/* -F *)",
+      "Bash(gh api repos/<dueño>/<repo>/* --field *)", "Bash(gh api repos/<dueño>/<repo>/* --raw-field *)",
+      "Bash(gh api repos/<dueño>/<repo>/* --input *)"
     ],
     "deny": [
-      "Bash(gh pr merge *)", "Bash(git push *--force*)", "Bash(git push -f*)",
+      "Bash(gh pr merge *)", "Bash(gh api *merge*)", "Bash(gh api *DELETE*)",
+      "Bash(git push *--force*)", "Bash(git push -f*)",
       "Bash(git push * main)", "Bash(git push * main *)", "Read(./.env)"
     ]
   },
@@ -242,6 +248,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **Arranque en modo plan** [probado]. La aprobación del plan se hace con modo auto, así que el agente implementa entera la tarea aprobada.
 - **El push a ramas de tarea está permitido; la fusión, el push forzado y el push a `main`, denegados** [probado]. Las reglas `deny` son una barandilla de comportamiento: la frontera real es el ruleset de GitHub.
 - **Los permisos de las skills van aquí**, no en el `allowed-tools` de la skill [implantado]: ese campo solo vale durante el turno que la lanza, y una tarea dura muchos turnos.
+- **`gh api` con tres niveles** [implantado, 7.0]. En una regla `Bash(…)`, `*` casa también con espacios y opciones, así que `allow gh api repos/<dueño>/<repo>/*` dejaría pasar también `gh api repos/…/comments -f body=…`, que escribe (con `-f` o `-F`, `gh api` hace un POST). La convención lo separa: en una lectura, la ruta va justo detrás de `gh api` (`allow`); en una escritura, `-X MÉTODO` va delante de la ruta, y solo abrir y editar el PR tienen `allow` propio; una escritura con la opción detrás de la ruta cae en las reglas `ask`; la fusión (`…merge…`) y `DELETE`, en `deny`.
 - **Hook `Stop`** [probado]: ejecuta los tests rápidos al final de cada turno. No hace nada en modo plan y comprueba `stop_hook_active` para no entrar en bucle. **Sin `jq` sale con código 1** [implantado], un error que se ve y no bloquea. Un 0 lo escondería y un 2 entraría en bucle, porque sin `jq` no puede leer `stop_hook_active`. En proyectos grandes, el «sello» (la huella del árbol en el último verde) evita volver a ejecutar las suites sin cambios.
 - **Reglas `ask` sobre la configuración calibrada y los datos de referencia** [implantado]: en modo auto siguen preguntando (la documentación dice que una regla `ask` explícita fuerza el aviso y se evalúa antes que el clasificador). Se escriben para `Edit` y para `Write`. La barra inicial (`/config/**`) ancla la ruta a la raíz del proyecto; sin ella, una regla `ask` casa con un directorio de ese nombre a cualquier profundidad. Si en la prueba en vivo alguna de las cuatro combinaciones no preguntara, se pasa a la forma sin barra. **Límite:** solo cubren las herramientas `Edit` y `Write`; un `sed -i` o una redirección desde Bash sobre esos ficheros no las activa. Es una barandilla de comportamiento, como las reglas `deny`.
 - **Hook `SessionStart`** [implantado]: su salida entra en el contexto en cada apertura, reanudación, `/clear` y compactación. Rama, última etiqueta (`git describe --tags --abbrev=0`, «ninguna» si no hay), línea «Hito en curso» de `AGENTS.md` y `git status -sb`. Solo `git` y `grep` locales, siempre código 0 y en milisegundos.
@@ -363,7 +370,7 @@ Si el proyecto empezó con la documentación en un documento online (en EDsim, u
 
 **Issues:**
 - **El issue resume y enlaza la especificación, nunca la copia.** Los criterios de aceptación son de 3 a 6 viñetas que citan la especificación.
-- **Dependencias:** manda la **nativa** (*blocked-by*), que GitHub muestra en el tablero y que la skill consulta con `gh issue view N --json blockedBy`. El cuerpo guarda el **motivo**. Un issue nuevo con dependencias lleva las dos.
+- **Dependencias:** manda la **nativa** (*blocked-by*), que GitHub muestra en el tablero y que la skill consulta por REST con `gh api repos/<dueño>/<repo>/issues/N/dependencies/blocked_by`. El cuerpo guarda el **motivo**. Un issue nuevo con dependencias lleva las dos.
 - **Cuidado con los números:** los issues y los PR comparten numeración, y pueden coincidir con los de las decisiones (en EDsim, issues #63 a #94 y decisiones 67 a 79). Las decisiones se escriben siempre «decisión 69 (H5-3)», sin almohadilla, porque con ella GitHub enlaza un issue.
 - **Crear issues por script, de forma idempotente:** se comprueba por título que no existe, y para el tablero se busca la ficha antes de añadirla, porque el añadido automático compite con `gh project item-add`.
 
