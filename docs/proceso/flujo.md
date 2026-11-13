@@ -12,13 +12,13 @@ title: "Una tarea va de su issue a la fusión, y de ahí a la siguiente"
 ---
 flowchart TD
     issue["issue en GitHub<br/>su ficha, en Próximo"] --> skill["/tarea-edsim N<br/>dependencias, issue y secciones de la especificación"]
-    skill --> plan["plan<br/>lo revisan Pedro y el chat"]
+    skill --> plan["plan<br/>el revisor del plan, en las críticas;<br/>el chat, en las críticas o con conceptos nuevos"]
     plan -->|"Pedro lo aprueba"| impl["implementación<br/>N1 en cada commit; N2 al final de cada turno"]
     impl --> antes["antes del push<br/>/code-review y sus correcciones; después, una sola N3"]
     antes --> pr["PR con «Closes #N»<br/>y la entrada del anexo"]
     pr --> critica{"¿crítica?"}
     critica -->|"sí"| codex["@codex review"]
-    critica -->|"no"| revision["revisión del chat<br/>recalcula y revisa el PR"]
+    critica -->|"no"| revision["revisión del chat, ligera<br/>el CI y lo que el plan interpretaba"]
     codex --> revision
     revision -->|"ajustes de la revisión"| impl
     revision -->|"aprobado y CI en verde"| fusion["fusión en main (squash)"]
@@ -97,8 +97,9 @@ Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
 | Quién | Qué hace |
 | --- | --- |
 | Pedro | Prioriza (de Backlog a Próximo), aprueba los planes, revisa los PR, escribe `@codex review` en las tareas críticas y fusiona; después, `/clear` y `/sincronizar`. |
-| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues, revisa el plan y el PR, recalcula los valores a mano y completa las métricas del PR. Desde la 5.4 escribe él mismo en GitHub, con `add_repo` y `gh api` REST: las «Notas del chat» de cada issue, su revisión y las métricas en el PR, y los issues del Backlog ([portabilidad.md](portabilidad.md#7-github-como-gestor-de-trabajo-implantado), §7). |
+| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues y completa las métricas del PR. Su revisión va a la medida (desde el hito 7): el **plan**, en las tareas críticas o con conceptos nuevos, recalculando los valores a mano, y además lo que marque el revisor del plan; el **PR**, ligera, con el CI y lo que el plan interpretaba, que es lo que hizo falta en todo el hito 5. Desde la 5.4 escribe él mismo en GitHub, con `add_repo` y `gh api` REST: las «Notas del chat» de cada issue, su revisión y las métricas en el PR, y los issues del Backlog ([portabilidad.md](portabilidad.md#7-github-como-gestor-de-trabajo-implantado), §7). |
 | Claude Code | Con `/tarea-edsim N`: plan, rama, commits con N1, `/code-review` y sus correcciones, una sola N3, entrada del anexo, push, PR y ficha. Con `/sincronizar`: comprueba la fusión, actualiza `main`, borra la rama y revisa el tablero. |
+| El revisor del plan | Subagente `revisor-plan` de Claude Code, solo en las tareas con la etiqueta `critica`: revisa el plan con un contexto limpio antes de que lo vea Pedro y devuelve lo que interpreta, sus diferencias con las notas del chat y los valores que no cuadran. Si trae dudas, Pedro las lleva al chat con solo esas secciones. |
 | Codex | Implementa las tareas con la etiqueta `quien:codex` siguiendo [tarea.md](tarea.md) y pide permiso para el push; en las tareas críticas, revisa el PR cuando Pedro escribe `@codex review`. |
 
 ## Reglas
