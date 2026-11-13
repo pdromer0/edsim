@@ -870,3 +870,75 @@ Consultadas el 13 de noviembre de 2026. Las de «para aprender más» están en 
 ## Anexo: guía de referencia del hito 7
 
 Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión, lecciones y pendientes.
+
+### Tarea 7.0: Proceso del hito 7
+
+**Qué se hizo**
+
+Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus, en local), sin `@codex review` (tarea no crítica). Aplica las siete mejoras de la decisión 98 (H7-15), un commit por mejora, más uno para `portabilidad.md` y los de las correcciones:
+
+- **El formato del plan** (`tarea.md` §2): ocho apartados, con «Lo que el plan interpreta» y «Diferencias con las notas del chat»; los valores a mano, con su cálculo ejecutado y su salida; el detalle, en el PR. La plantilla del PR gana «Lo que el plan interpretaba».
+- **El subagente `revisor-plan`** (`.claude/agents/revisor-plan.md`): Opus, solo lectura, recalcula con `python3` independiente del paquete; `/tarea-edsim` lo lanza en las tareas con la etiqueta `critica` y pone su informe al principio del plan.
+- **Las skills por REST:** `/tarea-edsim`, `/sincronizar` y `/cerrar-hito` leen el issue, los comentarios, las dependencias, el PR, sus checks y la Release con `gh api`, y el PR se abre y se edita con `gh api -X POST/PATCH`: un solo camino en local y en la nube. Solo el tablero sigue con `gh project`; si falla, la skill dice a Pedro qué ficha mover. `tarea.md`, `AGENTS.md` y `CLAUDE.md`, al día.
+- **La nube por defecto** (`flujo.md`, «Dónde corre cada tarea»; `tarea.md` §1; `portabilidad.md` §9): en local solo lo que necesita Docker, la app en el navegador, ficheros del portátil o crear una Release. La plantilla del issue gana «Dónde y modelo».
+- **La revisión del chat a la medida** (`flujo.md`, el diagrama y «Papeles»): el plan, en las críticas o con conceptos nuevos, más lo que marque el revisor; el PR, ligera.
+- **La Release lanzable sola** (`/cerrar-hito`): con el issue de cierre ya cerrado, va directamente a la Release; la crean Claude Code en local o Pedro, nunca el chat ni la nube (HTTP 403).
+- **El piloto `@claude`:** el `if` de `claude.yml` exige `sender` `pdromer0` y que el texto empiece por `@claude`, sin tocar los `permissions`.
+
+**Decisiones del diff**
+
+- **Las reglas de `gh api` en tres niveles** (ajuste del chat al plan, con un matiz): en una regla `Bash(…)`, `*` casa también con espacios y opciones, así que un `allow` de `gh api repos/pdromer0/edsim/*` dejaba pasar también las escrituras con la opción detrás de la ruta. La convención: lecturas con la ruta justo detrás de `gh api` (`allow`), escrituras con `-X` delante (solo abrir y editar el PR tienen `allow`), las escrituras escritas al revés en `ask`, y la fusión y `DELETE` en `deny`.
+- **El `deny` de la fusión es `*pulls/*/merge*`, no `*merge*`:** la comprobación a mano encontró que `*merge*` denegaba también las lecturas que piden `merged` o `merge_commit_sha` en el `--jq`, que es el paso 2 de `/sincronizar` (commit `d3973eb`).
+- **«Fusionado» es `merged == true`:** por REST, `merge_commit_sha` también lo trae un PR abierto (el merge de prueba), así que no sirve para decidirlo.
+- **Los issues que cierra un PR salen de su cuerpo**, con la regex de las notas más `:?`, porque REST no tiene `closingIssuesReferences`.
+- **La etiqueta de la Release se construye** (`v0.H-hitoH`) en lugar de buscarse con un grep, que da varias por especificación (ajuste del chat).
+- **El piloto, con un comentario normal** (ajuste del chat): la acción solo se ejecuta con el `claude.yml` de `main`, así que una revisión, que usa el de la rama, se saltaría. La condición nueva se prueba tras la fusión.
+- **«Cierra #110» no cierra el issue**: GitHub solo reconoce las palabras clave en inglés; el PR lleva `Closes #114` y `Closes #110`.
+- **El tablero por REST existe**: en local, `gh api users/pdromer0/projectsV2/1/fields` responde. Lo que da 403 en la nube es el proxy, no la falta de REST; las skills siguen con `gh project`.
+
+**Valores a mano**
+
+- **Los comandos REST de las skills**, ejecutados tal como están escritos (salida completa en el PR): el issue (#114 abierto; #111 da `es_pr` verdadero), los comentarios, `blocked_by` (#115 bloqueado por #114), el PR #111 y sus cuatro checks en `success`, el PR de una rama por su punta (`commits/<punta>/pulls`), los issues que cierra (#111 da [74]; #106 da [72, 105]) y la etiqueta y la Release de `v0.5-hito5`.
+- **La regex frente a GraphQL:** 40 de 40 PR fusionados iguales a `closingIssuesReferences`.
+- **Las etiquetas:** `v0.H-hitoH` cuadra con las siete existentes (`v0.0-hito0` a `v0.6-hito6`); un grep de `v0.…-hito…` da dos en `hito-5.md` y `hito-7.md` y tres en `hito-6.md`.
+
+**Medidas**
+
+- **Sin N3:** rama solo de documentación, skills, un agente, un workflow y los permisos de `settings.json`, con el permiso de Pedro (`tarea.md` §4). El CI se ejecuta igual.
+- **El grep final:** no queda `gh issue view`, `gh pr view` ni `gh pr create` en `.claude/skills/`, `tarea.md`, `flujo.md`, `AGENTS.md` ni `CLAUDE.md`; `gh project` sigue en `/tarea-edsim` (8 líneas) y `/sincronizar` (9).
+- **Los permisos:** una lectura con `gh api` pasa sin aviso, y `gh api …/pulls/111/merge` queda denegado.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| 1 | La regex sin `(?i)` | Los 12 PR que cierran issues dan distinto; los 28 restantes, igual | 12 distintos y 28 iguales |
+| 2 | «Fusionado» por `merge_commit_sha` no nulo | Con el PR de la 7.0 abierto, daría «fusionado» | En el PR |
+| 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Pendiente, tras la fusión |
+| 4 | Prueba de humo del revisor: un plan falso de la 7.1 con tres errores sembrados y cuatro apartados de control | Marca los tres y ninguno de control | En una sesión nueva, lanzada por Pedro |
+
+**Revisión**
+
+`/code-review medium main...chore/h7-proceso`, diez hallazgos:
+
+- **Corregidos en `567529c`** (permisos):
+  - las reglas `ask` no cubrían las opciones pegadas (`-XDELETE`, `-fbody=`, `--method=`): ahora acaban en `-X*`;
+  - `PATCH …/pulls/*` cerraba un PR o cambiaba su base sin preguntar: `state=` y `base=` piden permiso;
+  - la API `…/merges` no estaba denegada;
+  - `*pulls/*/merge*` denegaba lecturas con `/merge` en el `--jq`: queda `…/merge` al final o seguido de un espacio;
+  - el ejemplo de `portabilidad.md` ya no coincidía con el fichero real.
+- **Corregidos en `1c91278`** (skills):
+  - los valores ejecutados en modo plan, que no deja escribir ficheros: van por la entrada estándar;
+  - `check-runs`, con `--paginate`;
+  - `/sincronizar` pregunta el número si la búsqueda del PR por la punta no da uno (GitHub documenta que, si el commit no está en `main`, solo devuelve los abiertos; con #111, fusionado con squash, dio el cerrado).
+- **Explicados:**
+  - la regex lee todo el cuerpo, comentarios HTML incluidos, y no ve los enlaces hechos a mano en la web; coincide con GitHub en 40 de 40, y `/sincronizar` solo avisa, nunca cierra;
+  - los *statuses* de commit no se miran porque todo el CI es de Actions y sale como *check runs*.
+- **Pendiente:** separar lecturas de escrituras con comodines es frágil. Un hook `PreToolUse` que analice los argumentos de `gh api` (método, campos, rutas de fusión) sería robusto; propuesta para el Backlog.
+
+**Pendiente**
+
+- **La condición nueva de `claude.yml`**, tras la fusión: un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude.
+- **El primer uso real del revisor del plan**, en la 7.1, comparado con la revisión del chat del mismo plan.
+- **Un hook `PreToolUse` para `gh api`** (hallazgo de la revisión), en lugar de las reglas con comodines: propuesta para el Backlog.
+- **Las reglas de Codex** (`.codex/rules/edsim.rules`) siguen con `gh pr create` y `gh pr view`: Codex trabaja en local y pide permiso para todo lo que usa la red; se cambia si una tarea de Codex va a la nube.
