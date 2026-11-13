@@ -35,7 +35,9 @@ El plan tiene siempre estos apartados:
 
 El plan es corto y se lee de un vistazo: el detalle (tablas largas, listas de ficheros, salidas completas de los cálculos) va al PR, no al plan.
 
-El plan lo revisan Pedro y el chat; la implementación empieza cuando Pedro lo aprueba.
+En las tareas con la etiqueta `critica`, antes de enseñar el plan lo revisa con un contexto limpio el subagente `revisor-plan` de Claude Code ([.claude/agents/revisor-plan.md](../../.claude/agents/revisor-plan.md)): recalcula los valores a mano y devuelve lo que el plan interpreta, sus diferencias con las notas y los valores que no cuadran. Su informe va al principio del plan.
+
+El plan lo aprueba Pedro, y la implementación empieza entonces. El chat lo revisa antes en las tareas críticas o con conceptos nuevos, más lo que marque el revisor del plan ([flujo.md](flujo.md#papeles)).
 
 ## 3. Implementación
 

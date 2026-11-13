@@ -31,7 +31,8 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
    - la rama, la del issue; si está vacía, propón una con prefijo `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/` o `ci/` (los únicos con push permitido);
    - que la ficha pasará a «En curso» al aprobarlo;
    - el esfuerzo de `/code-review`: `high` si el issue tiene la etiqueta `critica`; `medium` si no. Si la casilla «Crítica» del cuerpo está marcada (`- [x]`) y falta la etiqueta, o al revés, avisa del descuadre y usa `high`.
-5. Presenta el plan para su aprobación.
+5. **Revisor del plan**, solo si el issue tiene la etiqueta `critica` (la que dio en el paso 1, no la casilla). Escrito el fichero de plan, lanza el subagente `revisor-plan` con N y la ruta del fichero. Pon su informe, tal cual, al principio del plan, bajo los tres datos. No corrijas el plan por tu cuenta: si el veredicto es «dudas», di a Pedro que lo lleve al chat con solo esas secciones. Si el subagente no existe (se creó a mitad de sesión) o falla, dilo y presenta el plan sin informe.
+6. Presenta el plan para su aprobación.
 
 ## Fase 2: con el plan aprobado
 
