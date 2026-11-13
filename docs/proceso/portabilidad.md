@@ -217,21 +217,25 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
       "Bash(git push -u origin ci/*)",
       "Bash(gh api repos/<dueño>/<repo>/*)",
       "Bash(gh api -X POST repos/<dueño>/<repo>/pulls *)", "Bash(gh api -X PATCH repos/<dueño>/<repo>/pulls/*)",
-      "Bash(gh pr checks *)", "Bash(gh run view *)", "Bash(gh issue list *)",
+      "Bash(gh pr view *)", "Bash(gh pr checks *)", "Bash(gh run view *)",
+      "Bash(gh issue view *)", "Bash(gh issue list *)", "Bash(gh pr create *)",
       "Bash(gh project list *)", "Bash(gh project field-list *)", "Bash(gh project item-list *)",
       "Bash(gh project item-add *)", "Bash(gh project item-edit *)",
       "Bash(scripts/tests-rapidos.sh*)", "Bash(scripts/tests-completos.sh*)"
     ],
     "ask": [
       "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)",
-      "Bash(gh api repos/<dueño>/<repo>/* -X *)", "Bash(gh api repos/<dueño>/<repo>/* --method *)",
-      "Bash(gh api repos/<dueño>/<repo>/* -f *)", "Bash(gh api repos/<dueño>/<repo>/* -F *)",
-      "Bash(gh api repos/<dueño>/<repo>/* --field *)", "Bash(gh api repos/<dueño>/<repo>/* --raw-field *)",
-      "Bash(gh api repos/<dueño>/<repo>/* --input *)"
+      "Bash(gh api repos/<dueño>/<repo>/* -X*)", "Bash(gh api repos/<dueño>/<repo>/* --method*)",
+      "Bash(gh api repos/<dueño>/<repo>/* -f*)", "Bash(gh api repos/<dueño>/<repo>/* -F*)",
+      "Bash(gh api repos/<dueño>/<repo>/* --field*)", "Bash(gh api repos/<dueño>/<repo>/* --raw-field*)",
+      "Bash(gh api repos/<dueño>/<repo>/* --input*)",
+      "Bash(gh api -X * state=*)", "Bash(gh api -X * base=*)"
     ],
     "deny": [
-      "Bash(gh pr merge *)", "Bash(gh api *pulls/*/merge*)",
-      "Bash(gh api *-X DELETE*)", "Bash(gh api *--method DELETE*)",
+      "Bash(gh pr merge *)", "Bash(gh api *pulls/*/merge)", "Bash(gh api *pulls/*/merge *)",
+      "Bash(gh api *<repo>/merges*)",
+      "Bash(gh api *-X DELETE*)", "Bash(gh api *-XDELETE*)",
+      "Bash(gh api *--method DELETE*)", "Bash(gh api *--method=DELETE*)",
       "Bash(git push *--force*)", "Bash(git push -f*)",
       "Bash(git push * main)", "Bash(git push * main *)", "Read(./.env)"
     ]
@@ -249,7 +253,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **Arranque en modo plan** [probado]. La aprobación del plan se hace con modo auto, así que el agente implementa entera la tarea aprobada.
 - **El push a ramas de tarea está permitido; la fusión, el push forzado y el push a `main`, denegados** [probado]. Las reglas `deny` son una barandilla de comportamiento: la frontera real es el ruleset de GitHub.
 - **Los permisos de las skills van aquí**, no en el `allowed-tools` de la skill [implantado]: ese campo solo vale durante el turno que la lanza, y una tarea dura muchos turnos.
-- **`gh api` con tres niveles** [implantado, 7.0]. En una regla `Bash(…)`, `*` casa también con espacios y opciones, así que `allow gh api repos/<dueño>/<repo>/*` dejaría pasar también `gh api repos/…/comments -f body=…`, que escribe (con `-f` o `-F`, `gh api` hace un POST). La convención lo separa: en una lectura, la ruta va justo detrás de `gh api` (`allow`); en una escritura, `-X MÉTODO` va delante de la ruta, y solo abrir y editar el PR tienen `allow` propio; una escritura con la opción detrás de la ruta cae en las reglas `ask`; la fusión (`*pulls/*/merge*`) y `DELETE`, en `deny`. El `deny` no puede ser `*merge*`: casaría también con una lectura que pide `merged` o `merge_commit_sha` en el `--jq` (lo encontró la comprobación de la 7.0).
+- **`gh api` con tres niveles** [implantado, 7.0]. En una regla `Bash(…)`, `*` casa también con espacios y opciones, así que `allow gh api repos/<dueño>/<repo>/*` dejaría pasar también `gh api repos/…/comments -f body=…`, que escribe (con `-f` o `-F`, `gh api` hace un POST). La convención lo separa: en una lectura, la ruta va justo detrás de `gh api` (`allow`); en una escritura, `-X MÉTODO` va delante de la ruta, y solo abrir y editar el PR tienen `allow` propio; una escritura con la opción detrás de la ruta cae en las reglas `ask`, también con la opción pegada a su valor (`-XDELETE`, `-fbody=…`, `--method=…`: por eso las reglas acaban en `-X*` y no en `-X *`); cambiar el estado o la base del PR (`state=`, `base=`) también pregunta; la fusión (`…/pulls/N/merge` y la API `…/merges`) y `DELETE`, en `deny`. El `deny` no puede ser `*merge*`: casaría también con una lectura que pide `merged` o `merge_commit_sha` en el `--jq` (lo encontró la comprobación de la 7.0). Es una barandilla de comportamiento: la frontera real es el ruleset de GitHub, y un hook `PreToolUse` que analice los argumentos de `gh api` la haría robusta (pendiente de la 7.0).
 - **Hook `Stop`** [probado]: ejecuta los tests rápidos al final de cada turno. No hace nada en modo plan y comprueba `stop_hook_active` para no entrar en bucle. **Sin `jq` sale con código 1** [implantado], un error que se ve y no bloquea. Un 0 lo escondería y un 2 entraría en bucle, porque sin `jq` no puede leer `stop_hook_active`. En proyectos grandes, el «sello» (la huella del árbol en el último verde) evita volver a ejecutar las suites sin cambios.
 - **Reglas `ask` sobre la configuración calibrada y los datos de referencia** [implantado]: en modo auto siguen preguntando (la documentación dice que una regla `ask` explícita fuerza el aviso y se evalúa antes que el clasificador). Se escriben para `Edit` y para `Write`. La barra inicial (`/config/**`) ancla la ruta a la raíz del proyecto; sin ella, una regla `ask` casa con un directorio de ese nombre a cualquier profundidad. Si en la prueba en vivo alguna de las cuatro combinaciones no preguntara, se pasa a la forma sin barra. **Límite:** solo cubren las herramientas `Edit` y `Write`; un `sed -i` o una redirección desde Bash sobre esos ficheros no las activa. Es una barandilla de comportamiento, como las reglas `deny`.
 - **Hook `SessionStart`** [implantado]: su salida entra en el contexto en cada apertura, reanudación, `/clear` y compactación. Rama, última etiqueta (`git describe --tags --abbrev=0`, «ninguna» si no hay), línea «Hito en curso» de `AGENTS.md` y `git status -sb`. Solo `git` y `grep` locales, siempre código 0 y en milisegundos.
