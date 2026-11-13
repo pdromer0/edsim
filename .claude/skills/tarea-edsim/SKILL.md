@@ -15,7 +15,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
 
 - Lee ahora [docs/proceso/tarea.md](../../../docs/proceso/tarea.md) entero y síguelo paso a paso. Esta skill solo añade lo propio de Claude Code.
 - Si un paso necesita algo que no puedes hacer (un permiso denegado, un comando que falla), para y dilo. No lo rodees. La excepción es el tablero: si `gh project` falla, sigue con el aviso de su procedimiento.
-- GitHub, por REST (`gh api repos/pdromer0/edsim/…`), que funciona en local y en la nube; GraphQL (`gh issue view`, `gh pr view`, `gh pr create`) da 403 en la nube. Solo el tablero usa `gh project`, porque en la nube no hay alternativa. En una lectura, la ruta va justo detrás de `gh api` y `--paginate` detrás de la ruta, sin `-f` ni `-F` (con ellos, `gh api` hace un POST). En una escritura, `-X MÉTODO` va delante de la ruta. Así casan las reglas de `.claude/settings.json`.
+- GitHub, por REST (`gh api repos/pdromer0/edsim/…`), que funciona en local y en la nube; GraphQL (las órdenes `issue` y `pr` de `gh`, y `gh project`) da 403 en la nube. Solo el tablero usa `gh project`, porque en la nube no hay alternativa. En una lectura, la ruta va justo detrás de `gh api` y `--paginate` detrás de la ruta, sin `-f` ni `-F` (con ellos, `gh api` hace un POST). En una escritura, `-X MÉTODO` va delante de la ruta. Así casan las reglas de `.claude/settings.json`.
 - Los id del tablero (proyecto, campo Status y sus opciones) se leen en cada uso con el procedimiento de abajo, nunca de memoria.
 - Nunca `gh pr merge` ni su ruta REST (`pulls/N/merge`). El push solo con el plan aprobado y la N3 en verde.
 

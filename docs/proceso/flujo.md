@@ -89,7 +89,7 @@ Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
 
 - **la rama**, la del issue: la nube propone una `claude/*`, y Pedro elige la del issue;
 - **el entorno** se prepara con `uv sync --all-packages`, con `BASH_DEFAULT_TIMEOUT_MS=900000` para que la N3 quepa en un comando, y el script del entorno busca el repositorio en lugar de suponer dónde está;
-- **GitHub, por REST:** las skills usan `gh api`, porque el proxy de la nube da 403 a GraphQL (`gh issue view`, `gh pr view`, `gh project`);
+- **GitHub, por REST:** las skills usan `gh api`, porque el proxy de la nube da 403 a GraphQL (las órdenes `issue` y `pr` de `gh`, y `gh project`);
 - **el tablero** no se puede mover desde la nube: la skill dice qué ficha mover y a qué columna, y la mueve Pedro.
 
 ## Papeles

@@ -26,7 +26,7 @@ N es el número del **issue** de la tarea de cierre (por ejemplo, el #75 cerró 
 - El cierre es una tarea más: sigue **entera** [la skill `/tarea-edsim`](../tarea-edsim/SKILL.md) con este N (modo plan, dependencias, plan, rama, tablero, commits con N1, `/code-review`, N3, PR). Esta skill solo añade lo que hay que escribir al cerrar un hito y la Release.
 - En local, no en la nube: el proxy de la nube rechaza GraphQL (tablero) y las etiquetas.
 - **La Release la crean Claude Code en local o Pedro**, nunca el chat ni una sesión en la nube: GitHub responde HTTP 403 («not permitted for this session type») al crearla desde ahí (comprobado por el chat el 13 de noviembre de 2026).
-- Cada cifra que escribas sale del anexo, del registro de calibración o de un comando (`gh pr view`, `wc -c`, un script en el scratchpad), nunca de memoria. Si dos fuentes no coinciden, para y pregunta.
+- Cada cifra que escribas sale del anexo, del registro de calibración o de un comando (`gh api repos/pdromer0/edsim/pulls/N`, `wc -c`, un script en el scratchpad), nunca de memoria. Si dos fuentes no coinciden, para y pregunta.
 - Lo que digas de la app (un botón, a qué página lleva, en qué orden salen las secciones) se comprueba en su código antes de escribirlo.
 - Nada de lo que propone el balance se implanta en el cierre.
 
