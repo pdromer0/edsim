@@ -11,10 +11,21 @@ Argumentos: `$ARGUMENTS`
 
 N es el número del **issue** de la tarea de cierre (por ejemplo, el #75 cerró el hito 5), no el del PR. El resto es lo efímero de esta sesión. Si no hay número, para y pide N.
 
+## Primero: ¿la tarea o solo la Release?
+
+`gh api repos/pdromer0/edsim/issues/N --jq '{state,body}'`.
+
+- **Abierto:** es la tarea de cierre; sigue con «Reglas de toda la tarea».
+- **Cerrado** (el cierre ya se fusionó): solo queda la Release, que se puede lanzar sola. La etiqueta es `v0.H-hitoH`, con la H del fichero `docs/specs/hito-H.md` que enlaza el issue. No la busques con un grep de `v0.…-hito…`: cada especificación nombra varias.
+  1. `grep -c 'v0.H-hitoH' docs/specs/hito-H.md`: si da 0, para; la especificación no nombra esa etiqueta.
+  2. `gh api repos/pdromer0/edsim/git/refs/tags/<etiqueta> --jq .ref`: si da 404, para y pide a Pedro que cree la etiqueta.
+  3. `gh api repos/pdromer0/edsim/releases/tags/<etiqueta> --jq .html_url`: si responde, la Release ya existe; para y da el enlace. Si da 404, ve directamente a «Después de la fusión: la Release», paso 3.
+
 ## Reglas de toda la tarea
 
 - El cierre es una tarea más: sigue **entera** [la skill `/tarea-edsim`](../tarea-edsim/SKILL.md) con este N (modo plan, dependencias, plan, rama, tablero, commits con N1, `/code-review`, N3, PR). Esta skill solo añade lo que hay que escribir al cerrar un hito y la Release.
 - En local, no en la nube: el proxy de la nube rechaza GraphQL (tablero) y las etiquetas.
+- **La Release la crean Claude Code en local o Pedro**, nunca el chat ni una sesión en la nube: GitHub responde HTTP 403 («not permitted for this session type») al crearla desde ahí (comprobado por el chat el 13 de noviembre de 2026).
 - Cada cifra que escribas sale del anexo, del registro de calibración o de un comando (`gh pr view`, `wc -c`, un script en el scratchpad), nunca de memoria. Si dos fuentes no coinciden, para y pregunta.
 - Lo que digas de la app (un botón, a qué página lleva, en qué orden salen las secciones) se comprueba en su código antes de escribirlo.
 - Nada de lo que propone el balance se implanta en el cierre.
@@ -69,7 +80,9 @@ Un commit por bloque. Los ficheros de código de la app llevan N1 con sus tests;
 
 ## Después de la fusión: la Release
 
-1. Pedro crea la etiqueta del hito (`vX.Y-hitoN`) sobre la fusión del cierre. No la crees tú.
+Se puede lanzar sola, en una sesión nueva: `/cerrar-hito N` con el issue de cierre ya cerrado entra directamente aquí (ver «Primero»).
+
+1. Pedro crea la etiqueta del hito (`v0.H-hitoH`) sobre la fusión del cierre. No la crees tú.
 2. Comprueba que existe en GitHub: `gh api repos/pdromer0/edsim/git/refs/tags/<etiqueta>`.
 3. Escribe las notas en un fichero del scratchpad:
    - qué trae el hito, en tres o cuatro frases;
