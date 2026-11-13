@@ -29,8 +29,10 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
     una skill, con permiso de Pedro, y una ronda de ajustes que solo toca documentación o hooks.
 
   Una versión incorrecta se comprueba con los ficheros donde se predice el fallo y con los que
-  deben seguir pasando. Cada valor esperado calculado a mano lleva su cálculo escrito en el plan,
-  con aritmética o con código independiente de la función probada, nunca de memoria.
+  deben seguir pasando. Cada valor esperado calculado a mano lleva en el plan su cálculo ejecutado
+  (un script temporal con código independiente de la función probada) y su salida, nunca de memoria.
+  El plan dice también lo que interpreta y en qué se aparta de las notas del chat
+  ([tarea.md](docs/proceso/tarea.md#2-plan) §2).
 - Para y pregunta solo si algo contradice el plan o la especificación, una biblioteca no se
   comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño
   nueva. Nunca cambies una semilla para que un test pase.

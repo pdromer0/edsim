@@ -4,6 +4,10 @@ Closes #
 
 <!-- Qué cambia y por qué; cada decisión del diff. -->
 
+## Lo que el plan interpretaba
+
+<!-- Lo que el plan decidió sin que lo dijeran la especificación ni las notas del chat, y en qué se apartó de las notas. Es lo primero que mira la revisión ligera del chat. -->
+
 ## Ajustes de la aprobación
 
 <!-- Qué cambió respecto al plan aprobado y por qué. -->

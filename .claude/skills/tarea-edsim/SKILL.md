@@ -27,7 +27,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
    - Si es un fichero de más de unos 50 KB (`wc -c`), lanza un subagente Explore que, a partir de `grep -n '^#'`, resuma las secciones enlazadas y dé sus rangos de líneas. Después lee tú esos rangos, sobre todo los que dan valores para el plan.
    - Si es más pequeño, léelo por secciones igualmente.
    - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2») o está vacío (`_No response_`), la especificación son el cuerpo y los comentarios del issue (más el argumento). Si no basta, pregunta.
-4. Plan con los seis apartados de `tarea.md`, más tres datos al principio:
+4. Plan con los ocho apartados de `tarea.md` §2 («Lo que el plan interpreta» y «Diferencias con las notas del chat» incluidos). Cada valor a mano, con un script del *scratchpad* ejecutado y su salida, en resumen; la salida completa y las tablas largas, al PR. Al principio, tres datos:
    - la rama, la del issue; si está vacía, propón una con prefijo `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/` o `ci/` (los únicos con push permitido);
    - que la ficha pasará a «En curso» al aprobarlo;
    - el esfuerzo de `/code-review`: `high` si el issue tiene la etiqueta `critica`; `medium` si no. Si la casilla «Crítica» del cuerpo está marcada (`- [x]`) y falta la etiqueta, o al revés, avisa del descuadre y usa `high`.

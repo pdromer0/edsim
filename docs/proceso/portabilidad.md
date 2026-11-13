@@ -43,7 +43,8 @@ Son las que hacen que el flujo funcione. En un proyecto nuevo se copian tal cual
 
 **Prácticas de calidad** [probado], que se llevan a cualquier proyecto con cálculos o datos:
 
-- **Tests primero, con valores calculados a mano.** Una referencia que usa la función probada hereda su error. Desde la P.2, cada valor a mano lleva su cálculo escrito en el plan, con aritmética o con código independiente, nunca de memoria.
+- **Tests primero, con valores calculados a mano.** Una referencia que usa la función probada hereda su error. Desde la P.2, cada valor a mano lleva su cálculo escrito en el plan, nunca de memoria; desde la 7.0, ese cálculo se ejecuta (un script temporal con código independiente) y su salida se pega.
+- **El plan dice lo que interpreta** [implantado, 7.0]: dos apartados, «Lo que el plan interpreta» (lo que no está literalmente en la especificación ni en las notas) y «Diferencias con las notas del chat». En el hito 5, los cuatro errores que se encontraron en los planes estaban ahí, no en la aritmética, y los tests no los ven porque se escriben con la misma interpretación que el código. El detalle va al PR, para que el plan se lea de un vistazo.
 - **Casos límite como lista explícita en el plan:** enteros enormes, NaN e infinitos, `date` frente a `datetime`, empates y orden de eventos del mismo instante, listas de distinta longitud, vacíos, primer y último elemento.
 - **Versiones incorrectas con predicción firme.** Antes de dar un test por bueno, se rompe el código a propósito, se predice qué test debe fallar y se comprueba que falla por esa razón. Es una prueba de mutación hecha a mano.
 - **Lo exacto antes que lo simulado.** Semillas, tolerancias y umbrales se fijan antes de medir. Nunca se cambia una semilla para que un test pase.

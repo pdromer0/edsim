@@ -18,8 +18,10 @@ Los niveles de tests N1, N2 y N3 son los de la sección «Workflow» de [docs/di
 El plan tiene siempre estos apartados:
 
 1. **Contexto y qué cambia.**
-2. **Valores a mano**: cada uno con su cálculo escrito, con aritmética o con código independiente de la función probada, nunca de memoria.
-3. **Casos límite**, como lista explícita. Como mínimo, se piensa en:
+2. **Lo que el plan interpreta**: todo lo que no está literalmente en la especificación ni en las notas del chat (un nombre, una población, un orden, un caso que la especificación no cubre). Es donde estuvieron los errores de los planes del hito 5, y lo que mira primero quien revisa.
+3. **Diferencias con las notas del chat**: lo que el plan hace distinto de lo que dicen las notas, y por qué. Si no hay, se dice.
+4. **Valores a mano**: cada uno con su cálculo **ejecutado**, con código independiente de la función probada (un script temporal; en Claude Code, en el *scratchpad*), y su salida pegada. Nunca de memoria ni con aritmética de cabeza.
+5. **Casos límite**, como lista explícita. Como mínimo, se piensa en:
    - enteros enormes;
    - NaN e infinitos;
    - `date` frente a `datetime`;
@@ -27,9 +29,11 @@ El plan tiene siempre estos apartados:
    - listas de distinta longitud;
    - vacíos;
    - el primer y el último elemento.
-4. **Versiones incorrectas**, cada una con su predicción firme: qué tests fallan y cuáles siguen pasando.
-5. **Comprobaciones**: tests, medidas y comprobaciones a mano.
-6. **Cuándo parar y preguntar.**
+6. **Versiones incorrectas**, cada una con su predicción firme: qué tests fallan y cuáles siguen pasando.
+7. **Comprobaciones**: tests, medidas y comprobaciones a mano.
+8. **Cuándo parar y preguntar.**
+
+El plan es corto y se lee de un vistazo: el detalle (tablas largas, listas de ficheros, salidas completas de los cálculos) va al PR, no al plan.
 
 El plan lo revisan Pedro y el chat; la implementación empieza cuando Pedro lo aprueba.
 
