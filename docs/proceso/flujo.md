@@ -76,6 +76,22 @@ La especificación dice qué hay que hacer y el anexo qué se hizo; el issue y e
 
 En las tareas de proceso, la especificación y su anexo son `docs/proceso/<tarea>.md`.
 
+## Dónde corre cada tarea
+
+**En la nube por defecto** (una sesión de Claude Code en claude.ai/code), desde el hito 7. En la 5.7, la N3 tardó allí 10 min 41 s, frente a 13 min 52 s en el portátil, y el portátil queda libre. **En local**, solo lo que la nube no puede hacer:
+
+- lo que necesita Docker: Kafka, Postgres;
+- la app en el navegador, cuando Pedro tiene que verla;
+- los ficheros que solo están en el portátil;
+- crear Releases: GitHub responde HTTP 403 («not permitted for this session type») al crearlas desde la nube o desde el chat.
+
+Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
+
+- **la rama**, la del issue: la nube propone una `claude/*`, y Pedro elige la del issue;
+- **el entorno** se prepara con `uv sync --all-packages`, con `BASH_DEFAULT_TIMEOUT_MS=900000` para que la N3 quepa en un comando, y el script del entorno busca el repositorio en lugar de suponer dónde está;
+- **GitHub, por REST:** las skills usan `gh api`, porque el proxy de la nube da 403 a GraphQL (`gh issue view`, `gh pr view`, `gh project`);
+- **el tablero** no se puede mover desde la nube: la skill dice qué ficha mover y a qué columna, y la mueve Pedro.
+
 ## Papeles
 
 | Quién | Qué hace |

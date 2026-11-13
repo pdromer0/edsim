@@ -416,6 +416,7 @@ El detalle está en [`flujo.md`](flujo.md) (con diagramas) y en [`tarea.md`](tar
   - **Opus con esfuerzo alto** para lo que necesita criterio: instrucciones que leerán todas las sesiones futuras, skills, tareas críticas.
   - **Opus** para `/doctor prompt-audit`.
   - **Sonnet, o un subagente con Sonnet**, para las gráficas.
+- **La nube por defecto** [implantado, 7.0]: cada tarea va en una sesión en la nube salvo que necesite Docker, la app en el navegador, ficheros que solo están en el portátil o crear una Release (403 desde la nube). El issue lo dice en «Dónde y modelo». La N3 fue más rápida allí (10:41 frente a 13:52 en la 5.7). Lo que hay que preparar: `uv sync --all-packages`, `BASH_DEFAULT_TIMEOUT_MS=900000`, la rama del issue en lugar de `claude/*` y las skills por REST; el tablero lo mueve la persona. Detalle en [flujo.md](flujo.md#dónde-corre-cada-tarea).
 - **No se cambia de modelo a mitad de una tarea.** La caché de la conversación es por modelo, y cambiar obliga a reenviarlo todo. Si hay que cambiar, al principio de la sesión.
 - **Diagnóstico periódico:** `/insights` (dónde se atasca el flujo), `/usage` (dónde se va el consumo) y `/doctor prompt-audit`. Se repiten al cerrar cada hito y se comparan con los anteriores.
 - **Conectores de claude.ai en Claude Code:** los que tenga la cuenta aparecen en `/mcp`. En EDsim, el de Claude Docs permitió que el agente exportara él mismo el documento online. Los que no pintan nada no estorban, porque sus herramientas se cargan bajo demanda.
