@@ -21,7 +21,7 @@ El plan tiene siempre estos apartados:
 1. **Contexto y qué cambia.**
 2. **Lo que el plan interpreta**: todo lo que no está literalmente en la especificación ni en las notas del chat (un nombre, una población, un orden, un caso que la especificación no cubre). Es donde estuvieron los errores de los planes del hito 5, y lo que mira primero quien revisa.
 3. **Diferencias con las notas del chat**: lo que el plan hace distinto de lo que dicen las notas, y por qué. Si no hay, se dice.
-4. **Valores a mano**: cada uno con su cálculo **ejecutado**, con código independiente de la función probada (un script temporal; en Claude Code, en el *scratchpad*), y su salida pegada. Nunca de memoria ni con aritmética de cabeza.
+4. **Valores a mano**: cada uno con su cálculo **ejecutado**, con código independiente de la función probada, y su salida pegada. En modo plan, que no deja escribir ficheros, el script va por la entrada estándar (`python3 - <<'EOF'`); con permiso de escritura, también vale un fichero temporal (en Claude Code, en el *scratchpad*). Nunca de memoria ni con aritmética de cabeza.
 5. **Casos límite**, como lista explícita. Como mínimo, se piensa en:
    - enteros enormes;
    - NaN e infinitos;

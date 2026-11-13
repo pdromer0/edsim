@@ -30,7 +30,7 @@ El primer número es el issue N. El resto es lo efímero de esta sesión. Las no
    - Si es un fichero de más de unos 50 KB (`wc -c`), lanza un subagente Explore que, a partir de `grep -n '^#'`, resuma las secciones enlazadas y dé sus rangos de líneas. Después lee tú esos rangos, sobre todo los que dan valores para el plan.
    - Si es más pequeño, léelo por secciones igualmente.
    - Si el enlace no es un fichero (por ejemplo, «Prompt de la P.2») o está vacío (`_No response_`), la especificación son el cuerpo y los comentarios del issue (más el argumento). Si no basta, pregunta.
-4. Plan con los ocho apartados de `tarea.md` §2 («Lo que el plan interpreta» y «Diferencias con las notas del chat» incluidos). Cada valor a mano, con un script del *scratchpad* ejecutado y su salida, en resumen; la salida completa y las tablas largas, al PR. Al principio, tres datos:
+4. Plan con los ocho apartados de `tarea.md` §2 («Lo que el plan interpreta» y «Diferencias con las notas del chat» incluidos). Cada valor a mano, con su cálculo ejecutado (en modo plan, `python3 - <<'EOF'`, sin escribir ficheros) y su salida, en resumen; la salida completa y las tablas largas, al PR. Al principio, tres datos:
    - la rama, la del issue; si está vacía, propón una con prefijo `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/` o `ci/` (los únicos con push permitido);
    - que la ficha pasará a «En curso» al aprobarlo;
    - el esfuerzo de `/code-review`: `high` si el issue tiene la etiqueta `critica`; `medium` si no. Si la casilla «Crítica» del cuerpo está marcada (`- [x]`) y falta la etiqueta, o al revés, avisa del descuadre y usa `high`.
@@ -67,7 +67,7 @@ Primero la revisión y sus correcciones; después, una sola N3 (`tarea.md` §4).
 Primero, el estado del PR, por REST:
 
 - `gh api repos/pdromer0/edsim/pulls/<PR> --jq '{state,merged,head_sha:.head.sha}'`; si la punta no es la de la rama local (por ejemplo, `@claude` metió un commit desde GitHub), `git pull --ff-only` antes de tocar nada;
-- el CI de esa punta: `gh api repos/pdromer0/edsim/commits/<head_sha>/check-runs --jq '.check_runs[] | {name,status,conclusion}'`;
+- el CI de esa punta: `gh api repos/pdromer0/edsim/commits/<head_sha>/check-runs --paginate --jq '.check_runs[] | {name,status,conclusion}'` (el CI es de GitHub Actions, así que todo sale como *check runs*; un `status` distinto de `completed` es CI en marcha, no en verde);
 - los comentarios y las revisiones: `gh api repos/pdromer0/edsim/issues/<PR>/comments --paginate`, `gh api repos/pdromer0/edsim/pulls/<PR>/reviews --paginate` y `gh api repos/pdromer0/edsim/pulls/<PR>/comments --paginate`.
 
 Después, como antes del push: clasifica todos los ajustes de la ronda; después, las correcciones en commits nuevos en la misma rama, cada uno con N1 (la N2, en el hook Stop), y al final una sola N3 antes del push. Si las correcciones de la ronda solo tocan documentación o scripts de los hooks, no hay N3: la última en verde sigue valiendo para todo lo que la N3 ejecuta. Pon al día la sección «Ajustes de la revisión» del PR y la entrada del anexo.
