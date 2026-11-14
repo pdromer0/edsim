@@ -442,6 +442,175 @@ class _Draft:
         return (self.sim_time, self.position, self.order)
 
 
+def _event_drafts(
+    event: Event,
+    position: int,
+    dice: Dice,
+    profile: RecordProfile,
+    offsets: Mapping[str, int],
+) -> tuple[list[_Draft], NotebookRow | None, int]:
+    """The drafts of one true event, before numbering: the slips 1 to 7 of the module.
+
+    A patient event rolls the dice once; a resource event does not roll and passes as it is.
+
+    Returns:
+        The drafts (the original, its correction and its duplicate, as drawn), the row of
+        the notebook if the event was forgotten, and the corrections drawn (0 or 1).
+    """
+    spec = CATALOGS[event.schema_version][event.event_type]
+    envelope = {
+        "event_type": event.event_type,
+        "schema_version": event.schema_version,
+        "episode_id": event.episode_id,
+        "patient_id": event.patient_id,
+        "source_system": event.source_system,
+    }
+    if not spec.patient:
+        resource = _Draft(
+            event.sim_time,
+            position,
+            0,
+            {
+                **envelope,
+                "sim_time": event.sim_time,
+                "event_time": event.event_time,
+                "recorded_time": event.event_time,
+                "payload": dict(event.payload),
+            },
+            {"fact_id": event.event_id, "kind": GOOD, "delay_min": 0.0, "clock_min": 0.0},
+        )
+        return [resource], None, 0
+
+    roll = dice.roll()
+    if not isinstance(roll, Roll):
+        raise TypeError(f"dice.roll() must return a Roll, got {roll!r}")
+    if roll.u_forget < profile.forget:
+        return [], NotebookRow(None, event.event_id, LOST), 0
+
+    system = event.source_system
+    offset = offsets[system]
+    clock_min = profile.clock[system]
+    delay = profile.delay[system]
+    delay_min = delay.quantile(roll.z_delay) if roll.u_delay < delay.rate else 0.0
+    sim_time = event.sim_time + delay_min
+
+    payload = dict(event.payload)
+    wrong = None
+    candidates = [k for k in payload if k in WRONG_FIELDS]
+    if candidates and roll.u_wrong < profile.wrong:
+        key = candidates[_pick(roll.u_wrong_field, len(candidates))]
+        value = _wrong_value(key, payload[key], roll.u_wrong_value, _choices(event, key))
+        wrong = (key, payload[key], value)
+        payload[key] = value
+    empty = None
+    candidates = [k for k in payload if wrong is None or k != wrong[0]]
+    if candidates and roll.u_empty < profile.empty:
+        empty = candidates[_pick(roll.u_empty_field, len(candidates))]
+        payload[empty] = None
+
+    # The class comes from what is written, not from what was drawn: a delay that
+    # does not move sim_time, or an offset that rounds to 0 ms, is no slip.
+    slipped = sim_time != event.sim_time or offset != 0 or wrong is not None or empty is not None
+    stamp = _shift(event.event_time, offset)
+    original = _Draft(
+        sim_time,
+        position,
+        0,
+        {
+            **envelope,
+            "sim_time": sim_time,
+            "event_time": stamp,
+            "payload": payload,
+        },
+        {
+            "fact_id": event.event_id,
+            "kind": WITH_SLIPS if slipped else GOOD,
+            "delay_min": sim_time - event.sim_time,
+            "clock_min": clock_min,
+            "empty_field": empty,
+            **(_wrong_cells(wrong)),
+        },
+        offset=offset,
+    )
+    drafts = [original]
+
+    corrected = 0
+    if wrong is not None and roll.u_correction < profile.correction.rate:
+        corrected = 1
+        when = sim_time + profile.correction.quantile(roll.z_correction)
+        drafts.append(
+            _Draft(
+                when,
+                position,
+                2,
+                {
+                    **envelope,
+                    "event_type": RECORD_CORRECTED,
+                    "sim_time": when,
+                    "payload": {"corrige": None, "campos": {wrong[0]: wrong[1]}},
+                },
+                {
+                    "fact_id": event.event_id,
+                    "kind": CORRECTION,
+                    "delay_min": when - event.sim_time,
+                    "clock_min": clock_min,
+                    "wrong_field": wrong[0],
+                    "true_value": wrong[1],
+                },
+                link=original,
+                offset=offset,
+            )
+        )
+
+    if roll.u_duplicate < profile.duplicate.rate:
+        when = sim_time + profile.duplicate.quantile(roll.z_duplicate)
+        drafts.append(
+            _Draft(
+                when,
+                position,
+                1,
+                {
+                    **envelope,
+                    "sim_time": when,
+                    "event_time": stamp,
+                    "payload": dict(payload),
+                },
+                {
+                    "fact_id": event.event_id,
+                    "kind": DUPLICATE,
+                    "delay_min": when - event.sim_time,
+                    "clock_min": clock_min,
+                },
+                link=original,
+                offset=offset,
+            )
+        )
+    return drafts, None, corrected
+
+
+def _finish(draft: _Draft, start: date, derived: str) -> tuple[Record, NotebookRow]:
+    """The record and the notebook row of a numbered draft (``event_id`` already given).
+
+    The ``recorded_time`` is computed only now, for what is written: a draft past the
+    horizon may lie beyond any date. A correction or a duplicate points to its original,
+    which comes before it in emission order and so is already numbered.
+    """
+    values = draft.fields
+    if draft.offset is not None:
+        clock = _shift(event_time(start, draft.sim_time), draft.offset)
+        values = {**values, "recorded_time": clock}
+        if draft.order == 2:
+            values["event_time"] = clock
+    row = dict(draft.row)
+    if draft.order == 2:
+        values = {**values, "payload": {**values["payload"], "corrige": draft.link.event_id}}
+        row["corrects"] = draft.link.event_id
+    elif draft.order == 1:
+        row["duplicate_of"] = draft.link.event_id
+    written = Record(event_id=draft.event_id, run_id=derived, ingest_time=None, **values)
+    return written, NotebookRow(record_id=draft.event_id, **row)
+
+
 def record(
     events: Sequence[Event],
     profile: RecordProfile,
@@ -488,138 +657,11 @@ def record(
     lost: list[tuple[int, NotebookRow]] = []
     corrections_drawn = 0
     for position, event in enumerate(events):
-        spec = CATALOGS[event.schema_version][event.event_type]
-        envelope = {
-            "event_type": event.event_type,
-            "schema_version": event.schema_version,
-            "episode_id": event.episode_id,
-            "patient_id": event.patient_id,
-            "source_system": event.source_system,
-        }
-        if not spec.patient:
-            drafts.append(
-                _Draft(
-                    event.sim_time,
-                    position,
-                    0,
-                    {
-                        **envelope,
-                        "sim_time": event.sim_time,
-                        "event_time": event.event_time,
-                        "recorded_time": event.event_time,
-                        "payload": dict(event.payload),
-                    },
-                    {"fact_id": event.event_id, "kind": GOOD, "delay_min": 0.0, "clock_min": 0.0},
-                )
-            )
-            continue
-
-        roll = dice.roll()
-        if not isinstance(roll, Roll):
-            raise TypeError(f"dice.roll() must return a Roll, got {roll!r}")
-        if roll.u_forget < profile.forget:
-            lost.append((position, NotebookRow(None, event.event_id, LOST)))
-            continue
-
-        system = event.source_system
-        offset = offsets[system]
-        clock_min = profile.clock[system]
-        delay = profile.delay[system]
-        delay_min = delay.quantile(roll.z_delay) if roll.u_delay < delay.rate else 0.0
-        sim_time = event.sim_time + delay_min
-
-        payload = dict(event.payload)
-        wrong = None
-        candidates = [k for k in payload if k in WRONG_FIELDS]
-        if candidates and roll.u_wrong < profile.wrong:
-            key = candidates[_pick(roll.u_wrong_field, len(candidates))]
-            value = _wrong_value(key, payload[key], roll.u_wrong_value, _choices(event, key))
-            wrong = (key, payload[key], value)
-            payload[key] = value
-        empty = None
-        candidates = [k for k in payload if wrong is None or k != wrong[0]]
-        if candidates and roll.u_empty < profile.empty:
-            empty = candidates[_pick(roll.u_empty_field, len(candidates))]
-            payload[empty] = None
-
-        # The class comes from what is written, not from what was drawn: a delay that
-        # does not move sim_time, or an offset that rounds to 0 ms, is no slip.
-        slipped = (
-            sim_time != event.sim_time or offset != 0 or wrong is not None or empty is not None
-        )
-        stamp = _shift(event.event_time, offset)
-        original = _Draft(
-            sim_time,
-            position,
-            0,
-            {
-                **envelope,
-                "sim_time": sim_time,
-                "event_time": stamp,
-                "payload": payload,
-            },
-            {
-                "fact_id": event.event_id,
-                "kind": WITH_SLIPS if slipped else GOOD,
-                "delay_min": sim_time - event.sim_time,
-                "clock_min": clock_min,
-                "empty_field": empty,
-                **(_wrong_cells(wrong)),
-            },
-            offset=offset,
-        )
-        drafts.append(original)
-
-        if wrong is not None and roll.u_correction < profile.correction.rate:
-            corrections_drawn += 1
-            when = sim_time + profile.correction.quantile(roll.z_correction)
-            drafts.append(
-                _Draft(
-                    when,
-                    position,
-                    2,
-                    {
-                        **envelope,
-                        "event_type": RECORD_CORRECTED,
-                        "sim_time": when,
-                        "payload": {"corrige": None, "campos": {wrong[0]: wrong[1]}},
-                    },
-                    {
-                        "fact_id": event.event_id,
-                        "kind": CORRECTION,
-                        "delay_min": when - event.sim_time,
-                        "clock_min": clock_min,
-                        "wrong_field": wrong[0],
-                        "true_value": wrong[1],
-                    },
-                    link=original,
-                    offset=offset,
-                )
-            )
-
-        if roll.u_duplicate < profile.duplicate.rate:
-            when = sim_time + profile.duplicate.quantile(roll.z_duplicate)
-            drafts.append(
-                _Draft(
-                    when,
-                    position,
-                    1,
-                    {
-                        **envelope,
-                        "sim_time": when,
-                        "event_time": stamp,
-                        "payload": dict(payload),
-                    },
-                    {
-                        "fact_id": event.event_id,
-                        "kind": DUPLICATE,
-                        "delay_min": when - event.sim_time,
-                        "clock_min": clock_min,
-                    },
-                    link=original,
-                    offset=offset,
-                )
-            )
+        made, forgotten, corrected = _event_drafts(event, position, dice, profile, offsets)
+        drafts += made
+        if forgotten is not None:
+            lost.append((position, forgotten))
+        corrections_drawn += corrected
 
     drafts.sort(key=lambda d: d.key)
     written = [d for d in drafts if d.sim_time < horizon]
@@ -631,21 +673,9 @@ def record(
     records = []
     rows = []
     for draft in written:
-        values = draft.fields
-        if draft.offset is not None:
-            # Only now, for what is written: a draft past the horizon may lie beyond any date.
-            clock = _shift(event_time(start, draft.sim_time), draft.offset)
-            values = {**values, "recorded_time": clock}
-            if draft.order == 2:
-                values["event_time"] = clock
-        row = dict(draft.row)
-        if draft.order == 2:
-            values = {**values, "payload": {**values["payload"], "corrige": draft.link.event_id}}
-            row["corrects"] = draft.link.event_id
-        elif draft.order == 1:
-            row["duplicate_of"] = draft.link.event_id
-        records.append(Record(event_id=draft.event_id, run_id=derived, ingest_time=None, **values))
-        rows.append(NotebookRow(record_id=draft.event_id, **row))
+        written_record, row = _finish(draft, start, derived)
+        records.append(written_record)
+        rows.append(row)
 
     unwritten = [(d.position, d.order, d) for d in drafts if d.sim_time >= horizon]
     unwritten += [(pos, 0, row) for pos, row in lost]
