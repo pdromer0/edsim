@@ -363,3 +363,60 @@ def test_un_fichero_que_no_existe_es_un_os_error(tmp_path):
     """Pilla un fichero ausente que se convierte en otro error: la CLI espera `OSError`."""
     with pytest.raises(OSError):
         load_record_profiles(tmp_path / "no_existe.toml")
+
+
+# --- El fichero real, config/registro_clinico.toml -----------------------------------------
+
+REAL = {
+    "realista": {
+        "forget": 0.005, "empty": 0.01, "wrong": 0.01,
+        "duplicate": (0.005, (0.5, 2.0)), "correction": (0.5, (120.0, 720.0)),
+        "delay": {
+            "admision": (0.10, (1.0, 5.0)), "triaje": (0.60, (5.0, 15.0)),
+            "his": (0.70, (10.0, 45.0)), "lab": (0.05, (1.0, 3.0)),
+        },
+        "clock": {"admision": 0.0, "triaje": 2.0, "his": 0.0, "lab": -1.0},
+    },
+    "hostil": {
+        "forget": 0.05, "empty": 0.07, "wrong": 0.07,
+        "duplicate": (0.04, (0.5, 5.0)), "correction": (0.3, (240.0, 1440.0)),
+        "delay": {
+            "admision": (0.30, (2.0, 15.0)), "triaje": (0.90, (10.0, 40.0)),
+            "his": (0.90, (20.0, 120.0)), "lab": (0.20, (2.0, 10.0)),
+        },
+        "clock": {"admision": 3.0, "triaje": 7.0, "his": -5.0, "lab": -3.0},
+    },
+}  # fmt: skip
+"""Los valores de «Valores orientativos de partida» de la especificación: la 7.2 no encontró
+fuentes que los cambien, y este test los fija para que cambiarlos sea una decisión visible."""
+
+
+@pytest.mark.parametrize("name", ["realista", "hostil"])
+def test_el_fichero_real_tiene_los_valores_de_la_especificacion(name):
+    """Pilla un valor del fichero que se aparta de la tabla de la especificación sin decirlo."""
+    from registro_factory import PROFILES_FILE
+
+    profile = load_record_profiles(PROFILES_FILE)[name]
+    expected = REAL[name]
+    assert (profile.forget, profile.empty, profile.wrong) == (
+        expected["forget"],
+        expected["empty"],
+        expected["wrong"],
+    )
+    for key in ("duplicate", "correction"):
+        rate, minutes = expected[key]
+        assert (getattr(profile, key).rate, getattr(profile, key).minutes) == (rate, minutes), key
+    for system in SYSTEMS:
+        rate, minutes = expected["delay"][system]
+        assert (profile.delay[system].rate, profile.delay[system].minutes) == (rate, minutes)
+    assert dict(profile.clock) == expected["clock"]
+
+
+def test_el_limpio_real_no_tiene_nada_distinto_de_cero():
+    """Pilla un `limpio` del fichero real con un despiste (la carga ya lo exige: doble cierre)."""
+    from registro_factory import PROFILES_FILE
+
+    clean = load_record_profiles(PROFILES_FILE)["limpio"]
+    rates = [clean.forget, clean.empty, clean.wrong, clean.duplicate.rate, clean.correction.rate]
+    rates += [t.rate for t in clean.delay.values()] + list(clean.clock.values())
+    assert rates == [0.0] * len(rates)
