@@ -703,7 +703,7 @@ Cuatro niveles, de lo más barato a lo más completo: **N0** ruff; **N1** los fi
 | Antes de cada commit | N0 + N1 | pre-commit (nbstripout, `ruff check --fix`, `ruff format`, espacios, YAML, ficheros grandes) y los ficheros de test del área tocada | El paso está limpio y su área pasa |
 | Al probar una versión incorrecta | N1 | Los ficheros donde se predice el fallo y los que deben seguir pasando | El test detecta el error previsto |
 | Antes de cada push | N3 | Una sola vez, después de la revisión propia (`/code-review`) y de todas sus correcciones. `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka, también `scripts/tests-integracion.sh` (hito 6) | Lo que se sube pasa todo |
-| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y, desde el hito 6, `tests-kafka` (integración contra el Kafka de `compose.yaml`), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
+| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y, desde el hito 6, `tests-kafka` (integración contra el Kafka de `compose.yaml`), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR. Si el PR entero solo cambia documentación, un job previo (`cambios`) hace que los demás se salten ([P.3, #81](proceso/p3.md)) | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
 | Al fusionar en `main` | CI | Lo mismo sobre `main`, sin cancelar nunca | `main` sigue en verde |
 
 Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
@@ -795,7 +795,7 @@ El coste por tarea es una estimación con las medidas de la tabla «Cuánto cues
 - `timeout-minutes` en cada job del CI: hoy no hay límite y GitHub deja un job colgado hasta 6 h.
 - Repartir los tests `slow` en jobs del CI aparte, cada uno en su máquina, para bajar el tiempo típico y el peor caso.
 - N1 automático con `pytest-testmon`: solo sigue el código Python, así que un cambio en `config/` o `tests/data/` seguiría pidiendo N2. Comprobar antes que admite pytest 9.2.
-- Saltar los tests del CI cuando el PR solo cambia documentación, con una comprobación dentro del job y no con `paths-ignore` (un check obligatorio que no se ejecuta bloquea la fusión).
+- **Hecho (#81, [anexo](proceso/p3.md)):** saltar los tests del CI cuando el PR solo cambia documentación, con un job previo (`cambios`) y un `if:` en cada job de tests, y no con `paths-ignore` (un check obligatorio que no se ejecuta bloquea la fusión).
 - Volver a mirar `loadgroup` cuando xdist publique una versión que admita pytest 9.2.
 
 ### Qué añadió el hito 6
