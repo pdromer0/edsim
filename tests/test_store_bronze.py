@@ -197,6 +197,25 @@ def test_lo_que_no_se_puede_guardar_va_a_rechazados_con_su_motivo(value, reason)
     assert "\x00" not in row.valor
 
 
+@pytest.mark.parametrize(
+    "depth",
+    [
+        1_100,  # json.loads lo lee; falla el recorrido de _check_strings
+        100_000,  # falla ya json.loads
+    ],
+)
+def test_un_json_demasiado_anidado_va_a_rechazados(depth):
+    """RecursionError no es ValueError: sin capturarlo, el mensaje tumbaría el consumidor y lo
+    volvería a encontrar en cada arranque (profundidades del cálculo del PR, con python3)."""
+    value = '{"payload": ' + "[" * depth + "]" * depth + "}"
+
+    row = to_row(message(value, offset=9))
+
+    assert isinstance(row, RejectedRow), row
+    assert row.motivo == "JSON demasiado anidado"
+    assert row.valor == value
+
+
 def test_el_valor_rechazado_se_guarda_con_lo_que_text_no_admite_escapado():
     nul = to_row(message(b'\x00{"a"'))
     broken = to_row(message(b'{"a": "\xff"}'))

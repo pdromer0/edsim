@@ -63,6 +63,9 @@ REQUIRED_KEYS = (
 
 RUN_TYPES = ("inicio", "fin")
 
+TOO_DEEP = "JSON demasiado anidado"
+"""The ``motivo`` of a value nested beyond the recursion limit, in ``json.loads`` or after."""
+
 
 @dataclass(frozen=True, slots=True)
 class KafkaMessage:
@@ -207,13 +210,20 @@ def _decode(value: bytes | None) -> tuple[str, dict]:
         raise _Unreadable(f"no es UTF-8 ({error.reason} en el byte {error.start})") from None
     try:
         data = json.loads(text, parse_constant=_reject_constant)
+    except RecursionError:
+        # Not a ValueError: uncaught, it would stop the consumer on every start.
+        raise _Unreadable(TOO_DEEP) from None
     except ValueError as error:
         if isinstance(error, _Unreadable):
             raise
         raise _Unreadable(f"JSON roto: {error}") from None
     if not isinstance(data, dict):
         raise _Unreadable(f"no es un objeto JSON, sino {type(data).__name__}")
-    _check_strings(data)
+    try:
+        _check_strings(data)
+    except RecursionError:
+        # json.loads reads deeper than a recursive walk of the result can go.
+        raise _Unreadable(TOO_DEEP) from None
     return text, data
 
 
