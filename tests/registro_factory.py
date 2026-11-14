@@ -223,3 +223,9 @@ def run_l(profile=None, u_wrong_l3=0.005):
         run_id=RUN,
         dice=scenario_l_dice(u_wrong_l3),
     )
+
+
+def big_recording():
+    """Un registro de 60 pacientes con el perfil escandaloso y un horizonte que deja correcciones
+    pendientes: hay registros con campos vacíos, valores erróneos, duplicados y correcciones."""
+    return record(patient_log(60), loud_profile(), 5, horizon=400.0, run_id=RUN)

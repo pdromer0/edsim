@@ -10,24 +10,16 @@ más escondería un bronce corrupto detrás de una cuenta que no cuadra.
 import json
 
 import pytest
-from registro_factory import RUN, loud_profile, patient_log, run_l
+from registro_factory import big_recording, run_l
 
 from edsim.clinical_record import (
     NOTEBOOK_COLUMNS,
     NotebookRow,
     notebook_csv,
     read_notebook_csv,
-    record,
     record_from_json,
     record_json,
 )
-
-
-def big_recording():
-    """Un registro de 60 pacientes con el perfil escandaloso y un horizonte que deja correcciones
-    pendientes: hay registros con campos vacíos, valores erróneos, duplicados y correcciones."""
-    return record(patient_log(60), loud_profile(), 5, horizon=400.0, run_id=RUN)
-
 
 # --- record_from_json ------------------------------------------------------------------------
 

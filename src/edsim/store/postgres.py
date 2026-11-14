@@ -14,16 +14,18 @@ in. An error of the data (``psycopg.DataError``, ``psycopg.IntegrityError``, or 
 client cannot encode) becomes ``StoreDataError``, which the consumer's safety net handles.
 
 **The reading** (``read_bronze_lines``) gives back what was published of a run, as it came:
-the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id``. Building
-``Record`` from it is for the task that brings ``registro comparar --postgres`` (7.3).
+the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id``, from the
+**last publication** of the run (see ``READ_LINES``). ``read_bronze_records`` builds the
+``Record`` of the clinical record from those lines, for ``registro comparar --postgres``.
 """
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import astuple
 from types import ModuleType
 
+from edsim.clinical_record import Record, record_from_json
 from edsim.store.bronze import EventRow, RejectedRow, RunRow
 from edsim.store.consumer import RunProgress, StoreDataError
 from edsim.store.migrations import Migration, MigrationError, apply_migrations
@@ -202,10 +204,22 @@ READ_LINES = """\
 SELECT valor FROM (
     SELECT DISTINCT ON (event_id) event_id, sim_time, valor
     FROM bronce.eventos
-    WHERE run_id = %s
-    ORDER BY event_id, ingest_time
+    WHERE run_id = %(run_id)s
+      AND ingest_time >= COALESCE(
+          (
+              SELECT max(ingest_time)
+              FROM bronce.ejecuciones
+              WHERE run_id = %(run_id)s AND tipo = 'inicio'
+          ),
+          '-infinity'
+      )
+    ORDER BY event_id, ingest_time DESC
 ) AS una_por_evento
 ORDER BY sim_time, event_id"""
+"""The last publication of a run: the rows that arrived at or after its last ``inicio`` (all of
+them if bronze has none), one per ``event_id``, the latest. It is the publication that
+``PROGRESS`` counts and ``edsim almacen consumir --run`` waits for. An earlier publication of the
+same run (a rerun, with the same ``event_id`` and maybe other values) is not read."""
 
 
 class PostgresBronze:
@@ -252,16 +266,51 @@ class PostgresBronze:
 def read_bronze_lines(url: str, run_id: str) -> list[str]:
     """What was published of ``run_id``, from bronze: one ``valor`` per ``event_id``.
 
-    If a run was published twice, bronze has two rows per ``event_id`` (they arrived at
-    different times); this gives the one that arrived first. In order of ``sim_time`` and
-    ``event_id``.
+    If a run was published more than once, bronze has several rows per ``event_id`` (they arrived
+    at different times); this reads the last publication, the one since the last ``inicio`` of the
+    run (``READ_LINES``), as ``edsim almacen consumir --run`` counts it. A publication cut short
+    gives fewer lines, not the lines of an earlier one. In order of ``sim_time`` and ``event_id``.
 
     Raises:
         MissingPostgresExtraError: If the ``postgres`` extra is not installed.
         DatabaseUnavailableError: If Postgres does not answer.
     """
     with connect(url) as connection:
-        return [valor for (valor,) in connection.execute(READ_LINES, (run_id,))]
+        return [valor for (valor,) in connection.execute(READ_LINES, {"run_id": run_id})]
+
+
+class BronzeReadError(RuntimeError):
+    """A ``valor`` of bronze that should be a record of the clinical record is not."""
+
+
+def records_from_lines(lines: Iterable[str]) -> list[Record]:
+    """The ``Record`` of each line, in order.
+
+    Raises:
+        BronzeReadError: If a line is not a record; it says which one (from 1).
+    """
+    records = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            records.append(record_from_json(line))
+        except ValueError as error:
+            raise BronzeReadError(
+                f"el valor {number} de bronce no es un registro: {error}"
+            ) from error
+    return records
+
+
+def read_bronze_records(url: str, run_id: str) -> list[Record]:
+    """The records of ``run_id`` in bronze, in emission order, from its last publication.
+
+    ``run_id`` is the derived run of the recording (``<run_id>_<perfil>_s<semilla>``).
+
+    Raises:
+        MissingPostgresExtraError: If the ``postgres`` extra is not installed.
+        DatabaseUnavailableError: If Postgres does not answer.
+        BronzeReadError: If a ``valor`` is not a record.
+    """
+    return records_from_lines(read_bronze_lines(url, run_id))
 
 
 @contextmanager
