@@ -59,7 +59,7 @@ EDsim se importa y sus tests pasan; solo lo que habla con Kafka pide el extra.
 **Levantar y parar.**
 
 ```bash
-docker compose up --wait     # arranca Kafka y la consola y espera a que estén sanos (unos 10 s)
+docker compose up --wait     # arranca Kafka, la consola y Postgres y espera a que estén sanos (unos 10 s)
 docker compose ps            # estado
 docker compose logs -f kafka # registro del broker
 docker compose stop          # para los contenedores: los topics y los mensajes se conservan
@@ -67,10 +67,21 @@ docker compose start         # los vuelve a arrancar tal cual
 docker compose down          # para y borra los contenedores
 ```
 
-Redpanda Console queda en <http://localhost:8080>: topics, particiones, mensajes con
+Redpanda Console queda en <http://127.0.0.1:8080>: topics, particiones, mensajes con
 su clave y su marca de tiempo, y grupos de consumidores. El broker no tiene volumen: tras
 `down`, el siguiente `up` empieza vacío, sin topics ni mensajes. Para conservarlos, usa
 `stop` y `start`.
+
+**Postgres (hito 7).** TimescaleDB 2.31.0 sobre Postgres 17, en `127.0.0.1:5432`, con el
+usuario, la contraseña y la base de datos `edsim` (solo para local). Sus datos van en el
+volumen `edsim-postgres`, que sobrevive a `down`; para borrarlos, `docker compose down -v`.
+
+```bash
+uv sync --all-packages --extra kafka --extra postgres  # los dos clientes
+uv run edsim almacen preparar                          # crea las tablas de bronce (migraciones)
+uv run edsim almacen consumir                          # de Kafka a bronce, hasta Ctrl+C
+uv run edsim almacen consumir --run RUN_ID             # hasta tener toda esa ejecución
+```
 
 **Tests de integración.**
 
@@ -78,9 +89,11 @@ su clave y su marca de tiempo, y grupos de consumidores. El broker no tiene volu
 scripts/tests-integracion.sh
 ```
 
-Si el broker ya está en marcha, lo usa y lo deja así. Si no, lo levanta y lo baja al
-terminar. Ejecuta `tests_integracion/`, que no forma parte de `uv run pytest`. Para
-probar contra otro broker: `EDSIM_KAFKA=host:puerto uv run --extra kafka pytest tests_integracion`.
+Si Kafka y Postgres ya están en marcha, los usa y los deja así. Si no, los levanta y los baja
+al terminar (sin borrar el volumen de Postgres). Ejecuta `tests_integracion/`, que no forma
+parte de `uv run pytest`; cada sesión crea su propia base de datos y la borra al acabar. Para
+probar contra otro broker u otro Postgres: `EDSIM_KAFKA=host:puerto` y `EDSIM_POSTGRES=URL`,
+con `uv run --extra kafka --extra postgres pytest tests_integracion`.
 
 **Si el cliente no conecta.** Kafka tiene dos direcciones, una para cada lado de Docker:
 

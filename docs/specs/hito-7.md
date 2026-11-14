@@ -219,7 +219,7 @@ Kafka es como el correo: transporta mensajes, pero no es un archivo donde buscar
 
 ### En EDsim
 
-- `compose.yaml` añade el servicio `postgres` con la imagen `timescale/timescaledb` en una etiqueta exacta (`X.Y.Z-pg17`), fijada y comprobada en la 7.5, como Kafka en la 6.1 (decisión 62). La imagen no tiene etiqueta `latest` a propósito.
+- `compose.yaml` añade el servicio `postgres` con la imagen `timescale/timescaledb` en una etiqueta exacta, fijada y comprobada en la 7.5 como Kafka en la 6.1 (decisión 62): `2.31.0-pg17`, con Postgres 17.11. La imagen no tiene etiqueta `latest` a propósito.
 - La tabla `bronce.eventos` es una hypertable partida por `ingest_time`, la hora de llegada: la pone Kafka, siempre existe y su reloj es fiable. Partirla por `event_time` dejaría que el reloj desajustado de la pieza 1 decidiera dónde se guarda cada registro.
 - **La regla de Timescale:** toda clave única de una hypertable tiene que incluir la columna por la que se parte. Por eso la clave es (`event_id`, `ingest_time`) y no `event_id` solo (pieza 4).
 
@@ -497,7 +497,7 @@ lab = 0
 
 ```yaml
   postgres:
-    image: timescale/timescaledb:X.Y.Z-pg17   # versión exacta fijada en la 7.5
+    image: timescale/timescaledb:2.31.0-pg17   # versión exacta fijada en la 7.5
     environment:
       POSTGRES_USER: edsim
       POSTGRES_PASSWORD: edsim      # solo local; el repositorio no guarda secretos reales
@@ -506,7 +506,8 @@ lab = 0
       - "127.0.0.1:5432:5432"
     volumes:
       - edsim-postgres:/var/lib/postgresql/data
-    healthcheck: …                  # pg_isready
+    healthcheck:                    # por TCP: sin -h, daría por sano el servidor temporal del init
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U edsim -d edsim"]
 volumes:
   edsim-postgres:
 ```
@@ -518,6 +519,7 @@ volumes:
 ### Tablas (migración `001_bronce.sql`)
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS timescaledb;   -- añadida en la 7.5
 CREATE SCHEMA IF NOT EXISTS bronce;
 
 CREATE TABLE bronce.eventos (
@@ -558,7 +560,7 @@ CREATE TABLE bronce.rechazados (    -- mensajes que no se pueden leer
 );
 ```
 
-Los nombres de las columnas del sobre son los del mensaje (el contrato); los de bronce, en español. El plan de la 7.5 confirma el DDL con la versión fijada de TimescaleDB (la sintaxis de `create_hypertable` cambió entre versiones).
+Los nombres de las columnas del sobre son los del mensaje (el contrato); los de bronce, en español. La 7.5 confirmó el DDL con la versión fijada (TimescaleDB 2.31.0): `by_range` funciona, y una clave única sin `ingest_time` hace fallar `create_hypertable` («cannot create a unique index without the column "ingest_time"»). La migración empieza con `CREATE EXTENSION IF NOT EXISTS timescaledb`, que no hace nada en las bases de datos de la imagen (la trae `template1`) y la crea en cualquier otra.
 
 La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMARY KEY, nombre text NOT NULL, aplicada timestamptz NOT NULL)`.
 
@@ -584,7 +586,7 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 
 **Lógica en el paquete:** `edsim.store` (`postgres.py` importa `psycopg`, solo dentro de las funciones que conectan; `bronze.py` convierte un mensaje en una fila sin conectar a nada; `migrations.py` aplica los ficheros; `consumer.py` es el bucle, con el consumidor y la conexión inyectados, para probarlo con un Kafka y un Postgres falsos). La CLI solo construye los clientes reales e imprime.
 
-**Leer lo registrado de bronce:** `read_bronze_records(dsn, run_id) -> list[Record]` reconstruye los registros desde `valor`, uno por `event_id` (si se publicó dos veces, el mismo registro), en orden de `sim_time` y `event_id`. Es lo que usa la comparación con `--postgres`.
+**Leer lo registrado de bronce:** `read_bronze_records(dsn, run_id) -> list[Record]` reconstruye los registros desde `valor`, uno por `event_id` (si se publicó dos veces, el mismo registro), en orden de `sim_time` y `event_id`. Es lo que usa la comparación con `--postgres`. La 7.5 deja `read_bronze_lines(url, run_id) -> list[str]` en `edsim.store.postgres`, con los `valor` tal cual y en ese orden, porque `Record` llega con la 7.1. `read_bronze_records` es su envoltorio y llega con la 7.3, junto con `registro comparar --postgres`.
 
 ## Especificación: la comparación
 
@@ -664,7 +666,8 @@ edsim/
 │   │   ├── migrations.py
 │   │   ├── bronze.py            # mensaje → fila, sin conectar
 │   │   ├── consumer.py          # el bucle, con clientes inyectados
-│   │   └── postgres.py          # importa psycopg solo al conectar
+│   │   ├── postgres.py          # importa psycopg solo al conectar
+│   │   └── report.py            # textos de edsim almacen
 │   └── cli.py                   # grupos registro y almacen; opciones del directo (7.2 a 7.5)
 ├── tests/                       # rápidos y lentos, sin Docker
 ├── tests_integracion/           # contra Kafka y Postgres reales (7.4, 7.5)
@@ -695,7 +698,7 @@ No hay test lento de «las tasas salen como dice el fichero»: con el dado, el t
 ### Integración, contra Kafka y Postgres reales
 
 - **El test de punta a punta del hito:** reemitir con el perfil **limpio** y consumir: lo que hay en bronce coincide con la verdad (salvo los identificadores, con la libreta). Si la 7.5 se fusiona antes que la 7.4, la 7.5 lo hace con la verdad publicada sin registro y la 7.4 añade el caso limpio.
-- Con el perfil **realista**, la cuenta cuadra con lo leído de bronce (`read_bronze_records` y la comparación).
+- Con el perfil **realista**, la cuenta cuadra con lo leído de bronce (`read_bronze_records` y la comparación). Lo añade la 7.4 (reparto del chat del 14-11-2026).
 - **Un solo test** de parar y relanzar el consumidor: no duplica ni pierde nada. El rápido prueba nuestra lógica; este, que Kafka recuerda de verdad dónde nos quedamos.
 - Cada sesión de tests crea su propia base de datos (`edsim_test_<8 hex>`) y la borra al acabar: los datos de Pedro no se tocan.
 - En el CI, el job `tests-kafka` pasa a llamarse `tests-integracion` y levanta Kafka y Postgres desde el mismo `compose.yaml`; sigue siendo obligatorio. **Al fusionar la 7.5, Pedro cambia el nombre del check obligatorio en la protección de `main`**; si no, ningún PR podrá fusionarse.
@@ -760,9 +763,9 @@ Dieciséis decisiones candidatas, tomadas con Pedro una a una en la sesión conc
 | 7.0 (#114) | Proceso: las siete mejoras de H7-15 (cierra #110). Pedro instala la app de GitHub para `@claude` | — | Local | Opus, alto | `chore/h7-proceso` | No |
 | 7.1 (#115) | Registro clínico: `Record`, los ocho despistes con el dado inyectable, la emisión, la renumeración, el corte, la libreta, la cuenta y los esquemas `registro-v*`. Sin perfiles. Primera prueba del revisor del plan | A | Nube | Opus, alto | `feat/h7-registro` | **Sí** |
 | 7.2 (#116) | Perfiles en `config/registro_clinico.toml` con su estado y fuentes, carga y validación, el flujo propio, `record_run` y `edsim registro validar` y `generar` | A | Nube | Sonnet, alto | `feat/h7-perfiles-registro` | No |
-| 7.3 (#117) | Comparación: conciliación, retraso e indicadores ingenuos; `edsim registro comparar` (sin `--postgres`, que llega con la 7.5) | A | Nube | Sonnet, alto | `feat/h7-comparacion` | No |
+| 7.3 (#117) | Comparación: conciliación, retraso e indicadores ingenuos; `edsim registro comparar`, también con `--postgres` y `read_bronze_records` sobre el `read_bronze_lines` de la 7.5 (reparto del chat, 14-11-2026) | A | Nube | Sonnet, alto | `feat/h7-comparacion` | No |
 | 7.4 (#118) | Directo y reemisión con `--registro`: la sala de espera, el censo, el `inicio` con registro y «directo = lotes» de lo registrado | A | Local (Kafka) | Opus, alto | `feat/h7-directo-registro` | **Sí** |
-| 7.5 (#119) | Postgres y consumidor: compose (cierra #91), extra `postgres`, migraciones, `bronce`, el consumidor, `edsim almacen preparar` y `consumir`, `read_bronze_records`, `registro comparar --postgres` y el job `tests-integracion` | B | Local (Docker) | Opus, alto | `feat/h7-almacen` | **Sí** |
+| 7.5 (#119) | Postgres y consumidor: compose (cierra #91), extra `postgres`, migraciones, `bronce`, el consumidor, `edsim almacen preparar` y `consumir`, `read_bronze_lines` y el job `tests-integracion` | B | Local (Docker) | Opus, alto | `feat/h7-almacen` | **Sí** |
 | 7.6 (#120) | Notebook `07_persistencia.ipynb`: el escenario de Lucía, los tres perfiles, la tabla «verdad frente a registrado», consultas SQL a bronce y las dos clases de duplicados; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h7-notebook` | No |
 | 7.7 (#121) | Cierre con `/cerrar-hito`: ADR 0084 a 0099, diario, `docs/diseno.md` (el nombre nuevo, las capas, el registro de decisiones y la hoja de ruta), balance, Release y `v0.7-hito7` | — | Local | Opus, alto | `docs/h7-cierre` | No |
 
@@ -775,7 +778,7 @@ Dieciséis decisiones candidatas, tomadas con Pedro una a una en la sesión conc
 | 7.2 | 7.1 | Los perfiles alimentan el mecanismo |
 | 7.3 | 7.2 | La función solo necesita la 7.1, pero el comando lee lo que escribe `generar` |
 | 7.4 | 7.2 | `--registro PERFIL` necesita los perfiles; no necesita la 7.3 |
-| 7.5 | 7.0 | Se prueba con la verdad que ya publica el directo; `registro comparar --postgres`, cuando esté la 7.3 (si no, va en la 7.3 o la 7.4, la que se fusione después) |
+| 7.5 | 7.0 | Se prueba con la verdad que ya publica el directo; `registro comparar --postgres` va en la 7.3, sobre lo que deja la 7.5 |
 | 7.6 | 7.3, 7.4, 7.5 | Junta todo |
 | 7.7 | Todas | |
 

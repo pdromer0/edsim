@@ -46,7 +46,7 @@ clasifica() {
     # tests/data/ lo lee también app/tests/conftest.py.
     src/edsim/* | config/* | pyproject.toml | uv.lock | tests/data/*) echo ambas ;;
     # La rápida no ejecuta tests_integracion/ ni usa compose.yaml: los prueban
-    # scripts/tests-integracion.sh y el job tests-kafka del CI.
+    # scripts/tests-integracion.sh y el job tests-integracion del CI.
     compose.yaml | tests_integracion/*) echo doc ;;
     tests/* | schemas/* | scripts/* | .claude/* | .codex/* | .github/* | .pre-commit-config.yaml | .gitignore)
       echo nucleo ;;
