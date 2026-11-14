@@ -273,9 +273,10 @@ def read_bronze_lines(url: str, run_id: str) -> list[str]:
 
     Raises:
         MissingPostgresExtraError: If the ``postgres`` extra is not installed.
-        DatabaseUnavailableError: If Postgres does not answer.
+        DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
+        edsim.store.migrations.MigrationError: If the tables of bronze are missing.
     """
-    with connect(url) as connection:
+    with connect(url) as connection, _postgres_errors(url):
         return [valor for (valor,) in connection.execute(READ_LINES, {"run_id": run_id})]
 
 
@@ -307,10 +308,23 @@ def read_bronze_records(url: str, run_id: str) -> list[Record]:
 
     Raises:
         MissingPostgresExtraError: If the ``postgres`` extra is not installed.
-        DatabaseUnavailableError: If Postgres does not answer.
+        DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
+        edsim.store.migrations.MigrationError: If the tables of bronze are missing.
         BronzeReadError: If a ``valor`` is not a record.
     """
     return records_from_lines(read_bronze_lines(url, run_id))
+
+
+@contextmanager
+def _postgres_errors(url: str) -> Iterator[None]:
+    """Translate the errors of Postgres inside the block into those the CLI reports with code 1."""
+    psycopg = import_psycopg()
+    try:
+        yield
+    except _lost_connection(psycopg) as error:
+        raise DatabaseUnavailableError(url, f"se perdió la conexión: {_detail(error)}") from error
+    except psycopg.ProgrammingError as error:
+        raise MigrationError(f"{_detail(error)}; ¿falta «edsim almacen preparar»?") from error
 
 
 @contextmanager
@@ -324,13 +338,5 @@ def bronze_store(url: str = DEFAULT_URL) -> Iterator[PostgresBronze]:
         DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
         edsim.store.migrations.MigrationError: If the tables of bronze are missing.
     """
-    psycopg = import_psycopg()
-    with connect(url) as connection:
-        try:
-            yield PostgresBronze(connection)
-        except _lost_connection(psycopg) as error:
-            raise DatabaseUnavailableError(
-                url, f"se perdió la conexión: {_detail(error)}"
-            ) from error
-        except psycopg.ProgrammingError as error:
-            raise MigrationError(f"{_detail(error)}; ¿falta «edsim almacen preparar»?") from error
+    with connect(url) as connection, _postgres_errors(url):
+        yield PostgresBronze(connection)

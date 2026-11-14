@@ -19,6 +19,7 @@ from edsim.store.postgres import (
     bronze_store,
     connect,
     prepare,
+    read_bronze_lines,
     safe_url,
 )
 
@@ -158,3 +159,25 @@ def test_una_conexion_perdida_al_preparar_es_postgres_no_disponible(monkeypatch)
 
     with pytest.raises(DatabaseUnavailableError, match="se perdió la conexión: the connection"):
         prepare(URL)
+
+
+def test_leer_bronce_sin_las_tablas_dice_que_falta_preparar_y_cierra_la_conexion(monkeypatch):
+    """La lectura de la 7.3 traduce los errores de Postgres como el consumidor: sin las tablas,
+    `MigrationError` con la pista, no un `ProgrammingError` de psycopg que saldría como traza."""
+    connection = FailingConnection()
+    psycopg = fake_psycopg(monkeypatch, connection)
+    connection.error = psycopg.ProgrammingError('relation "bronce.eventos" does not exist')
+
+    with pytest.raises(MigrationError, match="¿falta «edsim almacen preparar»?"):
+        read_bronze_lines(URL, "r1_realista_s1")
+    assert connection.closed
+
+
+def test_leer_bronce_con_la_conexion_perdida_es_postgres_no_disponible(monkeypatch):
+    connection = FailingConnection()
+    psycopg = fake_psycopg(monkeypatch, connection)
+    connection.error = psycopg.OperationalError("server closed the connection unexpectedly")
+
+    with pytest.raises(DatabaseUnavailableError, match="se perdió la conexión"):
+        read_bronze_lines(URL, "r1_realista_s1")
+    assert connection.closed
