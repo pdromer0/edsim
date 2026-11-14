@@ -81,10 +81,17 @@ def test_escritos_iguales_a_los_generados(version):
     assert COMMAND in json.loads(written)["$comment"]
 
 
-def test_la_carpeta_schemas_tiene_exactamente_los_seis():
-    expected = {schema_filename(v) for v in VERSIONS} | {RUNS_SCHEMA.name, CONTROL_SCHEMA.name}
+def test_la_carpeta_schemas_tiene_exactamente_los_diez():
+    # Los cuatro eventos-v*, ed.runs, ed.control y, desde la tarea 7.1, los cuatro registro-v*.
+    from edsim.clinical_record.schemas import schema_filename as record_filename
+
+    expected = (
+        {schema_filename(v) for v in VERSIONS}
+        | {RUNS_SCHEMA.name, CONTROL_SCHEMA.name}
+        | {record_filename(v) for v in VERSIONS}
+    )
     assert {p.name for p in SCHEMAS.iterdir()} == expected
-    assert len(expected) == 6
+    assert len(expected) == 10
 
 
 @pytest.mark.parametrize("name", sorted(p.name for p in SCHEMAS.glob("*.json")))
