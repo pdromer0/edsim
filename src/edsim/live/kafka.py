@@ -410,9 +410,18 @@ class KafkaSink:
     # -- LiveSink ---------------------------------------------------------------------
 
     def start(self, message: RunStart) -> None:
-        """Publish the ``inicio`` of the run in ``ed.runs``."""
+        """Publish the ``inicio`` of the run in ``ed.runs`` and wait for its confirmation.
+
+        The ``inicio`` goes to another topic than the census, so without the wait the broker
+        could append an event of the census first, with an earlier ``LogAppendTime``. The
+        consumer of bronze counts a publication from the arrival of its ``inicio``
+        (docs/specs/hito-7.md, task 7.5): that event would never count. With one broker, the
+        ``flush`` puts every event after it. If the ``inicio`` is not delivered, the next
+        ``write`` raises, as for an event.
+        """
         self._check_run_id("RunStart", message.info.run_id)
         self._produce(RUNS, self._key, run_start_json(message).encode("utf-8"), None, START)
+        self._producer.flush(FLUSH_TIMEOUT)
 
     def write(self, event: Event) -> None:
         """Publish one event in its topic.

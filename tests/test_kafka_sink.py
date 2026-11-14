@@ -91,6 +91,24 @@ def test_inicio_y_fin_en_ed_runs():
     assert sink.delivered == 0  # cuenta solo eventos
 
 
+def test_el_inicio_se_confirma_antes_de_mandar_el_censo():
+    """La 7.5 cuenta una publicación desde la llegada de su inicio: el inicio se entrega
+    (flush) antes de que se mande el primer evento, así que el broker lo añade antes."""
+    start = RunStart(INFO, 120.0, 180.0, 60.0, 1, 1)
+    producer = FakeProducer(deliver_on_poll=False)
+
+    with KafkaSink(producer, "rcenso") as sink:
+        sink.start(start)
+        assert [message.topic for message, _ in producer.delivered] == ["ed.runs"]
+        sink.write(events(1, "rcenso")[0])
+
+    assert producer.ops[:3] == [
+        ("produce", "ed.runs"),
+        ("flush",),
+        ("produce", "ed.patient.events"),
+    ]
+
+
 def test_reparto_con_un_catalogo_que_aun_no_existe(monkeypatch):
     # Una versión 99 de prueba: la 3 más un evento de recurso sin episodio y sin recurso. Se
     # cambia CATALOGS solo durante el test (monkeypatch); el paquete no cambia.
