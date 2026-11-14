@@ -416,12 +416,18 @@ class KafkaSink:
         could append an event of the census first, with an earlier ``LogAppendTime``. The
         consumer of bronze counts a publication from the arrival of its ``inicio``
         (docs/specs/hito-7.md, task 7.5): that event would never count. With one broker, the
-        ``flush`` puts every event after it. If the ``inicio`` is not delivered, the next
-        ``write`` raises, as for an event.
+        ``flush`` puts every event after it.
+
+        Raises:
+            SinkError: If the ``inicio`` was refused, or is still pending after
+                ``FLUSH_TIMEOUT``: no event of the census is sent.
         """
         self._check_run_id("RunStart", message.info.run_id)
         self._produce(RUNS, self._key, run_start_json(message).encode("utf-8"), None, START)
-        self._producer.flush(FLUSH_TIMEOUT)
+        pending = self._producer.flush(FLUSH_TIMEOUT)
+        if self.failed or pending:
+            self._reported = len(self.failed)
+            raise self._error("the inicio was not delivered", pending=pending)
 
     def write(self, event: Event) -> None:
         """Publish one event in its topic.
