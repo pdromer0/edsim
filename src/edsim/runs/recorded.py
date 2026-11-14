@@ -16,6 +16,9 @@ folder (docs/specs/hito-7.md, «En disco»), atomically and without touching any
 warm-up of the run, so ``edsim.clinical_record.compare`` can reconcile it; ``read_recorded_records``
 reads its ``registrado.jsonl``. A run read with ``--postgres`` takes the records from bronze
 instead and never reads that file.
+
+``replay_records`` gives what ``edsim directo reemitir --registro`` publishes: the records of
+``record``, checked byte for byte against the folder if it exists (task 7.4).
 """
 
 import json
@@ -323,3 +326,105 @@ def read_recorded_records(run: RecordedRun) -> tuple[Record, ...]:
         except ValueError as error:
             raise RunLogError(f"{RECORDED_FILE}:{number}: {error}") from error
     return tuple(records)
+
+
+class RecordingMismatchError(RunLogError):
+    """The ``registrado.jsonl`` of a recording is not what ``record`` gives now: a replay with
+    ``--registro`` never publishes something else than the batch."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayRecords:
+    """What a replay with ``--registro`` publishes, from ``replay_records``.
+
+    Attributes:
+        run_id: The true run.
+        derived_run_id: The run of the recording, ``<run_id>_<perfil>_s<semilla>``.
+        profile: The profile of the recording.
+        seed: The seed of the recording.
+        records: The records of ``record``, in emission order.
+        fingerprint: The fingerprint of the profiles file used.
+        checked: The folder ``registros/<perfil>-s<semilla>/`` whose ``registrado.jsonl`` was
+            compared with the records, byte for byte; ``None`` if there is none.
+    """
+
+    run_id: str
+    derived_run_id: str
+    profile: str
+    seed: int
+    records: tuple[Record, ...]
+    fingerprint: str
+    checked: Path | None
+
+
+def replay_records(
+    store: RunStore,
+    run_id: str,
+    profile: str,
+    seed: int | None = None,
+    *,
+    profiles_file: str | Path = DEFAULT_PROFILES_FILE,
+) -> ReplayRecords:
+    """What the replay of a saved run with ``--registro`` publishes (docs/specs/hito-7.md, 7.4).
+
+    The records come from ``record`` over the true log, with the profile of ``profiles_file``.
+    If the run already has ``registros/<perfil>-s<semilla>/``, its ``registrado.jsonl`` must be
+    those records, byte for byte: what is published is then what is in the folder. Nothing is
+    written.
+
+    Args:
+        store: The catalog of runs the run is in.
+        run_id: The run, which must exist and be valid.
+        profile: ``limpio``, ``realista`` or ``hostil``.
+        seed: The seed of the recording; by default, the one of the run.
+        profiles_file: The profiles file, ``config/registro_clinico.toml`` by default.
+
+    Raises:
+        RecordingMismatchError: If the folder exists and its ``registrado.jsonl`` is not what
+            ``record`` gives (a ``RunLogError``: a problem of the data).
+        RunLogError: If the true log is not valid, or a file of the folder is not a regular
+            file or not UTF-8.
+        ValueError: If the run is not valid, ``profile`` is not one of the three, ``seed`` is
+            not an integer >= 0, the derived ``run_id`` does not fit or the profiles file is
+            not valid.
+        OSError: If a file cannot be read.
+    """
+    saved = store.open(run_id)
+    if profile not in PROFILE_NAMES:
+        raise ValueError(f"unknown profile {profile!r}: the profiles are {PROFILE_NAMES!r}")
+    seed = saved.seed if seed is None else seed
+    derived = derived_run_id(run_id, profile, seed)  # ValueError for a bad seed or a long id
+    profiles = load_record_profiles(profiles_file)
+    events = _read_events(store, run_id)
+    try:
+        recording = record(
+            events, profiles[profile], seed, horizon=saved.days * MINUTES_PER_DAY, run_id=run_id
+        )
+    except ValueError as error:
+        # The profile, the seed and the horizon were already checked: it is the log.
+        raise RunLogError(f"eventos.jsonl: {error}") from error
+
+    path = store.root / run_id / RECORDS_DIR / f"{profile}-s{seed}"
+    fingerprint = config_fingerprint(profiles_file)
+    checked = None
+    if path.exists() or path.is_symlink():
+        written = _read_regular(path / RECORDED_FILE)
+        computed = "".join(record_json(r) + "\n" for r in recording.records).encode("utf-8")
+        if written != computed:
+            copy = path / PROFILES_COPY
+            copied = config_fingerprint(copy) if copy.is_file() else "sin copia"
+            raise RecordingMismatchError(
+                f"{path / RECORDED_FILE} is not what record gives with {profiles_file} "
+                f"(fingerprint {fingerprint}); the folder was written with profiles of "
+                f"fingerprint {copied}"
+            )
+        checked = path
+    return ReplayRecords(
+        run_id=run_id,
+        derived_run_id=derived,
+        profile=profile,
+        seed=seed,
+        records=recording.records,
+        fingerprint=fingerprint,
+        checked=checked,
+    )

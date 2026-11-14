@@ -16,6 +16,11 @@ Cada test dice qué error pilla:
 - los errores de uso: sala sin `registro` en el `inicio`, o al revés.
 """
 
+import re
+import shutil
+from datetime import date
+from pathlib import Path
+
 import pytest
 from registro_factory import (
     DERIVED,
@@ -29,8 +34,18 @@ from registro_factory import (
     scenario_l_dice,
 )
 from runaway import check_calls
+from test_launch import REPLAY_RUN, save_run
 
-from edsim.clinical_record import Record, RecordStream, record_json
+from edsim.arrivals.profile import load_profile
+from edsim.clinical_record import (
+    Record,
+    RecordStream,
+    load_record_profiles,
+    record_from_json,
+    record_json,
+)
+from edsim.engine.center import load_center
+from edsim.engine.events import read_events
 from edsim.live.clock import FakeClock
 from edsim.live.control import STOP, Command, NoControl, ScriptedControl
 from edsim.live.directo import (
@@ -43,7 +58,10 @@ from edsim.live.directo import (
     RunStart,
     run_live,
 )
+from edsim.live.launch import prepare_live, prepare_replay, run_prepared, with_recording
 from edsim.live.pacer import Pacer
+from edsim.profiles.config import load_profiles
+from edsim.runs import RecordingMismatchError, RunStore, record_run
 
 RECORD_INFO = RecordInfo(RUN, "prueba", SEED)
 INFO = RunInfo(DERIVED, "replay", 4, 2026, START, False, RECORD_INFO)
@@ -175,3 +193,131 @@ def test_un_registro_que_retrocede_no_vale_en_la_reemision():
     records = run_l().records
     with pytest.raises(ValueError, match="goes back"):
         RecordedLog([records[3], records[2]])
+
+
+# --- Lanzar y reemitir con registro (launch) --------------------------------------------
+
+PROFILES_FILE = Path(__file__).resolve().parent.parent / "config" / "registro_clinico.toml"
+DATA = Path(__file__).resolve().parent / "data"
+
+
+def filtered_records(records, truth, start: float) -> list:
+    """La fórmula de «filtrado igual», sin `census`, `open_episodes` ni `recorded_census`: los
+    registros con `sim_time` >= W, sin episodio, o de un episodio que la *verdad* tiene abierto
+    en W (llegó antes de W y no salió antes de W, ni yéndose sin ser visto)."""
+    before = [e for e in truth if e.sim_time < start]
+    departed = {
+        e.episode_id for e in before if e.event_type in ("patient_departed", "patient_left_wbs")
+    }
+    still_open = {e.episode_id for e in before if e.episode_id is not None} - departed
+    return [
+        r
+        for r in records
+        if r.sim_time >= start or r.episode_id is None or r.episode_id in still_open
+    ]
+
+
+def replay(root, **options) -> tuple:
+    prepared = prepare_replay(
+        root, REPLAY_RUN, record_profile="realista", profiles_file=PROFILES_FILE, **options
+    )
+    sink = TimedSink(FakeClock())
+    run_prepared(prepared, clock=FakeClock(), speed="max", control=NoControl(), sink=sink)
+    return prepared, sink
+
+
+@pytest.fixture(scope="module")
+def saved_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("ejecuciones")
+    save_run(root, REPLAY_RUN)
+    return root
+
+
+@pytest.fixture
+def root(saved_root, tmp_path):
+    """Una copia de la ejecución guardada, para escribir su carpeta de registros."""
+    copy = tmp_path / "ejecuciones"
+    shutil.copytree(saved_root, copy)
+    return copy
+
+
+def test_la_reemision_con_registro_es_lo_registrado_por_lotes_con_y_sin_carpeta(root):
+    """Sin carpeta, lo calculado con `record`; con ella (`registro generar`), lo mismo, tras
+    compararla byte a byte. Las dos, `registrado.jsonl` filtrado como el directo."""
+    without, sink_without = replay(root)
+    result = record_run(RunStore(root), REPLAY_RUN, "realista", profiles_file=PROFILES_FILE)
+    with_folder, sink_with = replay(root)
+
+    lines = (result.path / "registrado.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [record_from_json(line) for line in lines]
+    truth = list(read_events(root / REPLAY_RUN / "eventos.jsonl"))
+    expected = [record_json(r) for r in filtered_records(records, truth, 1440.0)]
+    assert [record_json(r) for r in sink_with.events] == expected
+    assert sink_without.items == sink_with.items
+    assert (without.replayed.checked, with_folder.replayed.checked) == (None, result.path)
+    derived = f"{REPLAY_RUN}_realista_s2026"
+    assert with_folder.info.run_id == sink_with.run_end.run_id == derived
+    assert with_folder.info.record == RecordInfo(REPLAY_RUN, "realista", 2026)
+    # Guardas: hay censo, el calentamiento de los cerrados se queda fuera y hay directo.
+    census = sink_with.run_start.census_events
+    assert 0 < census < sum(r.sim_time < 1440.0 for r in records)
+    assert len(sink_with.events) > census
+
+
+@pytest.mark.parametrize("change", ["una-linea-de-menos", "otros-perfiles"])
+def test_una_carpeta_que_no_coincide_es_un_error(root, tmp_path, change):
+    """La reemisión nunca publica algo distinto de lo registrado por lotes (V35)."""
+    result = record_run(RunStore(root), REPLAY_RUN, "realista", profiles_file=PROFILES_FILE)
+    profiles = PROFILES_FILE
+    if change == "una-linea-de-menos":
+        path = result.path / "registrado.jsonl"
+        path.write_text("".join(path.read_text(encoding="utf-8").splitlines(True)[:-1]))
+    else:
+        text = PROFILES_FILE.read_text(encoding="utf-8")
+        profiles = tmp_path / "otros.toml"
+        assert text.count("olvido = 0.005") == 1
+        profiles.write_text(text.replace("olvido = 0.005", "olvido = 0.006"), encoding="utf-8")
+
+    with pytest.raises(RecordingMismatchError, match="is not what record gives") as caught:
+        prepare_replay(root, REPLAY_RUN, record_profile="realista", profiles_file=profiles)
+    fingerprints = re.findall(r"fingerprint (\S+?)\)?;?(?: |$)", str(caught.value))
+    assert len(fingerprints) == 2
+    assert (fingerprints[0] == fingerprints[1]) == (change == "una-linea-de-menos")
+
+
+@pytest.fixture(scope="module")
+def models():
+    return {
+        "centro": load_center(DATA / "centro_sala_ejemplo.toml"),
+        "llegadas": load_profile(DATA / "llegadas_ejemplo.toml"),
+        "perfiles": load_profiles(DATA / "perfiles_ejemplo.toml"),
+    }
+
+
+def live_prepared(models, run_id="rdirecto"):
+    return prepare_live(
+        models["centro"],
+        models["llegadas"],
+        2,
+        2026,
+        warmup_days=1,
+        run_id=run_id,
+        profiles=models["perfiles"],
+    )
+
+
+def test_con_registro_el_directo_se_anuncia_con_el_run_id_derivado(models):
+    realista = load_record_profiles(PROFILES_FILE)["realista"]
+    prepared = with_recording(live_prepared(models), realista, 7)
+
+    assert prepared.info == RunInfo(
+        "rdirecto_realista_s7", "directo", 3, 2026, date(2026, 1, 5), False,
+        RecordInfo("rdirecto", "realista", 7),
+    )  # fmt: skip
+    assert isinstance(prepared.recording, RecordStream)
+    assert prepared.recording.run_id == prepared.info.run_id
+    with pytest.raises(ValueError, match="already publishes"):
+        with_recording(prepared, realista, 7)
+    # Un --run-id de 50 caracteres: el derivado tendría 65.
+    with pytest.raises(ValueError, match="derived run_id"):
+        with_recording(live_prepared(models, "x" * 50), realista, 2026)

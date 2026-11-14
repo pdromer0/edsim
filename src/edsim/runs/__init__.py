@@ -127,10 +127,13 @@ from edsim.runs.profiles_diff import (
 )
 from edsim.runs.recorded import (
     RecordedRun,
+    RecordingMismatchError,
     RecordRunResult,
+    ReplayRecords,
     read_recorded_records,
     read_recorded_run,
     record_run,
+    replay_records,
 )
 from edsim.runs.replay import (
     ReplayAbandonment,
@@ -364,9 +367,12 @@ __all__ = [
     "read_run_header",
     "RecordRunResult",
     "RecordedRun",
+    "RecordingMismatchError",
+    "ReplayRecords",
     "read_recorded_records",
     "read_recorded_run",
     "record_run",
+    "replay_records",
     "build_episode_event_index",
     "read_episode_events",
     "read_run_results",

@@ -11,18 +11,24 @@ scripted orders and a sink in memory (docs/specs/hito-6.md, "Precisiones para la
 - ``run_prepared``: the pacer, the status and ``run_live``.
 - ``live_run_id``: the default identifier of a live run (H6-19).
 
+With ``--registro`` (docs/specs/hito-7.md, task 7.4), only what was written down is published,
+with the derived ``run_id``: ``with_recording`` puts the waiting room in front of the engine,
+and ``prepare_replay`` with ``record_profile`` publishes the records of ``record``, checked
+against ``registros/`` if the run has them (``replay_records``).
+
 A live run does not save a run in ``resultados/``: its batch is ``edsim motor simular``
 with the same ``--run-id``.
 """
 
 import numbers
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from edsim.arrivals.profile import ArrivalProfile
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.clinical_record import DEFAULT_PROFILES_FILE, RecordProfile, RecordStream
 from edsim.engine.center import CenterConfig
 from edsim.engine.clinical_sampler import choose_model
 from edsim.engine.engine import check_horizon, start_ed
@@ -38,9 +44,12 @@ from edsim.live.directo import (
     LIVE,
     REPLAY,
     EngineSource,
+    LiveRecording,
     LiveSink,
     LiveSource,
     LogSource,
+    RecordedLog,
+    RecordInfo,
     RunEnd,
     RunInfo,
     RunStart,
@@ -51,6 +60,7 @@ from edsim.live.pacer import Pacer
 from edsim.live.status import STATUS_INTERVAL, LiveStatus, ReportingSink, StatusControl
 from edsim.profiles.config import ClinicalProfiles
 from edsim.runs.identifiers import validate_run_id
+from edsim.runs.recorded import ReplayRecords, replay_records
 from edsim.runs.store import RunStore
 
 EVENTS_FILE = "eventos.jsonl"
@@ -83,12 +93,18 @@ class PreparedRun:
         info: Identity of the run, for the ``inicio``.
         start: Start of the live stream ``W``, in minutes.
         horizon: Horizon in minutes.
+        recording: With ``--registro``, the waiting room of what was written down;
+            ``None`` publishes the truth.
+        replayed: In a replay with ``--registro``, what ``replay_records`` gave (the
+            profiles used and the folder checked).
     """
 
     source: LiveSource
     info: RunInfo
     start: float
     horizon: float
+    recording: LiveRecording | None = None
+    replayed: ReplayRecords | None = None
 
 
 def prepare_live(
@@ -161,6 +177,32 @@ def prepare_live(
     return PreparedRun(EngineSource(ed, buffer), info, start, horizon)
 
 
+def with_recording(prepared: PreparedRun, profile: RecordProfile, seed: int) -> PreparedRun:
+    """A live run of the engine that publishes only what was written down (``--registro``).
+
+    The waiting room (``RecordStream``) records each step of the engine with ``profile``
+    and ``seed``; the run is announced with the derived ``run_id`` and the block
+    ``registro``, and so are its records and its end.
+
+    Args:
+        prepared: From ``prepare_live``, without a recording.
+        profile: The profile of the slips, from ``load_record_profiles``.
+        seed: The seed of the recording, an integer >= 0 (by default, that of the run).
+
+    Raises:
+        ValueError: If ``prepared`` already has a recording, ``seed`` is not valid or the
+            derived ``run_id`` does not fit in 64 characters.
+    """
+    if prepared.recording is not None:
+        raise ValueError("the run already publishes what was written down")
+    origin = prepared.info.run_id
+    stream = RecordStream(profile, seed, horizon=prepared.horizon, run_id=origin)
+    info = replace(
+        prepared.info, run_id=stream.run_id, record=RecordInfo(origin, profile.name, seed)
+    )
+    return replace(prepared, info=info, recording=stream)
+
+
 def log_start_date(event: Event) -> date:
     """The date of minute 0 of a log, from one of its events: ``event_time`` − ``sim_time``.
 
@@ -180,7 +222,15 @@ def log_start_date(event: Event) -> date:
     return rounded.date()
 
 
-def prepare_replay(root: str | Path, run_id: str, *, warmup_days: int | None = None) -> PreparedRun:
+def prepare_replay(
+    root: str | Path,
+    run_id: str,
+    *,
+    warmup_days: int | None = None,
+    record_profile: str | None = None,
+    record_seed: int | None = None,
+    profiles_file: str | Path = DEFAULT_PROFILES_FILE,
+) -> PreparedRun:
     """Prepare the replay of a saved run (H6-13).
 
     The horizon is the ``days`` of its ``run.json``, ``W`` is ``warmup_days`` or its own
@@ -188,15 +238,26 @@ def prepare_replay(root: str | Path, run_id: str, *, warmup_days: int | None = N
     its first event. It keeps the ``run_id`` and the ``event_id``: it publishes the same
     bytes. The log is read lazily.
 
+    With ``record_profile`` (``--registro``, task 7.4), it publishes what was written down
+    instead: the records of ``record`` (``replay_records``, checked against ``registros/``
+    if the run has them), with the derived ``run_id`` and the block ``registro``. The truth
+    is still read, lazily, for the census.
+
     Args:
         root: Directory of the runs, such as ``resultados/ejecuciones``.
         run_id: The run.
         warmup_days: Full days before ``W``; the saved warm-up if ``None``.
+        record_profile: ``limpio``, ``realista`` or ``hostil``; ``None`` replays the truth.
+        record_seed: The seed of the recording; by default, the one of the run.
+        profiles_file: The profiles of the clinical record.
 
     Raises:
         OSError: If the run or its files cannot be read.
+        RunLogError: With ``record_profile``, if the true log is not valid, or the folder of
+            the recording is not what ``record`` gives (``RecordingMismatchError``).
         ValueError: If the run is not valid, ``warmup_days`` is not less than its days, or
-            its log is empty, is of another run or does not start at 00:00.
+            its log is empty, is of another run or does not start at 00:00; with
+            ``record_profile``, if the profile, the seed or the profiles file are not valid.
     """
     saved = RunStore(root).open(run_id)
     days, warmup = check_horizon(
@@ -217,8 +278,20 @@ def prepare_replay(root: str | Path, run_id: str, *, warmup_days: int | None = N
         anchored=False,
     )
     horizon = float(days * MINUTES_PER_DAY)
+    source = LogSource(read_events(path), horizon)
+    start = float(warmup * MINUTES_PER_DAY)
+    if record_profile is None:
+        return PreparedRun(source, info, start, horizon)
+    replayed = replay_records(
+        RunStore(root), run_id, record_profile, record_seed, profiles_file=profiles_file
+    )
+    info = replace(
+        info,
+        run_id=replayed.derived_run_id,
+        record=RecordInfo(run_id, replayed.profile, replayed.seed),
+    )
     return PreparedRun(
-        LogSource(read_events(path), horizon), info, float(warmup * MINUTES_PER_DAY), horizon
+        source, info, start, horizon, recording=RecordedLog(replayed.records), replayed=replayed
     )
 
 
@@ -279,4 +352,5 @@ def run_prepared(
         start=prepared.start,
         horizon=prepared.horizon,
         run_info=prepared.info,
+        recording=prepared.recording,
     )
