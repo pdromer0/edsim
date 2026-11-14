@@ -607,6 +607,6 @@ def record(
         "perfil": profile.name,
         "semilla": seed,
         "horizonte": horizon,
-        "cuenta": counts.as_dict(),
+        "cuenta": MappingProxyType(dict(counts.as_dict())),
     }
     return Recording(derived, tuple(records), tuple(rows), MappingProxyType(info))

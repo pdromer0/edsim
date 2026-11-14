@@ -22,9 +22,10 @@ RECORD_CORRECTED = "record_corrected"
 class Record:
     """One record of what was written down: the envelope of ``Event`` and a free payload.
 
-    The payload is copied into a read-only mapping, in the order given; its
-    values are whatever the record holds (``None`` for an empty field). Nothing
-    else is checked: ``record`` builds every record from a valid event.
+    The payload is copied into a read-only mapping, in the order given, and so
+    is every mapping inside it; its values are whatever the record holds
+    (``None`` for an empty field). Nothing else is checked: ``record`` builds
+    every record from a valid event.
 
     Attributes:
         event_id: ``run_id`` of the derived run, a hyphen and the emission
@@ -60,7 +61,20 @@ class Record:
             raise ValueError(f"{self.event_type}: payload must be a mapping, got {self.payload!r}")
         # The dataclass is frozen: object.__setattr__ is the standard way to set
         # fields during construction.
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(self, "payload", _frozen(self.payload))
+
+
+def _frozen(value: object) -> object:
+    """A read-only copy: mappings as ``MappingProxyType`` and lists as tuples, at every level.
+
+    The ``campos`` of a ``record_corrected`` is a mapping inside the payload, and
+    must not change after the record is built either.
+    """
+    if isinstance(value, Mapping):
+        return MappingProxyType({k: _frozen(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return tuple(_frozen(v) for v in value)
+    return value
 
 
 def _plain(value: object) -> object:

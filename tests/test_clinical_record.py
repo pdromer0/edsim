@@ -637,6 +637,18 @@ def test_el_json_de_record_es_el_de_to_json():
     ]
 
 
+def test_lo_que_devuelve_es_de_solo_lectura():
+    """Ni la cuenta ni los campos de una corrección se pueden cambiar después."""
+    recording = run_l()
+
+    with pytest.raises(TypeError):
+        recording.info["cuenta"]["registros"] = 0
+    with pytest.raises(TypeError):
+        recording.records[-1].payload["campos"]["nivel"] = 9
+    with pytest.raises(TypeError):
+        recording.records[3].payload["nivel"] = 3
+
+
 def test_un_campo_vacio_se_escribe_como_null():
     sink = MemorySink()
     EventLog(RUN, START, sink, schema_version=4).emit(
