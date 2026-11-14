@@ -83,7 +83,8 @@ En las tareas de proceso, la especificación y su anexo son `docs/proceso/<tarea
 - lo que necesita Docker: Kafka, Postgres;
 - la app en el navegador, cuando Pedro tiene que verla;
 - los ficheros que solo están en el portátil;
-- crear Releases: GitHub responde HTTP 403 («not permitted for this session type») al crearlas desde la nube o desde el chat.
+- crear Releases: GitHub responde HTTP 403 («not permitted for this session type») al crearlas desde la nube o desde el chat;
+- las tareas que cambian `.github/workflows/claude.yml`, porque la condición solo se prueba tras la fusión.
 
 Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
 
