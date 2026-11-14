@@ -217,6 +217,9 @@ def test_reads_only_the_indexed_hour(tiny_log, monkeypatch):
     assert sources[0].seek.call_args_list[1].args == (index._checkpoints[1].offset,)
 
 
+# Recorre cada minuto del horizonte: 28 s solo y 73 s con xdist (6 workers) en el portátil de
+# Pedro (medido en la tarea 7.4); el límite general de 60 s lo corta en la N2 y en la N3.
+@pytest.mark.timeout(180)
 def test_every_minute_matches_curves_full_fold_and_cards(replay_run):
     store, result, events = replay_run
     index = build_replay_index(store, "sample")
