@@ -264,9 +264,11 @@ def _hours(horizon: object, warmup: object) -> range:
     horizon_min, warmup_min = values
     if not 0 <= warmup_min < horizon_min:
         raise ValueError(f"need 0 <= warmup < horizon, got warmup={warmup!r} horizon={horizon!r}")
-    hours = range(math.ceil(warmup_min / 60), math.ceil(horizon_min / 60))
-    if len(hours) > MAX_HOURS:
-        raise ValueError(f"the window has {len(hours)} hours, more than the {MAX_HOURS} allowed")
+    first, last = math.ceil(warmup_min / 60), math.ceil(horizon_min / 60)
+    # The count is checked as an integer: len() of a huge range is an OverflowError.
+    if last - first > MAX_HOURS:
+        raise ValueError(f"the window has {last - first} hours, more than the {MAX_HOURS} allowed")
+    hours = range(first, last)
     return hours
 
 

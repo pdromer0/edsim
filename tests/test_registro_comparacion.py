@@ -630,6 +630,8 @@ def test_el_error_de_la_cuenta_da_todos_los_problemas_a_la_vez():
         (1440, True),
         (0, 0),
         (MAX_HOURS * 60 + 60, 0),
+        (1e300, 0),
+        (1e300, 1e299),
     ],
 )
 def test_una_ventana_imposible_es_un_error(horizon, warmup):
