@@ -907,6 +907,14 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 - **Sin N3:** rama solo de documentación, skills, un agente, un workflow y los permisos de `settings.json`, con el permiso de Pedro (`tarea.md` §4). El CI se ejecuta igual.
 - **El grep final:** no queda `gh issue view`, `gh pr view` ni `gh pr create` en `.claude/skills/`, `tarea.md`, `flujo.md`, `AGENTS.md` ni `CLAUDE.md`; `gh project` sigue en `/tarea-edsim` (8 líneas) y `/sincronizar` (9).
 - **Los permisos:** una lectura con `gh api` pasa sin aviso, y `gh api …/pulls/111/merge` queda denegado.
+- **La prueba de humo del revisor** (versión incorrecta 4), lanzada por Pedro en una sesión nueva y en modo plan: 117 s, 7 llamadas a herramientas y unos 43.000 tokens. Ejecutó `python3` sin bloqueo.
+  - Las 16 dudas salen sobre todo de «Diferencias con las notas del chat»: el plan falso omitía a propósito muchas notas del #115, y el revisor las marcó una a una, lo que prueba que lee las notas por REST.
+  - La variante del corte, un control, sale «sospechosa» porque usa otro origen del reloj que el registro 7, no por su valor.
+  - La celda «1.166,2 es 19:26:12» de su informe no es una errata: es la hora de `sim_time`, sin el reloj de +2.
+- **El piloto `@claude`**, con un comentario normal en el PR (usa el `claude.yml` de `main`, sin el aviso de validación del workflow):
+  - el comentario de Pedro, a las 09:19:17; la primera respuesta de `claude[bot]`, a las 09:19:37; su commit `a6acb27`, a las 09:20:00: 43 s del comentario al commit (el job declara 22 s);
+  - hizo lo pedido en un commit y un fichero, con el prefijo de commit del proyecto, y puntuó el elemento anterior con «;» para que la lista cuadrara. Usó Sonnet 5.5, el modelo de serie de la acción;
+  - su push lanzó el CI solo, y los cuatro *check runs* de `a6acb27` (`tests`, `tests-app`, `tests-kafka` y `notebooks`) acabaron en `success`.
 
 **Versiones incorrectas**
 
@@ -915,7 +923,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 | 1 | La regex sin `(?i)` | Los 12 PR que cierran issues dan distinto; los 28 restantes, igual | 12 distintos y 28 iguales |
 | 2 | «Fusionado» por `merge_commit_sha` no nulo | Con el PR de la 7.0 abierto, daría «fusionado» | Abierto, con `merged` falso y `merge_commit_sha` relleno (el merge de prueba): habría dado «fusionado». Justo al crearlo era nulo, porque GitHub lo calcula en segundo plano |
 | 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Pendiente, tras la fusión |
-| 4 | Prueba de humo del revisor: un plan falso de la 7.1 con tres errores sembrados y cuatro apartados de control | Marca los tres y ninguno de control | En una sesión nueva, lanzada por Pedro |
+| 4 | Prueba de humo del revisor: un plan falso de la 7.1 con tres errores sembrados y cuatro apartados de control | Marca los tres y ninguno de control | Se cumple. Veredicto «dudas (16)»; S1 (el reloj en `sim_time`), error, y ve que choca con el 1.031,2 del propio plan; S2 (100 pasa a 1), sospechosa; S3, error, con 1.166,2 y 19:28:12 recalculados; ningún control como error |
 
 **Revisión**
 
@@ -938,7 +946,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 
 **Pendiente**
 
-- **La condición nueva de `claude.yml`**, tras la fusión: un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude.
+- **La condición nueva de `claude.yml`**, tras la fusión (el piloto ya funcionó con la de `main`): un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude.
 - **El primer uso real del revisor del plan**, en la 7.1, comparado con la revisión del chat del mismo plan.
 - **Un hook `PreToolUse` para `gh api`** (hallazgo de la revisión), en lugar de las reglas con comodines: propuesta para el Backlog.
 - **Las reglas de Codex** (`.codex/rules/edsim.rules`) siguen con `gh pr create` y `gh pr view`: Codex trabaja en local y pide permiso para todo lo que usa la red; se cambia si una tarea de Codex va a la nube.
