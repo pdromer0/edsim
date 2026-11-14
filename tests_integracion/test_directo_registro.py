@@ -97,7 +97,7 @@ def publish_and_consume(saved, profile: str, bootstrap: str, bronze_url: str) ->
         runs = connection.execute(
             "SELECT tipo, mensaje FROM bronce.ejecuciones WHERE run_id = %s ORDER BY ingest_time",
             (derived,),
-        ).fetchall()
+        )
     assert report.complete, report
     assert [kind for kind, _ in runs] == ["inicio", "fin"]
     assert runs[0][1]["registro"] == {"origen": run_id, "perfil": profile, "semilla": SEED}
