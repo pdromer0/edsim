@@ -26,6 +26,7 @@ from edsim.clinical_record.notebook import (
     NotebookRow,
     account,
     notebook_csv,
+    read_notebook_csv,
 )
 from edsim.clinical_record.profiles import (
     DEFAULT_PROFILES_FILE,
@@ -46,7 +47,12 @@ from edsim.clinical_record.record import (
     derived_run_id,
     record,
 )
-from edsim.clinical_record.records import RECORD_CORRECTED, Record, record_json
+from edsim.clinical_record.records import (
+    RECORD_CORRECTED,
+    Record,
+    record_from_json,
+    record_json,
+)
 
 __all__ = [
     "CORRECTION",
@@ -78,6 +84,8 @@ __all__ = [
     "derived_run_id",
     "load_record_profiles",
     "notebook_csv",
+    "read_notebook_csv",
     "record",
+    "record_from_json",
     "record_json",
 ]
