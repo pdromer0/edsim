@@ -111,9 +111,15 @@ def _check_unit(name: str, value: object) -> float:
 
 
 def _check_finite(name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:  # an integer of 10**400 has no float: it is not finite either
+        raise ValueError(f"{name} must be a finite number, got {value!r}") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    return number
 
 
 @dataclass(frozen=True, slots=True)

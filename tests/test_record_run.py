@@ -403,3 +403,27 @@ def test_un_fallo_al_renombrar_no_deja_la_temporal(clinical_store, tmp_path, mon
         record_run(store, "clinica", "realista", 7, profiles_file=PROFILES_FILE)
     assert not (run_dir / "registros" / "realista-s7").exists()
     assert not [p for p in run_dir.iterdir() if p.name.startswith(".")]
+
+
+def test_un_registro_que_aparece_a_mitad_se_dice_como_destino_existente(
+    clinical_store, tmp_path, monkeypatch
+):
+    """Pilla una carrera con otro `generar`: el renombrado falla y el error es `FileExistsError`.
+
+    Se simula con un `rename` que primero deja escrito el destino, como haría el otro proceso.
+    """
+    store, run_dir = fresh(clinical_store, tmp_path)
+    destination = run_dir / "registros" / "realista-s7"
+    real_rename = Path.rename
+
+    def lose_the_race(self, target):
+        if self.name.startswith(".registros-"):
+            destination.mkdir(parents=True)
+            (destination / "otro.txt").write_text("del otro proceso", encoding="utf-8")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", lose_the_race)
+    with pytest.raises(FileExistsError, match="realista-s7"):
+        record_run(store, "clinica", "realista", 7, profiles_file=PROFILES_FILE)
+    assert (destination / "otro.txt").read_text(encoding="utf-8") == "del otro proceso"
+    assert not [p for p in run_dir.iterdir() if p.name.startswith(".")]

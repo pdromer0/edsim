@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from edsim.arrivals.rate import MINUTES_PER_DAY
 from edsim.arrivals.report import config_fingerprint
 from edsim.clinical_record import (
     DEFAULT_PROFILES_FILE,
@@ -34,7 +35,6 @@ from edsim.clinical_record import (
 from edsim.engine.events import Event, from_json
 from edsim.runs.store import RunStore
 
-MINUTES_PER_DAY = 1440.0
 RECORDS_DIR = "registros"
 """The folder of a run that holds the recordings, one subfolder per profile and seed."""
 RECORDED_FILE = "registrado.jsonl"
@@ -169,7 +169,12 @@ def record_run(
 
         _check_destination(destination)
         records_dir.mkdir(exist_ok=True)
-        temporary.rename(destination)
+        try:
+            temporary.rename(destination)
+        except OSError as error:
+            if destination.exists():  # another process wrote it between the check and now
+                raise FileExistsError(f"destination already exists: {destination}") from error
+            raise
         return RecordRunResult(path=destination, info=info)
     finally:
         if temporary.exists():
