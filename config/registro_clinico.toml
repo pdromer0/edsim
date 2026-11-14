@@ -1,0 +1,110 @@
+# Simulador del registro clínico (hito 7): cuánto se equivoca el hospital al anotar.
+# Ver docs/specs/hito-7.md («Especificación: perfiles» y «Valores orientativos de partida»).
+#
+# Un perfil por tabla, con las mismas claves; las tasas son tantos por uno y los tiempos van
+# en minutos, [mediana, p90] de una lognormal. Los tres perfiles se leen con
+#   edsim.clinical_record.load_record_profiles("config/registro_clinico.toml")
+# y se validan con `edsim registro validar`. Las claves desconocidas están prohibidas.
+#
+# Cada valor lleva su estado, como en perfiles.toml:
+#   calibrado:   ajustado a un objetivo público con su horquilla;
+#   derivado:    lo calcula el código a partir de otros valores;
+#   orientativo: juicio razonado, sin dato.
+# TODOS los valores de este fichero son orientativos: ninguna fuente da las tasas de olvido,
+# campo vacío, valor erróneo, duplicado o corrección de un servicio de urgencias. Lo que sí
+# hay son órdenes de magnitud y formas, consultados el 14 de noviembre de 2026:
+#   - Gordon, Flottemesch y Asplin, Annals of Emergency Medicine 2008 (PMC4361868): con las
+#     horas tecleadas por el personal, la mediana sale 1,8 min antes de lo observado (rango
+#     intercuartílico: de 30,7 min antes a 2,9 min después); con sensores pasivos, 1,1 min
+#     antes. Errores pequeños en la mayoría y unos pocos muy grandes: la forma de la lognormal.
+#   - Ward et al., American Journal of Emergency Medicine 2013 (PubMed 23707000): tras implantar
+#     un HIS, la mediana de la hora de la evaluación clínica pasó a 3 min antes de lo observado,
+#     y la decisión de destino difería en más de 10 min en el 16 al 29 % de los casos.
+#   - Ward, Self y Froehle, Academic Emergency Medicine 2015 (PMC4560638): errores simulados
+#     con frecuencias del 2, el 4 y el 7 %; son un orden de magnitud, no una medida.
+#   - Estudio de 1994 en cinco urgencias y tres servicios de emergencias de Indianápolis («Does
+#     anybody really know what time it is? Does anybody really care?»): el 55 % de los relojes
+#     difería 1 min o más del UTC.
+# Las cifras vienen de los resúmenes de la búsqueda: los artículos (NCBI) no se pudieron abrir
+# desde la nube. Lo que NO apoya ninguna: los duplicados de la literatura (del 5 al 10 % de
+# historias duplicadas) son de identidad del paciente, no de un registro anotado dos veces; y
+# la mala clasificación del triaje (infra y sobretriaje) es criterio clínico, no tecleo.
+#
+# El perfil hostil no busca parecerse a nada: busca que la limpieza del hito 8 tenga trabajo.
+#
+# Con estos relojes, la clase «con_despistes» de la libreta es sobre todo «este sistema tiene el
+# reloj desajustado»: en 14 días de config/, el 66,8 % de lo escrito con el realista y el
+# 100 % con el hostil (los cuatro relojes del hostil son distintos de 0).
+
+# --- Limpio: sin despistes ---------------------------------------------------------------
+# Todas las tasas y todos los desfases a 0 (la carga lo exige: «limpio» tiene que significar
+# limpio). Los minutos no se usan con tasa 0; se dejan válidos por coherencia de claves.
+
+[limpio]
+olvido = 0.0
+vacio = 0.0
+erroneo = 0.0
+duplicado = { tasa = 0.0, minutos = [0.5, 2] }
+correccion = { tasa = 0.0, minutos = [120, 720] }
+
+[limpio.retraso]
+admision = { tasa = 0.0, minutos = [1, 5] }
+triaje = { tasa = 0.0, minutos = [5, 15] }
+his = { tasa = 0.0, minutos = [10, 45] }
+lab = { tasa = 0.0, minutos = [1, 3] }
+
+[limpio.reloj]   # desfase fijo de cada sistema, en minutos
+admision = 0
+triaje = 0
+his = 0
+lab = 0
+
+# --- Realista: las tasas de un hospital normal -------------------------------------------
+
+[realista]
+olvido = 0.005      # orientativo: raro en un hospital normal
+vacio = 0.01        # orientativo: íd.
+erroneo = 0.01      # orientativo: íd.; solo en nivel, edad, motivo y destino
+# Un registro anotado dos veces (doble clic): segundos o pocos minutos. Orientativo.
+duplicado = { tasa = 0.005, minutos = [0.5, 2] }
+# Sobre los valores erróneos: se corrige en el mismo turno o al día siguiente. Orientativo.
+correccion = { tasa = 0.5, minutos = [120, 720] }
+
+# Retraso de cada sistema: la tasa es la de los hechos que se anotan tarde y los minutos, la
+# lognormal de ese retraso. Todos orientativos; la forma (casi todos pequeños, unos pocos muy
+# grandes) es la de Gordon 2008.
+[realista.retraso]
+admision = { tasa = 0.10, minutos = [1, 5] }    # admisión registra al momento
+triaje = { tasa = 0.60, minutos = [5, 15] }     # diferencias de más de 10 min frecuentes (Ward 2013)
+his = { tasa = 0.70, minutos = [10, 45] }       # la valoración médica se documenta al acabar
+lab = { tasa = 0.05, minutos = [1, 3] }         # resultados automáticos
+
+# Desfase fijo del reloj de cada sistema, en minutos. Orientativo: unos minutos, como un PC sin
+# sincronizar (Gordon 2008: mediana de -1,8 min; estudio de 1994: el 55 % de los relojes a 1 min
+# o más del UTC).
+[realista.reloj]
+admision = 0
+triaje = 2
+his = 0
+lab = -1
+
+# --- Hostil: exagerado a propósito --------------------------------------------------------
+
+[hostil]
+olvido = 0.05       # orientativo: cerca del 7 % simulado por Ward 2015
+vacio = 0.07        # orientativo: íd.
+erroneo = 0.07      # orientativo: íd.
+duplicado = { tasa = 0.04, minutos = [0.5, 5] }       # orientativo
+correccion = { tasa = 0.3, minutos = [240, 1440] }    # orientativo: se corrige menos y más tarde
+
+[hostil.retraso]
+admision = { tasa = 0.30, minutos = [2, 15] }   # orientativo
+triaje = { tasa = 0.90, minutos = [10, 40] }    # orientativo
+his = { tasa = 0.90, minutos = [20, 120] }      # orientativo
+lab = { tasa = 0.20, minutos = [2, 10] }        # orientativo
+
+[hostil.reloj]
+admision = 3
+triaje = 7
+his = -5
+lab = -3

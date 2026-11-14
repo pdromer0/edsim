@@ -789,3 +789,12 @@ def test_la_libreta_en_csv():
     assert lines[4] == f"{eid(4)},r2026-000000002,con_despistes,7.0,2.0,,nivel,3,4,,"
     assert lines[-1] == ",r2026-000000005,perdido,,,,,,,,"
     assert text.endswith("\n") and len(lines) == 9
+
+
+@pytest.mark.parametrize("huge", [10**400, -(10**400)], ids=["positivo", "negativo"])
+def test_un_entero_enorme_es_un_value_error_en_el_perfil_en_codigo(huge):
+    """Pilla un `OverflowError` que escapa de `isfinite` con un entero sin float."""
+    with pytest.raises(ValueError, match="must be a finite number"):
+        Timed(0.1, (1, huge))
+    with pytest.raises(ValueError, match="must be a finite number"):
+        make_profile(forget=huge)

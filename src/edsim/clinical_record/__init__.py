@@ -6,7 +6,8 @@ with the eight slips of a profile, into a derived run with its own ``run_id``
 engine: only the catalog of ``edsim.engine.events``.
 
 - ``records``: ``Record`` and ``record_json``;
-- ``record``: the dice, the profile in code and ``record``;
+- ``record``: the dice (``Roll``, ``StreamDice``), the profile in code and ``record``;
+- ``profiles``: the load and the validation of ``config/registro_clinico.toml``;
 - ``notebook``: ``defectos.csv`` and the account that balances;
 - ``schemas``: the JSON Schema of the records, ``schemas/registro-v*.schema.json``.
 """
@@ -26,6 +27,12 @@ from edsim.clinical_record.notebook import (
     account,
     notebook_csv,
 )
+from edsim.clinical_record.profiles import (
+    DEFAULT_PROFILES_FILE,
+    PROFILE_NAMES,
+    RecordProfiles,
+    load_record_profiles,
+)
 from edsim.clinical_record.record import (
     ROLL_SIZE,
     SYSTEMS,
@@ -34,6 +41,7 @@ from edsim.clinical_record.record import (
     Recording,
     RecordProfile,
     Roll,
+    StreamDice,
     Timed,
     derived_run_id,
     record,
@@ -42,6 +50,7 @@ from edsim.clinical_record.records import RECORD_CORRECTED, Record, record_json
 
 __all__ = [
     "CORRECTION",
+    "DEFAULT_PROFILES_FILE",
     "CORRECTION_PENDING",
     "DUPLICATE",
     "GOOD",
@@ -49,6 +58,7 @@ __all__ = [
     "LOST",
     "NOTEBOOK_COLUMNS",
     "PENDING",
+    "PROFILE_NAMES",
     "RECORD_CORRECTED",
     "ROLL_SIZE",
     "SYSTEMS",
@@ -59,11 +69,14 @@ __all__ = [
     "NotebookRow",
     "Record",
     "RecordProfile",
+    "RecordProfiles",
     "Recording",
     "Roll",
+    "StreamDice",
     "Timed",
     "account",
     "derived_run_id",
+    "load_record_profiles",
     "notebook_csv",
     "record",
     "record_json",
