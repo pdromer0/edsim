@@ -21,8 +21,8 @@ from pathlib import Path
 
 from edsim.clinical_record.record import WRONG_FIELDS
 from edsim.clinical_record.records import RECORD_CORRECTED
-from edsim.engine.events import CATALOGS, EPISODE_SCHEMA, PATIENT_SCHEMA, SCHEMA_VERSIONS
-from edsim.live.schemas import DIALECT, MAX_DOUBLE, event_schema
+from edsim.engine.events import CATALOGS, SCHEMA_VERSIONS
+from edsim.live.schemas import DIALECT, event_schema
 
 COMMAND = "uv run python -m edsim.clinical_record.schemas"
 """The command that writes the schemas of the records, from the root of the repository."""
@@ -50,7 +50,11 @@ def _nullable(branch: dict[str, object]) -> dict[str, object]:
 
 
 def _correction_branch(version: int) -> dict[str, object]:
-    """The branch of ``record_corrected``: one wrong field of its version, with its true value."""
+    """The branch of ``record_corrected``: one wrong field of its version, with its true value.
+
+    It is the branch of a patient event with another type, system and payload, so
+    that the envelope is written in one place, ``edsim.live.schemas``.
+    """
     fields: dict[str, object] = {}
     systems: list[str] = []
     for spec in CATALOGS[version].values():
@@ -60,41 +64,34 @@ def _correction_branch(version: int) -> dict[str, object]:
                 if spec.source_system not in systems:
                     systems.append(spec.source_system)
     fields = {key: fields[key] for key in WRONG_FIELDS if key in fields}
-    properties: dict[str, object] = {
-        "event_id": dict(_TEXT),
-        "event_type": {"const": RECORD_CORRECTED},
-        "schema_version": {"const": version},
-        "run_id": dict(_TEXT),
-        "episode_id": dict(EPISODE_SCHEMA),
-        "patient_id": dict(PATIENT_SCHEMA),
-        "source_system": {"enum": systems},
-        "sim_time": {"type": "number", "minimum": 0, "maximum": MAX_DOUBLE},
-        "event_time": dict(_TEXT),
-        "recorded_time": dict(_TEXT),
-        "ingest_time": dict(_NULL),
-        "payload": {
-            "type": "object",
-            "properties": {
-                "corrige": dict(_TEXT),
-                "campos": {
-                    "type": "object",
-                    "properties": fields,
-                    "minProperties": 1,
-                    "maxProperties": 1,
-                    "additionalProperties": False,
-                },
-            },
-            "required": ["corrige", "campos"],
-            "additionalProperties": False,
-        },
-    }
-    return {
-        "title": RECORD_CORRECTED,
+    patient = next(
+        branch
+        for branch, spec in zip(
+            event_schema(version)["oneOf"], CATALOGS[version].values(), strict=True
+        )
+        if spec.patient
+    )
+    branch = copy.deepcopy(patient)
+    branch["title"] = RECORD_CORRECTED
+    properties = branch["properties"]
+    properties["event_type"] = {"const": RECORD_CORRECTED}
+    properties["source_system"] = {"enum": systems}
+    properties["payload"] = {
         "type": "object",
-        "properties": properties,
-        "required": list(properties),
+        "properties": {
+            "corrige": dict(_TEXT),
+            "campos": {
+                "type": "object",
+                "properties": fields,
+                "minProperties": 1,
+                "maxProperties": 1,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["corrige", "campos"],
         "additionalProperties": False,
     }
+    return branch
 
 
 def record_schema(version: int) -> dict[str, object]:

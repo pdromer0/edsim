@@ -345,7 +345,8 @@ def test_validate_run_id_vive_en_un_modulo_neutro_y_runs_lo_reexporta():
 
 def test_clinical_record_no_carga_simpy_ni_el_motor():
     """Todo edsim.clinical_record, submódulo a submódulo, sin SimPy, sin el motor, sin
-    Kafka, sin Postgres y sin edsim.runs; del motor, solo el catálogo (tarea 7.1)."""
+    Kafka, sin Postgres y sin edsim.runs; del motor, solo el catálogo, y del directo,
+    solo sus esquemas (tarea 7.1)."""
     script = (
         "import sys, importlib, pkgutil, edsim.clinical_record\n"
         "names = [m.name for m in pkgutil.walk_packages(\n"
@@ -354,10 +355,10 @@ def test_clinical_record_no_carga_simpy_ni_el_motor():
         "    importlib.import_module(name)\n"
         "assert {'edsim.clinical_record.record', 'edsim.clinical_record.records',\n"
         "        'edsim.clinical_record.notebook', 'edsim.clinical_record.schemas'} <= set(names)\n"
-        "allowed = {'edsim.engine', 'edsim.engine.events'}\n"
+        "allowed = {'edsim.engine', 'edsim.engine.events', 'edsim.live', 'edsim.live.schemas'}\n"
         "bad = sorted(n for n in sys.modules if n.split('.')[0] in\n"
         "             ('simpy', 'confluent_kafka', 'psycopg')\n"
-        "             or (n.startswith('edsim.engine') and n not in allowed)\n"
+        "             or (n.startswith(('edsim.engine', 'edsim.live')) and n not in allowed)\n"
         "             or n == 'edsim.runs' or n.startswith('edsim.runs.'))\n"
         "assert not bad, bad\n"
     )
