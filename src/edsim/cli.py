@@ -1118,7 +1118,7 @@ def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             warmup_days=args.calentamiento,
             record_profile=args.registro,
             record_seed=args.semilla_registro,
-            profiles_file=args.registros or DEFAULT_PROFILES_FILE,
+            profiles_file=args.registros,
         )
     except RunLogError as error:
         print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)

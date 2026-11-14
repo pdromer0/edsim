@@ -24,9 +24,12 @@ Pure functions over events: no SimPy, no engine and no Kafka client.
 import math
 import numbers
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
-from edsim.clinical_record import Record
 from edsim.engine.events import TERMINAL_EVENTS, Event
+
+if TYPE_CHECKING:  # only for the annotation: this module needs nothing of the record
+    from edsim.clinical_record import Record
 from edsim.finite import to_float
 
 
