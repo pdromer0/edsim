@@ -14,11 +14,11 @@ import pytest
 from registro_factory import (
     RUN,
     CountingDice,
-    RunawayLoop,
     clean_record_profile,
     loud_profile,
     patient_log,
 )
+from runaway import RunawayLoop
 
 from edsim.clinical_record import (
     DUPLICATE,

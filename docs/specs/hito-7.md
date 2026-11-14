@@ -591,9 +591,9 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 
 ## Especificación: la comparación
 
-`compare(truth, records, notebook) -> Comparison`, en `edsim.clinical_record.compare`:
+`compare(truth, records, notebook, *, horizon, warmup=0.0) -> Comparison`, en `edsim.clinical_record.compare` (el horizonte y el calentamiento, en minutos, los necesita el censo medio; el origen del reloj sale de la verdad):
 
-- **Conciliación:** los recuentos de cada `clase` de la libreta, comprobando la cuenta; la distribución del retraso (`recorded_time` − `event_time` sin el desfase) por sistema, con mediana y p90; los recuentos por tipo de despiste.
+- **Conciliación:** los recuentos de cada `clase` de la libreta, comprobando la cuenta (si no cuadra, `ReconciliationError` con todos los problemas: es un error, no un número); la distribución del retraso (`recorded_time` − `event_time`, que ya no lleva el desfase) por sistema, con mediana y p90, de los registros escritos para su propio hecho (`bien` y `con_despistes`); y la clase `con_despistes` desglosada por tipo de despiste (reloj, retraso, valor erróneo y campo vacío, que se solapan, y cuántas son solo reloj).
 - **Indicadores ingenuos**, la misma función sobre la verdad y sobre lo registrado:
 
   | Indicador | Cómo se calcula a lo ingenuo |
@@ -612,7 +612,7 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 | --- | --- | --- |
 | `edsim registro validar` | `--registros FICHERO` | Comprueba `config/registro_clinico.toml` |
 | `edsim registro generar RUN_ID` | `--perfil P` (obligatorio), `--semilla N`, `--registros FICHERO`, `--ejecuciones DIR` | Escribe lo registrado en la carpeta de la ejecución e imprime la cuenta |
-| `edsim registro comparar RUN_ID` | `--perfil P`, `--semilla N`, `--ejecuciones DIR`, `--postgres [URL]` | La conciliación y los indicadores; con `--postgres`, lo registrado sale de bronce |
+| `edsim registro comparar RUN_ID` | `--perfil P` (obligatorio), `--semilla N`, `--ejecuciones DIR`, `--postgres [URL]` | La conciliación y los indicadores; con `--postgres`, lo registrado sale de la última publicación de la ejecución derivada en bronce (la verdad y la libreta, siempre de ficheros) |
 | `edsim directo lanzar` y `reemitir` | Las de hoy, más `--registro P`, `--semilla-registro N` y `--registros FICHERO` | Con `--registro`, publican solo lo registrado |
 | `edsim almacen preparar` | `--postgres URL` | Aplica las migraciones que falten e imprime cuáles |
 | `edsim almacen consumir` | `--kafka`, `--postgres`, `--run RUN_ID`, `--timeout S` | El consumidor de bronce |
@@ -1131,6 +1131,88 @@ Con el subagente `mutante` en paralelo, sobre `6737d01`:
 - **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
 - **La 7.4** (#118): `--registro` en `directo lanzar` y `reemitir` usa `StreamDice` y `load_record_profiles`.
 - **Si algún día hace falta sobrescribir un registro:** hoy no hay `--forzar`; se borra la carpeta a mano.
+
+### Tarea 7.3: Comparación con la verdad: conciliación e indicadores ingenuos
+
+**Qué se hizo**
+
+Issue #117, rama `feat/h7-comparacion`, Claude Code (Sonnet, en la nube). Tarea no crítica: sin revisor del plan, `/code-review medium`. Un commit por paso, más el de la revisión:
+
+- **Ayudas de los tests** (`30e7121`): el escenario L y su dado forzado pasan de `test_clinical_record.py` a `tests/registro_factory.py`, y `CountingDice` usa `check_calls` de `tests/runaway.py` en lugar de su `RunawayLoop` propio. 94 tests antes y 94 después.
+- **Lectores** (`ac21be6`): `record_from_json` (inverso de `record_json`) y `read_notebook_csv` (inverso de `notebook_csv`).
+- **`compare`** (`1a24eea`): `edsim.clinical_record.compare`, con la conciliación y los indicadores ingenuos.
+- **Textos** (`09c6d30`): `format_comparison` y `format_indicators` en `clinical_record/report.py`.
+- **Leer una ejecución** (`6121ef1`): `read_recorded_run`, `read_recorded_records` y `RecordedRun` en `runs/recorded.py` (aditivo en `__all__` de `edsim.runs`).
+- **Bronce** (`d46bc14`): `read_bronze_records` sobre `read_bronze_lines`, y `READ_LINES` pasa a leer la última publicación.
+- **CLI** (`810303b`): `edsim registro comparar RUN_ID --perfil P [--semilla N] [--ejecuciones DIR] [--postgres [URL]]`.
+- **Integración** (`1e8826b`): `tests_integracion/test_comparar.py`, tres tests contra Postgres.
+
+**Decisiones del diff**
+
+- **`--postgres` lee la última publicación** (propuesta del chat del 14-11): las filas de la ejecución desde su último `inicio` de `bronce.ejecuciones`, una por `event_id`, la más reciente; sin `inicio`, todas. Es la definición con la que `edsim almacen consumir --run` cuenta. Cambia lo que daba `read_bronze_lines` (la primera) y su docstring. Una republicación a medias da una cuenta que no cuadra (error con la pista de `almacen consumir --run`), no el hueco rellenado con la publicación anterior.
+- **La cuenta, un error**: `ReconciliationError` (un `ValueError`) con todos los problemas: ids repetidos, registros y filas de la libreta que no se corresponden, hechos sin fila o con dos, y las dos sumas de la especificación. La tercera igualdad (correcciones escritas + pendientes = erróneos con corrección) necesita lo sorteado, que solo está en `registro.json`: la comprueba `generar`, no `comparar`.
+- **`compare` recibe `horizon` y `warmup`** (minutos), que la especificación no listaba: el censo medio los necesita. El origen del reloj se deduce del primer evento de la verdad con la misma fórmula que `event_time()`. `--perfil` es obligatorio en `comparar`.
+- **Indicadores ingenuos**: el primer registro de cada tipo de cada episodio, en el orden dado (el de emisión); `assessment_started` solo con `tipo == "inicial"`; el censo cuenta `llegada <= H < salida` en cada hora en punto de `[calentamiento, horizonte)`; el reparto por nivel, sobre los `triage_completed` con un nivel entero de 1 a 5, duplicados incluidos; las llegadas, todos los `patient_arrived`. Los `record_corrected` no se leen.
+- **El retraso por sistema** es `recorded_time - event_time` de los registros `bien` y `con_despistes` (el desfase se cancela: se suma a las dos horas); los duplicados y las correcciones no entran.
+- **`con_despistes` desglosado** (nota del chat de la tarde): con reloj, con retraso, con valor erróneo, con campo vacío (se solapan) y solo reloj. Con la ejecución de `config/`, el reloj domina: 17,5 % de la clase es solo reloj en el realista y 22,2 % en el hostil, pero el reloj aparece en el 100 % del hostil.
+- **Traducción de errores de Postgres** compartida (`_postgres_errors`) entre `bronze_store` y `read_bronze_lines`: sin las tablas o con la conexión perdida, el mismo error que el consumidor, no una traza.
+
+**Valores a mano** (código independiente de `edsim`; completo en el PR)
+
+- Escenario L: tiempo hasta el triaje 4,2 frente a 6,2 min; a las 20:00, 1 frente a 2 pacientes; serie de las 17 a las 23 `[1, 2, 1, 1, 1, 1, 1]` frente a `[1, 2, 2, 2, 2, 2, 2]` (medias 8/24 y 13/24); nivel 3 frente a 4; retraso de triaje 7 min y HIS 0 (con el duplicado, 0,25).
+- A escala, un script de solo biblioteca estándar recalcula los cinco indicadores de los perfiles realista y hostil desde los ficheros: las cifras coinciden con las de la CLI.
+
+**Medidas** (`config/`, 14 días, semilla 2026: 55.054 hechos, 4.439 llegadas)
+
+- La ejecución, 7,6 s; cada `registro comparar` (55.000 registros), 4,2 s, la mayor parte de import y lectura.
+- Verdad frente a registrado (la tabla completa, con el limpio, en el PR):
+
+| Indicador | Verdad | Realista | Hostil |
+| --- | --- | --- | --- |
+| Tiempo hasta el triaje (mediana, min) | 8,87 | 10,89 (+2,02) | 12,93 (+4,06) |
+| Tiempo hasta el médico (mediana, min) | 14,89 | 14,90 (+0,01) | 7,06 (−7,83) |
+| Pacientes en urgencias (media por hora) | 39,37 | 50,74 (+11,37) | 155,83 (+116,46) |
+| Llegadas (registros de llegada) | 4.439 | 4.442 (+3) | 4.435 (−4) |
+| Nivel 4 en el triaje (%) | 50,73 | 50,58 (−0,16) | 49,27 (−1,46) |
+
+  Con el limpio, todo igual. El censo es el indicador que más se estropea, por los fantasmas (las salidas olvidadas); el tiempo hasta el médico del hostil sale menor porque el reloj del HIS (−5 min) y el de admisión (+3) restan 8 minutos.
+- Integración: los tres tests pasan en local contra un Postgres 16 sin TimescaleDB (con una extensión de mentira que solo admite las dos llamadas de la migración); en el CI, `tests-integracion`: ver «Revisión del PR» del PR.
+- N3 (`scripts/tests-completos.sh`, en la nube): 12:52 en verde: lint 0:00, formato 0:01, núcleo 7:23 (con xdist), app 4:08 y notebooks 6 en 1:20.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante` en paralelo, sobre `b33ee53`; V31 a mano, contra Postgres:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V9 | La conciliación cuenta los duplicados como hechos | Fallan 4 (el L, su informe y la cuenta real de realista y hostil) | 4 fallan, 164 pasan: los mismos. Con realista, 12.911 hechos en vez de 12.858 |
+| V10 | Los indicadores aplican las correcciones | Fallan 4 (nivel del L, su tabla, su informe y el reparto con correcciones) | 4 fallan, 164 pasan: los mismos |
+| V26 | Último registro de cada tipo | Fallan 2 (el primero con la llegada duplicada tarde, y el censo con la salida duplicada) | 2 fallan, 166 pasan: los mismos |
+| V27 | La conciliación no lanza si la cuenta no cuadra | Fallan 11 (los 8 casos, «todos los problemas» y 2 de la CLI) | 11 fallan, 157 pasan: los mismos |
+| V28 | El retraso incluye duplicados y correcciones | Fallan 2 (el retraso del L y su informe) | 2 fallan, 166 pasan: los mismos |
+| V29 | Empates en la hora en punto al revés | Fallan 5 | 5 fallan, 163 pasan: los mismos |
+| V30 | La media del censo incluye el calentamiento | Fallan 5 (4 casos de las horas y la media) | 5 fallan, 163 pasan: los mismos |
+| V31 | `READ_LINES` lee la primera publicación | Falla la integración con dos publicaciones | Fallan 2 de 3 (la última publicación y la cortada). Una variante, «la más reciente por `event_id` sin el `inicio`», falla solo la de la publicación cortada |
+
+Dos ajustes de los tests durante la tarea: la primera versión de la integración no distinguía V31 (la publicación vieja tenía una hora ilegible, que bronce rechaza, y quedaba como un prefijo idéntico de la nueva); y el test del reparto con correcciones corregía un nivel al mismo valor que ya tenía, así que V10 no lo habría visto. Los dos se arreglaron antes de lanzar las versiones.
+
+**Revisión**
+
+`/code-review medium main...feat/h7-comparacion`, seis hallazgos:
+
+- **Corregido** (`58c6c48`): un horizonte enorme y finito (`1e300`) daba `OverflowError` en lugar de `ValueError`.
+- **Explicados:**
+  - `_origin` repite la fórmula de `event_time()`; `run.json` no guarda la fecha de inicio;
+  - `record_from_json` repite la comprobación del sobre de `from_json`, que además arregla logs antiguos (`_upgrade`);
+  - la tercera igualdad de la cuenta se queda en `generar` (necesita `registro.json`);
+  - con `--postgres` antes del identificador de la ejecución, este se lee como la URL: el orden está en la ayuda.
+
+**Pendiente**
+
+- **La 7.4** (#118): `--registro` publica lo registrado; con él, el test de integración puede usar el camino real (publicar y consumir).
+- **La 7.6** (#120): el notebook usa `compare` y la tabla verdad frente a registrado.
+- **Si hace falta la tercera igualdad en `comparar`:** leer `cuenta` de `registro.json` y compararla con la libreta.
+- **Que `run.json` guarde `fecha_inicio`:** quitaría la deducción del origen del reloj.
 
 ### Tarea 7.5: Postgres con TimescaleDB y consumidor de bronce
 

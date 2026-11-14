@@ -7,12 +7,23 @@ imprime y que no escribe nada cuando falla; la lógica está en el paquete y tie
 
 import hashlib
 import json
+import re
+import shutil
 
 import pytest
 from registro_factory import PROFILES_FILE
+from runaway import check_calls
 from runs_factory import copy_run
 
 from edsim import cli
+from edsim.runs import RunStore, read_recorded_records, read_recorded_run, record_run
+from edsim.store.migrations import MigrationError
+from edsim.store.postgres import (
+    DEFAULT_URL,
+    BronzeReadError,
+    DatabaseUnavailableError,
+    MissingPostgresExtraError,
+)
 
 
 def usage_error(argv, capsys) -> str:
@@ -204,3 +215,265 @@ def test_generar_con_una_linea_rota_del_log_sale_con_1(runs, capsys):
     assert cli.main(generate_argv(root)) == 1
     assert "eventos.jsonl:2" in capsys.readouterr().err
     assert not (run_dir / "registros").exists()
+
+
+# --- comparar -----------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def recorded_root(clinical_store, tmp_path_factory):
+    """Una copia de `clinica` con el registro limpio, el realista y el realista de semilla 5."""
+    root = tmp_path_factory.mktemp("comparar")
+    store, _ = copy_run(clinical_store, "clinica", root)
+    record_run(store, "clinica", "limpio", profiles_file=PROFILES_FILE)
+    record_run(store, "clinica", "realista", profiles_file=PROFILES_FILE)
+    record_run(store, "clinica", "realista", 5, profiles_file=PROFILES_FILE)
+    return store.root
+
+
+@pytest.fixture
+def copy_of_recorded(recorded_root, tmp_path):
+    """Una copia que el test puede estropear: la carpeta de las ejecuciones y la de `clinica`."""
+    shutil.copytree(recorded_root, tmp_path / "ejecuciones", symlinks=True)
+    return tmp_path / "ejecuciones", tmp_path / "ejecuciones" / "clinica"
+
+
+def compare_argv(root, *extra, profile="realista", run_id="clinica"):
+    return ["registro", "comparar", run_id, "--perfil", profile, "--ejecuciones", str(root), *extra]
+
+
+def seed_of(root) -> int:
+    return RunStore(root).open("clinica").seed
+
+
+def prints(directory):
+    return {
+        p.relative_to(directory).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in sorted(directory.rglob("*"))
+        if p.is_file()
+    }
+
+
+@pytest.fixture
+def no_postgres(monkeypatch):
+    """Un `read_bronze_records` que falla el test si algo lo llama (con tope de llamadas)."""
+    calls = []
+
+    def fail(url, run_id):
+        calls.append(url)
+        check_calls(len(calls), 3, "read_bronze_records")
+        pytest.fail("conectó con Postgres")
+
+    monkeypatch.setattr(cli, "read_bronze_records", fail)
+
+
+def test_comparar_con_ficheros_imprime_la_conciliacion_y_la_tabla(
+    recorded_root, no_postgres, capsys
+):
+    """Pilla un `comparar` que no dice de qué ejecución y de dónde sale lo registrado, que no
+    imprime la cuenta o la tabla, o que sale con otro código."""
+    assert cli.main(compare_argv(recorded_root)) == 0
+    out = capsys.readouterr().out
+
+    seed = seed_of(recorded_root)
+    assert f"Comparación de clinica · perfil realista · semilla {seed}" in out
+    assert f"Ejecución derivada: clinica_realista_s{seed} · lo registrado sale de ficheros" in out
+    assert "Conciliación (la cuenta cuadra):" in out
+    assert "Retraso por sistema" in out
+    assert "Indicador" in out and "Nivel 5 en el triaje (%)" in out
+
+
+def test_comparar_no_escribe_nada(recorded_root, no_postgres, capsys):
+    """La comparación es una lectura: ningún fichero de la ejecución cambia ni se crea."""
+    before = prints(recorded_root)
+
+    assert cli.main(compare_argv(recorded_root)) == 0
+
+    assert prints(recorded_root) == before
+
+
+def test_comparar_con_el_perfil_limpio_no_tiene_diferencias(recorded_root, no_postgres, capsys):
+    """Con el limpio, cada fila de la tabla acaba en una diferencia de 0 (y la tabla no está
+    vacía: tiene las nueve filas)."""
+    assert cli.main(compare_argv(recorded_root, profile="limpio")) == 0
+    out = capsys.readouterr().out
+
+    table = out.split("  Indicador ", 1)[1].splitlines()[1:]
+    assert len(table) == 9
+    assert all(line.split()[-1] == "0" for line in table), table
+
+
+def test_comparar_con_una_semilla_elige_ese_registro(recorded_root, no_postgres, capsys):
+    """`--semilla 5` compara el registro de la semilla 5, no el de la ejecución."""
+    assert cli.main(compare_argv(recorded_root, "--semilla", "5")) == 0
+
+    assert "semilla 5" in capsys.readouterr().out
+
+
+def fake_bronze(monkeypatch, root, *, drop=0, calls=None):
+    """Un `read_bronze_records` que da lo que hay en ficheros, sin los últimos `drop`."""
+    run = read_recorded_run(RunStore(root), "clinica", "realista")
+    records = list(read_recorded_records(run))
+
+    def read(url, run_id):
+        if calls is not None:
+            calls.append((url, run_id))
+            check_calls(len(calls), 3, "read_bronze_records")
+        return records[: len(records) - drop]
+
+    monkeypatch.setattr(cli, "read_bronze_records", read)
+    return run
+
+
+def test_comparar_con_postgres_da_la_misma_conciliacion_que_con_ficheros(
+    recorded_root, monkeypatch, capsys
+):
+    """Con los mismos registros, el informe es el mismo salvo la línea del origen. La URL sin
+    valor es la de compose.yaml, y se pide la ejecución derivada, no la verdad."""
+    assert cli.main(compare_argv(recorded_root)) == 0
+    files = capsys.readouterr().out
+    calls = []
+    run = fake_bronze(monkeypatch, recorded_root, calls=calls)
+
+    assert cli.main(compare_argv(recorded_root, "--postgres")) == 0
+    postgres = capsys.readouterr().out
+
+    assert calls == [(DEFAULT_URL, run.derived_run_id)]
+    assert files.replace("ficheros", "X") == postgres.replace(
+        f"Postgres ({DEFAULT_URL.replace('edsim:edsim', 'edsim:***')})", "X"
+    )
+
+
+def test_comparar_con_postgres_imprime_la_url_sin_la_contrasena(recorded_root, monkeypatch, capsys):
+    """La URL de `--postgres URL` se usa tal cual y se imprime sin la contraseña."""
+    calls = []
+    fake_bronze(monkeypatch, recorded_root, calls=calls)
+    url = "postgresql://yo:secreta@otro:5432/base"
+
+    assert cli.main(compare_argv(recorded_root, "--postgres", url)) == 0
+    out = capsys.readouterr().out
+
+    assert calls[0][0] == url
+    assert "Postgres (postgresql://yo:***@otro:5432/base)" in out
+    assert "secreta" not in out
+
+
+def test_comparar_con_postgres_antes_de_otra_opcion_usa_la_url_por_defecto(
+    recorded_root, monkeypatch, capsys
+):
+    """`--postgres --perfil realista`: la opción sin valor no se come la siguiente."""
+    calls = []
+    fake_bronze(monkeypatch, recorded_root, calls=calls)
+
+    argv = ["registro", "comparar", "clinica", "--postgres", "--perfil", "realista"]
+    assert cli.main([*argv, "--ejecuciones", str(recorded_root)]) == 0
+    capsys.readouterr()
+
+    assert calls[0][0] == DEFAULT_URL
+
+
+def test_comparar_con_un_bronce_incompleto_sale_con_1_y_dice_que_consumir(
+    recorded_root, monkeypatch, capsys
+):
+    """Bronce al que le faltan registros: la cuenta no cuadra, código 1, nada en stdout (ningún
+    número) y la pista del comando que lo llena (`almacen consumir --run <derivada>`)."""
+    run = fake_bronze(monkeypatch, recorded_root, drop=2)
+
+    assert cli.main(compare_argv(recorded_root, "--postgres")) == 1
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "la cuenta no cuadra" in captured.err
+    assert f"edsim almacen consumir --run {run.derived_run_id}" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("error", "text"),
+    [
+        (DatabaseUnavailableError("postgresql://h/db", "rechazada"), "no se puede conectar"),
+        (MissingPostgresExtraError("Falta el extra postgres: uv sync"), "Falta el extra postgres"),
+        (MigrationError("relation does not exist"), "Error en las migraciones"),
+        (BronzeReadError("el valor 3 de bronce no es un registro"), "valor 3 de bronce"),
+    ],
+)
+def test_comparar_con_postgres_que_falla_sale_con_1_sin_traza(
+    recorded_root, monkeypatch, capsys, error, text
+):
+    """Postgres que no responde, el extra que falta, las tablas que faltan o un valor que no es un
+    registro: código 1 con su frase, no una traza ni un error de uso (2)."""
+
+    def fail(url, run_id):
+        raise error
+
+    monkeypatch.setattr(cli, "read_bronze_records", fail)
+
+    assert cli.main(compare_argv(recorded_root, "--postgres")) == 1
+    captured = capsys.readouterr()
+
+    assert text in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_comparar_con_una_cuenta_que_no_cuadra_en_ficheros_sale_con_1(
+    copy_of_recorded, no_postgres, capsys
+):
+    """Un `registrado.jsonl` al que le falta una línea: código 1, la cuenta que no cuadra y sin
+    la pista de bronce (no se leyó de bronce)."""
+    root, run_dir = copy_of_recorded
+    path = run_dir / "registros" / f"realista-s{seed_of(root)}" / "registrado.jsonl"
+    lines = path.read_text(encoding="utf-8").split("\n")
+    del lines[3]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    assert cli.main(compare_argv(root)) == 1
+    err = capsys.readouterr().err
+
+    assert "la cuenta no cuadra" in err and "almacen consumir" not in err
+
+
+def test_comparar_con_una_libreta_rota_sale_con_1_y_dice_la_linea(
+    copy_of_recorded, no_postgres, capsys
+):
+    """Un fallo de los datos (`defectos.csv`), con su línea: código 1, no 2."""
+    root, run_dir = copy_of_recorded
+    path = run_dir / "registros" / f"realista-s{seed_of(root)}" / "defectos.csv"
+    path.write_text(path.read_text(encoding="utf-8").replace("clase", "otra", 1), encoding="utf-8")
+
+    assert cli.main(compare_argv(root)) == 1
+    assert "defectos.csv:1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("extra", "profile", "run_id", "text"),
+    [
+        (("--semilla", "99"), "realista", "clinica", "there is no recording realista-s99"),
+        ((), "hostil", "clinica", "there is no recording hostil"),
+        ((), "realista", "no-existe", "no-existe"),
+        (("--postgres", "http://x"), "realista", "clinica", "no es una URL de Postgres"),
+        (("--semilla", "-1"), "realista", "clinica", "seed"),
+    ],
+)
+def test_comparar_con_un_uso_malo_sale_con_2_antes_de_conectar(
+    recorded_root, no_postgres, capsys, extra, profile, run_id, text
+):
+    """Un registro que no existe, una ejecución que no existe, una URL que no lo es o una semilla
+    negativa son errores de uso (2) y no llegan a conectar con Postgres (`no_postgres` falla el
+    test si algo lo llama)."""
+    err = usage_error(compare_argv(recorded_root, *extra, profile=profile, run_id=run_id), capsys)
+
+    assert text in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["registro", "comparar", "clinica"],
+        ["registro", "comparar", "clinica", "--perfil", "feroz"],
+        ["registro", "comparar"],
+    ],
+    ids=["sin_perfil", "perfil_desconocido", "sin_ejecucion"],
+)
+def test_comparar_sin_lo_obligatorio_es_un_error_de_uso(argv, no_postgres, capsys):
+    """El perfil y la ejecución son obligatorios, y el perfil es uno de los tres."""
+    assert re.search(r"perfil|RUN_ID|invalid choice", usage_error(argv, capsys))

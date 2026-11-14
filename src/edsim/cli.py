@@ -30,10 +30,13 @@ if Postgres or the broker do not answer, a topic does not carry the broker's tim
 migrations and the database disagree or an extra is missing; 2 for usage errors, before
 connecting.
 
-``registro`` (docs/specs/hito-7.md, "CLI"): 0 if ``validar`` and ``generar`` do their job; 1 if
-``generar`` finds the true log of the run unreadable or not of that run (the data); 2 for usage
-errors, before writing anything: a profiles file that does not load, a run that does not exist,
-a recording that already exists or a derived ``run_id`` longer than 64 characters.
+``registro`` (docs/specs/hito-7.md, "CLI"): 0 if ``validar``, ``generar`` and ``comparar`` do
+their job; 1 if ``generar`` or ``comparar`` find the data unreadable or not of that run, if the
+account of ``comparar`` does not balance, or if Postgres does not answer, bronze lacks its
+tables or holds something that is not a record; 2 for usage errors, before writing or
+connecting to anything: a profiles file that does not load, a run that does not exist, a
+recording that already exists (``generar``) or does not exist (``comparar``) or a derived
+``run_id`` longer than 64 characters.
 """
 
 import argparse
@@ -95,7 +98,13 @@ from edsim.calibration.window import (
     window_start_dates,
 )
 from edsim.checks import check_count
-from edsim.clinical_record import DEFAULT_PROFILES_FILE, PROFILE_NAMES, load_record_profiles
+from edsim.clinical_record import (
+    DEFAULT_PROFILES_FILE,
+    PROFILE_NAMES,
+    ReconciliationError,
+    load_record_profiles,
+)
+from edsim.clinical_record.report import format_comparison as format_record_comparison
 from edsim.clinical_record.report import format_profiles, format_recording
 from edsim.engine.center import CenterConfig, load_center
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
@@ -154,17 +163,26 @@ from edsim.profiles.validation import (
 )
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
-from edsim.runs import RunStore, record_run, simulate_run, validate_run_id
+from edsim.runs import (
+    RunStore,
+    read_recorded_records,
+    read_recorded_run,
+    record_run,
+    simulate_run,
+    validate_run_id,
+)
 from edsim.runs.recorded import RunLogError
 from edsim.store.bronze import TimestampTypeError
 from edsim.store.consumer import RUN_TIMEOUT, run_consumer
 from edsim.store.migrations import MigrationError
 from edsim.store.postgres import (
     DEFAULT_URL,
+    BronzeReadError,
     DatabaseUnavailableError,
     MissingPostgresExtraError,
     bronze_store,
     prepare,
+    read_bronze_records,
     safe_url,
 )
 from edsim.store.report import format_consume_end, format_migrations, format_progress
@@ -1105,6 +1123,44 @@ def _record_generate(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     return 0
 
 
+def _record_compare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    from_postgres = args.postgres is not None
+    try:
+        run = read_recorded_run(RunStore(args.ejecuciones), args.run_id, args.perfil, args.semilla)
+        if from_postgres:
+            records = read_bronze_records(args.postgres, run.derived_run_id)
+            source = f"Postgres ({safe_url(args.postgres)})"
+        else:
+            records = read_recorded_records(run)
+            source = "ficheros"
+        comparison = run.compare(records)
+    except RunLogError as error:
+        print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)
+        return 1
+    except ReconciliationError as error:
+        # `run` exists: the account is checked after the run is read.
+        hint = ""
+        if from_postgres:
+            hint = f"\n¿Está toda en bronce? edsim almacen consumir --run {run.derived_run_id}"
+        print(f"Error: {error}{hint}", file=sys.stderr, flush=True)
+        return 1
+    except STORE_ERRORS as error:
+        return _store_failure(error)
+    except (OSError, ValueError) as error:
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    print(
+        format_record_comparison(
+            comparison,
+            run_id=run.run_id,
+            derived_run_id=run.derived_run_id,
+            profile=run.profile,
+            seed=run.seed,
+            source=source,
+        )
+    )
+    return 0
+
+
 def parse_postgres_url(text: str) -> str:
     """The URL of Postgres, ``postgresql://usuario:contraseña@host:puerto/base``."""
     if not text.startswith(("postgresql://", "postgres://")) or text.endswith("://"):
@@ -1132,6 +1188,7 @@ STORE_ERRORS = (
     DatabaseUnavailableError,
     MigrationError,
     TimestampTypeError,
+    BronzeReadError,
 )
 """What ends an ``almacen`` command with code 1, besides those of Kafka."""
 
@@ -1951,6 +2008,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="carpeta de las ejecuciones guardadas (por defecto: %(default)s)",
     )
     record_generate.set_defaults(handler=_record_generate, subparser=record_generate)
+
+    record_compare = record_actions.add_parser(
+        "comparar",
+        help="compara lo registrado con la verdad: conciliación e indicadores ingenuos",
+        description="Lee la verdad de una ejecución guardada, su libreta y lo registrado "
+        "(registros/<perfil>-s<semilla>/, o la tabla bronce con --postgres) e imprime la "
+        "conciliación (recuentos por clase, con la cuenta comprobada; retraso por sistema; "
+        "despistes) y los indicadores ingenuos sobre la verdad y sobre lo registrado, con su "
+        "diferencia. Con --postgres lee la última publicación de la ejecución derivada; "
+        "--postgres va tras el identificador de la ejecución, o con una URL. No escribe nada.",
+    )
+    record_compare.add_argument("run_id", metavar="RUN_ID", help="la ejecución guardada")
+    record_compare.add_argument(
+        "--perfil",
+        required=True,
+        choices=PROFILE_NAMES,
+        help="el registro que se compara",
+    )
+    record_compare.add_argument(
+        "--semilla",
+        type=int,
+        default=None,
+        metavar="N",
+        help="semilla del registro (por defecto: la de la ejecución)",
+    )
+    record_compare.add_argument(
+        "--ejecuciones",
+        default=DEFAULT_RUNS,
+        metavar="DIR",
+        help="carpeta de las ejecuciones guardadas (por defecto: %(default)s)",
+    )
+    record_compare.add_argument(
+        "--postgres",
+        nargs="?",
+        const=DEFAULT_URL,
+        default=None,
+        type=parse_postgres_url,
+        metavar="URL",
+        help="lo registrado sale de la tabla bronce, no de registrado.jsonl "
+        "(sin URL: %(const)s, la de compose.yaml)",
+    )
+    record_compare.set_defaults(handler=_record_compare, subparser=record_compare)
 
     return parser
 

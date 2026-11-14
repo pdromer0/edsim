@@ -14,6 +14,7 @@ the resource events, which pass as they are and count as ``bien``.
 
 import csv
 import io
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -118,6 +119,78 @@ def notebook_csv(rows: Sequence[NotebookRow]) -> str:
     for row in rows:
         writer.writerow(_cell(getattr(row, name)) for name in NotebookRow.__dataclass_fields__)
     return out.getvalue()
+
+
+_FLOATS = ("delay_min", "clock_min")
+_INTEGER_FIELDS = ("nivel", "edad")
+"""The fields with a wrong value that are integers; ``motivo`` and ``destino`` are texts."""
+
+
+def _float_cell(line: int, name: str, cell: str) -> float | None:
+    if cell == "":
+        return None
+    try:
+        value = float(cell)
+    except ValueError:
+        raise ValueError(f"defectos.csv:{line}: {name} must be a number, got {cell!r}") from None
+    if not math.isfinite(value):
+        raise ValueError(f"defectos.csv:{line}: {name} must be finite, got {cell!r}")
+    return value
+
+
+def _value_cell(line: int, name: str, field: str | None, cell: str) -> object:
+    """``valor_verdadero`` or ``valor_registrado``: an integer for ``nivel`` and ``edad``."""
+    if cell == "":
+        return None
+    if field is None:
+        raise ValueError(f"defectos.csv:{line}: {name} without campo_erroneo")
+    if field not in _INTEGER_FIELDS:
+        return cell
+    try:
+        return int(cell)
+    except ValueError:
+        raise ValueError(
+            f"defectos.csv:{line}: {name} of {field} must be an integer, got {cell!r}"
+        ) from None
+
+
+def read_notebook_csv(text: str) -> tuple[NotebookRow, ...]:
+    """The rows of ``defectos.csv``: the inverse of ``notebook_csv``.
+
+    An empty cell is ``None``; ``retraso_min`` and ``desfase_min`` are finite floats; the values
+    of ``nivel`` and ``edad`` are integers and those of ``motivo`` and ``destino``, texts.
+
+    Raises:
+        ValueError: If the header is not ``NOTEBOOK_COLUMNS``, a row has another number of
+            cells, a number is not a number, or the ``clase`` is not one of ``KINDS``. The
+            message says the line.
+    """
+    reader = csv.reader(io.StringIO(text, newline=""))
+    rows = list(reader)
+    if not rows or tuple(rows[0]) != NOTEBOOK_COLUMNS:
+        raise ValueError(f"defectos.csv:1: the header must be {','.join(NOTEBOOK_COLUMNS)}")
+    result = []
+    for line, cells in enumerate(rows[1:], start=2):
+        if len(cells) != len(NOTEBOOK_COLUMNS):
+            raise ValueError(
+                f"defectos.csv:{line}: {len(NOTEBOOK_COLUMNS)} cells expected, got {len(cells)}"
+            )
+        row = dict(zip(NotebookRow.__dataclass_fields__, cells, strict=True))
+        for name in _FLOATS:
+            row[name] = _float_cell(line, name, row[name])
+        field = row["wrong_field"] or None
+        row["true_value"] = _value_cell(line, "valor_verdadero", field, row["true_value"])
+        row["recorded_value"] = _value_cell(line, "valor_registrado", field, row["recorded_value"])
+        for name, cell in row.items():
+            if cell == "":
+                row[name] = None
+        if row["fact_id"] is None:
+            raise ValueError(f"defectos.csv:{line}: hecho is empty")
+        try:
+            result.append(NotebookRow(**row))
+        except ValueError as error:
+            raise ValueError(f"defectos.csv:{line}: {error}") from None
+    return tuple(result)
 
 
 @dataclass(frozen=True, slots=True)

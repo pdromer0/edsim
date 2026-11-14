@@ -7,9 +7,11 @@ of any catalog (docs/specs/hito-7.md, «Especificación: el registro clínico»)
 
 ``record_json`` writes a record as ``to_json`` writes an event: the envelope in
 its order and the payload with tuples as lists and mappings as objects.
+``record_from_json`` is its inverse: what a file or bronze holds, back as a ``Record``.
 """
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -97,3 +99,52 @@ def record_json(record: Record) -> str:
     data = {name: getattr(record, name) for name in _ENVELOPE}
     data["payload"] = _plain(record.payload)
     return json.dumps(data, ensure_ascii=False, allow_nan=False)
+
+
+_STRINGS = ("event_id", "event_type", "run_id", "source_system", "event_time", "recorded_time")
+_OPTIONAL_STRINGS = ("episode_id", "patient_id", "ingest_time")
+
+
+def record_from_json(line: str) -> Record:
+    """Parse one line of ``registrado.jsonl`` (or the ``valor`` of a bronze row) into a ``Record``.
+
+    The inverse of ``record_json``: the same envelope keys, nothing else. The payload is not
+    checked against any catalog (a field may be ``None``). ``sim_time`` may be an integer
+    in the file; it comes back as a float.
+
+    Raises:
+        ValueError: If the line is not a JSON object with exactly the envelope keys, a field has
+            the wrong type, or ``sim_time`` or ``schema_version`` is not a finite number or an
+            integer.
+    """
+    data = json.loads(line)
+    if not isinstance(data, dict):
+        raise ValueError(f"a record must be a JSON object, got {data!r}")
+    missing = [k for k in _ENVELOPE if k not in data]
+    unknown = sorted(data.keys() - set(_ENVELOPE))
+    if missing or unknown:
+        problems = []
+        if missing:
+            problems.append(f"missing keys: {', '.join(missing)}")
+        if unknown:
+            problems.append(f"unknown keys: {', '.join(unknown)}")
+        raise ValueError(f"envelope: {'; '.join(problems)}")
+    for name in _STRINGS:
+        if not isinstance(data[name], str):
+            raise ValueError(f"{name} must be a string, got {data[name]!r}")
+    for name in _OPTIONAL_STRINGS:
+        if data[name] is not None and not isinstance(data[name], str):
+            raise ValueError(f"{name} must be a string or null, got {data[name]!r}")
+    version = data["schema_version"]
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError(f"schema_version must be an integer, got {version!r}")
+    sim_time = data["sim_time"]
+    if isinstance(sim_time, bool) or not isinstance(sim_time, int | float):
+        raise ValueError(f"sim_time must be a number, got {sim_time!r}")
+    try:
+        sim_time = float(sim_time)
+    except OverflowError:  # an integer of 10**400 has no float
+        raise ValueError("sim_time must be a finite number") from None
+    if not math.isfinite(sim_time):
+        raise ValueError(f"sim_time must be a finite number, got {sim_time!r}")
+    return Record(**{**data, "sim_time": sim_time})
