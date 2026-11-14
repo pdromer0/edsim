@@ -335,13 +335,14 @@ Con miles de pacientes, esto dice, por ejemplo, cuánto sale de alto el censo de
 
 ### La función
 
-`record(events, profile, seed, *, horizon, run_id) -> Recording`, en `edsim.clinical_record`:
+`record(events, profile, seed, *, horizon, run_id, dice) -> Recording`, en `edsim.clinical_record`. En la 7.1, `dice` es obligatorio; la 7.2 lo hace opcional, con el flujo de la semilla por defecto:
 
 - `events`: el log verdadero completo de una ejecución (los `Event` de `eventos.jsonl`, en su orden).
 - `profile`: un perfil cargado de `config/registro_clinico.toml`.
 - `seed`: la semilla del registro (por defecto, la de la ejecución).
 - `horizon`: el horizonte en minutos (`días × 1.440`).
 - `run_id`: el de la ejecución verdadera.
+- `dice`: de dónde salen los 13 números (`Roll`) de cada evento verdadero de paciente: un objeto con `roll()`. Los tests los fijan a mano.
 - Devuelve `Recording(run_id, records, notebook, info)`: el `run_id` derivado, los `Record` en orden de emisión, las filas de la libreta y los datos para `registro.json`.
 
 Es pura: el mismo log, el mismo perfil y la misma semilla dan los mismos bytes. No importa SimPy ni el motor.
@@ -950,3 +951,81 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 - **El primer uso real del revisor del plan**, en la 7.1, comparado con la revisión del chat del mismo plan.
 - **Un hook `PreToolUse` para `gh api`** (hallazgo de la revisión), en lugar de las reglas con comodines: propuesta para el Backlog.
 - **Las reglas de Codex** (`.codex/rules/edsim.rules`) siguen con `gh pr create` y `gh pr view`: Codex trabaja en local y pide permiso para todo lo que usa la red; se cambia si una tarea de Codex va a la nube.
+
+### Tarea 7.1: Simulador del registro clínico
+
+**Qué se hizo**
+
+Issue #115, rama `feat/h7-registro`, Claude Code (Opus, en la nube), con `@codex review` (tarea crítica). Primer uso real del revisor del plan. Un commit por paso, más los de las correcciones de la revisión:
+
+- **`validate_run_id` en un módulo neutro**, `edsim.identifiers`. Importar `edsim.runs.identifiers` ejecuta `edsim/runs/__init__.py`, que carga el motor y SimPy. `edsim.runs.identifiers` lo reexporta, como `edsim.lognormal`.
+- **`edsim.clinical_record`**:
+  - `records.py`: `Record`, el sobre de `Event` con el payload sin validar, y `record_json`, con el orden de claves de `to_json`;
+  - `record.py`: `Roll` y `Dice`, `Timed` y `RecordProfile` en código, y `record`, con los despistes 1 a 7, la emisión, el corte y la renumeración;
+  - `notebook.py`: la libreta y la cuenta;
+  - `schemas.py`: los esquemas `registro-v1` a `v4`.
+- **La firma de `record`** gana `dice`, obligatorio en la 7.1; la 7.2 lo hace opcional con el flujo de la semilla.
+
+**Decisiones del diff**
+
+- **El dado:** `Roll` tiene los 13 números con nombre en inglés, en el orden de la especificación (`u_forget` es `u_olvido`, …, `spare` es la reserva), y la tabla de equivalencias está en el docstring de `record.py`. Hay una tirada por evento verdadero de paciente, aunque se olvide o el perfil sea limpio. Los recursos no tiran.
+- **El cuantil es `mediana · exp(sigma · z)`:** con z = 0 da la mediana exacta. `exp(log 7)` da 6,999999999999999, y con eso el 1.031,2 del escenario L no saldría exacto.
+- **La hora del minuto 0 sale del log:** el primer evento la da exacta, y se comprueba en todos. Un log que no salió de `EventLog`, o que no es del `run_id` dado, es un error antes de tirar.
+- **Los desfases**, en milisegundos enteros (`round`). **Las horas registradas** se calculan al numerar, solo de lo escrito: una z enorme lleva un duplicado más allá de cualquier fecha, y no se escribe.
+- **La clase sale de lo escrito:** `con_despistes` si cambia `sim_time`, el desfase en ms, un valor o un campo. Tener un duplicado o una corrección no cambia la clase del original.
+- **`retraso_min`** (decisión de Pedro): `sim_time` del registro − `sim_time` verdadero de su hecho, en todas las filas escritas. En el escenario L da 7,0, 0,5 y 142,0; en las no escritas, vacío.
+- **La edad se invierte literalmente** (decisión de Pedro): 20 … 90 pasan a 2 … 9, y 99 a 100. Son errores inverosímiles a propósito, material para la limpieza del hito 8.
+- **La cuenta tiene cinco igualdades:** las tres de la especificación; una de recursos (pasan como `bien`); y «registros, por `event_id` distintos, = filas con registro», que es la que pilla un `event_id` repetido (V4). `record` la comprueba al final.
+- **Los esquemas** salen de las ramas de `event_schema`: el payload es anulable, y `record_corrected` es la rama de un evento de paciente con otro tipo, sistema y payload. Llevan título, `description` y `$comment` propios.
+- **`edsim.clinical_record.record` es la función, no el módulo:** el paquete exporta `record` con el nombre de su módulo, como pide «Estructura del código». Quien necesite el módulo usa `importlib.import_module`.
+
+**Valores a mano**
+
+El escenario L y sus dos variantes, recalculados con `python3` sin importar `edsim` (el código completo, en el PR):
+
+- **L:** 7 registros, con las horas de la tabla de la especificación. La cuenta: 6 = 4 + 1 + 1 + 0 y 7 = 4 + 1 + 1 + 1.
+- **El corte:** 6 registros y una `correccion_pendiente`.
+- **El dado:** con el realista, 6 registros y el nivel 3; con el hostil, igual que L.
+
+**Medidas**
+
+- Un log de 14 días de `config/` (55.054 eventos, versión 4):
+  - `record` tarda unos 3,5 s; la comprobación del inicio del log, 0,31 s;
+  - la cuenta cuadra con el realista y con el hostil (iguales salvo `erroneo`): 78 frente a 620 valores erróneos corregidos;
+  - los 55.621 registros del hostil validan contra `registro-v4`;
+  - dos llamadas dan los mismos bytes.
+- Con las tasas realistas, el 66 % de los hechos es `con_despistes`: el reloj del triaje va +2 y el retraso del HIS tiene una tasa de 0,70. Lo había señalado el revisor del plan.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Lo registrado conserva los `event_id` de la verdad | Fallan 10: 9 con el `RuntimeError` de la cuenta (el duplicado y la corrección repiten el id) y el de los recursos | 10 fallan, 57 pasan: los mismos |
+| V2 | Se emite por `event_time` | Fallan 6 (L, libreta, las dos variantes, el retraso y la libreta en CSV) | 6 fallan, 61 pasan: los mismos |
+| V3 | El reloj mueve también `sim_time` | Fallan 7 (L3 en 1.033,2) | 7 fallan, 60 pasan: los mismos (el duplicado en 14,0 y no 12,0; `retraso_min` 9,0 y no 7,0) |
+| V4 | El duplicado conserva el `event_id` del original | Fallan 9, con el `RuntimeError` de la cuenta | 9 fallan, 58 pasan: los mismos (6 ≠ 7, 5 ≠ 6, 1 ≠ 2) |
+| V5 | La corrección apunta al `event_id` de la verdad | Fallan 3 (L, la libreta, el dado) | 3 fallan, 64 pasan: los mismos |
+| V6 | Lo que cae tras el horizonte se escribe | Fallan 3 (la variante del corte, el hecho pendiente, el horizonte exclusivo) | 3 fallan, 64 pasan: los mismos |
+
+Las seis, con el subagente `mutante` en paralelo, sobre `ca5fbe9`.
+
+**Revisión**
+
+`/code-review high main...feat/h7-registro`, diez hallazgos:
+
+- **Corregidos:**
+  - el log de otra ejecución (`dc4b814`);
+  - el `OverflowError` con una z enorme y la clase por lo sorteado (`7b0c502`);
+  - la cuenta y los `campos` mutables (`2782555`);
+  - la cuenta que ningún test descuadraba y el JSON con listas y objetos (`023b325`);
+  - el sobre de `record_corrected` repetido a mano y la frontera abierta a todo `edsim.live` (`e19f958`).
+- **Explicados:**
+  - el ruido de los floats en `retraso_min`: es la definición elegida;
+  - `record_json` repite la regla de `to_json`, y un test lo ata;
+  - validar el log cuesta el 8 % de `record`;
+  - depender de `edsim.live.schemas`, que solo importa el catálogo; la frontera lo vigila.
+
+**Pendiente**
+
+- **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2.
+- **La comparación de las dos revisiones del plan** (la del revisor y la del chat): la cierra el chat.

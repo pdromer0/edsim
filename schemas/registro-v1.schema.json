@@ -1,0 +1,1226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Registros de EDsim, versión 1 del catálogo",
+  "description": "Una línea de registrado.jsonl: lo que el hospital anotó de un evento verdadero, con el sobre del log de eventos. Cada campo del payload puede quedar a null (un campo vacío), y record_corrected es la corrección tardía de un valor erróneo. No se valida contra el catálogo: un registro puede llevar valores erróneos.",
+  "$comment": "Generado con «uv run python -m edsim.clinical_record.schemas» desde la raíz del repositorio; no se edita a mano.",
+  "oneOf": [
+    {
+      "title": "patient_arrived",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "patient_arrived"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "admision"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "patient_registered",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "patient_registered"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "admision"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "triage_started",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "triage_started"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "triaje"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "circuito": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "puerta",
+                    "enfermeria"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "circuito"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "triage_completed",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "triage_completed"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "triaje"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "nivel": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "nivel"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "box_assigned",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "box_assigned"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "box": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "box"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "patient_displaced",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "patient_displaced"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "box": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "desalojado_por": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^EP-[0-9]{6}$",
+                  "maxLength": 9
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "box",
+            "desalojado_por"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "assessment_started",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "assessment_started"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "tipo": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "inicial",
+                    "reevaluacion"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pool": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "medicos"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "box": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tipo",
+            "pool",
+            "box"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "assessment_ended",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "assessment_ended"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "tipo": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "inicial",
+                    "reevaluacion"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "interrumpida": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "tipo",
+            "interrumpida"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "test_ordered",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "test_ordered"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "test_resulted",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "test_resulted"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "lab"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "disposition_decided",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "disposition_decided"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "destino": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "alta",
+                    "ingreso"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "destino"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "patient_departed",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "patient_departed"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "const": "his"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "destino": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "alta",
+                    "ingreso"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "destino"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "staffing_changed",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "staffing_changed"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "null"
+        },
+        "patient_id": {
+          "type": "null"
+        },
+        "source_system": {
+          "const": "rrhh"
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "recurso": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "enfermeria_triaje",
+                    "medicos"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "anterior": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nueva": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "recurso",
+            "anterior",
+            "nueva"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "title": "record_corrected",
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "const": "record_corrected"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "pattern": "^EP-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "patient_id": {
+          "type": "string",
+          "pattern": "^PT-[0-9]{6}$",
+          "maxLength": 9
+        },
+        "source_system": {
+          "enum": [
+            "triaje",
+            "his"
+          ]
+        },
+        "sim_time": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.7976931348623157e+308
+        },
+        "event_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ingest_time": {
+          "type": "null"
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "corrige": {
+              "type": "string",
+              "minLength": 1
+            },
+            "campos": {
+              "type": "object",
+              "properties": {
+                "nivel": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5
+                },
+                "destino": {
+                  "enum": [
+                    "alta",
+                    "ingreso"
+                  ]
+                }
+              },
+              "minProperties": 1,
+              "maxProperties": 1,
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "corrige",
+            "campos"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "run_id",
+        "episode_id",
+        "patient_id",
+        "source_system",
+        "sim_time",
+        "event_time",
+        "recorded_time",
+        "ingest_time",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
