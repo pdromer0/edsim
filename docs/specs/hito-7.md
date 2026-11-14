@@ -642,6 +642,13 @@ Todos son **orientativos**: no hay una fuente que dé las tasas de despiste de u
 
 La 7.2 busca fuentes mejores y cambia lo que haga falta en su plan, con el estado de cada valor. El perfil hostil no busca parecerse a nada: busca que la limpieza del hito 8 tenga trabajo.
 
+**Resultado de la búsqueda de la 7.2 (14 de noviembre de 2026).** No hay fuente mejor para ninguna tasa: **todos los valores de `config/registro_clinico.toml` quedan «orientativo»** y el fichero lo dice, valor a valor. Lo que la búsqueda añadió:
+
+- **Apoyan órdenes de magnitud de los tiempos:** Gordon 2008 (también con sensores pasivos: 1,1 min antes), Ward 2013 (la mediana de la evaluación clínica, 3 min antes tras implantar un HIS) y un estudio de 1994 en urgencias de Indianápolis, donde el 55 % de los relojes difería 1 min o más del UTC.
+- **No apoyan ninguna tasa de olvido, campo vacío, valor erróneo, duplicado ni corrección.** Los duplicados de la literatura (del 5 al 10 % de historias duplicadas) son de identidad del paciente, no de un registro anotado dos veces; y la mala clasificación del triaje (infratriaje y sobretriaje) es criterio clínico, no tecleo.
+- **Límite:** NCBI y PubMed no se podían abrir desde la nube; las cifras vienen de los resúmenes de la búsqueda, no de los artículos.
+- **Con los relojes de arriba**, la clase `con_despistes` de la libreta es sobre todo «este sistema tiene el reloj desajustado»: en 14 días de `config/`, el 66,8 % de lo escrito con el realista y el 100 % con el hostil.
+
 ## Estructura del código
 
 ```
@@ -855,13 +862,15 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 
 ## Fuentes y para aprender más
 
-Consultadas el 13 de noviembre de 2026. Las de «para aprender más» están en cada pieza.
+Consultadas el 13 de noviembre de 2026, y las de la 7.2 el 14. Las de «para aprender más» están en cada pieza.
 
 | Tema | Fuente | Qué se tomó |
 | --- | --- | --- |
 | Exactitud de las horas tecleadas | [Gordon, Flottemesch y Asplin, *Annals of Emergency Medicine* 2008](https://pmc.ncbi.nlm.nih.gov/articles/PMC4361868) | Mediana 1,8 min antes de lo observado; rango intercuartílico de 30,7 min antes a 2,9 min después |
 | Calidad de las horas tras implantar un HIS | [Ward et al., *American Journal of Emergency Medicine* 2013](https://pubmed.ncbi.nlm.nih.gov/23707000) | Discrepancias de más de 10 min en la decisión de destino: del 29,3 % al 16,1 % |
 | Efecto de los errores en los indicadores | [Ward, Self y Froehle, *Academic Emergency Medicine* 2015](https://pmc.ncbi.nlm.nih.gov/articles/PMC4560638) | Cuatro tipos de error al 2, 4 y 7 %; los indicadores de intervalos cortos, los más sensibles |
+| Desfase de los relojes clínicos | Estudio de 1994 en cinco urgencias y tres servicios de emergencias de Indianápolis, «Does anybody really know what time it is? Does anybody really care?» (solo su resumen; 7.2) | El 55 % de los relojes difería 1 min o más del UTC |
+| Horas con sensores pasivos | Gordon et al. 2008, como arriba (7.2) | Con sensores pasivos, la mediana sale 1,1 min antes de lo observado |
 | Historias duplicadas | [McCoy et al., *BMJ Quality & Safety* 2013](https://qualitysafety.bmj.com/content/22/3/219) | Orden de magnitud de las coincidencias de identidad; solo para «Para versiones posteriores» |
 | Claves únicas en TimescaleDB | [Documentación de TimescaleDB (Tiger Data)](https://www.tigerdata.com/docs/learn/data-model/primary-keys-time-and-uniqueness) | Toda clave única incluye la columna de partición |
 | Imagen de TimescaleDB | [Docker Hub](https://hub.docker.com/r/timescale/timescaledb) | Etiquetas `X.Y.Z-pgNN`; sin `latest` |

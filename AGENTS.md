@@ -66,6 +66,8 @@ uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin
 uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
 uv run edsim almacen preparar    # aplica las migraciones de bronce (Postgres levantado)
 uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa ejecución; sin --run, hasta Ctrl+C
+uv run edsim registro validar    # comprueba config/registro_clinico.toml: los tres perfiles del registro clínico
+uv run edsim registro generar RUN_ID --perfil realista  # escribe lo registrado en registros/ de la ejecución, con su libreta; no toca la verdad
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
