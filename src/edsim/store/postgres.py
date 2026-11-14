@@ -25,7 +25,7 @@ from types import ModuleType
 
 from edsim.store.bronze import EventRow, RejectedRow, RunRow
 from edsim.store.consumer import RunProgress, StoreDataError
-from edsim.store.migrations import Migration, apply_migrations
+from edsim.store.migrations import Migration, MigrationError, apply_migrations
 
 DEFAULT_URL = "postgresql://edsim:edsim@localhost:5432/edsim"
 """The Postgres of ``compose.yaml``."""
@@ -122,16 +122,33 @@ def connect(
     return PostgresConnection(connection)
 
 
+def _lost_connection(psycopg: ModuleType) -> tuple[type[BaseException], ...]:
+    return (psycopg.OperationalError, psycopg.InterfaceError)
+
+
+def _detail(error: BaseException) -> str:
+    return str(error).strip()
+
+
 def prepare(url: str = DEFAULT_URL) -> list[Migration]:
     """Apply the migrations that are missing in the database at ``url``; the ones applied.
 
     Raises:
         MissingPostgresExtraError: If the ``postgres`` extra is not installed.
-        DatabaseUnavailableError: If Postgres does not answer.
-        edsim.store.migrations.MigrationError: If the files and the database disagree.
+        DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
+        edsim.store.migrations.MigrationError: If the files and the database disagree, or
+            Postgres refuses a migration (a Postgres without TimescaleDB, for instance).
     """
+    psycopg = import_psycopg()
     with connect(url) as connection:
-        return apply_migrations(connection)
+        try:
+            return apply_migrations(connection)
+        except _lost_connection(psycopg) as error:
+            raise DatabaseUnavailableError(
+                url, f"se perdió la conexión: {_detail(error)}"
+            ) from error
+        except psycopg.Error as error:
+            raise MigrationError(f"Postgres rechazó la migración: {_detail(error)}") from error
 
 
 INSERT_EVENTS = """\
@@ -243,6 +260,22 @@ def read_bronze_lines(url: str, run_id: str) -> list[str]:
 
 @contextmanager
 def bronze_store(url: str = DEFAULT_URL) -> Iterator[PostgresBronze]:
-    """A ``PostgresBronze`` on a new connection to ``url``, closed at the end."""
+    """A ``PostgresBronze`` on a new connection to ``url``, closed at the end.
+
+    The errors of Postgres inside the block become those the CLI reports with code 1.
+
+    Raises:
+        MissingPostgresExtraError: If the ``postgres`` extra is not installed.
+        DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
+        edsim.store.migrations.MigrationError: If the tables of bronze are missing.
+    """
+    psycopg = import_psycopg()
     with connect(url) as connection:
-        yield PostgresBronze(connection)
+        try:
+            yield PostgresBronze(connection)
+        except _lost_connection(psycopg) as error:
+            raise DatabaseUnavailableError(
+                url, f"se perdió la conexión: {_detail(error)}"
+            ) from error
+        except psycopg.ProgrammingError as error:
+            raise MigrationError(f"{_detail(error)}; ¿falta «edsim almacen preparar»?") from error
