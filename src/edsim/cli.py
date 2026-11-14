@@ -4,8 +4,9 @@ Options are in Spanish, as in the design; the code behind them is in English.
 The CLI is a thin layer: it parses arguments, runs the package (``compare_mm1``,
 ``simulate_arrivals``, ``validate_arrivals``, ``simulate_run``,
 ``validate_engine``, ``validate_profiles``, ``simulate_replicas``,
-``sensitivity``, and ``edsim.live`` for ``directo``) and hands the results to the
-report modules for the tables, the CSV files, the plots and the lines of a live run.
+``sensitivity``, ``edsim.live`` for ``directo`` and ``edsim.store`` for ``almacen``)
+and hands the results to the report modules for the tables, the CSV files, the
+plots and the lines of a live run.
 
 Exit codes: 0 if all goes well; 1 if ``llegadas validar``, ``motor validar``
 or ``perfiles validar`` runs and some check fails, ``motor simular`` finds a
@@ -21,9 +22,17 @@ by its horizon or by an order ``parar``, and if ``preparar`` or ``control`` do
 their job; 130 with Ctrl+C, after publishing the end; 1 if a message is not
 delivered, the topics are missing or differ, the broker does not answer or the
 ``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka.
+
+``almacen`` (docs/specs/hito-7.md, "CLI"): 0 if ``preparar`` applies what is missing, if
+``consumir`` stops with Ctrl+C or, with ``--run``, if bronze holds the whole run; 1 if
+``--run`` times out or is stopped with Ctrl+C before (saying how many events are missing),
+if Postgres or the broker do not answer, a topic does not carry the broker's timestamp, the
+migrations and the database disagree or an extra is missing; 2 for usage errors, before
+connecting.
 """
 
 import argparse
+import signal
 import sys
 from collections.abc import Callable
 from importlib.metadata import version
@@ -107,6 +116,7 @@ from edsim.live.control import (
 from edsim.live.directo import MemoryLiveSink, SinkError
 from edsim.live.kafka import (
     ADMIN_CLIENT,
+    BRONZE_CLIENT,
     CONNECT_TIMEOUT,
     MISSING_EXTRA_MESSAGE,
     BrokerUnavailableError,
@@ -117,6 +127,7 @@ from edsim.live.kafka import (
     MissingTopicsError,
     OrderNotDeliveredError,
     TopicMismatchError,
+    connect_bronze_consumer,
     connect_producer,
     ensure_topics,
     pending_messages,
@@ -137,6 +148,18 @@ from edsim.profiles.validation import (
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
 from edsim.runs import simulate_run, validate_run_id
+from edsim.store.bronze import TimestampTypeError
+from edsim.store.consumer import RUN_TIMEOUT, run_consumer
+from edsim.store.migrations import MigrationError
+from edsim.store.postgres import (
+    DEFAULT_URL,
+    DatabaseUnavailableError,
+    MissingPostgresExtraError,
+    bronze_store,
+    prepare,
+    safe_url,
+)
+from edsim.store.report import format_consume_end, format_migrations, format_progress
 
 DEFAULT_RHOS = "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95"
 CSV_NAME = "barrido.csv"
@@ -1047,6 +1070,106 @@ def _prepare_topics(args: argparse.Namespace, parser: argparse.ArgumentParser) -
     return 0
 
 
+def parse_postgres_url(text: str) -> str:
+    """The URL of Postgres, ``postgresql://usuario:contraseña@host:puerto/base``."""
+    if not text.startswith(("postgresql://", "postgres://")) or text.endswith("://"):
+        raise argparse.ArgumentTypeError(
+            f"«{safe_url(text)}» no es una URL de Postgres, como {DEFAULT_URL}"
+        )
+    return text
+
+
+def parse_seconds(text: str) -> float:
+    """A positive number of seconds."""
+    try:
+        seconds = float(text)
+    except ValueError:
+        seconds = float("nan")
+    if not seconds > 0 or seconds == float("inf"):
+        raise argparse.ArgumentTypeError(
+            f"los segundos deben ser un número positivo; se recibió «{text}»"
+        )
+    return seconds
+
+
+STORE_ERRORS = (
+    MissingPostgresExtraError,
+    DatabaseUnavailableError,
+    MigrationError,
+    TimestampTypeError,
+)
+"""What ends an ``almacen`` command with code 1, besides those of Kafka."""
+
+
+def _store_failure(error: Exception) -> int:
+    """Print what went wrong with Postgres or the data, in Spanish, and return code 1."""
+    if isinstance(error, DatabaseUnavailableError):
+        text = f"Error: {error}. ¿Está levantado? docker compose up --wait"
+    elif isinstance(error, MissingPostgresExtraError):
+        text = str(error)
+    elif isinstance(error, MigrationError):
+        text = f"Error en las migraciones: {error}"
+    else:
+        text = f"Error: {error}"
+    print(text, file=sys.stderr, flush=True)
+    return 1
+
+
+def _store_prepare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        applied = prepare(args.postgres)
+    except STORE_ERRORS as error:
+        return _store_failure(error)
+    print(format_migrations(args.postgres, applied))
+    return 0
+
+
+def _store_consume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.timeout is not None and args.run is None:
+        parser.error("--timeout es el límite de --run: sin --run, el consumidor sigue hasta Ctrl+C")
+    timeout = RUN_TIMEOUT if args.timeout is None else args.timeout
+    watch = _broker_watch(args, parser)
+    stop = {"asked": False}
+
+    def ask_to_stop(signum, frame) -> None:
+        # Between two batches: the batch in progress is saved and committed.
+        stop["asked"] = True
+
+    previous = signal.signal(signal.SIGINT, ask_to_stop)
+    try:
+        # Only check: creating the topics is for `edsim directo preparar`.
+        ensure_topics(
+            args.kafka,
+            TOPICS,
+            create=False,
+            connect_timeout=CONNECT_TIMEOUT,
+            client_config=watch.config(ADMIN_CLIENT),
+        )
+        with bronze_store(args.postgres) as store:
+            consumer = connect_bronze_consumer(args.kafka, watch=watch)
+            try:
+                report = run_consumer(
+                    consumer,
+                    store,
+                    run_id=args.run,
+                    timeout=timeout if args.run is not None else None,
+                    should_stop=lambda: stop["asked"],
+                    on_progress=lambda report: print(format_progress(report), flush=True),
+                    on_error=lambda error: watch.on_error(BRONZE_CLIENT, error),
+                )
+            finally:
+                consumer.close()
+    except KAFKA_ERRORS as error:
+        return _kafka_failure(error, args.kafka)
+    except STORE_ERRORS as error:
+        return _store_failure(error)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        _kafka_summary(watch)
+    print(format_consume_end(report, args.run), flush=True)
+    return 0 if args.run is None or report.complete else 1
+
+
 def _control(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.velocidad is not None:
         command = Command(SPEED, args.velocidad)
@@ -1200,6 +1323,16 @@ def _add_bootstrap_option(parser: argparse.ArgumentParser) -> argparse.Action:
         default=DEFAULT_BOOTSTRAP,
         metavar="HOST:PUERTO",
         help="dirección del broker de Kafka (por defecto: %(default)s)",
+    )
+
+
+def _add_postgres_option(parser: argparse.ArgumentParser) -> argparse.Action:
+    return parser.add_argument(
+        "--postgres",
+        type=parse_postgres_url,
+        default=DEFAULT_URL,
+        metavar="URL",
+        help="URL de Postgres (por defecto: %(default)s, la de compose.yaml)",
     )
 
 
@@ -1681,6 +1814,49 @@ def build_parser() -> argparse.ArgumentParser:
     _add_bootstrap_option(control)
     _add_kafka_log_option(control)
     control.set_defaults(handler=_control, subparser=control)
+
+    store = commands.add_parser(
+        "almacen",
+        help="almacén: Postgres y el consumidor de Kafka a la capa bronce",
+        description="La capa bronce del hito 7: lo que llega de Kafka, guardado en Postgres "
+        "tal cual (docs/specs/hito-7.md).",
+    )
+    store_actions = store.add_subparsers(dest="accion", required=True, metavar="accion")
+
+    store_prepare = store_actions.add_parser(
+        "preparar",
+        help="aplica las migraciones que falten",
+        description="Aplica en Postgres las migraciones de edsim/store/sql/ que falten, cada "
+        "una en su transacción, e imprime cuáles. Termina con código 1 si Postgres no "
+        "responde o la base de datos tiene una migración que este EDsim no conoce.",
+    )
+    _add_postgres_option(store_prepare)
+    store_prepare.set_defaults(handler=_store_prepare, subparser=store_prepare)
+
+    store_consume = store_actions.add_parser(
+        "consumir",
+        help="lleva lo publicado en Kafka a la tabla bronce",
+        description="El consumidor de bronce (grupo edsim-bronce): lee lotes de "
+        "ed.patient.events, ed.resource.events y ed.runs, los guarda en una transacción y "
+        "después confirma los offsets. Sin --run, sigue hasta Ctrl+C; con --run, hasta que "
+        "bronce tiene toda la última publicación de la ejecución o vence --timeout.",
+    )
+    _add_bootstrap_option(store_consume)
+    _add_postgres_option(store_consume)
+    store_consume.add_argument(
+        "--run",
+        default=None,
+        metavar="RUN_ID",
+        help="para cuando bronce tiene toda la última publicación de esta ejecución",
+    )
+    store_consume.add_argument(
+        "--timeout",
+        type=parse_seconds,
+        default=None,
+        metavar="S",
+        help=f"con --run, segundos de espera (por defecto: {RUN_TIMEOUT:g})",
+    )
+    store_consume.set_defaults(handler=_store_consume, subparser=store_consume)
 
     return parser
 

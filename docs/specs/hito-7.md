@@ -219,7 +219,7 @@ Kafka es como el correo: transporta mensajes, pero no es un archivo donde buscar
 
 ### En EDsim
 
-- `compose.yaml` añade el servicio `postgres` con la imagen `timescale/timescaledb` en una etiqueta exacta (`X.Y.Z-pg17`), fijada y comprobada en la 7.5, como Kafka en la 6.1 (decisión 62). La imagen no tiene etiqueta `latest` a propósito.
+- `compose.yaml` añade el servicio `postgres` con la imagen `timescale/timescaledb` en una etiqueta exacta, fijada y comprobada en la 7.5 como Kafka en la 6.1 (decisión 62): `2.31.0-pg17`, con Postgres 17.11. La imagen no tiene etiqueta `latest` a propósito.
 - La tabla `bronce.eventos` es una hypertable partida por `ingest_time`, la hora de llegada: la pone Kafka, siempre existe y su reloj es fiable. Partirla por `event_time` dejaría que el reloj desajustado de la pieza 1 decidiera dónde se guarda cada registro.
 - **La regla de Timescale:** toda clave única de una hypertable tiene que incluir la columna por la que se parte. Por eso la clave es (`event_id`, `ingest_time`) y no `event_id` solo (pieza 4).
 
@@ -498,7 +498,7 @@ lab = 0
 
 ```yaml
   postgres:
-    image: timescale/timescaledb:X.Y.Z-pg17   # versión exacta fijada en la 7.5
+    image: timescale/timescaledb:2.31.0-pg17   # versión exacta fijada en la 7.5
     environment:
       POSTGRES_USER: edsim
       POSTGRES_PASSWORD: edsim      # solo local; el repositorio no guarda secretos reales
@@ -507,7 +507,8 @@ lab = 0
       - "127.0.0.1:5432:5432"
     volumes:
       - edsim-postgres:/var/lib/postgresql/data
-    healthcheck: …                  # pg_isready
+    healthcheck:                    # por TCP: sin -h, daría por sano el servidor temporal del init
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U edsim -d edsim"]
 volumes:
   edsim-postgres:
 ```
@@ -519,6 +520,7 @@ volumes:
 ### Tablas (migración `001_bronce.sql`)
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS timescaledb;   -- añadida en la 7.5
 CREATE SCHEMA IF NOT EXISTS bronce;
 
 CREATE TABLE bronce.eventos (
@@ -559,7 +561,7 @@ CREATE TABLE bronce.rechazados (    -- mensajes que no se pueden leer
 );
 ```
 
-Los nombres de las columnas del sobre son los del mensaje (el contrato); los de bronce, en español. El plan de la 7.5 confirma el DDL con la versión fijada de TimescaleDB (la sintaxis de `create_hypertable` cambió entre versiones).
+Los nombres de las columnas del sobre son los del mensaje (el contrato); los de bronce, en español. La 7.5 confirmó el DDL con la versión fijada (TimescaleDB 2.31.0): `by_range` funciona, y una clave única sin `ingest_time` hace fallar `create_hypertable` («cannot create a unique index without the column "ingest_time"»). La migración empieza con `CREATE EXTENSION IF NOT EXISTS timescaledb`, que no hace nada en las bases de datos de la imagen (la trae `template1`) y la crea en cualquier otra.
 
 La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMARY KEY, nombre text NOT NULL, aplicada timestamptz NOT NULL)`.
 
@@ -585,7 +587,7 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 
 **Lógica en el paquete:** `edsim.store` (`postgres.py` importa `psycopg`, solo dentro de las funciones que conectan; `bronze.py` convierte un mensaje en una fila sin conectar a nada; `migrations.py` aplica los ficheros; `consumer.py` es el bucle, con el consumidor y la conexión inyectados, para probarlo con un Kafka y un Postgres falsos). La CLI solo construye los clientes reales e imprime.
 
-**Leer lo registrado de bronce:** `read_bronze_records(dsn, run_id) -> list[Record]` reconstruye los registros desde `valor`, uno por `event_id` (si se publicó dos veces, el mismo registro), en orden de `sim_time` y `event_id`. Es lo que usa la comparación con `--postgres`.
+**Leer lo registrado de bronce:** `read_bronze_records(dsn, run_id) -> list[Record]` reconstruye los registros desde `valor`, uno por `event_id` (si se publicó dos veces, el mismo registro), en orden de `sim_time` y `event_id`. Es lo que usa la comparación con `--postgres`. La 7.5 deja `read_bronze_lines(url, run_id) -> list[str]` en `edsim.store.postgres`, con los `valor` tal cual y en ese orden, porque `Record` llega con la 7.1. `read_bronze_records` es su envoltorio y llega con la 7.3, junto con `registro comparar --postgres`.
 
 ## Especificación: la comparación
 
@@ -665,7 +667,8 @@ edsim/
 │   │   ├── migrations.py
 │   │   ├── bronze.py            # mensaje → fila, sin conectar
 │   │   ├── consumer.py          # el bucle, con clientes inyectados
-│   │   └── postgres.py          # importa psycopg solo al conectar
+│   │   ├── postgres.py          # importa psycopg solo al conectar
+│   │   └── report.py            # textos de edsim almacen
 │   └── cli.py                   # grupos registro y almacen; opciones del directo (7.2 a 7.5)
 ├── tests/                       # rápidos y lentos, sin Docker
 ├── tests_integracion/           # contra Kafka y Postgres reales (7.4, 7.5)
@@ -696,7 +699,7 @@ No hay test lento de «las tasas salen como dice el fichero»: con el dado, el t
 ### Integración, contra Kafka y Postgres reales
 
 - **El test de punta a punta del hito:** reemitir con el perfil **limpio** y consumir: lo que hay en bronce coincide con la verdad (salvo los identificadores, con la libreta). Si la 7.5 se fusiona antes que la 7.4, la 7.5 lo hace con la verdad publicada sin registro y la 7.4 añade el caso limpio.
-- Con el perfil **realista**, la cuenta cuadra con lo leído de bronce (`read_bronze_records` y la comparación).
+- Con el perfil **realista**, la cuenta cuadra con lo leído de bronce (`read_bronze_records` y la comparación). Lo añade la 7.4 (reparto del chat del 14-11-2026).
 - **Un solo test** de parar y relanzar el consumidor: no duplica ni pierde nada. El rápido prueba nuestra lógica; este, que Kafka recuerda de verdad dónde nos quedamos.
 - Cada sesión de tests crea su propia base de datos (`edsim_test_<8 hex>`) y la borra al acabar: los datos de Pedro no se tocan.
 - En el CI, el job `tests-kafka` pasa a llamarse `tests-integracion` y levanta Kafka y Postgres desde el mismo `compose.yaml`; sigue siendo obligatorio. **Al fusionar la 7.5, Pedro cambia el nombre del check obligatorio en la protección de `main`**; si no, ningún PR podrá fusionarse.
@@ -761,9 +764,9 @@ Dieciséis decisiones candidatas, tomadas con Pedro una a una en la sesión conc
 | 7.0 (#114) | Proceso: las siete mejoras de H7-15 (cierra #110). Pedro instala la app de GitHub para `@claude` | — | Local | Opus, alto | `chore/h7-proceso` | No |
 | 7.1 (#115) | Registro clínico: `Record`, los ocho despistes con el dado inyectable, la emisión, la renumeración, el corte, la libreta, la cuenta y los esquemas `registro-v*`. Sin perfiles. Primera prueba del revisor del plan | A | Nube | Opus, alto | `feat/h7-registro` | **Sí** |
 | 7.2 (#116) | Perfiles en `config/registro_clinico.toml` con su estado y fuentes, carga y validación, el flujo propio, `record_run` y `edsim registro validar` y `generar` | A | Nube | Sonnet, alto | `feat/h7-perfiles-registro` | No |
-| 7.3 (#117) | Comparación: conciliación, retraso e indicadores ingenuos; `edsim registro comparar` (sin `--postgres`, que llega con la 7.5) | A | Nube | Sonnet, alto | `feat/h7-comparacion` | No |
+| 7.3 (#117) | Comparación: conciliación, retraso e indicadores ingenuos; `edsim registro comparar`, también con `--postgres` y `read_bronze_records` sobre el `read_bronze_lines` de la 7.5 (reparto del chat, 14-11-2026) | A | Nube | Sonnet, alto | `feat/h7-comparacion` | No |
 | 7.4 (#118) | Directo y reemisión con `--registro`: la sala de espera, el censo, el `inicio` con registro y «directo = lotes» de lo registrado | A | Local (Kafka) | Opus, alto | `feat/h7-directo-registro` | **Sí** |
-| 7.5 (#119) | Postgres y consumidor: compose (cierra #91), extra `postgres`, migraciones, `bronce`, el consumidor, `edsim almacen preparar` y `consumir`, `read_bronze_records`, `registro comparar --postgres` y el job `tests-integracion` | B | Local (Docker) | Opus, alto | `feat/h7-almacen` | **Sí** |
+| 7.5 (#119) | Postgres y consumidor: compose (cierra #91), extra `postgres`, migraciones, `bronce`, el consumidor, `edsim almacen preparar` y `consumir`, `read_bronze_lines` y el job `tests-integracion` | B | Local (Docker) | Opus, alto | `feat/h7-almacen` | **Sí** |
 | 7.6 (#120) | Notebook `07_persistencia.ipynb`: el escenario de Lucía, los tres perfiles, la tabla «verdad frente a registrado», consultas SQL a bronce y las dos clases de duplicados; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h7-notebook` | No |
 | 7.7 (#121) | Cierre con `/cerrar-hito`: ADR 0084 a 0099, diario, `docs/diseno.md` (el nombre nuevo, las capas, el registro de decisiones y la hoja de ruta), balance, Release y `v0.7-hito7` | — | Local | Opus, alto | `docs/h7-cierre` | No |
 
@@ -776,7 +779,7 @@ Dieciséis decisiones candidatas, tomadas con Pedro una a una en la sesión conc
 | 7.2 | 7.1 | Los perfiles alimentan el mecanismo |
 | 7.3 | 7.2 | La función solo necesita la 7.1, pero el comando lee lo que escribe `generar` |
 | 7.4 | 7.2 | `--registro PERFIL` necesita los perfiles; no necesita la 7.3 |
-| 7.5 | 7.0 | Se prueba con la verdad que ya publica el directo; `registro comparar --postgres`, cuando esté la 7.3 (si no, va en la 7.3 o la 7.4, la que se fusione después) |
+| 7.5 | 7.0 | Se prueba con la verdad que ya publica el directo; `registro comparar --postgres` va en la 7.3, sobre lo que deja la 7.5 |
 | 7.6 | 7.3, 7.4, 7.5 | Junta todo |
 | 7.7 | Todas | |
 
@@ -1029,3 +1032,104 @@ Las seis, con el subagente `mutante` en paralelo, sobre `ca5fbe9`.
 
 - **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2.
 - **La comparación de las dos revisiones del plan** (la del revisor y la del chat): la cierra el chat.
+
+### Tarea 7.5: Postgres con TimescaleDB y consumidor de bronce
+
+**Qué se hizo**
+
+Issue #119, rama `feat/h7-almacen`, Claude Code; cierra también el #91 (la consola en `127.0.0.1:8080`). Primera tarea de la pista B, en paralelo con la 7.1, que se fusionó antes: la rama trae `main` con un merge. Los pasos 1 a 9, en local; el merge, las versiones incorrectas, la revisión y la N3, en la nube (ver «Proceso»). Un commit por paso, más los de las correcciones de la revisión:
+
+- **`compose.yaml`**: `postgres` con `timescale/timescaledb:2.31.0-pg17` (Postgres 17.11), el volumen `edsim-postgres`, solo en `127.0.0.1:5432` y el healthcheck por TCP (`pg_isready -h 127.0.0.1`); la consola, en `127.0.0.1:8080`.
+- **El extra `postgres`** (`psycopg[binary]>=3.3.9,<3.4`). El test de frontera pasa a una tabla de clientes opcionales con su único módulo: `confluent_kafka` en `live/kafka.py` y `psycopg` en `store/postgres.py`, los dos dentro de funciones.
+- **`edsim.store`**:
+  - `migrations.py` y `sql/001_bronce.sql`: el aplicador y la migración de las tres tablas;
+  - `bronze.py`: de un mensaje de Kafka a una fila de `eventos`, `ejecuciones` o `rechazados`, sin conectar a nada;
+  - `consumer.py`: el bucle, guardar y después apuntar, con la red de seguridad;
+  - `postgres.py`: la conexión, `PostgresBronze`, `prepare` y `read_bronze_lines`;
+  - `report.py`: los textos de la CLI.
+- **`KafkaSink.start`** espera (`flush`) a que el broker confirme el `inicio` antes de mandar el censo, y falla si no llega.
+- **La CLI**: `edsim almacen preparar` y `edsim almacen consumir [--run RUN_ID] [--timeout S]`.
+- **Integración**: la base de datos de cada sesión (`edsim_test_<8 hex>`), cuatro tests en `tests_integracion/test_almacen.py`, `scripts/tests-integracion.sh` con los dos servicios y el job `tests-kafka` renombrado a `tests-integracion` (conserva `needs: cambios` y su `if`).
+
+**Decisiones del diff**
+
+- **La imagen es `2.31.0-pg17`**, no la `2.32.0-pg17` de dos días antes, como la consola v3.14.0 en la 6.1. **`001_bronce.sql` empieza con `CREATE EXTENSION IF NOT EXISTS timescaledb`**: la base de datos de los tests se crea con `CREATE DATABASE` y no la trae.
+- **`bronze.py` no valida con el catálogo:** lo registrado tiene campos a `null` y `record_corrected`. Exige solo las claves que llenan columnas, con sus tipos, y deja las demás en `valor`. Manda a `rechazados` todo lo que se sabe que rompe el `INSERT` (un entero fuera de `integer`, NaN e infinito, NUL, sustitutos sueltos, UTF-8 roto, horas sin zona), porque un mensaje así bloquearía el consumidor: releería el mismo lote para siempre.
+- **La red de seguridad**, para lo que nadie previó: si el `INSERT` del lote falla por un dato, el lote se repite fila a fila con un `SAVEPOINT` por fila, y solo la que falla va a `rechazados`, con el mensaje de Postgres. Un error que no es de datos se propaga sin confirmar.
+- **Se inyecta un almacén, no la conexión:** las transacciones, los savepoints y la red viven en `consumer.py`, sobre las primitivas de `PostgresBronze`, y se prueban en rápidos con `tests/fake_store.py`. La integración prueba lo que el falso solo imita: `ON CONFLICT`, su recuento y el error de Postgres.
+- **`--run` cuenta en bronce, desde el último `inicio`:** así termina un consumidor relanzado, que no vuelve a ver lo ya confirmado, y no lo engaña una publicación anterior de la misma ejecución. Por eso el `inicio` tiene que llegar antes que el censo (el `flush`). Y la da por completa solo con el consumidor al día, cuando el último `consume` volvió vacío: una publicación nueva puede estar aún en Kafka (ajuste de la revisión del PR).
+- **`read_bronze_lines`** en lugar de `read_bronze_records`: `Record` era de la 7.1, sin fusionar cuando se planeó la 7.5.
+- **El grupo de la integración es único** (`edsim-bronce-test-<8 hex>`): con `edsim-bronce`, un test movería los offsets del consumidor de Pedro. Por eso la integración llama a las funciones y no a `edsim almacen consumir`, que se prueba en rápidos con dobles y Pedro comprueba a mano.
+- **El extremo a extremo y el de parar y relanzar son un solo test**, publicado con `edsim directo lanzar --velocidad max`: la primera pasada para cuando bronce tiene algo de la ejecución, y el test exige 0 < guardados < publicados antes de relanzar, para no pasar vacío.
+
+**Valores a mano**
+
+Recalculados con `python3` sin importar `edsim` (el código, en el plan y en el PR):
+
+- La marca 1.767.225.600.123 ms es `2026-01-01T00:00:00.123+00:00`.
+- `"2026-01-05T12:19:01.200+01:00"` es 11:19:01.200 en UTC; sin zona, se rechaza.
+- La caída entre guardar y apuntar (7 mensajes, lotes de 3, caída al confirmar el lote 2): 7 filas, 3 repetidos ignorados y ninguno perdido. Apuntando antes (V13), 4 filas, y se pierden los mensajes 3, 4 y 5.
+
+**Medidas**
+
+- El job de integración antes: `tests-kafka`, 1:30 (CI de `main`, `cdde0a4`). Después, `tests-integracion`: 1:46 (`7268d1b`), con 28 tests en 60 s; el script, arranque 0:32, pytest 1:04 y total 1:37.
+- En local, `scripts/tests-integracion.sh` antes del cambio: 1:16. Después no se midió en local (ver «Proceso»).
+- N3 (`scripts/tests-completos.sh`, en la nube): 16:18 en verde: lint 0:01, formato 0:00, núcleo 4.184 tests en 11:19 (con xdist), app 316 en 3:45 y notebooks 6 en 1:13.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V13 | Confirmar antes de guardar | Fallan 2: el orden de las llamadas y la caída (3 filas en vez de 6) | 3 fallan, 97 pasan: los 2 y `…un_error_que_no_es_de_datos_se_propaga_sin_confirmar`, que también ve un commit que no debía existir |
+| V14 | Clave única por las coordenadas de Kafka | A mano: `create_hypertable` falla, porque Timescale exige la columna de partición en toda clave única | Falla así (paso 1, a mano) |
+| V15 | `ingest_time` = hora de recepción | Fallan el de la marca de `bronze.py` y el de la fila guardada del bucle | 43 fallan: los 2, todos los que comparan `ingest_time` (33 de `bronze.py`, entre ellos los 30 casos de `rechazados`) y los de `--run`, que vencen el `timeout` porque los eventos quedan antes del `inicio`. La predicción solo contaba los tests escritos para pillarla |
+| V16 | Aceptar `CreateTime` | Fallan el del tipo de marca de `bronze.py` y el del bucle | 4 fallan, 78 pasan: los 2, `…la_marca_se_comprueba_tambien_en_lo_que_se_rechazaria` y el de la CLI con una marca que no es del broker, que con el tope falla con `RunawayLoop` en 11 s (sin él, giraba sin fin: ver «Proceso») |
+| V17 | Sin el límite de `integer` en `schema_version` | Falla solo el caso de 2³¹ | 1 falla (`[value10-schema_version]`), 63 pasan |
+| V18 | `--run` cuenta en memoria | Falla solo «relanzar con `--run` termina» | 2 fallan, 32 pasan: el predicho y `…cuenta_desde_la_ultima_publicacion`, porque los `event_id` de las dos publicaciones se solapan y el recuento en memoria da 3 = 3 |
+| V19 | El aplicador no registra la migración | Fallan 3 | 3 fallan, 27 pasan: los mismos |
+| V20 | `tests-integracion` sin `needs`/`if` | No es un test | El diff de `ci.yml` los conserva, y en el CI del PR el job corrió después de `cambios` y pasó |
+| V21 | Sin la red de seguridad | Falla el de la fila que Postgres no acepta | 1 falla, 33 pasan: el mismo |
+
+Las rápidas, con el subagente `mutante` en paralelo, sobre `5b8fef4`, el merge de `main`; V16, repetida sobre `bd6457f`, el commit del tope.
+
+**Revisión**
+
+`/code-review high` contra `origin/main`, diez hallazgos:
+
+- **Corregidos:**
+  - `start` ignoraba lo que devolvía el `flush`: con el `inicio` aún pendiente, el censo seguía (`99e51b9`);
+  - `tests-integracion.sh` bajaba con `down` un Kafka que ya estaba en marcha si Postgres no lo estaba (`ace600e`);
+  - los errores de Postgres a mitad de camino salían como una traza de Python (`f914b5f`);
+  - `safe_url` no tapaba un `password=` en la consulta (`4cb0a5b`);
+  - la primera pasada del test de integración podía guardar la ejecución entera antes de parar, y `dataclasses.replace` en lugar de un ayudante (`9f9f732`).
+- **Encontrado al probar V16, fuera de la revisión:** con V16, un test de la CLI no terminaba nunca (`bd6457f`, ver «Proceso»). El consumidor falso corta ahora un bucle que no para (`RunawayLoop` tras 10.000 llamadas a `consume`) y, sin reloj, espera 1 ms con un lote vacío, como el de verdad espera su `timeout`.
+- **Explicados:**
+  - `progress` en cada vuelta del bucle: cuesta un recuento por lote, pero es lo que hace terminar un `--run` cuando parte de la ejecución la guarda otro consumidor del mismo grupo;
+  - `insert_rejected` fuera de un savepoint en la red: no hay nada que lo haga fallar, porque `valor` y `motivo` ya llegan sin NUL ni sustitutos;
+  - `read_bronze_lines` devuelve la primera publicación y `--run` cuenta la última: es la decisión del plan; la 7.3 decide qué lee `registro comparar --postgres`;
+  - Ctrl+C mientras se conecta espera a los timeouts de conexión, pero no tapa el error;
+  - el error de `commit` de Kafka sigue saliendo con su traza (código 1), como decidió el plan: traducirlo pediría importar `confluent_kafka` fuera de `live/kafka.py`.
+
+**Ajustes de la revisión del PR**
+
+Codex encontró dos fallos, los dos ciertos (análisis del chat en el PR). Un commit por arreglo, con el test escrito antes y ejecutado contra el código sin arreglar:
+
+| Hallazgo | Predicción del test sin el arreglo | Observado | Arreglo |
+| --- | --- | --- | --- |
+| `--run` daba por completa una publicación vieja: miraba `progress` antes del primer `consume`, así que con la publicación 1 completa en bronce y la 2 en Kafka terminaba sin leerla | Termina sin llamar a `consume` | `assert 0 == 2` en `consumer.consumes`: termina con 0 llamadas. Con el arreglo, guarda la 2 (5 filas: el `inicio`, 3 eventos y el `fin`) en dos llamadas, la segunda vacía | `progress` tras cada `consume`; completa solo si además ese `consume` volvió vacío (`6345783`) |
+| Un JSON muy anidado lanzaba `RecursionError`, que no es `ValueError`, se escapaba de `to_row` y bloqueaba la partición | Con 1.100 niveles falla `_check_strings`; con 100.000, ya `json.loads` (comprobado antes con `python3`) | Los dos con `RecursionError`, en `bronze.py:233` y en el decodificador de `json`. Con el arreglo, los dos van a `rechazados`; de 900 a 1.100 niveles no se escapa nada (hasta 995, fila de `eventos`; desde 1.000, rechazo) | Los dos sitios convierten `RecursionError` en `_Unreadable`, con el motivo «JSON demasiado anidado» (`690f6ac`) |
+
+Una sola N3 tras los dos: 13:36 en verde (lint 0:00, formato 0:00, núcleo 4.187 tests en 8:17 con xdist, app 316 en 4:01 y notebooks 6 en 1:18).
+
+**Proceso**
+
+- **La sesión local se interrumpió tres veces**, porque WSL se quedaba sin memoria durante las versiones incorrectas. La primera vez había siete mutantes en paralelo con Docker levantado; la segunda, dos mutantes a la vez con Docker levantado: el portátil, con 16 GB, al 96 % y VmmemWSL en 6,4 GB. Se resolvió así: reinicio, WSL limitado a 7 GB con 8 GB de swap, Docker Desktop cerrado salvo para la integración y los mutantes de uno en uno. La tercera, también durante las versiones incorrectas, llevó lo que quedaba a la nube: el merge, las siete versiones incorrectas en paralelo (repitiendo V13, V17 y V19, cuyos resultados locales no se guardaron en el repositorio), la revisión y la N3.
+- **La causa probable no era el paralelismo, sino V16.** En la nube, el pytest de V16 sobre `test_cli_almacen.py` llegó a 7,5 GB en un minuto, con la CPU al 100 %, y hubo que matarlo. Aceptando `CreateTime`, el test de la marca que no es del broker ya no para: `edsim almacen consumir` sin `--run` gira sin fin contra el broker falso, que no tiene reloj, y el registro del falso crece en cada vuelta. V16 estaba en la tanda de siete y era la primera de la lista de una en una. Con el tope del consumidor falso (`bd6457f`), ese test falla con `RunawayLoop` en lugar de llenar la memoria, y V16 se repitió sobre ese commit.
+- **Sin `scripts/tests-integracion.sh` en local**, por decisión de Pedro (se aparta de «La 7.4 y la 7.5 ejecutan `scripts/tests-integracion.sh` antes del push»): la integración contra Kafka y Postgres la hace el job `tests-integracion` del CI de este PR, y Pedro comprueba a mano `edsim almacen preparar` y `consumir` contra los servicios locales.
+
+**Pendiente**
+
+- `read_bronze_records` (con `Record`) y `registro comparar --postgres`: tarea 7.3.
+- «Con el perfil realista, la cuenta cuadra con lo leído de bronce»: tarea 7.4.
+- Lo de la memoria de WSL, para `docs/proceso/portabilidad.md`, si Pedro lo pide.
+- `--run` con otro productor publicando sin parar en los mismos topics: `consume` no vuelve nunca vacío, así que `--run` espera hasta el `timeout` (código 1) aunque bronce ya tenga la ejecución. No pasa en los tests ni con un solo directo; si hace falta, «al día» podría ser un lote con menos mensajes que `batch_size`.
