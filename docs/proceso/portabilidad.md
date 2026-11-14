@@ -76,6 +76,18 @@ Todo el trabajo vive dentro de Linux (WSL2), igual que en el CI. En Windows solo
    dnsTunneling=true
    ```
 
+5. **Si el portátil tiene 16 GB, limita la memoria de WSL** en el mismo `C:\Users\<usuario>\.wslconfig`, y reinicia WSL con `wsl --shutdown` para que lo lea:
+
+   ```ini
+   [wsl2]
+   memory=7GB
+   swap=8GB
+   ```
+
+   **Por qué.** Sin límite, WSL2 puede quedarse con la mitad de la RAM, y Windows, Docker y el editor comparten el resto. Un proceso que crece sin parar (un test en un bucle sin fin, cuyo registro llegó a 7,5 GB en un minuto en la tarea 7.5) llena la memoria de WSL y arrastra a Windows: el portátil quedó al 96 % con `VmmemWSL` en 6,4 GB y WSL se colgó tres veces. Con `memory=7GB`, el límite es de WSL y deja 9 GB a Windows; con `swap=8GB`, un pico legítimo (una simulación grande, Kafka y Postgres a la vez) no mata nada. Con un portátil de más memoria, sube las dos cifras en proporción.
+
+   Esto no sustituye a los topes del código: un bucle sin fin sigue siendo un fallo, solo que tarda más en tumbar la máquina. Para eso, el límite de tiempo por test y el tope en los dobles de prueba (sección 10).
+
 ### Dentro de Ubuntu
 
 ```bash
@@ -106,7 +118,7 @@ Después: la extensión de Claude Code en Cursor (con la ventana conectada a WSL
 ```bash
 cd ~/proyectos && uv init --package <nombre> && cd <nombre>
 uv python pin 3.13
-uv add --dev pytest ruff pre-commit pytest-xdist
+uv add --dev pytest ruff pre-commit pytest-xdist pytest-timeout
 gh repo create <nombre> --public --source . --push
 ```
 
@@ -133,6 +145,7 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+timeout = 60    # segundos por test; mide antes el más lento y deja margen
 markers = ["slow: tests largos; el hook Stop no los ejecuta"]
 ```
 
@@ -445,6 +458,7 @@ El detalle está en [`flujo.md`](flujo.md) (con diagramas) y en [`tarea.md`](tar
 - La mayor ganancia de tiempo está en no ejecutar lo que no hace falta, no en paralelizar.
 - xdist solo compensa donde la ejecución en paralelo tarda como mucho el 60 % de la serie.
 - Las máquinas del CI varían hasta el doble: una comparación limpia mide las dos variantes en el mismo job.
+- **Un test que no termina no debe tumbar la máquina** ([#131](https://github.com/pdromer0/edsim/issues/131)). Dos redes, de más rápida a más general: un tope en cada doble de prueba que registra las llamadas y un bucle puede repetir (lanza un error claro tras N llamadas), y un límite de tiempo por test (`pytest-timeout`). El límite se fija midiendo el test más lento, con margen (aquí 60 s frente a 30 s), y los lentos llevan el suyo. El de tiempo salta tarde: a 60 s, un registro que crece a 60 MB/s ya pesa 3,5 GB (medido: 3,5 GB en serie y 4,1 GB con xdist en la comprobación de #131), así que no sustituye al tope. Y los dos pierden contra un portátil sin límite de memoria para WSL (sección 3).
 
 ## 11. Lista de arranque de un proyecto nuevo
 

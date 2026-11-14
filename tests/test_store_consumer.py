@@ -21,8 +21,8 @@ from fake_store import (
     FakeBroker,
     FakeBronzeConsumer,
     FakeStore,
-    RunawayLoop,
 )
+from runaway import RunawayLoop
 
 from edsim.live.kafka import (
     BRONZE_GROUP,

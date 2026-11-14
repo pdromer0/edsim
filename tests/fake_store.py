@@ -16,6 +16,7 @@ import time
 from contextlib import contextmanager
 
 from fake_kafka import LOG_APPEND_TIME, FakeRecord
+from runaway import check_calls
 
 from edsim.store.consumer import RunProgress, StoreDataError
 
@@ -44,14 +45,10 @@ EMPTY_WAIT = 0.001
 """Segundos reales que espera un `consume` sin mensajes y sin `clock`."""
 
 
-class RunawayLoop(AssertionError):
-    """El bucle pidió más lotes que `MAX_CONSUMES`: no iba a parar."""
-
-
 MAX_CONSUMES = 10_000
 """Llamadas a `consume` que un test admite. Un bucle que no para (una versión incorrecta
-que quita la parada) falla así en lugar de girar sin fin y llenar la memoria: con V16, el
-test de la marca de la CLI lo hacía."""
+que quita la parada) falla con `RunawayLoop` (tests/runaway.py) en lugar de girar sin fin y
+llenar la memoria: con V16, el test de la marca de la CLI lo hacía."""
 
 
 class FakeBronzeConsumer:
@@ -80,8 +77,7 @@ class FakeBronzeConsumer:
 
     def consume(self, num_messages, timeout):
         self.consumes += 1
-        if self.consumes > MAX_CONSUMES:
-            raise RunawayLoop(f"{MAX_CONSUMES} llamadas a consume: el bucle no para")
+        check_calls(self.consumes, MAX_CONSUMES, "consume")
         if self.on_consume is not None:
             self.on_consume()
         batch = []

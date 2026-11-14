@@ -37,6 +37,8 @@ dev = [
     "nbmake>=1.5.5",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
+    # La 2.5.0 está retirada en PyPI; uv la salta y resuelve a la 2.4.0.
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.17.3",
 ]
@@ -54,6 +56,12 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+# Límite por test (setup y teardown incluidos), en segundos, con el método `signal`: el test
+# falla con «Timeout >60.0s» y xdist sigue. Es la red general contra un bucle sin fin. Medido
+# el 14-nov-2026: el test rápido más lento tarda 30 s en serie. Los `slow` (hasta 158 s), la
+# integración y los notebooks llevan el suyo, en sus `conftest.py`.
+timeout = 60
+timeout_method = "signal"  # explícito: sin SIGALRM falla, no cae a `thread`, que mata el proceso
 markers = [
     "slow: tests estadísticos largos; el hook de Claude Code los excluye",
 ]

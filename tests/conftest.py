@@ -227,3 +227,18 @@ def clinical_simulation():
         profiles=load_profiles(EXAMPLE_PROFILES),
     )
     return sink.events, result.ground_truth
+
+
+SLOW_TIMEOUT = 600
+"""Segundos que admite un test `slow`, con su `setup` y `teardown`. El valor por defecto
+(`timeout` en `pyproject.toml`, 60 s) no basta: el peor `slow` medido (14-nov-2026, con 4
+workers de xdist) tarda 158 s, casi todo en el `setup` de un fixture de sesión, que se carga
+al primer test que lo pide. Es un tope contra un bucle sin fin, no una medida: se sube si un
+`slow` legítimo lo supera."""
+
+
+def pytest_collection_modifyitems(items):
+    """Da a los tests `slow` su propio límite de tiempo, mayor que el de los demás."""
+    for item in items:
+        if item.get_closest_marker("slow") and not item.get_closest_marker("timeout"):
+            item.add_marker(pytest.mark.timeout(SLOW_TIMEOUT))

@@ -13,6 +13,13 @@ import sys
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
 
+from runaway import check_calls
+
+MAX_PRODUCER_CALLS = 100_000
+"""Llamadas a `produce` y a `poll` que un test admite al productor falso. Un bucle que no
+para (por ejemplo, el de reintento de `KafkaSink` sin su `break`) falla con `RunawayLoop` en
+lugar de girar sin fin: `calls`, `ops` y `polls` crecen en cada vuelta."""
+
 
 @dataclass
 class FakeMessage:
@@ -66,7 +73,8 @@ class FakeProducer:
     Attributes:
         calls: Cada llamada a produce: (topic, kwargs sin on_delivery), también las que
             lanzaron BufferError.
-        polls: El timeout de cada poll.
+        polls: El timeout de cada poll. Tanto `calls` como `polls` pasan de `MAX_PRODUCER_CALLS`
+            con `RunawayLoop` (tests/runaway.py).
         delivered: Los mensajes entregados, en orden de entrega, con su error o None.
         ops: Cada produce aceptado ("produce", topic) y cada flush ("flush",), en orden.
     """
@@ -100,6 +108,7 @@ class FakeProducer:
         on_delivery = kwargs.pop("on_delivery", None)
         kwargs = {"key": key, "value": value, **kwargs}
         self.calls.append((topic, kwargs))
+        check_calls(len(self.calls), MAX_PRODUCER_CALLS, "produce")
         if len(self.calls) in self.buffer_errors:
             raise BufferError("Local: Queue full")
         self._accepted += 1
@@ -124,6 +133,7 @@ class FakeProducer:
 
     def poll(self, timeout=None) -> int:
         self.polls.append(timeout)
+        check_calls(len(self.polls), MAX_PRODUCER_CALLS, "poll")
         if not self.deliver_on_poll:
             return 0
         ready = [m.number for m, _ in self._pending if m.number not in self.hold]
