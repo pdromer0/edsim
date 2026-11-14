@@ -19,6 +19,7 @@ import json
 import re
 import subprocess
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import confluent_kafka
@@ -87,8 +88,7 @@ def test_postgres_bronze_ignora_lo_repetido_y_la_red_recibe_el_error_de_postgres
         # Un payload que bronze.py dejaría pasar si no lo conociera: \u0000 escrito como texto
         # en el JSON de la fila. Postgres lo rechaza al convertirlo a jsonb.
         bad_message = message(run_id, 3)
-        bad = (bad_message, to_row(bad_message))
-        bad = (bad[0], type(bad[1])(**{**_fields(bad[1]), "payload": '{"x": "\\u0000"}'}))
+        bad = (bad_message, replace(to_row(bad_message), payload='{"x": "\\u0000"}'))
         good = (message(run_id, 4), to_row(message(run_id, 4)))
         netted = save_batch(store, [bad, good])
         stored = connection.execute(
@@ -107,10 +107,6 @@ def test_postgres_bronze_ignora_lo_repetido_y_la_red_recibe_el_error_de_postgres
     [(offset, reason)] = rejected
     assert offset == 3
     assert reason.startswith("Postgres lo rechaza: unsupported Unicode escape sequence")
-
-
-def _fields(row) -> dict:
-    return {name: getattr(row, name) for name in row.__slots__}
 
 
 def published_count(out: str) -> int:
@@ -138,9 +134,19 @@ def test_parar_y_relanzar_el_consumidor_no_pierde_ni_repite_nada(
 
     with connect(bronze_url) as connection:
         store = PostgresBronze(connection)
+
         # Primera pasada: lotes de 50 y parar en cuanto bronce tenga algo de esta ejecución.
         # Los topics tienen también lo de otros tests: se guarda en esta base de datos y no
-        # importa.
+        # importa. Se cuentan los eventos sin más, no con progress: progress no cuenta nada
+        # hasta leer el inicio, que está en ed.runs, detrás de los de otros tests, y la parada
+        # podría llegar con toda la ejecución ya guardada.
+        def stored() -> int:
+            ((count,),) = connection.execute(
+                "SELECT count(DISTINCT event_id) FROM bronce.eventos WHERE run_id = %s",
+                (run_id,),
+            )
+            return count
+
         limit = time.monotonic() + RUN_LIMIT
         consumer = connect_bronze_consumer(bootstrap, group_id=group)
         try:
@@ -148,11 +154,11 @@ def test_parar_y_relanzar_el_consumidor_no_pierde_ni_repite_nada(
                 consumer,
                 store,
                 batch_size=50,
-                should_stop=lambda: store.progress(run_id).stored > 0 or time.monotonic() > limit,
+                should_stop=lambda: stored() > 0 or time.monotonic() > limit,
             )
         finally:
             consumer.close()
-        stored_first = store.progress(run_id).stored
+        stored_first = stored()
         # Si la parada no cayó a mitad de la ejecución, el relanzamiento no probaría nada.
         assert 0 < stored_first < published, (stored_first, published, first)
 
