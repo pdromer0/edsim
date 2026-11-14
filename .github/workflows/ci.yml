@@ -48,6 +48,7 @@ jobs:
         env:
           EVENTO: ${{ github.event_name }}
         run: |
+          exit 1
           solo_docs=false
           if [ "$EVENTO" = pull_request ] && git rev-parse --verify -q 'HEAD^2' > /dev/null; then
             git diff --name-only -z --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/cambiados"
