@@ -1074,7 +1074,7 @@ Recalculados con `python3` sin importar `edsim` (el código, en el plan y en el 
 
 - El job de integración antes: `tests-kafka`, 1:30 (CI de `main`, `cdde0a4`). Después, `tests-integracion`: el tiempo, en el PR.
 - En local, `scripts/tests-integracion.sh` antes del cambio: 1:16. Después no se midió en local (ver «Proceso»).
-- N3 (`scripts/tests-completos.sh`, en la nube): PENDIENTE_N3.
+- N3 (`scripts/tests-completos.sh`, en la nube): 16:18 en verde: lint 0:01, formato 0:00, núcleo 4.184 tests en 11:19 (con xdist), app 316 en 3:45 y notebooks 6 en 1:13.
 
 **Versiones incorrectas**
 
