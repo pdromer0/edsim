@@ -108,6 +108,13 @@ def test_la_api_de_la_tarea_4_8a_es_publica():
     assert len(set(runs.__all__)) == len(runs.__all__)
 
 
+def test_la_api_de_la_tarea_7_2_es_publica():
+    """`record_run` y su resultado, aditivos en `edsim.runs` (H7-5)."""
+    import edsim.runs as runs
+
+    assert {"record_run", "RecordRunResult"} <= set(runs.__all__)
+
+
 OPTIONAL_CLIENTS = {
     "confluent_kafka": ("live/kafka.py", "edsim.live.kafka"),
     "psycopg": ("store/postgres.py", "edsim.store.postgres"),

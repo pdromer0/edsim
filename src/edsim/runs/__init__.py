@@ -125,6 +125,7 @@ from edsim.runs.profiles_diff import (
     profiles_diff,
     read_run_profiles_values,
 )
+from edsim.runs.recorded import RecordRunResult, record_run
 from edsim.runs.replay import (
     ReplayAbandonment,
     ReplayCounts,
@@ -355,6 +356,8 @@ __all__ = [
     "offered_work_from_load",
     "read_center_values",
     "read_run_header",
+    "RecordRunResult",
+    "record_run",
     "build_episode_event_index",
     "read_episode_events",
     "read_run_results",
