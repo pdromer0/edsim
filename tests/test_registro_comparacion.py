@@ -306,7 +306,8 @@ def test_el_medico_solo_cuenta_la_valoracion_inicial_con_su_tipo():
 def test_el_reparto_por_nivel_ignora_lo_que_no_se_lee_y_las_correcciones():
     """Entran los `triage_completed` con un nivel entero de 1 a 5 (los duplicados cuentan);
     un `null`, un 9, un `True` y un «3» no entran en el denominador, y un `record_corrected` no
-    es un triaje ni cambia nada (V10)."""
+    es un triaje ni cambia nada: aquí «corrige» un triaje de nivel 1 a nivel 5 y el reparto no se
+    mueve (V10: saldría un 5 que nadie anotó como triaje)."""
     truth = hand_truth(
         *[
             step
@@ -330,7 +331,7 @@ def test_el_reparto_por_nivel_ignora_lo_que_no_se_lee_y_las_correcciones():
             number,
             event_type=RECORD_CORRECTED,
             sim_time=700.0,
-            payload={"corrige": records[triages[4]].event_id, "campos": {"nivel": 1}},
+            payload={"corrige": records[triages[4]].event_id, "campos": {"nivel": 5}},
         )
     )
     notebook.append(
