@@ -57,10 +57,15 @@ could change with the version of numpy; a uniform and its inverse cannot.
 
 The disorder has no rule: it comes from the delay. Resource events do not roll:
 they pass as they are, renumbered.
+
+**The waiting room.** ``RecordStream`` is ``record`` for a live run (task 7.4):
+the same slips, one step of the truth at a time, with the drafts in a heap by
+the emission key until the engine has passed their ``sim_time``.
 """
 
+import heapq
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time, timedelta
 from statistics import NormalDist
@@ -360,7 +365,18 @@ def _log_start(events: Sequence[Event]) -> date | None:
     """
     if not events:
         return None
-    first = events[0]
+    start = _start_of(events[0])
+    for event in events:
+        _check_event_time(event, start)
+    return start
+
+
+def _start_of(first: Event) -> date:
+    """The date of minute 0 from the first event of a log.
+
+    Raises:
+        ValueError: If that moment is not midnight at +01:00.
+    """
     moment = datetime.fromisoformat(first.event_time) - timedelta(
         milliseconds=math.floor(first.sim_time * 60_000)
     )
@@ -372,14 +388,15 @@ def _log_start(events: Sequence[Event]) -> date | None:
             f"{first.event_id}: event_time {first.event_time!r} does not start a log at "
             "midnight, +01:00"
         )
-    start = moment.date()
-    for event in events:
-        if event.event_time != event_time(start, event.sim_time):
-            raise ValueError(
-                f"{event.event_id}: event_time {event.event_time!r} is not the one of "
-                f"sim_time {event.sim_time!r} from {start.isoformat()}"
-            )
-    return start
+    return moment.date()
+
+
+def _check_event_time(event: Event, start: date) -> None:
+    if event.event_time != event_time(start, event.sim_time):
+        raise ValueError(
+            f"{event.event_id}: event_time {event.event_time!r} is not the one of "
+            f"sim_time {event.sim_time!r} from {start.isoformat()}"
+        )
 
 
 def _shift(clock: str, offset_ms: int) -> str:
@@ -709,3 +726,129 @@ def record(
         "cuenta": MappingProxyType(dict(counts.as_dict())),
     }
     return Recording(derived, tuple(records), tuple(rows), MappingProxyType(info))
+
+
+class RecordStream:
+    """The waiting room of a live run: ``record`` one step of the truth at a time.
+
+    ``record`` sees the whole log and sorts every draft at once. A live run sees the
+    true events as the engine makes them, and a record may have to wait: the triage of
+    minute 1,024.2 written down 7 minutes late goes out at 1,031.2, after the arrival of
+    minute 1,028.0 (docs/specs/hito-7.md, «Especificación: directo y reemisión con el
+    registro clínico»). So ``add`` rolls the dice of each event, with the same slips as
+    ``record``, and keeps its drafts in a heap by the emission key ``(sim_time written,
+    position in the log, original < duplicate < correction)``; ``ready(bound)`` takes
+    out, numbers and finishes the drafts with ``sim_time <= bound``.
+
+    The bound is ``peek()`` of the source: every event not seen yet has ``sim_time >=
+    peek()`` and a later position than every event seen, and its records have ``sim_time
+    >= peek()`` (delays are never negative). So nothing to come can go before a draft with
+    ``sim_time <= peek()``, also on a tie, where the position decides. With the same log,
+    profile, seed and dice, what ``ready`` gives, from the first call to ``ready(inf)``, is
+    the ``records`` of ``record``, byte for byte. Drafts at or after the horizon are never
+    numbered nor written, as in ``record``. Nothing of the notebook is kept: a live run
+    publishes, it does not write ``registros/``.
+
+    Args:
+        profile: The profile of the slips.
+        seed: The seed of the recording; it names the derived run.
+        horizon: The horizon in minutes.
+        run_id: The ``run_id`` of the true run.
+        dice: One ``Roll`` per true patient event; by default, ``StreamDice(seed)``.
+
+    Attributes:
+        run_id: The derived run, ``<run_id>_<perfil>_s<semilla>``.
+
+    Raises:
+        ValueError: If the derived ``run_id``, ``seed`` or ``horizon`` are not valid.
+    """
+
+    def __init__(
+        self,
+        profile: RecordProfile,
+        seed: int,
+        *,
+        horizon: float,
+        run_id: str,
+        dice: Dice | None = None,
+    ) -> None:
+        self.run_id = derived_run_id(run_id, profile.name, seed)
+        self._source_run_id = run_id
+        self._horizon = _check_horizon(horizon)
+        self._profile = profile
+        self._offsets = {s: round(profile.clock[s] * 60_000) for s in SYSTEMS}
+        self._dice = StreamDice(seed) if dice is None else dice
+        self._start: date | None = None
+        self._position = 0
+        self._last = -math.inf  # sim_time of the last event added
+        self._bound = -math.inf  # the highest bound released so far
+        self._room: list[tuple[tuple[float, int, int], _Draft]] = []
+        self._numbered = 0
+
+    def __len__(self) -> int:
+        """Drafts waiting in the room."""
+        return len(self._room)
+
+    def add(self, events: Iterable[Event]) -> None:
+        """Roll the dice of the next true events, in the order of the log, and keep their drafts.
+
+        Raises:
+            ValueError: If an event is of another run, its ``event_time`` is not the one of
+                its ``sim_time`` (the first one must start at midnight, +01:00), it goes back
+                in time, or it is before a bound already released.
+        """
+        for event in events:
+            if event.run_id != self._source_run_id:
+                raise ValueError(
+                    f"{event.event_id}: event of run {event.run_id!r}, not {self._source_run_id!r}"
+                )
+            if self._start is None:
+                self._start = _start_of(event)
+            _check_event_time(event, self._start)
+            if event.sim_time < self._last:
+                raise ValueError(
+                    f"{event.event_id}: sim_time {event.sim_time} goes back from {self._last}"
+                )
+            if event.sim_time < self._bound:
+                raise ValueError(
+                    f"{event.event_id}: sim_time {event.sim_time} is before {self._bound}, "
+                    "already released: the bound of ready must be peek() of the source"
+                )
+            self._last = event.sim_time
+            drafts, _, _ = _event_drafts(
+                event, self._position, self._dice, self._profile, self._offsets
+            )
+            self._position += 1
+            for draft in drafts:
+                # The key is unique (one draft of each order per position): the heap never
+                # compares two drafts.
+                heapq.heappush(self._room, (draft.key, draft))
+
+    def ready(self, bound: float) -> list[Record]:
+        """The records with ``sim_time <= bound``, numbered, in emission order.
+
+        Args:
+            bound: ``peek()`` of the source: nothing it can still give is before it.
+                ``math.inf`` once the source has nothing left: everything before the
+                horizon goes out.
+
+        Raises:
+            ValueError: If ``bound`` is NaN.
+            RuntimeError: If there are more records than nine digits.
+        """
+        if isinstance(bound, bool) or not isinstance(bound, int | float) or math.isnan(bound):
+            raise ValueError(f"bound must be a number of minutes, got {bound!r}")
+        self._bound = max(self._bound, bound)
+        out: list[Record] = []
+        while self._room and self._room[0][0][0] <= bound:
+            _, draft = heapq.heappop(self._room)
+            if draft.sim_time >= self._horizon:
+                continue  # never written, as in record: neither numbered
+            self._numbered += 1
+            if self._numbered > _MAX_RECORDS:
+                raise RuntimeError(
+                    f"no event_id left: a recording has at most {_MAX_RECORDS} records"
+                )
+            draft.event_id = f"{self.run_id}-{self._numbered:09d}"
+            out.append(_finish(draft, self._start, self.run_id)[0])
+        return out

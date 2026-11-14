@@ -6,7 +6,8 @@ with the eight slips of a profile, into a derived run with its own ``run_id``
 engine: only the catalog of ``edsim.engine.events``.
 
 - ``records``: ``Record`` and ``record_json``;
-- ``record``: the dice (``Roll``, ``StreamDice``), the profile in code and ``record``;
+- ``record``: the dice (``Roll``, ``StreamDice``), the profile in code, ``record`` and
+  its waiting room for the live run, ``RecordStream``;
 - ``profiles``: the load and the validation of ``config/registro_clinico.toml``;
 - ``notebook``: ``defectos.csv`` and the account that balances;
 - ``compare``: the reconciliation with the truth and the naive indicators;
@@ -52,6 +53,7 @@ from edsim.clinical_record.record import (
     Dice,
     Recording,
     RecordProfile,
+    RecordStream,
     Roll,
     StreamDice,
     Timed,
@@ -91,6 +93,7 @@ __all__ = [
     "Record",
     "RecordProfile",
     "RecordProfiles",
+    "RecordStream",
     "Reconciliation",
     "ReconciliationError",
     "Recording",
