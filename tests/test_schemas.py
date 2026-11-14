@@ -36,7 +36,7 @@ from edsim.engine.scenarios import (
     seen_in_room,
 )
 from edsim.live.control import MAX_SPEED, PAUSE, RESUME, SPEED, STOP, Command
-from edsim.live.directo import RunEnd, RunInfo, RunStart
+from edsim.live.directo import RecordInfo, RunEnd, RunInfo, RunStart
 from edsim.live.messages import (
     KNOWN_CONTROL_DIFFERENCES,
     control_json,
@@ -379,6 +379,15 @@ def test_cada_diferencia_de_la_lista_ocurre():
 # --- ed.runs ---------------------------------------------------------------------------
 
 INFO = RunInfo("r2026", "directo", 3, 2026, SCENARIO_START, True)
+RECORD_INFO = RunInfo(
+    "r2026_realista_s7",
+    "directo",
+    3,
+    2026,
+    SCENARIO_START,
+    True,
+    RecordInfo("r2026", "realista", 7),
+)
 
 
 def runs_messages() -> dict[str, str]:
@@ -389,6 +398,7 @@ def runs_messages() -> dict[str, str]:
         "inicio-max": run_start_json(RunStart(INFO, 3510.0, 4320.0, MAX_SPEED, 113, 520)),
         "fin-sin-eventos": run_end_json(RunEnd("r2026", "parar", 2880.0, None, 0)),
         "fin-error": run_end_json(RunEnd("r2026", "error", 3000.5, "r2026-000000041", 41)),
+        "inicio-registro": run_start_json(RunStart(RECORD_INFO, 3510.0, 4320.0, 60.0, 98, 431)),
     }
 
 
@@ -423,6 +433,8 @@ def invalid_runs() -> list[tuple[str, dict]]:
     m = runs_messages()
     start, end = m["inicio"], m["fin"]
     census = json.loads(start)["censo"]
+    recorded = m["inicio-registro"]
+    block = json.loads(recorded)["registro"]
     return [
         ("tipo-otro", edit(start, tipo="comienzo")),
         ("version-2", edit(start, version=2)),
@@ -446,6 +458,12 @@ def invalid_runs() -> list[tuple[str, dict]]:
         ("ultimo-event-id-vacio", edit(end, ultimo_event_id="")),
         ("fin-falta-campo", edit(end, ultimo_event_id=DELETE)),
         ("fin-con-censo", edit(end, censo=census)),
+        ("registro-campo-de-mas", edit(recorded, registro={**block, "huella": "x"})),
+        ("registro-falta-perfil", edit(recorded, registro={"origen": "r2026", "semilla": 7})),
+        ("registro-semilla-negativa", edit(recorded, registro={**block, "semilla": -1})),
+        ("registro-origen-vacio", edit(recorded, registro={**block, "origen": ""})),
+        ("registro-nulo", edit(recorded, registro=None)),
+        ("fin-con-registro", edit(end, registro=block)),
     ]
 
 
@@ -456,7 +474,7 @@ def test_mensajes_de_ed_runs_invalidos_no_validan():
     accepted = [name for name, data in cases if runs.is_valid(data)]
 
     assert not accepted
-    assert len(cases) == 22
+    assert len(cases) == 28
 
 
 # --- ed.control: parse_control y el esquema dicen lo mismo -----------------------------

@@ -178,7 +178,19 @@ class LiveTracker:
     # -- LiveSink ---------------------------------------------------------------------
 
     def start(self, message: RunStart) -> None:
+        """Take the ``inicio`` of the run.
+
+        Raises:
+            ValueError: If it is of another run, or of a run published with ``--registro``:
+                what was written down, with its forgotten events and its disorder, does not
+                pass the checks of order of the truth; its consumer is the one of bronze.
+        """
         self._check_run("RunStart", message.info.run_id)
+        if message.info.record is not None:
+            raise ValueError(
+                f"{message.info.run_id} is what was written down of {message.info.record.origin} "
+                "(--registro), not the truth: read it from bronze (edsim almacen consumir)"
+            )
         self.run_start = message
 
     def write(self, event: Event) -> None:

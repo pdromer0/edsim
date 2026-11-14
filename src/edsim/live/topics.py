@@ -18,8 +18,12 @@ Standard library only: no Kafka client.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from edsim.engine.events import Event
+
+if TYPE_CHECKING:  # only for the annotation: this module stays standard library only
+    from edsim.clinical_record import Record
 
 PATIENT_EVENTS = "ed.patient.events"
 RESOURCE_EVENTS = "ed.resource.events"
@@ -65,8 +69,8 @@ TOPICS: tuple[Topic, ...] = (
 """The four topics, as in the table of the specification."""
 
 
-def route(event: Event) -> tuple[str, bytes | None]:
-    """The topic and the key of an event.
+def route(event: "Event | Record") -> tuple[str, bytes | None]:
+    """The topic and the key of an event, or of a record of ``--registro`` (task 7.4).
 
     With ``episode_id``: ``ed.patient.events`` and the episode as key. Without
     it: ``ed.resource.events`` and the ``recurso`` of the payload as key, or no

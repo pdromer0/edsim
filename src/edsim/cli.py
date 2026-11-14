@@ -21,7 +21,10 @@ and before any file is created.
 by its horizon or by an order ``parar``, and if ``preparar`` or ``control`` do
 their job; 130 with Ctrl+C, after publishing the end; 1 if a message is not
 delivered, the topics are missing or differ, the broker does not answer or the
-``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka.
+``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka. With
+``--registro`` (docs/specs/hito-7.md, task 7.4), ``lanzar`` and ``reemitir`` publish only
+what was written down, with the derived ``run_id``; ``reemitir`` ends with 1 if the true log
+is unreadable or ``registros/<perfil>-s<semilla>/`` is not what ``record`` gives.
 
 ``almacen`` (docs/specs/hito-7.md, "CLI"): 0 if ``preparar`` applies what is missing, if
 ``consumir`` stops with Ctrl+C or, with ``--run``, if bronze holds the whole run; 1 if
@@ -149,7 +152,14 @@ from edsim.live.kafka import (
     pending_messages,
     publish_order,
 )
-from edsim.live.launch import PreparedRun, live_run_id, prepare_live, prepare_replay, run_prepared
+from edsim.live.launch import (
+    PreparedRun,
+    live_run_id,
+    prepare_live,
+    prepare_replay,
+    run_prepared,
+    with_recording,
+)
 from edsim.live.report import format_census, format_end, format_speed, format_status
 from edsim.live.topics import TOPICS
 from edsim.profiles.config import load_profiles
@@ -171,7 +181,7 @@ from edsim.runs import (
     simulate_run,
     validate_run_id,
 )
-from edsim.runs.recorded import RunLogError
+from edsim.runs.recorded import RECORDS_DIR, RunLogError
 from edsim.store.bronze import TimestampTypeError
 from edsim.store.consumer import RUN_TIMEOUT, run_consumer
 from edsim.store.migrations import MigrationError
@@ -1009,8 +1019,35 @@ def _check_kafka_log(args: argparse.Namespace, parser: argparse.ArgumentParser) 
         parser.error("--registro-kafka guarda lo que escribe librdkafka: no vale con --memoria")
 
 
+def _check_record_options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """``--semilla-registro`` and ``--registros`` only with ``--registro``; the default file."""
+    if args.registro is None:
+        for option, value in (
+            ("--semilla-registro", args.semilla_registro),
+            ("--registros", args.registros),
+        ):
+            if value is not None:
+                parser.error(f"{option} solo vale con --registro")
+        return
+    if args.semilla_registro is not None and args.semilla_registro < 0:
+        parser.error(
+            f"--semilla-registro debe ser un entero no negativo; se recibió {args.semilla_registro}"
+        )
+    if args.registros is None:
+        args.registros = DEFAULT_PROFILES_FILE
+
+
+def _record_line(origin: str, info, profiles_file, fingerprint: str) -> str:
+    """The header line of a run published with ``--registro``."""
+    return (
+        f"Solo lo registrado de {origin} · perfil {info.profile} · semilla {info.seed}"
+        f" · perfiles {profiles_file} (huella {fingerprint})"
+    )
+
+
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     _check_kafka_log(args, parser)
+    _check_record_options(args, parser)
     if args.semilla < 0:
         parser.error(f"--semilla debe ser un entero no negativo; se recibió {args.semilla}")
     clock = SystemClock()
@@ -1044,14 +1081,25 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         )
     except ValueError as error:
         parser.error(str(error))
+    record_line = ""
+    if args.registro is not None:
+        record_profiles, fingerprint = _load_file(
+            args.registros, "--registros", load_record_profiles, parser
+        )
+        seed = args.semilla if args.semilla_registro is None else args.semilla_registro
+        try:
+            prepared = with_recording(prepared, record_profiles[args.registro], seed)
+        except ValueError as error:
+            parser.error(f"--registro: {error}")
+        record_line = "\n" + _record_line(run_id, prepared.info.record, args.registros, fingerprint)
     watch = None if args.memoria else _broker_watch(args, parser)
     anchored = ", anclado al calendario" if args.anclar else ""
     print(
-        f"Directo · run_id {run_id} · velocidad {format_speed(args.velocidad)}"
+        f"Directo · run_id {prepared.info.run_id} · velocidad {format_speed(args.velocidad)}"
         f" · {_destination(args)}\n{_engine_header(args)}\n{_model_line(args)}"
         f"\n{args.dias} días desde {prepared.info.start_date.isoformat()}"
         f" ({args.calentamiento} de calentamiento{anchored}) · W = {prepared.start:g} min"
-        f" · horizonte {prepared.horizon:g} min · semilla {args.semilla}",
+        f" · horizonte {prepared.horizon:g} min · semilla {args.semilla}{record_line}",
         flush=True,
     )
     return _run_live_command(args, prepared, clock, watch)
@@ -1059,18 +1107,44 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     _check_kafka_log(args, parser)
+    _check_record_options(args, parser)
+    if args.registro is not None:
+        # Usage errors of the profiles file first, with code 2, as in lanzar.
+        _load_file(args.registros, "--registros", load_record_profiles, parser)
     try:
-        prepared = prepare_replay(args.ejecuciones, args.run_id, warmup_days=args.calentamiento)
+        prepared = prepare_replay(
+            args.ejecuciones,
+            args.run_id,
+            warmup_days=args.calentamiento,
+            record_profile=args.registro,
+            record_seed=args.semilla_registro,
+            profiles_file=args.registros,
+        )
+    except RunLogError as error:
+        print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)
+        return 1
     except (OSError, ValueError) as error:
         parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
     watch = None if args.memoria else _broker_watch(args, parser)
     info = prepared.info
+    record_line = ""
+    if prepared.replayed is not None:
+        replayed = prepared.replayed
+        record_line = "\n" + _record_line(
+            args.run_id, info.record, args.registros, replayed.fingerprint
+        )
+        record_line += (
+            f"\nCoincide, byte a byte, con {replayed.checked}"
+            if replayed.checked is not None
+            else f"\nSin {RECORDS_DIR}/{replayed.profile}-s{replayed.seed}/: calculado con record"
+        )
     print(
         f"Replay · run_id {info.run_id} · velocidad {format_speed(args.velocidad)}"
-        f" · {_destination(args)}\nEjecución {Path(args.ejecuciones) / info.run_id}"
+        f" · {_destination(args)}\nEjecución {Path(args.ejecuciones) / args.run_id}"
         f" · catálogo {info.schema_version} · semilla {info.seed}"
         f"\n{prepared.horizon / 1440:g} días desde {info.start_date.isoformat()} (la fecha del"
-        f" primer evento) · W = {prepared.start:g} min · horizonte {prepared.horizon:g} min",
+        f" primer evento) · W = {prepared.start:g} min · horizonte {prepared.horizon:g} min"
+        f"{record_line}",
         flush=True,
     )
     return _run_live_command(args, prepared, SystemClock(), watch)
@@ -1455,6 +1529,28 @@ def _add_live_options(parser: argparse.ArgumentParser) -> None:
         help="sin Kafka ni órdenes: publica en memoria e imprime el resumen",
     )
     _add_kafka_log_option(parser)
+    parser.add_argument(
+        "--registro",
+        choices=PROFILE_NAMES,
+        default=None,
+        metavar="PERFIL",
+        help="publica solo lo registrado con ese perfil del registro clínico (limpio, realista "
+        "u hostil), nunca la verdad, con el run_id derivado <run_id>_<perfil>_s<semilla>",
+    )
+    parser.add_argument(
+        "--semilla-registro",
+        type=int,
+        default=None,
+        metavar="N",
+        help="semilla del registro (por defecto: la de la ejecución); solo con --registro",
+    )
+    parser.add_argument(
+        "--registros",
+        default=None,
+        metavar="FICHERO",
+        help=f"perfiles del registro clínico en TOML (por defecto: {DEFAULT_PROFILES_FILE}); "
+        "solo con --registro",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

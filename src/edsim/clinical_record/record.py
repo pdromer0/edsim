@@ -57,10 +57,15 @@ could change with the version of numpy; a uniform and its inverse cannot.
 
 The disorder has no rule: it comes from the delay. Resource events do not roll:
 they pass as they are, renumbered.
+
+**The waiting room.** ``RecordStream`` is ``record`` for a live run (task 7.4):
+the same slips, one step of the truth at a time, with the drafts in a heap by
+the emission key until the engine has passed their ``sim_time``.
 """
 
+import heapq
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time, timedelta
 from statistics import NormalDist
@@ -360,7 +365,18 @@ def _log_start(events: Sequence[Event]) -> date | None:
     """
     if not events:
         return None
-    first = events[0]
+    start = _start_of(events[0])
+    for event in events:
+        _check_event_time(event, start)
+    return start
+
+
+def _start_of(first: Event) -> date:
+    """The date of minute 0 from the first event of a log.
+
+    Raises:
+        ValueError: If that moment is not midnight at +01:00.
+    """
     moment = datetime.fromisoformat(first.event_time) - timedelta(
         milliseconds=math.floor(first.sim_time * 60_000)
     )
@@ -372,14 +388,15 @@ def _log_start(events: Sequence[Event]) -> date | None:
             f"{first.event_id}: event_time {first.event_time!r} does not start a log at "
             "midnight, +01:00"
         )
-    start = moment.date()
-    for event in events:
-        if event.event_time != event_time(start, event.sim_time):
-            raise ValueError(
-                f"{event.event_id}: event_time {event.event_time!r} is not the one of "
-                f"sim_time {event.sim_time!r} from {start.isoformat()}"
-            )
-    return start
+    return moment.date()
+
+
+def _check_event_time(event: Event, start: date) -> None:
+    if event.event_time != event_time(start, event.sim_time):
+        raise ValueError(
+            f"{event.event_id}: event_time {event.event_time!r} is not the one of "
+            f"sim_time {event.sim_time!r} from {start.isoformat()}"
+        )
 
 
 def _shift(clock: str, offset_ms: int) -> str:
@@ -442,6 +459,175 @@ class _Draft:
         return (self.sim_time, self.position, self.order)
 
 
+def _event_drafts(
+    event: Event,
+    position: int,
+    dice: Dice,
+    profile: RecordProfile,
+    offsets: Mapping[str, int],
+) -> tuple[list[_Draft], NotebookRow | None, int]:
+    """The drafts of one true event, before numbering: the slips 1 to 7 of the module.
+
+    A patient event rolls the dice once; a resource event does not roll and passes as it is.
+
+    Returns:
+        The drafts (the original, its correction and its duplicate, as drawn), the row of
+        the notebook if the event was forgotten, and the corrections drawn (0 or 1).
+    """
+    spec = CATALOGS[event.schema_version][event.event_type]
+    envelope = {
+        "event_type": event.event_type,
+        "schema_version": event.schema_version,
+        "episode_id": event.episode_id,
+        "patient_id": event.patient_id,
+        "source_system": event.source_system,
+    }
+    if not spec.patient:
+        resource = _Draft(
+            event.sim_time,
+            position,
+            0,
+            {
+                **envelope,
+                "sim_time": event.sim_time,
+                "event_time": event.event_time,
+                "recorded_time": event.event_time,
+                "payload": dict(event.payload),
+            },
+            {"fact_id": event.event_id, "kind": GOOD, "delay_min": 0.0, "clock_min": 0.0},
+        )
+        return [resource], None, 0
+
+    roll = dice.roll()
+    if not isinstance(roll, Roll):
+        raise TypeError(f"dice.roll() must return a Roll, got {roll!r}")
+    if roll.u_forget < profile.forget:
+        return [], NotebookRow(None, event.event_id, LOST), 0
+
+    system = event.source_system
+    offset = offsets[system]
+    clock_min = profile.clock[system]
+    delay = profile.delay[system]
+    delay_min = delay.quantile(roll.z_delay) if roll.u_delay < delay.rate else 0.0
+    sim_time = event.sim_time + delay_min
+
+    payload = dict(event.payload)
+    wrong = None
+    candidates = [k for k in payload if k in WRONG_FIELDS]
+    if candidates and roll.u_wrong < profile.wrong:
+        key = candidates[_pick(roll.u_wrong_field, len(candidates))]
+        value = _wrong_value(key, payload[key], roll.u_wrong_value, _choices(event, key))
+        wrong = (key, payload[key], value)
+        payload[key] = value
+    empty = None
+    candidates = [k for k in payload if wrong is None or k != wrong[0]]
+    if candidates and roll.u_empty < profile.empty:
+        empty = candidates[_pick(roll.u_empty_field, len(candidates))]
+        payload[empty] = None
+
+    # The class comes from what is written, not from what was drawn: a delay that
+    # does not move sim_time, or an offset that rounds to 0 ms, is no slip.
+    slipped = sim_time != event.sim_time or offset != 0 or wrong is not None or empty is not None
+    stamp = _shift(event.event_time, offset)
+    original = _Draft(
+        sim_time,
+        position,
+        0,
+        {
+            **envelope,
+            "sim_time": sim_time,
+            "event_time": stamp,
+            "payload": payload,
+        },
+        {
+            "fact_id": event.event_id,
+            "kind": WITH_SLIPS if slipped else GOOD,
+            "delay_min": sim_time - event.sim_time,
+            "clock_min": clock_min,
+            "empty_field": empty,
+            **(_wrong_cells(wrong)),
+        },
+        offset=offset,
+    )
+    drafts = [original]
+
+    corrected = 0
+    if wrong is not None and roll.u_correction < profile.correction.rate:
+        corrected = 1
+        when = sim_time + profile.correction.quantile(roll.z_correction)
+        drafts.append(
+            _Draft(
+                when,
+                position,
+                2,
+                {
+                    **envelope,
+                    "event_type": RECORD_CORRECTED,
+                    "sim_time": when,
+                    "payload": {"corrige": None, "campos": {wrong[0]: wrong[1]}},
+                },
+                {
+                    "fact_id": event.event_id,
+                    "kind": CORRECTION,
+                    "delay_min": when - event.sim_time,
+                    "clock_min": clock_min,
+                    "wrong_field": wrong[0],
+                    "true_value": wrong[1],
+                },
+                link=original,
+                offset=offset,
+            )
+        )
+
+    if roll.u_duplicate < profile.duplicate.rate:
+        when = sim_time + profile.duplicate.quantile(roll.z_duplicate)
+        drafts.append(
+            _Draft(
+                when,
+                position,
+                1,
+                {
+                    **envelope,
+                    "sim_time": when,
+                    "event_time": stamp,
+                    "payload": dict(payload),
+                },
+                {
+                    "fact_id": event.event_id,
+                    "kind": DUPLICATE,
+                    "delay_min": when - event.sim_time,
+                    "clock_min": clock_min,
+                },
+                link=original,
+                offset=offset,
+            )
+        )
+    return drafts, None, corrected
+
+
+def _finish(draft: _Draft, start: date, derived: str) -> tuple[Record, NotebookRow]:
+    """The record and the notebook row of a numbered draft (``event_id`` already given).
+
+    The ``recorded_time`` is computed only now, for what is written: a draft past the
+    horizon may lie beyond any date. A correction or a duplicate points to its original,
+    which comes before it in emission order and so is already numbered.
+    """
+    values = draft.fields
+    if draft.offset is not None:
+        clock = _shift(event_time(start, draft.sim_time), draft.offset)
+        values = {**values, "recorded_time": clock}
+        if draft.order == 2:
+            values["event_time"] = clock
+    row = dict(draft.row)
+    if draft.order == 2:
+        values = {**values, "payload": {**values["payload"], "corrige": draft.link.event_id}}
+        row["corrects"] = draft.link.event_id
+    elif draft.order == 1:
+        row["duplicate_of"] = draft.link.event_id
+    written = Record(event_id=draft.event_id, run_id=derived, ingest_time=None, **values)
+    return written, NotebookRow(record_id=draft.event_id, **row)
+
+
 def record(
     events: Sequence[Event],
     profile: RecordProfile,
@@ -488,138 +674,11 @@ def record(
     lost: list[tuple[int, NotebookRow]] = []
     corrections_drawn = 0
     for position, event in enumerate(events):
-        spec = CATALOGS[event.schema_version][event.event_type]
-        envelope = {
-            "event_type": event.event_type,
-            "schema_version": event.schema_version,
-            "episode_id": event.episode_id,
-            "patient_id": event.patient_id,
-            "source_system": event.source_system,
-        }
-        if not spec.patient:
-            drafts.append(
-                _Draft(
-                    event.sim_time,
-                    position,
-                    0,
-                    {
-                        **envelope,
-                        "sim_time": event.sim_time,
-                        "event_time": event.event_time,
-                        "recorded_time": event.event_time,
-                        "payload": dict(event.payload),
-                    },
-                    {"fact_id": event.event_id, "kind": GOOD, "delay_min": 0.0, "clock_min": 0.0},
-                )
-            )
-            continue
-
-        roll = dice.roll()
-        if not isinstance(roll, Roll):
-            raise TypeError(f"dice.roll() must return a Roll, got {roll!r}")
-        if roll.u_forget < profile.forget:
-            lost.append((position, NotebookRow(None, event.event_id, LOST)))
-            continue
-
-        system = event.source_system
-        offset = offsets[system]
-        clock_min = profile.clock[system]
-        delay = profile.delay[system]
-        delay_min = delay.quantile(roll.z_delay) if roll.u_delay < delay.rate else 0.0
-        sim_time = event.sim_time + delay_min
-
-        payload = dict(event.payload)
-        wrong = None
-        candidates = [k for k in payload if k in WRONG_FIELDS]
-        if candidates and roll.u_wrong < profile.wrong:
-            key = candidates[_pick(roll.u_wrong_field, len(candidates))]
-            value = _wrong_value(key, payload[key], roll.u_wrong_value, _choices(event, key))
-            wrong = (key, payload[key], value)
-            payload[key] = value
-        empty = None
-        candidates = [k for k in payload if wrong is None or k != wrong[0]]
-        if candidates and roll.u_empty < profile.empty:
-            empty = candidates[_pick(roll.u_empty_field, len(candidates))]
-            payload[empty] = None
-
-        # The class comes from what is written, not from what was drawn: a delay that
-        # does not move sim_time, or an offset that rounds to 0 ms, is no slip.
-        slipped = (
-            sim_time != event.sim_time or offset != 0 or wrong is not None or empty is not None
-        )
-        stamp = _shift(event.event_time, offset)
-        original = _Draft(
-            sim_time,
-            position,
-            0,
-            {
-                **envelope,
-                "sim_time": sim_time,
-                "event_time": stamp,
-                "payload": payload,
-            },
-            {
-                "fact_id": event.event_id,
-                "kind": WITH_SLIPS if slipped else GOOD,
-                "delay_min": sim_time - event.sim_time,
-                "clock_min": clock_min,
-                "empty_field": empty,
-                **(_wrong_cells(wrong)),
-            },
-            offset=offset,
-        )
-        drafts.append(original)
-
-        if wrong is not None and roll.u_correction < profile.correction.rate:
-            corrections_drawn += 1
-            when = sim_time + profile.correction.quantile(roll.z_correction)
-            drafts.append(
-                _Draft(
-                    when,
-                    position,
-                    2,
-                    {
-                        **envelope,
-                        "event_type": RECORD_CORRECTED,
-                        "sim_time": when,
-                        "payload": {"corrige": None, "campos": {wrong[0]: wrong[1]}},
-                    },
-                    {
-                        "fact_id": event.event_id,
-                        "kind": CORRECTION,
-                        "delay_min": when - event.sim_time,
-                        "clock_min": clock_min,
-                        "wrong_field": wrong[0],
-                        "true_value": wrong[1],
-                    },
-                    link=original,
-                    offset=offset,
-                )
-            )
-
-        if roll.u_duplicate < profile.duplicate.rate:
-            when = sim_time + profile.duplicate.quantile(roll.z_duplicate)
-            drafts.append(
-                _Draft(
-                    when,
-                    position,
-                    1,
-                    {
-                        **envelope,
-                        "sim_time": when,
-                        "event_time": stamp,
-                        "payload": dict(payload),
-                    },
-                    {
-                        "fact_id": event.event_id,
-                        "kind": DUPLICATE,
-                        "delay_min": when - event.sim_time,
-                        "clock_min": clock_min,
-                    },
-                    link=original,
-                    offset=offset,
-                )
-            )
+        made, forgotten, corrected = _event_drafts(event, position, dice, profile, offsets)
+        drafts += made
+        if forgotten is not None:
+            lost.append((position, forgotten))
+        corrections_drawn += corrected
 
     drafts.sort(key=lambda d: d.key)
     written = [d for d in drafts if d.sim_time < horizon]
@@ -631,21 +690,9 @@ def record(
     records = []
     rows = []
     for draft in written:
-        values = draft.fields
-        if draft.offset is not None:
-            # Only now, for what is written: a draft past the horizon may lie beyond any date.
-            clock = _shift(event_time(start, draft.sim_time), draft.offset)
-            values = {**values, "recorded_time": clock}
-            if draft.order == 2:
-                values["event_time"] = clock
-        row = dict(draft.row)
-        if draft.order == 2:
-            values = {**values, "payload": {**values["payload"], "corrige": draft.link.event_id}}
-            row["corrects"] = draft.link.event_id
-        elif draft.order == 1:
-            row["duplicate_of"] = draft.link.event_id
-        records.append(Record(event_id=draft.event_id, run_id=derived, ingest_time=None, **values))
-        rows.append(NotebookRow(record_id=draft.event_id, **row))
+        written_record, row = _finish(draft, start, derived)
+        records.append(written_record)
+        rows.append(row)
 
     unwritten = [(d.position, d.order, d) for d in drafts if d.sim_time >= horizon]
     unwritten += [(pos, 0, row) for pos, row in lost]
@@ -679,3 +726,129 @@ def record(
         "cuenta": MappingProxyType(dict(counts.as_dict())),
     }
     return Recording(derived, tuple(records), tuple(rows), MappingProxyType(info))
+
+
+class RecordStream:
+    """The waiting room of a live run: ``record`` one step of the truth at a time.
+
+    ``record`` sees the whole log and sorts every draft at once. A live run sees the
+    true events as the engine makes them, and a record may have to wait: the triage of
+    minute 1,024.2 written down 7 minutes late goes out at 1,031.2, after the arrival of
+    minute 1,028.0 (docs/specs/hito-7.md, «Especificación: directo y reemisión con el
+    registro clínico»). So ``add`` rolls the dice of each event, with the same slips as
+    ``record``, and keeps its drafts in a heap by the emission key ``(sim_time written,
+    position in the log, original < duplicate < correction)``; ``ready(bound)`` takes
+    out, numbers and finishes the drafts with ``sim_time <= bound``.
+
+    The bound is ``peek()`` of the source: every event not seen yet has ``sim_time >=
+    peek()`` and a later position than every event seen, and its records have ``sim_time
+    >= peek()`` (delays are never negative). So nothing to come can go before a draft with
+    ``sim_time <= peek()``, also on a tie, where the position decides. With the same log,
+    profile, seed and dice, what ``ready`` gives, from the first call to ``ready(inf)``, is
+    the ``records`` of ``record``, byte for byte. Drafts at or after the horizon are never
+    numbered nor written, as in ``record``. Nothing of the notebook is kept: a live run
+    publishes, it does not write ``registros/``.
+
+    Args:
+        profile: The profile of the slips.
+        seed: The seed of the recording; it names the derived run.
+        horizon: The horizon in minutes.
+        run_id: The ``run_id`` of the true run.
+        dice: One ``Roll`` per true patient event; by default, ``StreamDice(seed)``.
+
+    Attributes:
+        run_id: The derived run, ``<run_id>_<perfil>_s<semilla>``.
+
+    Raises:
+        ValueError: If the derived ``run_id``, ``seed`` or ``horizon`` are not valid.
+    """
+
+    def __init__(
+        self,
+        profile: RecordProfile,
+        seed: int,
+        *,
+        horizon: float,
+        run_id: str,
+        dice: Dice | None = None,
+    ) -> None:
+        self.run_id = derived_run_id(run_id, profile.name, seed)
+        self._source_run_id = run_id
+        self._horizon = _check_horizon(horizon)
+        self._profile = profile
+        self._offsets = {s: round(profile.clock[s] * 60_000) for s in SYSTEMS}
+        self._dice = StreamDice(seed) if dice is None else dice
+        self._start: date | None = None
+        self._position = 0
+        self._last = -math.inf  # sim_time of the last event added
+        self._bound = -math.inf  # the highest bound released so far
+        self._room: list[tuple[tuple[float, int, int], _Draft]] = []
+        self._numbered = 0
+
+    def __len__(self) -> int:
+        """Drafts waiting in the room."""
+        return len(self._room)
+
+    def add(self, events: Iterable[Event]) -> None:
+        """Roll the dice of the next true events, in the order of the log, and keep their drafts.
+
+        Raises:
+            ValueError: If an event is of another run, its ``event_time`` is not the one of
+                its ``sim_time`` (the first one must start at midnight, +01:00), it goes back
+                in time, or it is before a bound already released.
+        """
+        for event in events:
+            if event.run_id != self._source_run_id:
+                raise ValueError(
+                    f"{event.event_id}: event of run {event.run_id!r}, not {self._source_run_id!r}"
+                )
+            if self._start is None:
+                self._start = _start_of(event)
+            _check_event_time(event, self._start)
+            if event.sim_time < self._last:
+                raise ValueError(
+                    f"{event.event_id}: sim_time {event.sim_time} goes back from {self._last}"
+                )
+            if event.sim_time < self._bound:
+                raise ValueError(
+                    f"{event.event_id}: sim_time {event.sim_time} is before {self._bound}, "
+                    "already released: the bound of ready must be peek() of the source"
+                )
+            self._last = event.sim_time
+            drafts, _, _ = _event_drafts(
+                event, self._position, self._dice, self._profile, self._offsets
+            )
+            self._position += 1
+            for draft in drafts:
+                # The key is unique (one draft of each order per position): the heap never
+                # compares two drafts.
+                heapq.heappush(self._room, (draft.key, draft))
+
+    def ready(self, bound: float) -> list[Record]:
+        """The records with ``sim_time <= bound``, numbered, in emission order.
+
+        Args:
+            bound: ``peek()`` of the source: nothing it can still give is before it.
+                ``math.inf`` once the source has nothing left: everything before the
+                horizon goes out.
+
+        Raises:
+            ValueError: If ``bound`` is NaN.
+            RuntimeError: If there are more records than nine digits.
+        """
+        if isinstance(bound, bool) or not isinstance(bound, int | float) or math.isnan(bound):
+            raise ValueError(f"bound must be a number of minutes, got {bound!r}")
+        self._bound = max(self._bound, bound)
+        out: list[Record] = []
+        while self._room and self._room[0][0][0] <= bound:
+            _, draft = heapq.heappop(self._room)
+            if draft.sim_time >= self._horizon:
+                continue  # never written, as in record: neither numbered
+            self._numbered += 1
+            if self._numbered > _MAX_RECORDS:
+                raise RuntimeError(
+                    f"no event_id left: a recording has at most {_MAX_RECORDS} records"
+                )
+            draft.event_id = f"{self.run_id}-{self._numbered:09d}"
+            out.append(_finish(draft, self._start, self.run_id)[0])
+        return out

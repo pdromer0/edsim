@@ -32,6 +32,17 @@
           },
           "required": ["episodios", "eventos"],
           "additionalProperties": false
+        },
+        "registro": {
+          "description": "Solo con --registro (docs/specs/hito-7.md, tarea 7.4): lo publicado es lo registrado de la ejecución origen, con ese perfil y esa semilla, y run_id es el derivado, <origen>_<perfil>_s<semilla>.",
+          "type": "object",
+          "properties": {
+            "origen": { "type": "string", "minLength": 1 },
+            "perfil": { "type": "string", "minLength": 1 },
+            "semilla": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["origen", "perfil", "semilla"],
+          "additionalProperties": false
         }
       },
       "required": [

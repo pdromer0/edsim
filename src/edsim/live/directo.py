@@ -27,6 +27,11 @@ Two sources: ``EngineSource``, the stepped engine of a run, and ``LogSource``,
 a saved log (the replay of H6-13). ``anchored_start`` gives the start date and
 ``W`` of a run anchored to the calendar (H6-12).
 
+With ``--registro`` (docs/specs/hito-7.md, task 7.4), the run publishes only what
+was written down: the truth goes step by step into a waiting room
+(``LiveRecording``), and the census and the live stream are its records, with the
+derived ``run_id``.
+
 ``RunStart`` and ``RunEnd`` are data here; ``edsim.live.messages`` turns them
 into the JSON messages of ``ed.runs``. Their values are in Spanish, as in those
 messages.
@@ -35,15 +40,16 @@ messages.
 import math
 import numbers
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.clinical_record import Record, derived_run_id
 from edsim.engine.events import SCHEMA_VERSIONS, TIMEZONE, Event, MemorySink
 from edsim.finite import to_float
-from edsim.live.census import census, open_episodes
+from edsim.live.census import census, open_episodes, recorded_census
 from edsim.live.control import ControlSource
 from edsim.live.pacer import Pacer
 
@@ -186,7 +192,99 @@ class LogSource:
         return [event]
 
 
+# --- What was written down (task 7.4) ------------------------------------------------
+
+
+class LiveRecording(Protocol):
+    """What a run published with ``--registro`` does with the truth: its waiting room.
+
+    ``run_live`` hands it every step of the truth with ``add`` and publishes what
+    ``ready(source.peek())`` gives: the records nothing still to come can go before, in
+    emission order. ``RecordStream`` (``edsim.clinical_record``) records the engine as it
+    goes; ``RecordedLog`` holds what ``record`` already gave (the replay).
+    """
+
+    def add(self, events: Iterable[Event]) -> None: ...
+
+    def ready(self, bound: float) -> list[Record]: ...
+
+
+class RecordedLog:
+    """The waiting room of a replay: the records of ``record``, already in emission order.
+
+    ``add`` ignores the truth (the records were computed from all of it) and ``ready``
+    gives the next records with ``sim_time <= bound``. Records come in emission order, so
+    their ``sim_time`` never goes back.
+
+    Args:
+        records: The records of a ``Recording``, in emission order.
+
+    Raises:
+        ValueError: If a record goes back in time.
+    """
+
+    def __init__(self, records: Iterable[Record]) -> None:
+        self._records: deque[Record] = deque(records)
+        last = -math.inf
+        for item in self._records:
+            if item.sim_time < last:
+                raise ValueError(f"{item.event_id} at {item.sim_time} goes back from {last}")
+            last = item.sim_time
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def add(self, events: Iterable[Event]) -> None:
+        """Nothing: the records come from the whole truth."""
+
+    def ready(self, bound: float) -> list[Record]:
+        """The next records with ``sim_time <= bound``, in emission order.
+
+        Raises:
+            ValueError: If ``bound`` is NaN, as ``RecordStream.ready``.
+        """
+        if isinstance(bound, bool) or not isinstance(bound, int | float) or math.isnan(bound):
+            raise ValueError(f"bound must be a number of minutes, got {bound!r}")
+        out = []
+        while self._records and self._records[0].sim_time <= bound:
+            out.append(self._records.popleft())
+        return out
+
+
 # --- What the run announces ----------------------------------------------------------
+
+
+def _check_seed(name: str, seed: object) -> int:
+    if isinstance(seed, bool) or not isinstance(seed, numbers.Integral) or seed < 0:
+        raise ValueError(f"{name} must be an integer >= 0, got {seed!r}")
+    return int(seed)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordInfo:
+    """What a run published with ``--registro`` is the record of (the block ``registro``).
+
+    Attributes:
+        origin: The ``run_id`` of the true run (``origen``).
+        profile: The profile of the slips (``perfil``).
+        seed: The seed of the recording (``semilla``).
+
+    Raises:
+        ValueError: If a field is not valid.
+    """
+
+    origin: str
+    profile: str
+    seed: int
+
+    def __post_init__(self) -> None:
+        # Any profile name, as RecordProfile: the CLI limits --registro to the three of the
+        # file, but a profile built in code (a test, a notebook) may have its own.
+        for name in ("origin", "profile"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be a non-empty string, got {value!r}")
+        object.__setattr__(self, "seed", _check_seed("seed of the record", self.seed))
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,15 +292,19 @@ class RunInfo:
     """What the caller knows of the run, for the ``inicio`` of ``ed.runs``.
 
     Attributes:
-        run_id: Identifier of the run, the same as in its events.
+        run_id: Identifier of the run, the same as in its events; with ``record``, the
+            derived run ``<origen>_<perfil>_s<semilla>``.
         mode: ``"directo"`` or ``"replay"``.
         schema_version: Version of the catalog of its events.
-        seed: Seed of the run (``semilla``).
+        seed: Seed of the run (``semilla``); with ``record``, the one of the true run.
         start_date: Date of minute 0 (``fecha_inicio``).
         anchored: Whether it is anchored to the calendar (``anclado``).
+        record: What it is the record of, if it publishes what was written down
+            (docs/specs/hito-7.md, task 7.4); ``None`` if it publishes the truth.
 
     Raises:
-        ValueError: If a field is not valid.
+        ValueError: If a field is not valid, or ``run_id`` is not the derived run of
+            ``record``.
     """
 
     run_id: str
@@ -211,6 +313,7 @@ class RunInfo:
     seed: int
     start_date: date
     anchored: bool
+    record: RecordInfo | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, str) or not self.run_id:
@@ -226,20 +329,25 @@ class RunInfo:
                 f"schema_version must be one of {sorted(SCHEMA_VERSIONS)}, "
                 f"got {self.schema_version!r}"
             )
-        if (
-            isinstance(self.seed, bool)
-            or not isinstance(self.seed, numbers.Integral)
-            or self.seed < 0
-        ):
-            raise ValueError(f"seed must be an integer >= 0, got {self.seed!r}")
+        seed = _check_seed("seed", self.seed)
         # datetime is a subclass of date: a date-time must not pass as a date.
         if not isinstance(self.start_date, date) or isinstance(self.start_date, datetime):
             raise ValueError(f"start_date must be a date without time, got {self.start_date!r}")
         if not isinstance(self.anchored, bool):
             raise ValueError(f"anchored must be True or False, got {self.anchored!r}")
+        if self.record is not None:
+            if not isinstance(self.record, RecordInfo):
+                raise ValueError(f"record must be a RecordInfo or None, got {self.record!r}")
+            info = self.record
+            derived = derived_run_id(info.origin, info.profile, info.seed)
+            if self.run_id != derived:
+                raise ValueError(
+                    f"the run_id of the record of {info.origin!r} with {info.profile!r} and "
+                    f"seed {info.seed} is {derived!r}, not {self.run_id!r}"
+                )
         # The dataclass is frozen: object.__setattr__ is the standard way to set
         # fields during construction.
-        object.__setattr__(self, "seed", int(self.seed))
+        object.__setattr__(self, "seed", seed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,11 +431,11 @@ class SinkError(Exception):
 
 
 class LiveSink(Protocol):
-    """Where a live run publishes: the announcement, the events and the end."""
+    """Where a live run publishes: the announcement, the events (or the records) and the end."""
 
     def start(self, message: RunStart) -> None: ...
 
-    def write(self, event: Event) -> None: ...
+    def write(self, event: Event | Record) -> None: ...
 
     def end(self, message: RunEnd) -> None: ...
 
@@ -336,25 +444,26 @@ class MemoryLiveSink:
     """Keeps everything a live run publishes, in order, for tests and notebooks.
 
     Attributes:
-        items: ``RunStart``, the events and ``RunEnd``, in publication order.
+        items: ``RunStart``, the events (or the records, with ``--registro``) and
+            ``RunEnd``, in publication order.
     """
 
     def __init__(self) -> None:
-        self.items: list[RunStart | Event | RunEnd] = []
+        self.items: list[RunStart | Event | Record | RunEnd] = []
 
     def start(self, message: RunStart) -> None:
         self.items.append(message)
 
-    def write(self, event: Event) -> None:
+    def write(self, event: Event | Record) -> None:
         self.items.append(event)
 
     def end(self, message: RunEnd) -> None:
         self.items.append(message)
 
     @property
-    def events(self) -> list[Event]:
-        """Only the events, in order."""
-        return [item for item in self.items if isinstance(item, Event)]
+    def events(self) -> list[Event | Record]:
+        """Only the events (or the records), in order: everything but the start and the end."""
+        return [item for item in self.items if not isinstance(item, RunStart | RunEnd)]
 
     @property
     def run_start(self) -> RunStart | None:
@@ -382,7 +491,7 @@ class _Publication:
         self.published = 0
         self.last_event_id: str | None = None
 
-    def write(self, event: Event) -> None:
+    def write(self, event: Event | Record) -> None:
         self.sink.write(event)
         self.published += 1
         self.last_event_id = event.event_id
@@ -403,25 +512,59 @@ class _Publication:
         )
 
 
+def _truth_feed(source: LiveSource) -> Callable[[], list[Event] | None]:
+    """The next step of the source, to publish as it is; ``None`` when nothing is left."""
+
+    def feed() -> list[Event] | None:
+        if source.peek() == math.inf:
+            return None
+        return source.step()
+
+    return feed
+
+
+def _recorded_feed(
+    source: LiveSource, recording: LiveRecording
+) -> Callable[[], list[Record] | None]:
+    """The next step of the source into the waiting room, and what it lets out.
+
+    The truth never goes to the sink: only the records ``ready`` gives. Once the source
+    has nothing left, ``ready(inf)`` lets out the rest; ``None`` when that is empty too.
+    """
+
+    def feed() -> list[Record] | None:
+        if source.peek() == math.inf:
+            return recording.ready(math.inf) or None
+        recording.add(source.step())
+        return recording.ready(source.peek())
+
+    return feed
+
+
 def _publish(
-    source: LiveSource,
+    feed: Callable[[], list[Event] | list[Record] | None],
     control: ControlSource,
     publication: _Publication,
-    initial: list[Event],
+    initial: list[Event] | list[Record],
+    pending: deque[Event | Record],
 ) -> str:
-    """Steps d), e) and f): census, live stream and wait for the horizon; the reason."""
+    """Steps d), e) and f): census, live stream and wait for the horizon; the reason.
+
+    Each item waits for its own ``sim_time``: with ``--registro``, the ``sim_time`` written
+    down, so a record delayed to 1,031.2 goes out at 1,031.2.
+    """
     for event in initial:
         publication.write(event)
 
     pacer = publication.pacer
     pacer.reanchor(publication.start)
     publication.live = True
-    pending: deque[Event] = deque()
     while True:
         if not pending:
-            if source.peek() == math.inf:
+            more = feed()
+            if more is None:
                 break
-            pending.extend(source.step())
+            pending.extend(more)
             continue
         if pacer.wait_until(pending[0].sim_time, control):
             return REASON_STOP
@@ -441,8 +584,17 @@ def run_live(
     start: float,
     horizon: float,
     run_info: RunInfo,
+    recording: LiveRecording | None = None,
 ) -> RunEnd:
     """Run a live run, from the warm-up to the end (see the module).
+
+    With ``recording`` (``--registro``, task 7.4), only what was written down is published,
+    never an event of the truth: every step of the source goes to ``recording``, and the
+    census and the live stream are its records. The census is the records with ``sim_time
+    < W`` whose episode the *truth* has open at ``W`` (or with no episode); the live stream,
+    every record with ``sim_time >= W``. ``censo.episodios`` counts the episodes among the
+    records of the census, so no number of the truth reaches the broker. What is published
+    is the ``registrado.jsonl`` of ``record`` filtered so, byte for byte.
 
     Args:
         source: ``EngineSource`` or ``LogSource``, before any step.
@@ -452,7 +604,10 @@ def run_live(
         sink: Where the run publishes.
         start: Start of the live stream ``W``, in minutes.
         horizon: Horizon in minutes; the same as the source's, if it has one.
-        run_info: Identity of the run, for ``RunStart``.
+        run_info: Identity of the run, for ``RunStart``; with ``recording``, with its
+            ``record`` and the derived ``run_id``.
+        recording: The waiting room of what was written down, before any ``add``:
+            ``RecordStream`` with the engine, ``RecordedLog`` in a replay.
 
     Returns:
         The ``RunEnd`` published.
@@ -460,7 +615,8 @@ def run_live(
     Raises:
         ValueError: Before doing anything, if ``start`` and ``horizon`` are
             not finite numbers with ``0 <= start < horizon``, the horizon of
-            the source is another, or ``run_info`` is not a ``RunInfo``.
+            the source is another, ``run_info`` is not a ``RunInfo``, or it has a
+            ``record`` without ``recording`` or the other way round.
         RuntimeError: Before publishing anything, if the source is the
             engine and the episodes open at ``start`` are not its live
             patient processes.
@@ -486,11 +642,18 @@ def run_live(
         raise ValueError(f"the horizon of the source is {source_horizon}, not {horizon}")
     if not isinstance(run_info, RunInfo):
         raise ValueError(f"run_info must be a RunInfo, got {run_info!r}")
+    if (recording is None) != (run_info.record is None):
+        raise ValueError(
+            "a run with --registro needs both a recording and the record of its run_info"
+        )
 
     # a) Warm-up, without waits and without publishing.
     warmup: list[Event] = []
     while source.peek() < start:
-        warmup.extend(source.step())
+        step = source.step()
+        warmup.extend(step)
+        if recording is not None:
+            recording.add(step)
 
     # b) Census, checked against the engine when there is one.
     still_open = open_episodes(warmup, start)
@@ -503,7 +666,19 @@ def run_live(
                 f"{len(still_open - alive)} open and not alive, "
                 f"{len(alive - still_open)} alive and not open"
             )
-    initial = census(warmup, start)
+    pending: deque[Event | Record] = deque()
+    if recording is None:
+        initial = census(warmup, start)
+        census_episodes = len(still_open)
+        feed = _truth_feed(source)
+    else:
+        # Everything before W is out of the room now (W <= peek); what is at W or later,
+        # and already out, is the start of the live stream.
+        released = recording.ready(source.peek())
+        initial = recorded_census(released, still_open, start)
+        pending.extend(r for r in released if r.sim_time >= start)
+        census_episodes = len({r.episode_id for r in initial if r.episode_id is not None})
+        feed = _recorded_feed(source, recording)
 
     # c) Announce.
     sink.start(
@@ -512,7 +687,7 @@ def run_live(
             live_start=start,
             horizon=horizon,
             speed=pacer.speed,
-            census_episodes=len(still_open),
+            census_episodes=census_episodes,
             census_events=len(initial),
         )
     )
@@ -520,7 +695,7 @@ def run_live(
     # d), e) and f).
     publication = _Publication(sink, pacer, start, horizon)
     try:
-        reason = _publish(source, control, publication, initial)
+        reason = _publish(feed, control, publication, initial, pending)
     except KeyboardInterrupt:
         sink.end(publication.end(run_info.run_id, REASON_INTERRUPT, publication.sim_now()))
         raise

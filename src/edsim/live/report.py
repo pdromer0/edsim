@@ -35,7 +35,17 @@ def format_status(status: LiveStatus) -> str:
 
 
 def format_census(start: RunStart) -> str:
-    """The census, when the run is announced."""
+    """The census, when the run is announced.
+
+    With ``--registro``, the census is of records, and its episodes are those with some
+    record in it, not the ones open in the truth (task 7.4).
+    """
+    if start.info.record is not None:
+        return (
+            f"Censo de lo registrado en W = {start.live_start:g} min:"
+            f" {start.census_episodes} episodios con registros, {start.census_events}"
+            " registros; empieza el directo"
+        )
     return (
         f"Censo en W = {start.live_start:g} min: {start.census_episodes} episodios abiertos,"
         f" {start.census_events} eventos; empieza el directo"

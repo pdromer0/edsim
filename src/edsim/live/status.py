@@ -19,12 +19,16 @@ functions. The texts in Spanish are in ``edsim.live.report``.
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from typing import TYPE_CHECKING
 
 from edsim.engine.events import Event, event_time
 from edsim.live.clock import Clock
 from edsim.live.control import Command, ControlSource
 from edsim.live.directo import LiveSink, RunEnd, RunStart
 from edsim.live.pacer import Pacer
+
+if TYPE_CHECKING:  # only for the annotation
+    from edsim.clinical_record import Record
 
 STATUS_INTERVAL = 10.0
 """Real seconds between two status lines."""
@@ -90,7 +94,7 @@ class ReportingSink:
         if self._on_start is not None:
             self._on_start(message)
 
-    def write(self, event: Event) -> None:
+    def write(self, event: "Event | Record") -> None:
         self.sink.write(event)
         self.published += 1
 

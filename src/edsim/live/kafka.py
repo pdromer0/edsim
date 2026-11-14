@@ -46,6 +46,7 @@ from pathlib import Path
 from types import ModuleType, TracebackType
 from typing import Protocol, Self
 
+from edsim.clinical_record import Record, record_json
 from edsim.engine.events import Event, from_json, to_json
 from edsim.live.control import Command
 from edsim.live.directo import REASON_ERROR, RunEnd, RunStart, SinkError
@@ -429,8 +430,11 @@ class KafkaSink:
             self._reported = len(self.failed)
             raise self._error("the inicio was not delivered", pending=pending)
 
-    def write(self, event: Event) -> None:
-        """Publish one event in its topic.
+    def write(self, event: Event | Record) -> None:
+        """Publish one event, or one record with ``--registro``, in its topic.
+
+        A record goes as an event does (task 7.4): the same topic and key (``route``), the
+        same headers, and its line of ``registrado.jsonl`` (``record_json``) as value.
 
         Raises:
             SinkError: If a message before it was not delivered (this one is not sent).
@@ -448,10 +452,11 @@ class KafkaSink:
         ]
         index = self._written
         self._written += 1
+        line = record_json(event) if isinstance(event, Record) else to_json(event)
         self._produce(
             topic,
             key,
-            to_json(event).encode("utf-8"),
+            line.encode("utf-8"),
             headers,
             event.event_id,
             index=index,
