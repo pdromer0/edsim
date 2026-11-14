@@ -12,6 +12,7 @@ con la regla de la última publicación. Imita la clave; que la de verdad sea (`
 """
 
 import json
+import time
 from contextlib import contextmanager
 
 from fake_kafka import LOG_APPEND_TIME, FakeRecord
@@ -39,13 +40,28 @@ class Crash(Exception):
     """Una caída programada del consumidor."""
 
 
+EMPTY_WAIT = 0.001
+"""Segundos reales que espera un `consume` sin mensajes y sin `clock`."""
+
+
+class RunawayLoop(AssertionError):
+    """El bucle pidió más lotes que `MAX_CONSUMES`: no iba a parar."""
+
+
+MAX_CONSUMES = 10_000
+"""Llamadas a `consume` que un test admite. Un bucle que no para (una versión incorrecta
+que quita la parada) falla así en lugar de girar sin fin y llenar la memoria: con V16, el
+test de la marca de la CLI lo hacía."""
+
+
 class FakeBronzeConsumer:
     """Un Consumer suscrito: `consume(n, timeout)` da hasta n mensajes desde su posición.
 
     Empieza en los offsets confirmados del broker (`earliest` si no hay). `commit` confirma
     su posición actual, como `commit(asynchronous=False)` sin offsets; `crash_on_commit`
     (número de llamada, desde 1) lanza `Crash` sin confirmar. Sin mensajes, `consume` avanza
-    `clock` lo que espera.
+    `clock` lo que espera, o, sin `clock`, espera `EMPTY_WAIT` de verdad. Pasadas
+    `MAX_CONSUMES` llamadas, lanza `RunawayLoop`.
     """
 
     def __init__(self, broker: FakeBroker, *, clock=None, crash_on_commit=None, log=None):
@@ -57,11 +73,15 @@ class FakeBronzeConsumer:
         self.log = log if log is not None else []
         self.closed = False
         self.on_consume = None  # si se da, se llama antes de cada consume
+        self.consumes = 0
 
     def close(self):
         self.closed = True
 
     def consume(self, num_messages, timeout):
+        self.consumes += 1
+        if self.consumes > MAX_CONSUMES:
+            raise RunawayLoop(f"{MAX_CONSUMES} llamadas a consume: el bucle no para")
         if self.on_consume is not None:
             self.on_consume()
         batch = []
@@ -73,8 +93,11 @@ class FakeBronzeConsumer:
             self.position[key] = start + len(taken)
             if len(batch) == num_messages:
                 break
-        if not batch and self.clock is not None:
-            self.clock.now += timeout
+        if not batch:
+            if self.clock is not None:
+                self.clock.now += timeout
+            else:
+                time.sleep(EMPTY_WAIT)  # el de verdad espera; sin esto, un bucle gira en vacío
         self.log.append(("consume", len(batch)))
         return batch
 

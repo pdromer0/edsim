@@ -15,7 +15,14 @@ from datetime import UTC, datetime
 
 import pytest
 from fake_kafka import CREATE_TIME, ManualClock, install_fake_confluent_kafka
-from fake_store import Crash, FakeBroker, FakeBronzeConsumer, FakeStore
+from fake_store import (
+    MAX_CONSUMES,
+    Crash,
+    FakeBroker,
+    FakeBronzeConsumer,
+    FakeStore,
+    RunawayLoop,
+)
 
 from edsim.live.kafka import (
     BRONZE_GROUP,
@@ -308,6 +315,16 @@ def test_parar_con_run_dice_cuantos_faltan():
     assert report.saved == 2
     assert report.progress.started is False
     assert report.missing is None  # sin el fin, no se sabe cuántos faltan
+
+
+def test_un_bucle_que_no_para_falla_en_lugar_de_girar_sin_fin():
+    """El doble corta un bucle sin parada: sin él, una versión incorrecta que la quita (V16 en
+    la CLI) dejaba el test girando y llenando la memoria."""
+    consumer = FakeBronzeConsumer(FakeBroker(), clock=ManualClock())  # sin esperas reales
+
+    with pytest.raises(RunawayLoop):
+        run_consumer(consumer, FakeStore())
+    assert consumer.consumes == MAX_CONSUMES + 1
 
 
 def test_la_configuracion_del_consumidor_de_bronce():
