@@ -77,6 +77,7 @@ from edsim.live.launch import prepare_live, prepare_replay, run_prepared, with_r
 from edsim.live.pacer import Pacer
 from edsim.profiles.config import load_profiles
 from edsim.runs import RecordingMismatchError, RunStore, record_run
+from edsim.runs.recorded import RunLogError
 
 RECORD_INFO = RecordInfo(RUN, "prueba", SEED)
 INFO = RunInfo(DERIVED, "replay", 4, 2026, START, False, RECORD_INFO)
@@ -203,6 +204,12 @@ def test_lo_registrado_y_el_bloque_registro_van_juntos():
         )
 
 
+def test_una_cota_nan_es_un_error_tambien_en_la_reemision():
+    """Como `RecordStream.ready`: con NaN, toda comparación es falsa y no saldría nada."""
+    with pytest.raises(ValueError, match="bound must be a number"):
+        RecordedLog(run_l().records).ready(float("nan"))
+
+
 def test_un_registro_que_retrocede_no_vale_en_la_reemision():
     records = run_l().records
     with pytest.raises(ValueError, match="goes back"):
@@ -297,6 +304,21 @@ def test_una_carpeta_que_no_coincide_es_un_error(root, tmp_path, change):
     fingerprints = re.findall(r"fingerprint (\S+?)\)?;?(?: |$)", str(caught.value))
     assert len(fingerprints) == 2
     assert (fingerprints[0] == fingerprints[1]) == (change == "una-linea-de-menos")
+
+
+@pytest.mark.parametrize("broken", ["sin-registrado", "fichero"])
+def test_una_carpeta_que_no_es_un_registro_es_un_error_de_datos(root, broken):
+    """Si `registros/realista-s2026` existe y no es un registro (le falta `registrado.jsonl`, o
+    es un fichero), es un `RunLogError`, de los datos (código 1), no un `OSError` (código 2)."""
+    result = record_run(RunStore(root), REPLAY_RUN, "realista", profiles_file=PROFILES_FILE)
+    if broken == "sin-registrado":
+        (result.path / "registrado.jsonl").unlink()
+    else:
+        shutil.rmtree(result.path)
+        result.path.write_text("no es una carpeta")
+
+    with pytest.raises(RunLogError, match="is not a recording"):
+        prepare_replay(root, REPLAY_RUN, record_profile="realista", profiles_file=PROFILES_FILE)
 
 
 @pytest.fixture(scope="module")

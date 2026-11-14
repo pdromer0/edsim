@@ -278,10 +278,9 @@ def prepare_replay(
         anchored=False,
     )
     horizon = float(days * MINUTES_PER_DAY)
-    source = LogSource(read_events(path), horizon)
     start = float(warmup * MINUTES_PER_DAY)
     if record_profile is None:
-        return PreparedRun(source, info, start, horizon)
+        return PreparedRun(LogSource(read_events(path), horizon), info, start, horizon)
     replayed = replay_records(
         RunStore(root), run_id, record_profile, record_seed, profiles_file=profiles_file
     )
@@ -290,8 +289,14 @@ def prepare_replay(
         run_id=replayed.derived_run_id,
         record=RecordInfo(run_id, replayed.profile, replayed.seed),
     )
+    # The source only once the records are there: a failure leaves no file open.
     return PreparedRun(
-        source, info, start, horizon, recording=RecordedLog(replayed.records), replayed=replayed
+        LogSource(read_events(path), horizon),
+        info,
+        start,
+        horizon,
+        recording=RecordedLog(replayed.records),
+        replayed=replayed,
     )
 
 

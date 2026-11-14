@@ -75,6 +75,15 @@ class RecordRunResult:
     info: Mapping[str, object]
 
 
+def _recorded_bytes(records: Sequence[Record]) -> bytes:
+    """The bytes of ``registrado.jsonl``: one ``record_json`` line per record.
+
+    The one serialization of ``record_run`` and of the check of ``replay_records``: a folder
+    written by one is what the other compares, byte for byte.
+    """
+    return "".join(record_json(r) + "\n" for r in records).encode("utf-8")
+
+
 def _check_destination(path: Path) -> None:
     """Fail if the recording exists or ``registros`` is not a folder."""
     if path.parent.exists() and not path.parent.is_dir():
@@ -175,8 +184,7 @@ def record_run(
         info["huella"] = config_fingerprint(copy)
         info["cuenta"] = dict(recording.info["cuenta"])
 
-        recorded = "".join(record_json(r) + "\n" for r in recording.records)
-        (temporary / RECORDED_FILE).write_bytes(recorded.encode("utf-8"))
+        (temporary / RECORDED_FILE).write_bytes(_recorded_bytes(recording.records))
         (temporary / NOTEBOOK_FILE).write_bytes(notebook_csv(recording.notebook).encode("utf-8"))
         text = json.dumps(info, ensure_ascii=False, allow_nan=False, indent=2) + "\n"
         (temporary / INFO_FILE).write_bytes(text.encode("utf-8"))
@@ -382,8 +390,8 @@ def replay_records(
     Raises:
         RecordingMismatchError: If the folder exists and its ``registrado.jsonl`` is not what
             ``record`` gives (a ``RunLogError``: a problem of the data).
-        RunLogError: If the true log is not valid, or a file of the folder is not a regular
-            file or not UTF-8.
+        RunLogError: If the true log is not valid, or the folder exists and is not a
+            recording (``registrado.jsonl`` missing or not a regular file).
         ValueError: If the run is not valid, ``profile`` is not one of the three, ``seed`` is
             not an integer >= 0, the derived ``run_id`` does not fit or the profiles file is
             not valid.
@@ -408,9 +416,13 @@ def replay_records(
     fingerprint = config_fingerprint(profiles_file)
     checked = None
     if path.exists() or path.is_symlink():
-        written = _read_regular(path / RECORDED_FILE)
-        computed = "".join(record_json(r) + "\n" for r in recording.records).encode("utf-8")
-        if written != computed:
+        try:
+            written = _read_regular(path / RECORDED_FILE)
+        except OSError as error:
+            # The folder is there but is no recording (no registrado.jsonl, a broken link,
+            # a file): a problem of the data, as a folder that does not match.
+            raise RunLogError(f"{path} is not a recording: {error}") from error
+        if written != _recorded_bytes(recording.records):
             copy = path / PROFILES_COPY
             copied = config_fingerprint(copy) if copy.is_file() else "sin copia"
             raise RecordingMismatchError(

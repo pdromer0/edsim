@@ -238,6 +238,13 @@ class RecordedLog:
         """Nothing: the records come from the whole truth."""
 
     def ready(self, bound: float) -> list[Record]:
+        """The next records with ``sim_time <= bound``, in emission order.
+
+        Raises:
+            ValueError: If ``bound`` is NaN, as ``RecordStream.ready``.
+        """
+        if isinstance(bound, bool) or not isinstance(bound, int | float) or math.isnan(bound):
+            raise ValueError(f"bound must be a number of minutes, got {bound!r}")
         out = []
         while self._records and self._records[0].sim_time <= bound:
             out.append(self._records.popleft())
@@ -271,6 +278,8 @@ class RecordInfo:
     seed: int
 
     def __post_init__(self) -> None:
+        # Any profile name, as RecordProfile: the CLI limits --registro to the three of the
+        # file, but a profile built in code (a test, a notebook) may have its own.
         for name in ("origin", "profile"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value:
