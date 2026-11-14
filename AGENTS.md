@@ -64,6 +64,8 @@ uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (
 uv run edsim directo preparar    # crea los topics de Kafka (Kafka levantado)
 uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe
 uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
+uv run edsim directo lanzar --registro realista  # publica solo lo registrado, con el run_id derivado (también reemitir; --semilla-registro, --registros)
+uv run edsim directo reemitir RUN_ID --registro realista  # lo registrado de una ejecución guardada; si existe registros/, lo compara byte a byte
 uv run edsim almacen preparar    # aplica las migraciones de bronce (Postgres levantado)
 uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa ejecución; sin --run, hasta Ctrl+C
 uv run edsim registro validar    # comprueba config/registro_clinico.toml: los tres perfiles del registro clínico

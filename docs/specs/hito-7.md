@@ -492,6 +492,15 @@ lab = 0
 - **«Directo = lotes» de lo registrado:** con la misma verdad, el mismo perfil y la misma semilla, lo publicado (censo y directo) es igual, byte a byte, a `registrado.jsonl` filtrado igual. Test lento, por versión de catálogo.
 - `LiveTracker` y `read_run` siguen siendo para la verdad: lo registrado, con olvidos y desorden, no cumple sus comprobaciones de orden. El consumidor de lo registrado es el de bronce.
 
+**Precisiones de la 7.4** (su plan, aprobado el 14 de noviembre de 2026):
+
+- **La sala suelta un registro cuando `s ≤ peek()`.** Todo hecho que aún no se ha visto tiene `sim_time ≥ peek()` y una posición mayor que cualquiera visto, así que en el empate decide la posición. Dentro de la sala, el orden es la clave de emisión completa `(s, posición, orden)`, no el de llegada. Vive en `clinical_record/record.py` (`RecordStream`), junto a los borradores de `record`; `live/` solo la conecta con `run_live`.
+- **El censo y el directo:** censo = registros con `s < W` sin episodio o de un episodio abierto en `W` según la verdad; directo = todos los de `s ≥ W`, también los de episodios que la verdad cerró antes (una corrección o un duplicado tardíos). La numeración es la de la grabación entera: lo publicado tiene huecos, como la verdad del hito 6.
+- **`censo.episodios`** cuenta los episodios con algún registro en el censo, no los abiertos de la verdad: ningún número de la verdad llega al broker.
+- **El bloque `registro`** va detrás de `censo`, con `origen`, `perfil` y `semilla`; el formato sigue en `"version": 1`, y `run_id` tiene que ser el derivado.
+- **La reemisión** calcula con `record` y el `--registros` dado. Si la carpeta existe, su `registrado.jsonl` tiene que ser lo mismo, byte a byte; si no, error de datos (código 1) con las dos huellas.
+- **Todo lleva el `run_id` derivado:** el `inicio`, los registros, el `fin`, la clave de `ed.runs`, el productor y las órdenes (`edsim directo control --run <derivado>`). El directo no escribe `registros/`.
+
 ## Especificación: Postgres y el consumidor
 
 ### Compose
@@ -661,14 +670,14 @@ edsim/
 ├── src/edsim/
 │   ├── clinical_record/         # nuevo
 │   │   ├── records.py           # Record, to_json del registro (7.1)
-│   │   ├── record.py            # record(): los ocho despistes, la emisión y el corte (7.1)
+│   │   ├── record.py            # record(): los ocho despistes, la emisión y el corte (7.1); la sala de espera, RecordStream (7.4)
 │   │   ├── notebook.py          # la libreta y la cuenta (7.1)
 │   │   ├── schemas.py           # esquemas del registro (7.1)
 │   │   ├── profiles.py          # carga y validación de registro_clinico.toml (7.2)
 │   │   ├── compare.py           # conciliación e indicadores ingenuos (7.3)
 │   │   └── report.py            # textos en español (7.2, 7.3)
 │   ├── runs/                    # record_run y su lectura (7.2)
-│   ├── live/                    # --registro en lanzar y reemitir; la sala de espera; inicio con registro (7.4)
+│   ├── live/                    # --registro en lanzar y reemitir; el censo de lo registrado; inicio con registro (7.4)
 │   ├── store/                   # nuevo (7.5)
 │   │   ├── sql/001_bronce.sql
 │   │   ├── migrations.py
