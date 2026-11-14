@@ -8,6 +8,7 @@ salen antes de conectar, el orden en que se crean las piezas y los textos.
 
 import json
 import re
+import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -25,12 +26,13 @@ from test_launch import REPLAY_DATE, REPLAY_RUN, save_run
 
 from edsim.arrivals.profile import load_profile
 from edsim.cli import main
+from edsim.clinical_record import Record
 from edsim.engine.center import load_center
 from edsim.engine.engine import simulate_ed
 from edsim.engine.events import MemorySink, read_events, to_json
 from edsim.live.clock import FakeClock
 from edsim.live.control import PAUSE, RESUME, SPEED, STOP, Command
-from edsim.live.directo import MemoryLiveSink, RunEnd
+from edsim.live.directo import MemoryLiveSink, RecordInfo, RunEnd
 from edsim.live.kafka import (
     MISSING_EXTRA_MESSAGE,
     BrokerUnavailableError,
@@ -42,6 +44,7 @@ from edsim.live.kafka import (
 from edsim.live.messages import control_json
 from edsim.live.topics import CONTROL, RUNS, TOPICS
 from edsim.profiles.config import load_profiles
+from edsim.runs import RunStore, record_run
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "tests" / "data"
@@ -139,6 +142,17 @@ USAGE_ERRORS = {
     "control-sin-run": (["directo", "control", "--pausar"], "--run"),
     "control-kafka-sin-puerto": (["directo", "control", "--run", "r1", "--parar", "--kafka", "sinpuerto"], "HOST:PUERTO"),  # noqa: E501
     "preparar-kafka-sin-puerto": (["directo", "preparar", "--kafka", "sinpuerto"], "HOST:PUERTO"),
+    # --registro (tarea 7.4)
+    "lanzar-registro-desconocido": ([*LAUNCH, "--registro", "otro"], "invalid choice: 'otro'"),
+    "lanzar-semilla-registro-sin-registro": ([*LAUNCH, "--semilla-registro", "3"], "--semilla-registro solo vale con --registro"),  # noqa: E501
+    "lanzar-registros-sin-registro": ([*LAUNCH, "--registros", "x.toml"], "--registros solo vale con --registro"),  # noqa: E501
+    "lanzar-semilla-registro-negativa": ([*LAUNCH, "--registro", "realista", "--semilla-registro", "-1"], "--semilla-registro"),  # noqa: E501
+    "lanzar-registros-que-no-existe": ([*LAUNCH, "--registro", "realista", "--registros", "/no/existe.toml"], "--registros"),  # noqa: E501
+    "lanzar-registro-derivado-largo": ([*LAUNCH, "--registro", "realista", "--run-id", "x" * 50], "derived run_id"),  # noqa: E501
+    "reemitir-registro-desconocido": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "otro"], "invalid choice"),  # noqa: E501
+    "reemitir-registros-sin-registro": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registros", "x.toml"], "--registros solo vale"),  # noqa: E501
+    "reemitir-semilla-registro-negativa": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "limpio", "--semilla-registro", "-2"], "--semilla-registro"),  # noqa: E501
+    "reemitir-registros-que-no-existe": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "limpio", "--registros", "/no/existe.toml"], "--registros"),  # noqa: E501
 }  # fmt: skip
 
 
@@ -663,3 +677,101 @@ def test_registro_kafka_con_memoria_es_un_error_de_uso(sin_conexion, capsys):
         main([*LAUNCH, "--memoria", "--registro-kafka", "x.log"])
     assert exit_.value.code == 2
     assert "--registro-kafka" in capsys.readouterr().err
+
+
+# --- Con --registro (tarea 7.4) --------------------------------------------------------
+
+RECORD_PROFILES = ROOT / "config" / "registro_clinico.toml"
+
+
+def test_lanzar_en_memoria_con_registro_publica_solo_lo_registrado(sinks, capsys):
+    code = main([*LAUNCH, "--memoria", "--velocidad", "max", "--run-id", "rcli",
+                 "--registro", "realista", "--semilla-registro", "7"])  # fmt: skip
+
+    assert code == 0
+    [live] = sinks
+    assert live.events and all(isinstance(r, Record) for r in live.events)
+    assert {r.run_id for r in live.events} == {"rcli_realista_s7"}
+    assert live.run_start.info.record == RecordInfo("rcli", "realista", 7)
+    assert live.run_end.run_id == "rcli_realista_s7"
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "Directo · run_id rcli_realista_s7 · velocidad máxima · en memoria"
+    assert out[4].startswith(
+        "Solo lo registrado de rcli · perfil realista · semilla 7 · perfiles "
+        "config/registro_clinico.toml (huella "
+    )
+    assert out[5].startswith("Censo de lo registrado en W = 1440 min: ")
+
+
+def test_lanzar_con_registro_y_kafka_solo_manda_registros_del_derivado(monkeypatch, capsys):
+    """Con el productor falso: ni un evento de la verdad en ningún topic (V12); la clave de
+    ed.runs, el productor y las órdenes, con el run_id derivado."""
+    kafka = KafkaFake(monkeypatch)
+    controls = []
+
+    def control(bootstrap, run_id, on_invalid, *, watch=None):
+        controls.append(run_id)
+        return kafka.control(bootstrap, run_id, on_invalid, watch=watch)
+
+    monkeypatch.setattr("edsim.cli.KafkaControl", control)
+    use_clock(monkeypatch, FakeClock())
+
+    code = main([*LAUNCH, "--velocidad", "max", "--run-id", "rcli", "--registro", "realista"])
+
+    assert code == 0, capsys.readouterr().err
+    derived = "rcli_realista_s2026"
+    assert controls == [derived]
+    assert [client for _, client in kafka.connects] == [derived]
+    values = [json.loads(call["value"]) for topic, call in kafka.producer.calls if topic != RUNS]
+    assert values and {v["run_id"] for v in values} == {derived}
+    assert all(v["event_id"].startswith(f"{derived}-") for v in values)
+    assert {call["key"] for topic, call in kafka.producer.calls if topic == RUNS} == {
+        derived.encode()
+    }
+    start, end = kafka.runs_messages()
+    assert start["registro"] == {"origen": "rcli", "perfil": "realista", "semilla": 2026}
+    assert (start["run_id"], end["run_id"], end["publicados"]) == (derived, derived, len(values))
+
+
+@pytest.fixture
+def own_saved(saved, tmp_path):
+    """Una copia de la ejecución guardada, para escribir su carpeta de registros."""
+    copy = tmp_path / "ejecuciones"
+    shutil.copytree(saved, copy)
+    return copy
+
+
+def test_reemitir_con_registro_dice_si_comparo_la_carpeta(own_saved, sinks, capsys):
+    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(own_saved), "--memoria",
+            "--velocidad", "max", "--registro", "realista"]  # fmt: skip
+
+    assert main(argv) == 0
+    first = capsys.readouterr().out.splitlines()
+    record_run(RunStore(own_saved), REPLAY_RUN, "realista", profiles_file=RECORD_PROFILES)
+    assert main(argv) == 0
+    second = capsys.readouterr().out.splitlines()
+
+    assert first[0].startswith(f"Replay · run_id {REPLAY_RUN}_realista_s2026 · ")
+    assert first[1].startswith(f"Ejecución {own_saved / REPLAY_RUN} · ")
+    assert first[4] == "Sin registros/realista-s2026/: calculado con record"
+    folder = own_saved / REPLAY_RUN / "registros" / "realista-s2026"
+    assert second[4] == f"Coincide, byte a byte, con {folder}"
+    first_sink, second_sink = sinks
+    assert first_sink.items == second_sink.items
+
+
+def test_reemitir_con_una_carpeta_que_no_coincide_es_un_error_de_datos(
+    own_saved, sin_conexion, capsys
+):
+    result = record_run(RunStore(own_saved), REPLAY_RUN, "realista", profiles_file=RECORD_PROFILES)
+    path = result.path / "registrado.jsonl"
+    path.write_text("".join(path.read_text(encoding="utf-8").splitlines(True)[1:]))
+
+    code = main(["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(own_saved),
+                 "--registro", "realista"])  # fmt: skip
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"Error en los datos de {REPLAY_RUN}: ")
+    assert "is not what record gives" in captured.err
+    assert captured.out == ""
