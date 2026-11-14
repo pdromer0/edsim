@@ -368,6 +368,7 @@ class _Draft:
     fields: dict[str, object]
     row: dict[str, object]
     link: "_Draft | None" = None  # the original of a duplicate, the wrong record of a correction
+    offset: int | None = None  # ms of the clock of its system; None keeps the times (resources)
     event_id: str | None = None
 
     @property
@@ -472,7 +473,11 @@ def record(
             empty = candidates[_pick(roll.u_empty_field, len(candidates))]
             payload[empty] = None
 
-        slipped = delay_min > 0 or clock_min != 0 or wrong is not None or empty is not None
+        # The class comes from what is written, not from what was drawn: a delay that
+        # does not move sim_time, or an offset that rounds to 0 ms, is no slip.
+        slipped = (
+            sim_time != event.sim_time or offset != 0 or wrong is not None or empty is not None
+        )
         stamp = _shift(event.event_time, offset)
         original = _Draft(
             sim_time,
@@ -482,7 +487,6 @@ def record(
                 **envelope,
                 "sim_time": sim_time,
                 "event_time": stamp,
-                "recorded_time": _shift(event_time(start, sim_time), offset),
                 "payload": payload,
             },
             {
@@ -493,13 +497,13 @@ def record(
                 "empty_field": empty,
                 **(_wrong_cells(wrong)),
             },
+            offset=offset,
         )
         drafts.append(original)
 
         if wrong is not None and roll.u_correction < profile.correction.rate:
             corrections_drawn += 1
             when = sim_time + profile.correction.quantile(roll.z_correction)
-            stamp_correction = _shift(event_time(start, when), offset)
             drafts.append(
                 _Draft(
                     when,
@@ -509,8 +513,6 @@ def record(
                         **envelope,
                         "event_type": RECORD_CORRECTED,
                         "sim_time": when,
-                        "event_time": stamp_correction,
-                        "recorded_time": stamp_correction,
                         "payload": {"corrige": None, "campos": {wrong[0]: wrong[1]}},
                     },
                     {
@@ -522,6 +524,7 @@ def record(
                         "true_value": wrong[1],
                     },
                     link=original,
+                    offset=offset,
                 )
             )
 
@@ -536,7 +539,6 @@ def record(
                         **envelope,
                         "sim_time": when,
                         "event_time": stamp,
-                        "recorded_time": _shift(event_time(start, when), offset),
                         "payload": dict(payload),
                     },
                     {
@@ -546,6 +548,7 @@ def record(
                         "clock_min": clock_min,
                     },
                     link=original,
+                    offset=offset,
                 )
             )
 
@@ -560,6 +563,12 @@ def record(
     rows = []
     for draft in written:
         values = draft.fields
+        if draft.offset is not None:
+            # Only now, for what is written: a draft past the horizon may lie beyond any date.
+            clock = _shift(event_time(start, draft.sim_time), draft.offset)
+            values = {**values, "recorded_time": clock}
+            if draft.order == 2:
+                values["event_time"] = clock
         row = dict(draft.row)
         if draft.order == 2:
             values = {**values, "payload": {**values["payload"], "corrige": draft.link.event_id}}

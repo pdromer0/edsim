@@ -514,6 +514,41 @@ def test_corte_hecho_pendiente():
     assert recording.info["cuenta"]["pendiente"] == 1
 
 
+@pytest.mark.parametrize("field", ["z_delay", "z_duplicate", "z_correction"])
+def test_una_z_enorme_cae_tras_el_horizonte_sin_romper_las_horas(field):
+    """Lo que no se escribe no necesita hora: z = 40 lo lleva más allá de cualquier fecha."""
+    sink = MemorySink()
+    EventLog(RUN, START, sink, schema_version=4).emit(
+        "triage_completed", 1430.0, arrival_id=1, nivel=3, motivo="disnea"
+    )
+    draws = {
+        "z_delay": {"u_delay": 0.0},
+        "z_duplicate": {"u_duplicate": 0.0},
+        "z_correction": {"u_wrong": 0.0, "u_wrong_field": 0.0, "u_correction": 0.0},
+    }[field]
+    recording = run_one(sink.events, [make_roll(**draws, **{field: 40.0})])
+
+    # Con el retraso, ni el hecho se escribe; con el duplicado o la corrección, solo el hecho.
+    assert len(recording.records) == (0 if field == "z_delay" else 1)
+    assert recording.info["cuenta"]["pendiente"] == (1 if field == "z_delay" else 0)
+
+
+def test_la_clase_sale_de_lo_escrito_no_de_lo_sorteado():
+    """Un desfase que redondea a 0 ms y un retraso que no mueve sim_time no son despistes."""
+    profile = make_profile(clock={"admision": 1e-6, "triaje": 0.0, "his": 0.0, "lab": 0.0})
+    roll = make_roll(u_delay=0.0, z_delay=-1000.0)  # admisión: 1 · exp(-1000·sigma) ≈ 0
+    recording = run_one(scenario_l()[:1], [roll], profile=profile)
+
+    arrived = recording.records[0]
+    first = scenario_l()[0]
+    assert (arrived.sim_time, arrived.event_time, arrived.recorded_time) == (
+        first.sim_time,
+        first.event_time,
+        first.event_time,
+    )
+    assert (recording.notebook[0].kind, recording.notebook[0].delay_min) == (GOOD, 0.0)
+
+
 @pytest.mark.parametrize(("horizon", "written"), [(1020.0 + 1e-9, 1), (1020.0, 0)])
 def test_el_horizonte_es_exclusivo(horizon, written):
     recording = run_one(scenario_l()[:1], [], horizon=horizon)
