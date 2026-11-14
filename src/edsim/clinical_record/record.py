@@ -35,6 +35,15 @@ Field               Specification       Use
 The order and the number do not change: changing them changes every slip of
 every recording.
 
+**The real dice.** ``StreamDice(seed)`` draws from child 10 of
+``child_streams(seed, 11)``: the engine uses children 0 to 9, so with the seed of
+the run the recording never shares a stream with it. Each roll is one
+``random(13)`` call, 13 uniforms in [0, 1); the three ``z_*`` are the standard
+normal quantile of their uniform, and ``spare`` is the thirteenth uniform. The
+consumption is fixed: exactly 13 doubles per roll. A normal drawn straight
+from the generator (``standard_normal``) would use a variable number of bits and
+could change with the version of numpy; a uniform and its inverse cannot.
+
 **The slips**, in this order, for each true patient event:
 
 1. forgetting: no record, nor delay, duplicate or correction for it;
@@ -54,8 +63,11 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time, timedelta
+from statistics import NormalDist
 from types import MappingProxyType
 from typing import Protocol
+
+import numpy as np
 
 from edsim.clinical_record.notebook import (
     CORRECTION,
@@ -72,6 +84,7 @@ from edsim.clinical_record.records import RECORD_CORRECTED, Record
 from edsim.engine.events import CATALOGS, TIMEZONE, Event, event_time
 from edsim.identifiers import validate_run_id
 from edsim.lognormal import lognormal_params
+from edsim.seeds import child_streams
 
 SYSTEMS: tuple[str, ...] = ("admision", "triaje", "his", "lab")
 """The systems with their own delay and clock; ``rrhh`` (resources) has neither."""
@@ -144,6 +157,53 @@ class Dice(Protocol):
     """Where ``record`` gets its numbers: one ``Roll`` per true patient event."""
 
     def roll(self) -> Roll: ...
+
+
+DICE_STREAMS = 11
+"""Children of the seed that ``StreamDice`` asks for: the 10 of the engine, and one more."""
+
+DICE_STREAM = 10
+"""The child of ``child_streams(seed, DICE_STREAMS)`` that is the dice of the record."""
+
+_Z_POSITIONS: tuple[int, ...] = tuple(
+    i for i, f in enumerate(fields(Roll)) if f.name.startswith("z_")
+)
+"""Where the standard normals are in a roll: ``z_delay``, ``z_correction`` and ``z_duplicate``."""
+
+_NORMAL = NormalDist()
+_SMALLEST = 2.0**-53
+"""A uniform of numpy is a multiple of 2⁻⁵³ in [0, 1): 0 is possible, and has no normal quantile."""
+
+
+def _standard_normal(u: float) -> float:
+    """The standard normal quantile of a uniform in [0, 1): finite, from -8.21 to 8.21."""
+    return _NORMAL.inv_cdf(max(u, _SMALLEST))
+
+
+class StreamDice:
+    """The real dice: child 10 of ``child_streams(seed, 11)``, 13 numbers per roll.
+
+    Same seed, same rolls, whatever the profile: that is what makes everything a
+    realistic profile gets wrong also wrong in a hostile one.
+
+    Args:
+        seed: The seed of the recording, an integer >= 0.
+
+    Raises:
+        ValueError: If ``seed`` is not an integer >= 0.
+    """
+
+    def __init__(self, seed: int) -> None:
+        if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+            raise ValueError(f"seed must be an integer >= 0, got {seed!r}")
+        self._rng = np.random.default_rng(child_streams(seed, DICE_STREAMS)[DICE_STREAM])
+
+    def roll(self) -> Roll:
+        """The next 13 numbers: ``ROLL_SIZE`` doubles of the stream, the ``z_*`` as normals."""
+        numbers = self._rng.random(ROLL_SIZE).tolist()
+        for i in _Z_POSITIONS:
+            numbers[i] = _standard_normal(numbers[i])
+        return Roll.from_numbers(numbers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,7 +443,7 @@ def record(
     *,
     horizon: float,
     run_id: str,
-    dice: Dice,
+    dice: Dice | None = None,
 ) -> Recording:
     """What the hospital writes down of a true log, with the slips of a profile.
 
@@ -394,7 +454,8 @@ def record(
         horizon: The horizon in minutes (days × 1440): nothing written at or
             after it is written.
         run_id: The ``run_id`` of the true run.
-        dice: One ``Roll`` per true patient event, in the order of the log.
+        dice: One ``Roll`` per true patient event, in the order of the log; by
+            default, ``StreamDice(seed)``.
 
     Returns:
         The derived ``run_id``, the records, the notebook and ``registro.json``.
@@ -414,6 +475,8 @@ def record(
         raise ValueError(f"the log is not of run {run_id!r}: it has events of {foreign!r}")
     start = _log_start(events)
     offsets = {s: round(profile.clock[s] * 60_000) for s in SYSTEMS}
+    if dice is None:
+        dice = StreamDice(seed)
 
     drafts: list[_Draft] = []
     lost: list[tuple[int, NotebookRow]] = []

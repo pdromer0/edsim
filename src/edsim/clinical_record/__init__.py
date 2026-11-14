@@ -6,7 +6,7 @@ with the eight slips of a profile, into a derived run with its own ``run_id``
 engine: only the catalog of ``edsim.engine.events``.
 
 - ``records``: ``Record`` and ``record_json``;
-- ``record``: the dice, the profile in code and ``record``;
+- ``record``: the dice (``Roll``, ``StreamDice``), the profile in code and ``record``;
 - ``notebook``: ``defectos.csv`` and the account that balances;
 - ``schemas``: the JSON Schema of the records, ``schemas/registro-v*.schema.json``.
 """
@@ -34,6 +34,7 @@ from edsim.clinical_record.record import (
     Recording,
     RecordProfile,
     Roll,
+    StreamDice,
     Timed,
     derived_run_id,
     record,
@@ -61,6 +62,7 @@ __all__ = [
     "RecordProfile",
     "Recording",
     "Roll",
+    "StreamDice",
     "Timed",
     "account",
     "derived_run_id",
