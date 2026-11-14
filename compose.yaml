@@ -1,7 +1,11 @@
-# compose.yaml — Kafka de un nodo (KRaft) y Redpanda Console. Ver docs/specs/hito-6.md, pieza 5.
+# compose.yaml — Kafka de un nodo (KRaft), Redpanda Console y Postgres con TimescaleDB.
+# Ver docs/specs/hito-6.md, pieza 5, y docs/specs/hito-7.md, «Especificación: Postgres y el
+# consumidor».
 #
-# Sin perfiles (son la base) y sin volumen: `docker compose down` deja el broker vacío.
-# Los topics no se crean aquí: la autocreación está desactivada y los crea EDsim (H6-7).
+# Sin perfiles (son la base). Kafka va sin volumen: `docker compose down` deja el broker vacío.
+# Postgres guarda sus datos en el volumen edsim-postgres, que sobrevive a `docker compose down`;
+# para borrarlos, `docker compose down -v`. Los topics no se crean aquí: la autocreación está
+# desactivada y los crea EDsim (H6-7); las tablas las crea `edsim almacen preparar` (H7-9).
 name: edsim
 
 services:
@@ -45,6 +49,28 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       KAFKA_BROKERS: kafka:19092
+
+  postgres:
+    image: timescale/timescaledb:2.31.0-pg17
+    environment:
+      POSTGRES_USER: edsim
+      # Solo para el Postgres local, que escucha en 127.0.0.1: el repositorio no guarda secretos.
+      POSTGRES_PASSWORD: edsim
+      POSTGRES_DB: edsim
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - edsim-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # Por TCP (-h): durante el init, el servidor temporal solo escucha en el socket unix, y
+      # sin -h pg_isready lo daría por sano antes del arranque definitivo.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U edsim -d edsim"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  edsim-postgres:

@@ -17,7 +17,7 @@ Closes #
 - [ ] N1: ruff y los tests del área tocada antes de cada commit
 - [ ] N2: rápida con sello (hook Stop) en verde
 - [ ] N3: `scripts/tests-completos.sh`, una sola, tras la revisión propia y antes del push (con sus tiempos)
-- [ ] `scripts/tests-integracion.sh`, si toca Kafka
+- [ ] `scripts/tests-integracion.sh`, si toca Kafka o Postgres
 - [ ] Documentación al día en este PR
 
 ## Revisión propia (/code-review)

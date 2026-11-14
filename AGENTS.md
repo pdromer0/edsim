@@ -49,6 +49,7 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
 ```bash
 uv sync --all-packages    # entorno completo del workspace (uv.lock)
 uv sync --all-packages --extra kafka  # el anterior más el cliente de Kafka
+uv sync --all-packages --extra kafka --extra postgres  # más el de Postgres (hito 7)
 uv run pytest            # tests del núcleo, incluidos los slow (como el CI)
 uv run pytest -m "not slow"  # tests rápidos del núcleo
 uv run --package edsim-app pytest app/tests  # tests de la app
@@ -58,11 +59,13 @@ uv run ruff format .     # formato
 uv run edsim             # CLI
 scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
 scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
-scripts/tests-integracion.sh  # contra Kafka real: levanta compose.yaml si hace falta
+scripts/tests-integracion.sh  # contra Kafka y Postgres reales: levanta compose.yaml si hace falta
 uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
 uv run edsim directo preparar    # crea los topics de Kafka (Kafka levantado)
 uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe
 uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
+uv run edsim almacen preparar    # aplica las migraciones de bronce (Postgres levantado)
+uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa ejecución; sin --run, hasta Ctrl+C
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)

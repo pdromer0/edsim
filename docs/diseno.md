@@ -454,14 +454,14 @@ El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.
 
 ```
 edsim/
-├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6)
+├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6); store (hito 7)
 ├── app/            # EDsim Lab (Streamlit), paquete edsim-app
 ├── config/         # centro, llegadas, perfiles y objetivos (TOML)
 ├── schemas/        # JSON Schema de los eventos y de los mensajes (hito 6)
-├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6)
+├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6) y Postgres (hito 7)
 ├── notebooks/      # un notebook por hito
 ├── docs/           # diseño, specs, ADRs, diario y calibración
-├── compose.yaml    # Kafka y Redpanda Console (hito 6)
+├── compose.yaml    # Kafka y Redpanda Console (hito 6); Postgres con TimescaleDB (hito 7)
 └── pyproject.toml  # workspace de uv con los dos paquetes
 ```
 
@@ -702,8 +702,8 @@ Cuatro niveles, de lo más barato a lo más completo: **N0** ruff; **N1** los fi
 | Al final de cada turno (hook `Stop` de Claude Code y de Codex) | N2 | `scripts/tests-rapidos.sh`. En modo plan, nada. Sin cambios desde el último verde, o con solo documentación, nada. Si no, la rápida de cada suite afectada, con `-x`: el núcleo con xdist y la app en serie. Codex formatea antes con `ruff format .` | El agente no devuelve el turno con la rápida en rojo |
 | Antes de cada commit | N0 + N1 | pre-commit (nbstripout, `ruff check --fix`, `ruff format`, espacios, YAML, ficheros grandes) y los ficheros de test del área tocada | El paso está limpio y su área pasa |
 | Al probar una versión incorrecta | N1 | Los ficheros donde se predice el fallo y los que deben seguir pasando | El test detecta el error previsto |
-| Antes de cada push | N3 | Una sola vez, después de la revisión propia (`/code-review`) y de todas sus correcciones. `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka, también `scripts/tests-integracion.sh` (hito 6) | Lo que se sube pasa todo |
-| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y, desde el hito 6, `tests-kafka` (integración contra el Kafka de `compose.yaml`), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR. Si el PR entero solo cambia documentación, un job previo (`cambios`) hace que los demás se salten ([P.3, #81](proceso/p3.md)) | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
+| Antes de cada push | N3 | Una sola vez, después de la revisión propia (`/code-review`) y de todas sus correcciones. `scripts/tests-completos.sh`: lint, formato, núcleo completo con xdist, app completa en serie y notebooks. Ejecuta todas las partes aunque una falle y sella las dos suites si todo pasa. En las tareas que tocan Kafka o Postgres, también `scripts/tests-integracion.sh` (hitos 6 y 7) | Lo que se sube pasa todo |
+| En cada push al PR | CI | `tests` (lint, formato y núcleo completo en serie), `tests-app`, `notebooks` y `tests-integracion` (integración contra el Kafka y el Postgres de `compose.yaml`; `tests-kafka` en el hito 6, renombrado en la 7.5), en paralelo. Un push nuevo cancela la ejecución anterior del mismo PR. Si el PR entero solo cambia documentación, un job previo (`cambios`) hace que los demás se salten ([P.3, #81](proceso/p3.md)) | Lo comprueba una máquina limpia; la protección de `main` exige sus checks obligatorios |
 | Al fusionar en `main` | CI | Lo mismo sobre `main`, sin cancelar nunca | `main` sigue en verde |
 
 Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
@@ -713,7 +713,7 @@ Qué suite afecta cada ruta cambiada (el primer caso que encaja manda):
 | `*.md`, `docs/`, `app/docs/`, `notebooks/` | Ninguna; se actualizan los sellos |
 | `app/` | App |
 | `src/edsim/`, `config/`, `pyproject.toml`, `uv.lock`, `tests/data/` | Núcleo y app (la app usa el núcleo y lee `tests/data/`) |
-| `compose.yaml`, `tests_integracion/` (hito 6) | Ninguna; se actualizan los sellos. Los prueba `scripts/tests-integracion.sh` |
+| `compose.yaml`, `tests_integracion/` (hitos 6 y 7) | Ninguna; se actualizan los sellos. Los prueba `scripts/tests-integracion.sh` |
 | `tests/`, `schemas/`, `scripts/`, `.claude/`, `.codex/`, `.github/`, `.pre-commit-config.yaml`, `.gitignore` | Núcleo |
 | Cualquier otra | Núcleo y app (lo conservador) |
 
@@ -809,6 +809,14 @@ El hito 6 (Tiempo real) añade una suite que necesita un broker de Kafka y, por 
 | Job `tests-kafka` | Cuarto job del CI: `uv sync --locked --extra kafka` y `scripts/tests-integracion.sh`, con `timeout-minutes: 15`. Obligatorio en la protección de `main` desde la 6.4 |
 | Sello | `compose.yaml` y `tests_integracion/` no afectan a la rápida (los prueba el script de integración); `schemas/` es núcleo, porque un test compara los esquemas escritos con los generados |
 | Frontera | El núcleo se importa sin `confluent-kafka`: solo `edsim/live/kafka.py` lo importa, dentro de funciones, y un test lo comprueba. La suite rápida usa un `FakeProducer` y, desde la 6.5, un módulo `confluent_kafka` falso |
+
+**Desde la 7.5 (hito 7).** La suite de integración prueba también Postgres:
+
+- el job se llama `tests-integracion`, instala los extras `kafka` y `postgres` y sigue siendo obligatorio;
+- `scripts/tests-integracion.sh` espera a que Kafka y Postgres estén sanos, y cada sesión crea su propia base de datos (`edsim_test_<8 hex>`) y la borra al acabar;
+- `edsim/store/postgres.py` es el único módulo que importa `psycopg`, dentro de funciones; el test de frontera lo comprueba como con `confluent-kafka`.
+
+Tras la 7.5, el script tarda en el portátil de Pedro lo que dice el anexo de la 7.5 en [hito-7.md](specs/hito-7.md).
 
 **Medir sin contenedores.** Con Kafka en marcha la completa tardó unos 6 minutos más (19:53 en la 6.1 frente a 14:00 en la 6.2). `scripts/tests-completos.sh` se mide sin contenedores (`docker compose down`); en el equipo de Pedro el motor de Docker corre dentro de WSL, sin Docker Desktop. La completa varía entre días sin cambios de código (la app, que no cambió, entre 3:06 y 4:25): se compara la parte que cambia, no el total. Tras la 6.4, 18 min 09 s: núcleo 3.167 tests en 13:00, app 287 en 4:16 y notebooks 0:53.
 
