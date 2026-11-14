@@ -110,6 +110,7 @@ def test_la_api_de_la_tarea_4_8a_es_publica():
 
 OPTIONAL_CLIENTS = {
     "confluent_kafka": ("live/kafka.py", "edsim.live.kafka"),
+    "psycopg": ("store/postgres.py", "edsim.store.postgres"),
 }
 """Cada cliente opcional, con el único módulo del núcleo que puede importarlo: el de Kafka
 (H6-2) y el de Postgres (H7-6). Los dos, solo dentro de funciones (import perezoso)."""
