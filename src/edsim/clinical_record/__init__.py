@@ -9,9 +9,20 @@ engine: only the catalog of ``edsim.engine.events``.
 - ``record``: the dice (``Roll``, ``StreamDice``), the profile in code and ``record``;
 - ``profiles``: the load and the validation of ``config/registro_clinico.toml``;
 - ``notebook``: ``defectos.csv`` and the account that balances;
+- ``compare``: the reconciliation with the truth and the naive indicators;
 - ``schemas``: the JSON Schema of the records, ``schemas/registro-v*.schema.json``.
 """
 
+from edsim.clinical_record.compare import (
+    Comparison,
+    DelayStats,
+    IndicatorRow,
+    Indicators,
+    Reconciliation,
+    ReconciliationError,
+    SlipCounts,
+    compare,
+)
 from edsim.clinical_record.notebook import (
     CORRECTION,
     CORRECTION_PENDING,
@@ -71,16 +82,24 @@ __all__ = [
     "WITH_SLIPS",
     "WRONG_FIELDS",
     "Account",
+    "Comparison",
+    "DelayStats",
     "Dice",
+    "IndicatorRow",
+    "Indicators",
     "NotebookRow",
     "Record",
     "RecordProfile",
     "RecordProfiles",
+    "Reconciliation",
+    "ReconciliationError",
     "Recording",
     "Roll",
+    "SlipCounts",
     "StreamDice",
     "Timed",
     "account",
+    "compare",
     "derived_run_id",
     "load_record_profiles",
     "notebook_csv",
