@@ -41,6 +41,18 @@ def test_sin_el_extra_el_error_dice_como_instalarlo(monkeypatch):
         ("postgresql://a:b:c@h/db", "postgresql://a:***@h/db"),
         ("postgresql://edsim@localhost/edsim", "postgresql://edsim@localhost/edsim"),
         ("postgresql://localhost/edsim", "postgresql://localhost/edsim"),
+        (
+            "postgresql://edsim@localhost/edsim?password=secreta",
+            "postgresql://edsim@localhost/edsim?password=***",
+        ),
+        (
+            "postgresql://localhost/edsim?sslmode=disable&password=secreta&connect_timeout=5",
+            "postgresql://localhost/edsim?sslmode=disable&password=***&connect_timeout=5",
+        ),
+        (
+            "postgresql://edsim:secreta@localhost/edsim?password=otra",
+            "postgresql://edsim:***@localhost/edsim?password=***",
+        ),
     ],
 )
 def test_la_url_se_imprime_sin_la_contrasena(url, printed):

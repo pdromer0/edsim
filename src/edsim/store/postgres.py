@@ -18,6 +18,7 @@ the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id
 ``Record`` from it is for the task that brings ``registro comparar --postgres`` (7.3).
 """
 
+import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import astuple
@@ -50,13 +51,18 @@ class DatabaseUnavailableError(RuntimeError):
 
 
 def safe_url(url: str) -> str:
-    """``url`` without its password, to print it."""
+    """``url`` without its password, to print it: neither in ``user:password@`` nor in a
+    ``password=`` parameter of the query (libpq takes both)."""
+    url = _QUERY_PASSWORD.sub(r"\1***", url)
     scheme, sep, rest = url.partition("://")
     credentials, at, host = rest.rpartition("@")
     if not sep or not at or ":" not in credentials:
         return url
     user = credentials.split(":", 1)[0]
     return f"{scheme}://{user}:***@{host}"
+
+
+_QUERY_PASSWORD = re.compile(r"([?&]password=)[^&#]*")
 
 
 def import_psycopg() -> ModuleType:
