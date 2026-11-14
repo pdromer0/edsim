@@ -29,6 +29,11 @@ delivered, the topics are missing or differ, the broker does not answer or the
 if Postgres or the broker do not answer, a topic does not carry the broker's timestamp, the
 migrations and the database disagree or an extra is missing; 2 for usage errors, before
 connecting.
+
+``registro`` (docs/specs/hito-7.md, "CLI"): 0 if ``validar`` and ``generar`` do their job; 1 if
+``generar`` finds the true log of the run unreadable or not of that run (the data); 2 for usage
+errors, before writing anything: a profiles file that does not load, a run that does not exist,
+a recording that already exists or a derived ``run_id`` longer than 64 characters.
 """
 
 import argparse
@@ -90,6 +95,8 @@ from edsim.calibration.window import (
     window_start_dates,
 )
 from edsim.checks import check_count
+from edsim.clinical_record import DEFAULT_PROFILES_FILE, PROFILE_NAMES, load_record_profiles
+from edsim.clinical_record.report import format_profiles, format_recording
 from edsim.engine.center import CenterConfig, load_center
 from edsim.engine.clinical_sampler import ModelChoiceError, PatientModel, choose_model
 from edsim.engine.engine import check_horizon, default_run_id
@@ -147,7 +154,8 @@ from edsim.profiles.validation import (
 )
 from edsim.queueing.replications import compare_mm1
 from edsim.queueing.report import format_comparison, plot_sweep, write_sweep_csv
-from edsim.runs import simulate_run, validate_run_id
+from edsim.runs import RunStore, record_run, simulate_run, validate_run_id
+from edsim.runs.recorded import RunLogError
 from edsim.store.bronze import TimestampTypeError
 from edsim.store.consumer import RUN_TIMEOUT, run_consumer
 from edsim.store.migrations import MigrationError
@@ -1070,6 +1078,33 @@ def _prepare_topics(args: argparse.Namespace, parser: argparse.ArgumentParser) -
     return 0
 
 
+def _record_validate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    profiles, fingerprint = _load_file(args.registros, "--registros", load_record_profiles, parser)
+    print(format_profiles(args.registros, fingerprint, profiles))
+    return 0
+
+
+def _record_generate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        result = record_run(
+            RunStore(args.ejecuciones),
+            args.run_id,
+            args.perfil,
+            args.semilla,
+            profiles_file=args.registros,
+        )
+    except RunLogError as error:
+        print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)
+        return 1
+    except RuntimeError as error:
+        print(f"Error: {error}", file=sys.stderr, flush=True)
+        return 1
+    except (OSError, ValueError) as error:
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    print(format_recording(result.info, result.path))
+    return 0
+
+
 def parse_postgres_url(text: str) -> str:
     """The URL of Postgres, ``postgresql://usuario:contraseña@host:puerto/base``."""
     if not text.startswith(("postgresql://", "postgres://")) or text.endswith("://"):
@@ -1857,6 +1892,65 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"con --run, segundos de espera (por defecto: {RUN_TIMEOUT:g})",
     )
     store_consume.set_defaults(handler=_store_consume, subparser=store_consume)
+
+    records = commands.add_parser(
+        "registro",
+        help="registro clínico: cuánto se equivoca el hospital al anotar",
+        description="El simulador del registro clínico del hito 7: convierte la verdad de una "
+        "ejecución en lo que el hospital anotó, con sus despistes (docs/specs/hito-7.md).",
+    )
+    record_actions = records.add_subparsers(dest="accion", required=True, metavar="accion")
+
+    def add_records_option(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument(
+            "--registros",
+            default=DEFAULT_PROFILES_FILE,
+            metavar="FICHERO",
+            help="perfiles del registro clínico en TOML (por defecto: %(default)s)",
+        )
+
+    record_validate = record_actions.add_parser(
+        "validar",
+        help="comprueba el fichero de perfiles del registro clínico",
+        description="Carga config/registro_clinico.toml (o --registros) y comprueba que tiene "
+        "los tres perfiles (limpio, realista y hostil) con las mismas claves, las tasas entre 0 "
+        "y 1, los minutos como [mediana, p90] y el limpio a cero. Imprime los perfiles. Termina "
+        "con código 2 si el fichero no es válido, con todos sus errores.",
+    )
+    add_records_option(record_validate)
+    record_validate.set_defaults(handler=_record_validate, subparser=record_validate)
+
+    record_generate = record_actions.add_parser(
+        "generar",
+        help="escribe lo registrado de una ejecución guardada",
+        description="Lee la verdad de una ejecución guardada y escribe, en su carpeta, "
+        "registros/<perfil>-s<semilla>/ con lo registrado, la libreta de despistes, la copia "
+        "de los perfiles y registro.json; imprime la cuenta. No toca ningún fichero de la "
+        "ejecución ni sobrescribe un registro que ya existe.",
+    )
+    record_generate.add_argument("run_id", metavar="RUN_ID", help="la ejecución guardada")
+    record_generate.add_argument(
+        "--perfil",
+        required=True,
+        choices=PROFILE_NAMES,
+        help="cuánto se equivoca el hospital",
+    )
+    record_generate.add_argument(
+        "--semilla",
+        type=int,
+        default=None,
+        metavar="N",
+        help="semilla del registro, para anotar la misma verdad de otra manera "
+        "(por defecto: la de la ejecución)",
+    )
+    add_records_option(record_generate)
+    record_generate.add_argument(
+        "--ejecuciones",
+        default=DEFAULT_RUNS,
+        metavar="DIR",
+        help="carpeta de las ejecuciones guardadas (por defecto: %(default)s)",
+    )
+    record_generate.set_defaults(handler=_record_generate, subparser=record_generate)
 
     return parser
 

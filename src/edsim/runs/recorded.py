@@ -43,6 +43,11 @@ PROFILES_COPY = "registro_clinico.toml"
 INFO_FILE = "registro.json"
 
 
+class RunLogError(ValueError):
+    """The true log of the run cannot be recorded: a line is not an event, or it is not the log of
+    the run. It is a problem of the data, not of how ``record_run`` was called."""
+
+
 @dataclass(frozen=True, slots=True)
 class RecordRunResult:
     """What ``record_run`` wrote.
@@ -69,7 +74,10 @@ def _read_events(store: RunStore, run_id: str) -> list[Event]:
 
     Split by ``\\n``, not ``splitlines``: that one also splits at U+2028 inside a text.
     """
-    text = store.read_file(run_id, "eventos.jsonl").decode("utf-8")
+    try:
+        text = store.read_file(run_id, "eventos.jsonl").decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise RunLogError(f"eventos.jsonl: {error}") from error
     events = []
     for number, line in enumerate(text.split("\n"), start=1):
         if not line:
@@ -77,7 +85,7 @@ def _read_events(store: RunStore, run_id: str) -> list[Event]:
         try:
             events.append(from_json(line))
         except ValueError as error:
-            raise ValueError(f"eventos.jsonl:{number}: {error}") from error
+            raise RunLogError(f"eventos.jsonl:{number}: {error}") from error
     return events
 
 
@@ -102,9 +110,11 @@ def record_run(
         The folder written and the content of its ``registro.json``.
 
     Raises:
+        RunLogError: If the true log of the run is not valid or is not the log of that run; a
+            ``ValueError``, but of the data.
         ValueError: If the run is not valid, ``profile`` is not one of the three, ``seed`` is not
-            an integer >= 0, the derived ``run_id`` does not fit in 64 characters, the log is not
-            valid or the profiles file is not. All before writing anything.
+            an integer >= 0, the derived ``run_id`` does not fit in 64 characters or the profiles
+            file is not valid. All before writing anything.
         FileExistsError: If ``registros/<perfil>-s<semilla>/`` already exists; nothing is
             overwritten.
         NotADirectoryError: If ``registros`` exists and is not a folder.
@@ -133,13 +143,17 @@ def record_run(
         copy = temporary / PROFILES_COPY
         shutil.copyfile(profiles_file, copy)
         profiles = load_record_profiles(copy)
-        recording = record(
-            events,
-            profiles[profile],
-            seed,
-            horizon=saved.days * MINUTES_PER_DAY,
-            run_id=run_id,
-        )
+        try:
+            recording = record(
+                events,
+                profiles[profile],
+                seed,
+                horizon=saved.days * MINUTES_PER_DAY,
+                run_id=run_id,
+            )
+        except ValueError as error:
+            # The profile, the seed and the horizon were already checked: it is the log.
+            raise RunLogError(f"eventos.jsonl: {error}") from error
         info = {
             key: recording.info[key]
             for key in ("run_id", "run_id_origen", "perfil", "semilla", "horizonte")
