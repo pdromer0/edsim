@@ -540,6 +540,14 @@ def test_run_id_derivado_que_no_cabe_es_error():
     assert dice.calls == 0
 
 
+def test_un_log_de_otra_ejecucion_es_error_antes_de_tirar():
+    """registro.json nombraría un origen equivocado: el log debe ser del run_id dado."""
+    dice = HandDice(default=make_roll())
+    with pytest.raises(ValueError, match="not of run 'r7'"):
+        record(scenario_l(), make_profile(), SEED, horizon=HORIZON, run_id="r7", dice=dice)
+    assert dice.calls == 0
+
+
 def mixed_log():
     """Dos pacientes y dos cambios de plantilla (eventos de recursos)."""
     sink = MemorySink()

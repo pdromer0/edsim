@@ -400,14 +400,17 @@ def record(
 
     Raises:
         ValueError: If the derived ``run_id`` is not valid, ``seed`` or
-            ``horizon`` are not valid, or the log does not start at midnight;
-            all before rolling any dice.
+            ``horizon`` are not valid, an event is not of ``run_id``, or the log
+            does not start at midnight; all before rolling any dice.
         RuntimeError: If there are more records than nine digits, or the
             account does not balance (a broken internal rule).
     """
     derived = derived_run_id(run_id, profile.name, seed)
     horizon = _check_horizon(horizon)
     events = tuple(events)
+    foreign = sorted({e.run_id for e in events} - {run_id})
+    if foreign:
+        raise ValueError(f"the log is not of run {run_id!r}: it has events of {foreign!r}")
     start = _log_start(events)
     offsets = {s: round(profile.clock[s] * 60_000) for s in SYSTEMS}
 
