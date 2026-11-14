@@ -19,8 +19,10 @@ not about the data (the connection drops) goes up without committing.
 
 **How it stops.** Continuously, until ``should_stop`` says so between two batches (the CLI
 sets it on Ctrl+C), the batch in progress saved and committed. Or, with ``run_id``, when bronze
-holds the whole last publication of that run (``Store.progress``), or when ``timeout`` runs
-out.
+holds the whole last publication of that run (``Store.progress``) and the last ``consume``
+came back empty, or when ``timeout`` runs out. The empty ``consume`` matters: if the run was
+already in bronze and is published again, the stored publication is complete, but the new one
+is still in Kafka.
 
 Standard library only.
 """
@@ -244,7 +246,8 @@ def run_consumer(
     Args:
         consumer: Subscribed to the topics; the caller closes it.
         store: Where the rows go.
-        run_id: If given, stop when bronze holds the whole last publication of this run.
+        run_id: If given, stop when bronze holds the whole last publication of this run and
+            the last ``consume`` came back empty (the consumer is caught up).
         timeout: With ``run_id``, seconds to wait for it; ``None``, no limit.
         batch_size: Messages of a batch at most.
         poll_timeout: Seconds a ``consume`` waits.
@@ -264,19 +267,15 @@ def run_consumer(
     next_progress = started + progress_interval
     try:
         while True:
-            if run_id is not None:
-                report.progress = store.progress(run_id)
-                if report.progress.complete:
-                    report.complete = True
-                    break
             if should_stop():
                 report.stopped = True
                 break
             if limit is not None and clock() >= limit:
                 report.timed_out = True
                 break
+            messages = consumer.consume(batch_size, poll_timeout)
             batch = []
-            for message in consumer.consume(batch_size, poll_timeout):
+            for message in messages:
                 if message.error():
                     report.errors += 1
                     if on_error is not None:
@@ -301,6 +300,13 @@ def run_consumer(
                 report.rejected += result.rejected
                 report.batches += 1
                 report.retried += result.retried
+            if run_id is not None:
+                report.progress = store.progress(run_id)
+                # Complete only once caught up: Kafka may hold a newer publication of the
+                # same run that bronze does not have yet.
+                if report.progress.complete and not messages:
+                    report.complete = True
+                    break
             if on_progress is not None and clock() >= next_progress:
                 report.seconds = clock() - started
                 on_progress(report)

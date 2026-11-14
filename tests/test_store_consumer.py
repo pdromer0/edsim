@@ -244,6 +244,30 @@ def test_con_run_cuenta_desde_la_ultima_publicacion():
     assert report.missing is None
 
 
+def test_con_run_no_da_por_completa_una_publicacion_vieja_si_kafka_tiene_otra():
+    """Bronce tiene completa la publicación 1 y Kafka guarda la 2 sin leer: --run tiene que
+    leerla antes de terminar. Solo se da por completa con el consumidor al día (el último
+    consume volvió vacío)."""
+    broker = FakeBroker()
+    store = FakeStore()
+    publish_run(broker, "r1", [1, 2, 3], stamp_ms=STAMP_MS)
+    first = run_consumer(FakeBronzeConsumer(broker), store, run_id="r1", timeout=5)
+    assert first.complete and len(store.events) == 3
+    publish_run(broker, "r1", [1, 2, 3], stamp_ms=STAMP_MS + 60_000)  # la publicación 2
+    clock = ManualClock()
+    consumer = FakeBronzeConsumer(broker, clock=clock)
+
+    report = run_consumer(consumer, store, run_id="r1", timeout=5, clock=clock)
+
+    assert report.complete and not report.timed_out
+    # Un consume con la publicación 2 entera (inicio, 3 eventos y fin) y otro vacío.
+    assert consumer.consumes == 2
+    assert (report.saved, report.repeated) == (5, 0)
+    assert len(store.events) == 6  # las dos publicaciones, con su ingest_time cada una
+    assert (report.progress.published, report.progress.stored) == (3, 3)
+    assert broker.committed == {(PATIENTS, 0): 6, (RUNS, 0): 4}
+
+
 def test_los_mensajes_que_son_errores_se_apartan_y_un_lote_solo_de_errores_no_confirma():
     broker = FakeBroker()
     broker.publish(PATIENTS, None, kind=0, error="_TRANSPORT")
