@@ -11,6 +11,7 @@ reserva) a 0,99, por encima de toda tasa, y todas las z a 0, salvo lo que diga c
 """
 
 import dataclasses
+import importlib
 import math
 from datetime import date
 
@@ -31,6 +32,7 @@ from edsim.clinical_record import (
     RecordProfile,
     Roll,
     Timed,
+    account,
     notebook_csv,
     record,
     record_json,
@@ -627,11 +629,15 @@ def test_los_recursos_pasan_tal_cual_renumerados():
 
 
 def test_el_json_de_record_es_el_de_to_json():
-    """Mismas claves y en el mismo orden que el log de eventos."""
-    event = scenario_l()[2]
-    values = {f.name: getattr(event, f.name) for f in dataclasses.fields(event)}
-
-    assert record_json(Record(**values)) == to_json(event)
+    """Mismas claves, en el mismo orden y con los mismos tipos que el log de eventos,
+    también con una lista (pruebas) y un objeto (resultados) en el payload."""
+    sink = MemorySink()
+    log = EventLog(RUN, START, sink, schema_version=4)
+    log.emit("test_ordered", 10.0, arrival_id=1, pruebas=["analitica", "imagen"])
+    log.emit("test_resulted", 70.0, arrival_id=1, resultados={"imagen": "alterado"})
+    for event in [scenario_l()[2], *sink.events]:
+        values = {f.name: getattr(event, f.name) for f in dataclasses.fields(event)}
+        assert record_json(Record(**values)) == to_json(event)
     assert [f.name for f in dataclasses.fields(Record)] == [
         f.name for f in dataclasses.fields(event)
     ]
@@ -687,6 +693,48 @@ def test_un_log_que_no_sale_de_eventlog_es_error():
 def test_horizonte_invalido(horizon):
     with pytest.raises(ValueError, match="horizon"):
         record(scenario_l(), make_profile(), SEED, horizon=horizon, run_id=RUN, dice=HandDice())
+
+
+def test_la_cuenta_que_no_cuadra_dice_que_igualdad_falla():
+    """Cada igualdad de la cuenta tiene su caso: una fila de menos, un event_id repetido y
+    una corrección sorteada que no está en ninguna parte."""
+    events = scenario_l()
+    recording = run_l()
+    records, rows = list(recording.records), list(recording.notebook)
+
+    assert account(events, records, rows, corrections_drawn=1).problems() == []
+    without_lost = account(events, records, rows[:-1], corrections_drawn=1).problems()
+    assert [p.split(":")[0] for p in without_lost] == [
+        "hechos de pacientes = bien + con_despistes + perdido + pendiente"
+    ]
+    repeated = [*records[:-1], dataclasses.replace(records[-1], event_id=records[0].event_id)]
+    assert [
+        p.split(":")[0] for p in account(events, repeated, rows, corrections_drawn=1).problems()
+    ] == [
+        "registros = bien + con_despistes + duplicado + correccion",
+        "registros = filas con registro",
+    ]
+    assert [
+        p.split(":")[0] for p in account(events, records, rows, corrections_drawn=2).problems()
+    ] == ["correcciones escritas + correccion_pendiente = erróneos con corrección"]
+
+
+def test_record_lanza_si_la_cuenta_no_cuadra(monkeypatch):
+    """El RuntimeError de record es el de una regla interna rota, no un error de entrada."""
+    # «import edsim.clinical_record.record as m» daría la función: el paquete exporta
+    # record con el nombre de su módulo. import_module devuelve el módulo.
+    module = importlib.import_module("edsim.clinical_record.record")
+
+    real = module.account
+    monkeypatch.setattr(
+        module,
+        "account",
+        lambda events, records, rows, *, corrections_drawn: real(
+            events, records, rows, corrections_drawn=corrections_drawn + 1
+        ),
+    )
+    with pytest.raises(RuntimeError, match="the account does not balance: correcciones escritas"):
+        run_l()
 
 
 # --- La tirada, el perfil y la libreta --------------------------------------------
