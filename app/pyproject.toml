@@ -24,6 +24,9 @@ edsim = { workspace = true }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+# Límite por test, en segundos: `pytest app/tests` desde la raíz lee este fichero (rootdir: app),
+# no el de la raíz. El test más lento de la app tarda 9 s.
+timeout = 60
 markers = [
     "slow: tests largos de la app; el hook de Codex los excluye",
 ]

@@ -7,7 +7,8 @@ Esta carpeta está fuera de `testpaths`: solo corre cuando se pide, con
 Los datos de Pedro no se tocan: cada sesión crea su propia base de datos
 (`edsim_test_<8 hex>`), la prepara con `edsim almacen preparar` y la borra al acabar.
 
-Cada espera tiene un límite explícito (`TIMEOUT`): ningún test puede quedarse colgado.
+Cada espera tiene un límite explícito (`TIMEOUT`): ningún test puede quedarse colgado. Además,
+cada test tiene un límite de tiempo (`TEST_TIMEOUT`), la red general de `pytest-timeout`.
 """
 
 import os
@@ -27,6 +28,11 @@ from psycopg import sql
 from edsim.live.kafka import TopicsReport, ensure_topics
 from edsim.live.topics import TOPIC_CONFIG, Topic
 from edsim.store.postgres import DEFAULT_URL
+
+TEST_TIMEOUT = 180
+"""Segundos por test de integración, con su `setup`. Un test encadena varias esperas de `TIMEOUT`
+(30 s): con el límite general de 60 s, un test sano podría caer por tiempo. No se midió con
+Kafka y Postgres reales en esta tarea: lo comprueba el CI."""
 
 LISTENER_HINT = (
     "Suele ser una dirección anunciada que no se alcanza desde aquí: el cliente vuelve a llamar "
@@ -183,3 +189,11 @@ def bronze_database(postgres_admin: str):
 def bronze_url(bronze_database) -> str:
     """La URL de la base de datos de la sesión, con las migraciones aplicadas."""
     return bronze_database[0]
+
+
+def pytest_collection_modifyitems(items):
+    """Da a los tests de esta carpeta el límite de `TEST_TIMEOUT`, mayor que el general."""
+    here = Path(__file__).parent
+    for item in items:
+        if item.path.is_relative_to(here) and not item.get_closest_marker("timeout"):
+            item.add_marker(pytest.mark.timeout(TEST_TIMEOUT))
