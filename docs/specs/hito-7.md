@@ -1032,3 +1032,92 @@ Las seis, con el subagente `mutante` en paralelo, sobre `ca5fbe9`.
 
 - **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2.
 - **La comparación de las dos revisiones del plan** (la del revisor y la del chat): la cierra el chat.
+
+### Tarea 7.5: Postgres con TimescaleDB y consumidor de bronce
+
+**Qué se hizo**
+
+Issue #119, rama `feat/h7-almacen`, Claude Code; cierra también el #91 (la consola en `127.0.0.1:8080`). Primera tarea de la pista B, en paralelo con la 7.1, que se fusionó antes: la rama trae `main` con un merge. Los pasos 1 a 9, en local; el merge, las versiones incorrectas, la revisión y la N3, en la nube (ver «Proceso»). Un commit por paso, más los de las correcciones de la revisión:
+
+- **`compose.yaml`**: `postgres` con `timescale/timescaledb:2.31.0-pg17` (Postgres 17.11), el volumen `edsim-postgres`, solo en `127.0.0.1:5432` y el healthcheck por TCP (`pg_isready -h 127.0.0.1`); la consola, en `127.0.0.1:8080`.
+- **El extra `postgres`** (`psycopg[binary]>=3.3.9,<3.4`). El test de frontera pasa a una tabla de clientes opcionales con su único módulo: `confluent_kafka` en `live/kafka.py` y `psycopg` en `store/postgres.py`, los dos dentro de funciones.
+- **`edsim.store`**:
+  - `migrations.py` y `sql/001_bronce.sql`: el aplicador y la migración de las tres tablas;
+  - `bronze.py`: de un mensaje de Kafka a una fila de `eventos`, `ejecuciones` o `rechazados`, sin conectar a nada;
+  - `consumer.py`: el bucle, guardar y después apuntar, con la red de seguridad;
+  - `postgres.py`: la conexión, `PostgresBronze`, `prepare` y `read_bronze_lines`;
+  - `report.py`: los textos de la CLI.
+- **`KafkaSink.start`** espera (`flush`) a que el broker confirme el `inicio` antes de mandar el censo, y falla si no llega.
+- **La CLI**: `edsim almacen preparar` y `edsim almacen consumir [--run RUN_ID] [--timeout S]`.
+- **Integración**: la base de datos de cada sesión (`edsim_test_<8 hex>`), cuatro tests en `tests_integracion/test_almacen.py`, `scripts/tests-integracion.sh` con los dos servicios y el job `tests-kafka` renombrado a `tests-integracion` (conserva `needs: cambios` y su `if`).
+
+**Decisiones del diff**
+
+- **La imagen es `2.31.0-pg17`**, no la `2.32.0-pg17` de dos días antes, como la consola v3.14.0 en la 6.1. **`001_bronce.sql` empieza con `CREATE EXTENSION IF NOT EXISTS timescaledb`**: la base de datos de los tests se crea con `CREATE DATABASE` y no la trae.
+- **`bronze.py` no valida con el catálogo:** lo registrado tiene campos a `null` y `record_corrected`. Exige solo las claves que llenan columnas, con sus tipos, y deja las demás en `valor`. Manda a `rechazados` todo lo que se sabe que rompe el `INSERT` (un entero fuera de `integer`, NaN e infinito, NUL, sustitutos sueltos, UTF-8 roto, horas sin zona), porque un mensaje así bloquearía el consumidor: releería el mismo lote para siempre.
+- **La red de seguridad**, para lo que nadie previó: si el `INSERT` del lote falla por un dato, el lote se repite fila a fila con un `SAVEPOINT` por fila, y solo la que falla va a `rechazados`, con el mensaje de Postgres. Un error que no es de datos se propaga sin confirmar.
+- **Se inyecta un almacén, no la conexión:** las transacciones, los savepoints y la red viven en `consumer.py`, sobre las primitivas de `PostgresBronze`, y se prueban en rápidos con `tests/fake_store.py`. La integración prueba lo que el falso solo imita: `ON CONFLICT`, su recuento y el error de Postgres.
+- **`--run` cuenta en bronce, desde el último `inicio`:** así termina un consumidor relanzado, que no vuelve a ver lo ya confirmado, y no lo engaña una publicación anterior de la misma ejecución. Por eso el `inicio` tiene que llegar antes que el censo (el `flush`).
+- **`read_bronze_lines`** en lugar de `read_bronze_records`: `Record` era de la 7.1, sin fusionar cuando se planeó la 7.5.
+- **El grupo de la integración es único** (`edsim-bronce-test-<8 hex>`): con `edsim-bronce`, un test movería los offsets del consumidor de Pedro. Por eso la integración llama a las funciones y no a `edsim almacen consumir`, que se prueba en rápidos con dobles y Pedro comprueba a mano.
+- **El extremo a extremo y el de parar y relanzar son un solo test**, publicado con `edsim directo lanzar --velocidad max`: la primera pasada para cuando bronce tiene algo de la ejecución, y el test exige 0 < guardados < publicados antes de relanzar, para no pasar vacío.
+
+**Valores a mano**
+
+Recalculados con `python3` sin importar `edsim` (el código, en el plan y en el PR):
+
+- La marca 1.767.225.600.123 ms es `2026-01-01T00:00:00.123+00:00`.
+- `"2026-01-05T12:19:01.200+01:00"` es 11:19:01.200 en UTC; sin zona, se rechaza.
+- La caída entre guardar y apuntar (7 mensajes, lotes de 3, caída al confirmar el lote 2): 7 filas, 3 repetidos ignorados y ninguno perdido. Apuntando antes (V13), 4 filas, y se pierden los mensajes 3, 4 y 5.
+
+**Medidas**
+
+- El job de integración antes: `tests-kafka`, 1:30 (CI de `main`, `cdde0a4`). Después, `tests-integracion`: el tiempo, en el PR.
+- En local, `scripts/tests-integracion.sh` antes del cambio: 1:16. Después no se midió en local (ver «Proceso»).
+- N3 (`scripts/tests-completos.sh`, en la nube): PENDIENTE_N3.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V13 | Confirmar antes de guardar | Fallan 2: el orden de las llamadas y la caída (3 filas en vez de 6) | 3 fallan, 97 pasan: los 2 y `…un_error_que_no_es_de_datos_se_propaga_sin_confirmar`, que también ve un commit que no debía existir |
+| V14 | Clave única por las coordenadas de Kafka | A mano: `create_hypertable` falla, porque Timescale exige la columna de partición en toda clave única | Falla así (paso 1, a mano) |
+| V15 | `ingest_time` = hora de recepción | Fallan el de la marca de `bronze.py` y el de la fila guardada del bucle | 43 fallan: los 2, todos los que comparan `ingest_time` (33 de `bronze.py`, entre ellos los 30 casos de `rechazados`) y los de `--run`, que vencen el `timeout` porque los eventos quedan antes del `inicio`. La predicción solo contaba los tests escritos para pillarla |
+| V16 | Aceptar `CreateTime` | Fallan el del tipo de marca de `bronze.py` y el del bucle | 4 fallan, 78 pasan: los 2, `…la_marca_se_comprueba_tambien_en_lo_que_se_rechazaria` y el de la CLI con una marca que no es del broker, que con el tope falla con `RunawayLoop` en 11 s (sin él, giraba sin fin: ver «Proceso») |
+| V17 | Sin el límite de `integer` en `schema_version` | Falla solo el caso de 2³¹ | 1 falla (`[value10-schema_version]`), 63 pasan |
+| V18 | `--run` cuenta en memoria | Falla solo «relanzar con `--run` termina» | 2 fallan, 32 pasan: el predicho y `…cuenta_desde_la_ultima_publicacion`, porque los `event_id` de las dos publicaciones se solapan y el recuento en memoria da 3 = 3 |
+| V19 | El aplicador no registra la migración | Fallan 3 | 3 fallan, 27 pasan: los mismos |
+| V20 | `tests-integracion` sin `needs`/`if` | No es un test | El diff de `ci.yml` los conserva; el CI del PR, en el PR |
+| V21 | Sin la red de seguridad | Falla el de la fila que Postgres no acepta | 1 falla, 33 pasan: el mismo |
+
+Las rápidas, con el subagente `mutante` en paralelo, sobre `5b8fef4`, el merge de `main`; V16, repetida sobre `bd6457f`, el commit del tope.
+
+**Revisión**
+
+`/code-review high` contra `origin/main`, diez hallazgos:
+
+- **Corregidos:**
+  - `start` ignoraba lo que devolvía el `flush`: con el `inicio` aún pendiente, el censo seguía (`99e51b9`);
+  - `tests-integracion.sh` bajaba con `down` un Kafka que ya estaba en marcha si Postgres no lo estaba (`ace600e`);
+  - los errores de Postgres a mitad de camino salían como una traza de Python (`f914b5f`);
+  - `safe_url` no tapaba un `password=` en la consulta (`4cb0a5b`);
+  - la primera pasada del test de integración podía guardar la ejecución entera antes de parar, y `dataclasses.replace` en lugar de un ayudante (`9f9f732`).
+- **Encontrado al probar V16, fuera de la revisión:** con V16, un test de la CLI no terminaba nunca (`bd6457f`, ver «Proceso»). El consumidor falso corta ahora un bucle que no para (`RunawayLoop` tras 10.000 llamadas a `consume`) y, sin reloj, espera 1 ms con un lote vacío, como el de verdad espera su `timeout`.
+- **Explicados:**
+  - `progress` en cada vuelta del bucle: cuesta un recuento por lote, pero es lo que hace terminar un `--run` cuando parte de la ejecución la guarda otro consumidor del mismo grupo;
+  - `insert_rejected` fuera de un savepoint en la red: no hay nada que lo haga fallar, porque `valor` y `motivo` ya llegan sin NUL ni sustitutos;
+  - `read_bronze_lines` devuelve la primera publicación y `--run` cuenta la última: es la decisión del plan; la 7.3 decide qué lee `registro comparar --postgres`;
+  - Ctrl+C mientras se conecta espera a los timeouts de conexión, pero no tapa el error;
+  - el error de `commit` de Kafka sigue saliendo con su traza (código 1), como decidió el plan: traducirlo pediría importar `confluent_kafka` fuera de `live/kafka.py`.
+
+**Proceso**
+
+- **La sesión local se interrumpió tres veces**, porque WSL se quedaba sin memoria durante las versiones incorrectas. La primera vez había siete mutantes en paralelo con Docker levantado; la segunda, dos mutantes a la vez con Docker levantado: el portátil, con 16 GB, al 96 % y VmmemWSL en 6,4 GB. Se resolvió así: reinicio, WSL limitado a 7 GB con 8 GB de swap, Docker Desktop cerrado salvo para la integración y los mutantes de uno en uno. La tercera, también durante las versiones incorrectas, llevó lo que quedaba a la nube: el merge, las siete versiones incorrectas en paralelo (repitiendo V13, V17 y V19, cuyos resultados locales no se guardaron en el repositorio), la revisión y la N3.
+- **La causa probable no era el paralelismo, sino V16.** En la nube, el pytest de V16 sobre `test_cli_almacen.py` llegó a 7,5 GB en un minuto, con la CPU al 100 %, y hubo que matarlo. Aceptando `CreateTime`, el test de la marca que no es del broker ya no para: `edsim almacen consumir` sin `--run` gira sin fin contra el broker falso, que no tiene reloj, y el registro del falso crece en cada vuelta. V16 estaba en la tanda de siete y era la primera de la lista de una en una. Con el tope del consumidor falso (`bd6457f`), ese test falla con `RunawayLoop` en lugar de llenar la memoria, y V16 se repitió sobre ese commit.
+- **Sin `scripts/tests-integracion.sh` en local**, por decisión de Pedro (se aparta de «La 7.4 y la 7.5 ejecutan `scripts/tests-integracion.sh` antes del push»): la integración contra Kafka y Postgres la hace el job `tests-integracion` del CI de este PR, y Pedro comprueba a mano `edsim almacen preparar` y `consumir` contra los servicios locales.
+
+**Pendiente**
+
+- `read_bronze_records` (con `Record`) y `registro comparar --postgres`: tarea 7.3.
+- «Con el perfil realista, la cuenta cuadra con lo leído de bronce»: tarea 7.4.
+- Lo de la memoria de WSL, para `docs/proceso/portabilidad.md`, si Pedro lo pide.
