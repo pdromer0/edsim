@@ -320,3 +320,24 @@ def test_el_paquete_no_importa_jsonschema():
                 if n.split(".")[0] == "jsonschema"
             ]
     assert not imports, imports
+
+
+def test_validate_run_id_vive_en_un_modulo_neutro_y_runs_lo_reexporta():
+    """edsim.runs sigue dando el mismo objeto, y edsim.identifiers no carga el motor (tarea 7.1)."""
+    import edsim.identifiers as identifiers
+    import edsim.runs as runs
+    import edsim.runs.identifiers as runs_identifiers
+
+    assert runs.validate_run_id is identifiers.validate_run_id
+    assert runs_identifiers.validate_run_id is identifiers.validate_run_id
+    script = (
+        "import sys, edsim.identifiers\n"
+        "bad = sorted(n for n in sys.modules if n.split('.')[0] == 'simpy'"
+        " or n.startswith(('edsim.engine', 'edsim.runs')))\n"
+        "assert not bad, bad\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
