@@ -10,8 +10,10 @@ from types import MappingProxyType
 
 import pytest
 from fake_kafka import FakeProducer
+from registro_factory import DERIVED, run_l
 from test_directo import INFO, live_hand_log
 
+from edsim.clinical_record import record_json
 from edsim.engine import events as events_module
 from edsim.engine.events import CATALOG_V3, CATALOGS, EventLog, EventSpec, MemorySink, to_json
 from edsim.engine.scenarios import SCENARIO_START
@@ -406,3 +408,27 @@ def test_el_fin_de_error_lleva_lo_confirmado_tras_el_flush():
     end = last_end(producer)
     assert (end["motivo"], end["publicados"]) == ("error", 2)
     assert end["ultimo_event_id"] == "rcenso-000000001"
+
+
+def test_un_registro_va_como_un_evento_con_su_linea_de_registrado():
+    """Con `--registro` (tarea 7.4): mismo topic, misma clave y mismas cabeceras que un evento;
+    el valor es la línea de `registrado.jsonl`, también la de un `record_corrected`."""
+    records = run_l().records
+    triage, correction = records[3], records[6]
+    producer = FakeProducer()
+
+    with KafkaSink(producer, DERIVED) as sink:
+        sink.write(triage)
+        sink.write(correction)
+
+    [(topic1, call1), (topic2, call2)] = producer.calls
+    assert (topic1, call1["key"]) == (topic2, call2["key"]) == ("ed.patient.events", b"EP-000001")
+    assert call1["headers"] == [("event_type", b"triage_completed"), ("schema_version", b"4")]
+    assert call2["headers"] == [("event_type", b"record_corrected"), ("schema_version", b"4")]
+    assert call1["value"] == record_json(triage).encode("utf-8")
+    assert call2["value"] == record_json(correction).encode("utf-8")
+    assert json.loads(call2["value"])["payload"] == {
+        "corrige": f"{DERIVED}-000000004",
+        "campos": {"nivel": 3},
+    }
+    assert sink.delivered == 2

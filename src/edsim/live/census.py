@@ -15,6 +15,9 @@ and those with ``sim_time >= W`` are live. A patient who leaves exactly at
 ``W`` is open: its departure is live. ``census`` followed by ``live_events``
 is the log without the warm-up of the closed episodes (piece 7).
 
+With ``--registro`` the census is made of records instead (``recorded_census``),
+with the episodes open according to the truth.
+
 Pure functions over events: no SimPy, no engine and no Kafka client.
 """
 
@@ -22,6 +25,7 @@ import math
 import numbers
 from collections.abc import Iterable
 
+from edsim.clinical_record import Record
 from edsim.engine.events import TERMINAL_EVENTS, Event
 from edsim.finite import to_float
 
@@ -74,6 +78,28 @@ def census(events: Iterable[Event], start: float) -> list[Event]:
         e
         for e in events
         if e.sim_time < start and (e.episode_id is None or e.episode_id in still_open)
+    ]
+
+
+def recorded_census[R: Record](
+    records: Iterable[R], still_open: frozenset[str], start: float
+) -> list[R]:
+    """The census of what was written down (``--registro``, docs/specs/hito-7.md, task 7.4).
+
+    The records with ``sim_time < start`` whose episode is in ``still_open`` (the episodes
+    the *truth* has open at ``start``: the census is a photo of the simulator, not something
+    the hospital knows) or that have no episode, in the order given (emission order). A
+    record of an episode already closed is not in the census, even if its departure was
+    forgotten or written down late.
+
+    Raises:
+        ValueError: If ``start`` is not a number or is NaN.
+    """
+    start = _check_start(start)
+    return [
+        r
+        for r in records
+        if r.sim_time < start and (r.episode_id is None or r.episode_id in still_open)
     ]
 
 

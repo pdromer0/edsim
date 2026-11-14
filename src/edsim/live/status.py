@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
+from edsim.clinical_record import Record
 from edsim.engine.events import Event, event_time
 from edsim.live.clock import Clock
 from edsim.live.control import Command, ControlSource
@@ -90,7 +91,7 @@ class ReportingSink:
         if self._on_start is not None:
             self._on_start(message)
 
-    def write(self, event: Event) -> None:
+    def write(self, event: Event | Record) -> None:
         self.sink.write(event)
         self.published += 1
 
