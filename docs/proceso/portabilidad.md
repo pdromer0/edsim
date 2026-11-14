@@ -43,7 +43,8 @@ Son las que hacen que el flujo funcione. En un proyecto nuevo se copian tal cual
 
 **Prácticas de calidad** [probado], que se llevan a cualquier proyecto con cálculos o datos:
 
-- **Tests primero, con valores calculados a mano.** Una referencia que usa la función probada hereda su error. Desde la P.2, cada valor a mano lleva su cálculo escrito en el plan, con aritmética o con código independiente, nunca de memoria.
+- **Tests primero, con valores calculados a mano.** Una referencia que usa la función probada hereda su error. Desde la P.2, cada valor a mano lleva su cálculo escrito en el plan, nunca de memoria; desde la 7.0, ese cálculo se ejecuta (un script temporal con código independiente) y su salida se pega.
+- **El plan dice lo que interpreta** [implantado, 7.0]: dos apartados, «Lo que el plan interpreta» (lo que no está literalmente en la especificación ni en las notas) y «Diferencias con las notas del chat». En el hito 5, los cuatro errores que se encontraron en los planes estaban ahí, no en la aritmética, y los tests no los ven porque se escriben con la misma interpretación que el código. El detalle va al PR, para que el plan se lea de un vistazo.
 - **Casos límite como lista explícita en el plan:** enteros enormes, NaN e infinitos, `date` frente a `datetime`, empates y orden de eventos del mismo instante, listas de distinta longitud, vacíos, primer y último elemento.
 - **Versiones incorrectas con predicción firme.** Antes de dar un test por bueno, se rompe el código a propósito, se predice qué test debe fallar y se comprueba que falla por esa razón. Es una prueba de mutación hecha a mano.
 - **Lo exacto antes que lo simulado.** Semillas, tolerancias y umbrales se fijan antes de medir. Nunca se cambia una semilla para que un test pase.
@@ -196,7 +197,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **los ficheros grandes generados o copiados se escriben con un script**: el modelo no reescribe su contenido;
 - avisar antes de un comando largo de qué se ejecuta y cuánto tarda.
 
-**Regla de después de la fusión** [implantado]: antes de actualizar `main` o borrar una rama, se comprueba con `gh pr view N --json state,mergedAt` que el PR está fusionado. Si no lo está, se para.
+**Regla de después de la fusión** [implantado]: antes de actualizar `main` o borrar una rama, se comprueba con `gh api repos/<dueño>/<repo>/pulls/N --jq '{merged,merged_at}'` que el PR está fusionado (`merged` es `true`; `merge_commit_sha` no sirve, porque un PR abierto también lo trae). Si no lo está, se para. Por REST desde la 7.0, para que funcione también en la nube.
 
 ### `.claude/settings.json`: lo que el agente puede hacer
 
@@ -214,17 +215,28 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
       "Bash(git push -u origin docs/*)", "Bash(git push -u origin refactor/*)",
       "Bash(git push -u origin test/*)", "Bash(git push -u origin chore/*)",
       "Bash(git push -u origin ci/*)",
-      "Bash(gh pr create *)", "Bash(gh pr view *)", "Bash(gh pr checks *)", "Bash(gh run view *)",
-      "Bash(gh issue view *)", "Bash(gh issue list *)",
+      "Bash(gh api repos/<dueño>/<repo>/*)",
+      "Bash(gh api -X POST repos/<dueño>/<repo>/pulls *)", "Bash(gh api -X PATCH repos/<dueño>/<repo>/pulls/*)",
+      "Bash(gh pr view *)", "Bash(gh pr checks *)", "Bash(gh run view *)",
+      "Bash(gh issue view *)", "Bash(gh issue list *)", "Bash(gh pr create *)",
       "Bash(gh project list *)", "Bash(gh project field-list *)", "Bash(gh project item-list *)",
       "Bash(gh project item-add *)", "Bash(gh project item-edit *)",
       "Bash(scripts/tests-rapidos.sh*)", "Bash(scripts/tests-completos.sh*)"
     ],
     "ask": [
-      "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)"
+      "Edit(/config/**)", "Write(/config/**)", "Edit(/tests/data/**)", "Write(/tests/data/**)",
+      "Bash(gh api repos/<dueño>/<repo>/* -X*)", "Bash(gh api repos/<dueño>/<repo>/* --method*)",
+      "Bash(gh api repos/<dueño>/<repo>/* -f*)", "Bash(gh api repos/<dueño>/<repo>/* -F*)",
+      "Bash(gh api repos/<dueño>/<repo>/* --field*)", "Bash(gh api repos/<dueño>/<repo>/* --raw-field*)",
+      "Bash(gh api repos/<dueño>/<repo>/* --input*)",
+      "Bash(gh api -X * state=*)", "Bash(gh api -X * base=*)"
     ],
     "deny": [
-      "Bash(gh pr merge *)", "Bash(git push *--force*)", "Bash(git push -f*)",
+      "Bash(gh pr merge *)", "Bash(gh api *pulls/*/merge)", "Bash(gh api *pulls/*/merge *)",
+      "Bash(gh api *<repo>/merges*)",
+      "Bash(gh api *-X DELETE*)", "Bash(gh api *-XDELETE*)",
+      "Bash(gh api *--method DELETE*)", "Bash(gh api *--method=DELETE*)",
+      "Bash(git push *--force*)", "Bash(git push -f*)",
       "Bash(git push * main)", "Bash(git push * main *)", "Read(./.env)"
     ]
   },
@@ -241,6 +253,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **Arranque en modo plan** [probado]. La aprobación del plan se hace con modo auto, así que el agente implementa entera la tarea aprobada.
 - **El push a ramas de tarea está permitido; la fusión, el push forzado y el push a `main`, denegados** [probado]. Las reglas `deny` son una barandilla de comportamiento: la frontera real es el ruleset de GitHub.
 - **Los permisos de las skills van aquí**, no en el `allowed-tools` de la skill [implantado]: ese campo solo vale durante el turno que la lanza, y una tarea dura muchos turnos.
+- **`gh api` con tres niveles** [implantado, 7.0]. En una regla `Bash(…)`, `*` casa también con espacios y opciones, así que `allow gh api repos/<dueño>/<repo>/*` dejaría pasar también `gh api repos/…/comments -f body=…`, que escribe (con `-f` o `-F`, `gh api` hace un POST). La convención lo separa: en una lectura, la ruta va justo detrás de `gh api` (`allow`); en una escritura, `-X MÉTODO` va delante de la ruta, y solo abrir y editar el PR tienen `allow` propio; una escritura con la opción detrás de la ruta cae en las reglas `ask`, también con la opción pegada a su valor (`-XDELETE`, `-fbody=…`, `--method=…`: por eso las reglas acaban en `-X*` y no en `-X *`); cambiar el estado o la base del PR (`state=`, `base=`) también pregunta; la fusión (`…/pulls/N/merge` y la API `…/merges`) y `DELETE`, en `deny`. El `deny` no puede ser `*merge*`: casaría también con una lectura que pide `merged` o `merge_commit_sha` en el `--jq` (lo encontró la comprobación de la 7.0). Es una barandilla de comportamiento: la frontera real es el ruleset de GitHub, y un hook `PreToolUse` que analice los argumentos de `gh api` la haría robusta (pendiente de la 7.0).
 - **Hook `Stop`** [probado]: ejecuta los tests rápidos al final de cada turno. No hace nada en modo plan y comprueba `stop_hook_active` para no entrar en bucle. **Sin `jq` sale con código 1** [implantado], un error que se ve y no bloquea. Un 0 lo escondería y un 2 entraría en bucle, porque sin `jq` no puede leer `stop_hook_active`. En proyectos grandes, el «sello» (la huella del árbol en el último verde) evita volver a ejecutar las suites sin cambios.
 - **Reglas `ask` sobre la configuración calibrada y los datos de referencia** [implantado]: en modo auto siguen preguntando (la documentación dice que una regla `ask` explícita fuerza el aviso y se evalúa antes que el clasificador). Se escriben para `Edit` y para `Write`. La barra inicial (`/config/**`) ancla la ruta a la raíz del proyecto; sin ella, una regla `ask` casa con un directorio de ese nombre a cualquier profundidad. Si en la prueba en vivo alguna de las cuatro combinaciones no preguntara, se pasa a la forma sin barra. **Límite:** solo cubren las herramientas `Edit` y `Write`; un `sed -i` o una redirección desde Bash sobre esos ficheros no las activa. Es una barandilla de comportamiento, como las reglas `deny`.
 - **Hook `SessionStart`** [implantado]: su salida entra en el contexto en cada apertura, reanudación, `/clear` y compactación. Rama, última etiqueta (`git describe --tags --abbrev=0`, «ninguna» si no hay), línea «Hito en curso» de `AGENTS.md` y `git status -sb`. Solo `git` y `grep` locales, siempre código 0 y en milisegundos.
@@ -279,10 +292,11 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 ### Skills [implantado]
 
 - **`/tarea-<proyecto> N [notas efímeras]`**: lleva una tarea del issue al PR, siguiendo `docs/proceso/tarea.md`. Las notas duraderas van como comentario «Notas del chat» del issue. Sus fases:
-  - **en modo plan, solo lee:** el issue con sus comentarios, sus dependencias, las secciones enlazadas de la especificación y el plan;
+  - **en modo plan, solo lee:** el issue con sus comentarios, sus dependencias, las secciones enlazadas de la especificación y el plan; en las tareas con la etiqueta `critica`, el subagente `revisor-plan` revisa el plan antes de enseñarlo;
   - **con el plan aprobado:** crea la rama, mueve la ficha e implementa;
   - **antes del push:** `/code-review` con su nivel y su destino (`main...<rama>`); clasifica todos los hallazgos, hace las correcciones con N1 y después lanza una sola N3 en segundo plano mientras escribe el anexo y el PR;
   - **al final:** abre el PR con la plantilla y comprueba que la ficha está en «En revisión».
+  - **GitHub, por REST** [implantado, 7.0]: el issue, los comentarios, las dependencias, el PR, sus checks y la Release con `gh api`, y el PR se abre con `gh api -X POST …/pulls`, un solo camino en local y en la nube (donde GraphQL da 403). Solo el tablero sigue con `gh project`; si falla, la skill dice qué ficha mover.
 - **`/sincronizar [N]`**, tras la fusión y después de `/clear`:
   1. comprueba que el PR está fusionado; si no, para;
   2. `git pull --ff-only` en `main` y comprueba que contiene el commit de la fusión;
@@ -300,6 +314,7 @@ Se añade un job por cada capa que lo necesite: notebooks, app, integración con
 - **`/cerrar-hito N`** [escrita en la 5.8, con lo que hizo esa tarea; su primer uso será el cierre del hito 7]: del issue de cierre al PR (ADR con «Qué cambió al implementarla», diario, diseño, manual de la app, balance, lecciones, README y `AGENTS.md`) y, tras la etiqueta, la Release.
 - **`crear-tareas`**, de la especificación a los issues [pendiente, hito 7].
 - **Subagente `mutante`** para las versiones incorrectas en worktree [piloto 5.2].
+- **Subagente `revisor-plan`** [implantado, 7.0; primer uso real, la 7.1]: Opus, solo lectura (Read, Grep, Glob y Bash para recalcular con `python3` independiente del paquete). En las tareas críticas, revisa el plan con un contexto limpio, como `mutante` comprueba las versiones incorrectas: el plan no se califica a sí mismo. Devuelve «Lo que el plan interpreta», «Diferencias con las notas del chat» y «Valores que no cuadran».
 - **Plugins:** solo el LSP del lenguaje (pyright en Python) [implantado, A5]. Superpowers y feature-dev quedan descartados porque chocan con la metodología propia. Para GitHub se usa `gh` en lugar del MCP de GitHub.
 
 ## 6. Documentación (docs-as-code) [implantado]
@@ -362,7 +377,7 @@ Si el proyecto empezó con la documentación en un documento online (en EDsim, u
 
 **Issues:**
 - **El issue resume y enlaza la especificación, nunca la copia.** Los criterios de aceptación son de 3 a 6 viñetas que citan la especificación.
-- **Dependencias:** manda la **nativa** (*blocked-by*), que GitHub muestra en el tablero y que la skill consulta con `gh issue view N --json blockedBy`. El cuerpo guarda el **motivo**. Un issue nuevo con dependencias lleva las dos.
+- **Dependencias:** manda la **nativa** (*blocked-by*), que GitHub muestra en el tablero y que la skill consulta por REST con `gh api repos/<dueño>/<repo>/issues/N/dependencies/blocked_by`. El cuerpo guarda el **motivo**. Un issue nuevo con dependencias lleva las dos.
 - **Cuidado con los números:** los issues y los PR comparten numeración, y pueden coincidir con los de las decisiones (en EDsim, issues #63 a #94 y decisiones 67 a 79). Las decisiones se escriben siempre «decisión 69 (H5-3)», sin almohadilla, porque con ella GitHub enlaza un issue.
 - **Crear issues por script, de forma idempotente:** se comprueba por título que no existe, y para el tablero se busca la ficha antes de añadirla, porque el añadido automático compite con `gh project item-add`.
 
@@ -408,6 +423,7 @@ El detalle está en [`flujo.md`](flujo.md) (con diagramas) y en [`tarea.md`](tar
   - **Opus con esfuerzo alto** para lo que necesita criterio: instrucciones que leerán todas las sesiones futuras, skills, tareas críticas.
   - **Opus** para `/doctor prompt-audit`.
   - **Sonnet, o un subagente con Sonnet**, para las gráficas.
+- **La nube por defecto** [implantado, 7.0]: cada tarea va en una sesión en la nube salvo que necesite Docker, la app en el navegador, ficheros que solo están en el portátil o crear una Release (403 desde la nube). El issue lo dice en «Dónde y modelo». La N3 fue más rápida allí (10:41 frente a 13:52 en la 5.7). Lo que hay que preparar: `uv sync --all-packages`, `BASH_DEFAULT_TIMEOUT_MS=900000`, la rama del issue en lugar de `claude/*` y las skills por REST; el tablero lo mueve la persona. Detalle en [flujo.md](flujo.md#dónde-corre-cada-tarea).
 - **No se cambia de modelo a mitad de una tarea.** La caché de la conversación es por modelo, y cambiar obliga a reenviarlo todo. Si hay que cambiar, al principio de la sesión.
 - **Diagnóstico periódico:** `/insights` (dónde se atasca el flujo), `/usage` (dónde se va el consumo) y `/doctor prompt-audit`. Se repiten al cerrar cada hito y se comparan con los anteriores.
 - **Conectores de claude.ai en Claude Code:** los que tenga la cuenta aparecen en `/mcp`. En EDsim, el de Claude Docs permitió que el agente exportara él mismo el documento online. Los que no pintan nada no estorban, porque sus herramientas se cargan bajo demanda.
@@ -478,7 +494,10 @@ Es el «hito 0» genérico. Cada línea termina con su comprobación.
 | Aviso de Windows y línea de estado (en `~/.claude`) | P.2, A6 | Probado por Pedro en una sesión nueva: suena al pedir permiso y la línea muestra modelo, rama y % de contexto |
 | Plugin LSP de Python (pyright) | — | Pendiente: `/plugin` es interactivo y no lo lanza el agente |
 | Subagentes para las versiones incorrectas | 5.2 | Probado con cinco versiones incorrectas (cuatro en paralelo), con predicción frente a observado. El worktree parte del `HEAD` local (`worktree.baseRef = "head"`), con su `uv sync --offline --frozen` y `edsim.__file__` comprobado dentro, sin tocar el árbol principal. Claude Code borra los worktrees limpios. Dos avisos: `.claude/agents/` se carga al abrir la sesión (un subagente creado a mitad de sesión no existe hasta la siguiente), y un worktree cuyo subagente deja trabajo en segundo plano sigue bloqueado. Detalle en el anexo de la 5.2 de [hito-5.md](../specs/hito-5.md) |
-| `@claude` en el PR | Pospuesto a después de la 5.8 | — |
+| `@claude` en el PR | 7.0 | Implantado: `/install-github-app` con solo el workflow de menciones (#125); el `if` responde solo a `pdromer0` y a los textos que empiezan por `@claude`. La acción solo se ejecuta con el `claude.yml` de `main`, así que la condición se prueba tras la fusión. Piloto en el PR de la 7.0: resultado en el anexo de la 7.0 de [hito-7.md](../specs/hito-7.md) |
+| Revisor del plan (`revisor-plan`) | 7.0 (prueba de humo), 7.1 (primer uso) | Implantado en la 7.0; la prueba de humo, en una sesión nueva sobre la rama, y la comparación con la revisión del chat del mismo plan, en la 7.1 |
+| Skills por REST (`gh api`) | 7.0 | Implantado: los comandos, ejecutados a mano en local en la 7.0; los issues que cierra un PR, por regex sobre su cuerpo, coinciden con GraphQL en 40 de 40 PR. En la nube los probó el chat; su primer uso en una tarea, la 7.1 |
+| La nube por defecto | Hito 7 | Implantado en la 7.0 ([flujo.md](flujo.md#dónde-corre-cada-tarea)); cada issue lo dice en «Dónde y modelo». Primera tarea con la regla, la 7.1 |
 | El chat lee el PR y el CI | 5.4 | Probado: con `add_repo` y `gh api` REST. Desde la 5.4 el chat también escribe en GitHub (notas en los issues, revisiones y métricas en los PR, issues del Backlog; §7) |
 | Codex desde el issue | 5.5 | Sin hacer: la 5.5 pasó a Claude Code (cambio de Pedro del 12 de noviembre). Codex sigue en el hito con `@codex review` en la 5.6 |
 | Sesión en la nube | 5.7 | Probado de punta a punta, con tres salvedades. Funcionó: el push a `feat/h5-notebook`, los hooks, las skills y el subagente `mutante` (dos worktrees en paralelo), `uv sync --all-packages` en 35 s y la N3 en segundo plano: 10 min 41 s (núcleo 6:13, app 3:23, notebooks 1:05) frente a 13 min 52 s en el portátil. Falló: `gh issue view` y todo `gh project` (GraphQL, 403 del proxy), así que el issue se lee con la herramienta de GitHub de la sesión y la ficha del tablero la mueve Pedro; el script del entorno falló porque se ejecutaba fuera del repositorio (corregido buscándolo con `find`); y la sesión limitaba la rama a `claude/*` frente a la del issue (Pedro eligió la del issue). Detalle en el anexo de la 5.7 de [hito-5.md](../specs/hito-5.md) |

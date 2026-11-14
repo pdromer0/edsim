@@ -6,8 +6,9 @@ Los niveles de tests N1, N2 y N3 son los de la sección «Workflow» de [docs/di
 
 ## 1. Arranque
 
-- Lee el issue con sus comentarios: `gh issue view N --json number,title,state,body,labels,milestone,blockedBy,comments`. Si está cerrado, para.
-- Dependencias: **manda la nativa** (`blockedBy`, la relación «blocked by» de GitHub). Si algún issue que la bloquea sigue abierto, para y dilo. La sección «Depende de» del cuerpo guarda el motivo; si las dos no coinciden, avisa del descuadre, pero decide por la nativa.
+- Lee el issue con sus comentarios, por REST, que funciona en local y en la nube (GraphQL da 403 en la nube): `gh api repos/pdromer0/edsim/issues/N` y `gh api repos/pdromer0/edsim/issues/N/comments --paginate`. Si está cerrado o es un PR (trae la clave `pull_request`), para.
+- Dependencias: **manda la nativa** (`gh api repos/pdromer0/edsim/issues/N/dependencies/blocked_by --paginate`, la relación «blocked by» de GitHub). Si algún issue que la bloquea sigue abierto, para y dilo. La sección «Depende de» del cuerpo guarda el motivo; si las dos no coinciden, avisa del descuadre, pero decide por la nativa.
+- Dónde corre: lo dice el issue en «Dónde y modelo». Por defecto, en la nube; en local, lo que necesita Docker, la app en el navegador o ficheros del portátil ([flujo.md](flujo.md#dónde-corre-cada-tarea)). En la nube, la rama es la del issue, no la `claude/*` que propone la sesión.
 - Con el árbol limpio, `git switch main && git pull --ff-only` y crea la rama que indica el issue. Si ya existe (un PR que junta varias tareas), cambia a ella. Si el agente arranca en modo plan, que no deja escribir, la rama se crea al aprobar el plan, como primer paso de la implementación.
 - Lee solo las secciones de la especificación que enlaza el issue, y por secciones: primero los encabezados (`grep -n '^#' fichero`) y después los rangos de líneas que interesan. Ver «Cómo leer las especificaciones grandes» en [docs/README.md](../README.md).
 - Las notas del chat van como comentario «Notas del chat» del issue; el argumento de la skill queda para lo efímero de esa sesión. Si un comentario o el argumento precisan algo del cuerpo, mandan ellos; entre dos comentarios que se contradicen, el más reciente.
@@ -18,8 +19,10 @@ Los niveles de tests N1, N2 y N3 son los de la sección «Workflow» de [docs/di
 El plan tiene siempre estos apartados:
 
 1. **Contexto y qué cambia.**
-2. **Valores a mano**: cada uno con su cálculo escrito, con aritmética o con código independiente de la función probada, nunca de memoria.
-3. **Casos límite**, como lista explícita. Como mínimo, se piensa en:
+2. **Lo que el plan interpreta**: todo lo que no está literalmente en la especificación ni en las notas del chat (un nombre, una población, un orden, un caso que la especificación no cubre). Es donde estuvieron los errores de los planes del hito 5, y lo que mira primero quien revisa.
+3. **Diferencias con las notas del chat**: lo que el plan hace distinto de lo que dicen las notas, y por qué. Si no hay, se dice.
+4. **Valores a mano**: cada uno con su cálculo **ejecutado**, con código independiente de la función probada, y su salida pegada. En modo plan, que no deja escribir ficheros, el script va por la entrada estándar (`python3 - <<'EOF'`); con permiso de escritura, también vale un fichero temporal (en Claude Code, en el *scratchpad*). Nunca de memoria ni con aritmética de cabeza.
+5. **Casos límite**, como lista explícita. Como mínimo, se piensa en:
    - enteros enormes;
    - NaN e infinitos;
    - `date` frente a `datetime`;
@@ -27,11 +30,15 @@ El plan tiene siempre estos apartados:
    - listas de distinta longitud;
    - vacíos;
    - el primer y el último elemento.
-4. **Versiones incorrectas**, cada una con su predicción firme: qué tests fallan y cuáles siguen pasando.
-5. **Comprobaciones**: tests, medidas y comprobaciones a mano.
-6. **Cuándo parar y preguntar.**
+6. **Versiones incorrectas**, cada una con su predicción firme: qué tests fallan y cuáles siguen pasando.
+7. **Comprobaciones**: tests, medidas y comprobaciones a mano.
+8. **Cuándo parar y preguntar.**
 
-El plan lo revisan Pedro y el chat; la implementación empieza cuando Pedro lo aprueba.
+El plan es corto y se lee de un vistazo: el detalle (tablas largas, listas de ficheros, salidas completas de los cálculos) va al PR, no al plan.
+
+En las tareas con la etiqueta `critica`, antes de enseñar el plan lo revisa con un contexto limpio el subagente `revisor-plan` de Claude Code ([.claude/agents/revisor-plan.md](../../.claude/agents/revisor-plan.md)): recalcula los valores a mano y devuelve lo que el plan interpreta, sus diferencias con las notas y los valores que no cuadran. Su informe va al principio del plan.
+
+El plan lo aprueba Pedro, y la implementación empieza entonces. El chat lo revisa antes en las tareas críticas o con conceptos nuevos, más lo que marque el revisor del plan ([flujo.md](flujo.md#papeles)).
 
 ## 3. Implementación
 

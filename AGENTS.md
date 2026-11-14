@@ -29,8 +29,10 @@ Ciclo completo en [docs/diseno.md](docs/diseno.md), sección "Metodología de tr
     una skill, con permiso de Pedro, y una ronda de ajustes que solo toca documentación o hooks.
 
   Una versión incorrecta se comprueba con los ficheros donde se predice el fallo y con los que
-  deben seguir pasando. Cada valor esperado calculado a mano lleva su cálculo escrito en el plan,
-  con aritmética o con código independiente de la función probada, nunca de memoria.
+  deben seguir pasando. Cada valor esperado calculado a mano lleva en el plan su cálculo ejecutado
+  (un script temporal con código independiente de la función probada) y su salida, nunca de memoria.
+  El plan dice también lo que interpreta y en qué se aparta de las notas del chat
+  ([tarea.md](docs/proceso/tarea.md#2-plan) §2).
 - Para y pregunta solo si algo contradice el plan o la especificación, una biblioteca no se
   comporta como se esperaba, un test falla sin causa clara o hace falta una decisión de diseño
   nueva. Nunca cambies una semilla para que un test pase.
@@ -117,7 +119,8 @@ Flujo de cada tarea (el agente ejecuta git):
 1. Actualiza `main` (`git switch main && git pull`) y crea la rama de la tarea (`git switch -c <rama>`).
 2. Haz los commits en la rama, uno por paso lógico, sin esperar revisión entre ellos.
 3. Pide permiso a Pedro y haz `git push -u origin <rama>`.
-4. Abre el pull request con `gh pr create`.
+4. Abre el pull request por REST, que funciona también en la nube:
+   `gh api -X POST repos/pdromer0/edsim/pulls -f title=… -f head=<rama> -f base=main -F body=@<fichero>`.
 5. Pedro revisa y fusiona siempre.
 
 Codex sigue el paso 3 tal cual; Claude Code tiene su excepción en `CLAUDE.md`.
@@ -126,8 +129,9 @@ Encadena con `&&` los pasos que dependen del anterior, para que ninguno se ejecu
 salvo `git push`, que va solo.
 
 Después de la fusión: antes de actualizar `main` o borrar una rama, comprueba con
-`gh pr view N --json state,mergedAt` que el PR está fusionado. Si no lo está, para. Nunca des un PR
-por fusionado sin esa comprobación.
+`gh api repos/pdromer0/edsim/pulls/N --jq '{merged,merged_at}'` que el PR está fusionado (`merged`
+es `true`; `merge_commit_sha` no sirve, porque un PR abierto también lo trae). Si no lo está, para.
+Nunca des un PR por fusionado sin esa comprobación.
 
 ## Review guidelines
 

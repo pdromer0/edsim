@@ -48,6 +48,12 @@ body:
         - Pedro
     validations:
       required: true
+  - type: input
+    id: donde
+    attributes:
+      label: Dónde y modelo
+      description: En la nube por defecto; en local si necesita Docker, la app en el navegador o ficheros del portátil (docs/proceso/flujo.md, «Dónde corre cada tarea»).
+      placeholder: "Nube. Sonnet, esfuerzo alto"
   - type: checkboxes
     id: critica
     attributes:

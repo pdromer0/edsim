@@ -12,13 +12,13 @@ title: "Una tarea va de su issue a la fusión, y de ahí a la siguiente"
 ---
 flowchart TD
     issue["issue en GitHub<br/>su ficha, en Próximo"] --> skill["/tarea-edsim N<br/>dependencias, issue y secciones de la especificación"]
-    skill --> plan["plan<br/>lo revisan Pedro y el chat"]
+    skill --> plan["plan<br/>el revisor del plan, en las críticas;<br/>el chat, en las críticas o con conceptos nuevos"]
     plan -->|"Pedro lo aprueba"| impl["implementación<br/>N1 en cada commit; N2 al final de cada turno"]
     impl --> antes["antes del push<br/>/code-review y sus correcciones; después, una sola N3"]
     antes --> pr["PR con «Closes #N»<br/>y la entrada del anexo"]
     pr --> critica{"¿crítica?"}
     critica -->|"sí"| codex["@codex review"]
-    critica -->|"no"| revision["revisión del chat<br/>recalcula y revisa el PR"]
+    critica -->|"no"| revision["revisión del chat, ligera<br/>el CI y lo que el plan interpretaba"]
     codex --> revision
     revision -->|"ajustes de la revisión"| impl
     revision -->|"aprobado y CI en verde"| fusion["fusión en main (squash)"]
@@ -76,13 +76,32 @@ La especificación dice qué hay que hacer y el anexo qué se hizo; el issue y e
 
 En las tareas de proceso, la especificación y su anexo son `docs/proceso/<tarea>.md`.
 
+## Dónde corre cada tarea
+
+**En la nube por defecto** (una sesión de Claude Code en claude.ai/code), desde el hito 7. En la 5.7, la N3 tardó allí 10 min 41 s, frente a 13 min 52 s en el portátil, y el portátil queda libre. **En local**, solo lo que la nube no puede hacer:
+
+- lo que necesita Docker: Kafka, Postgres;
+- la app en el navegador, cuando Pedro tiene que verla;
+- los ficheros que solo están en el portátil;
+- crear Releases: GitHub responde HTTP 403 («not permitted for this session type») al crearlas desde la nube o desde el chat;
+- las tareas que cambian `.github/workflows/claude.yml`, porque la condición solo se prueba tras la fusión.
+
+Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
+
+- **la rama**, la del issue: la nube propone una `claude/*`, y Pedro elige la del issue;
+- **el entorno** se prepara con `uv sync --all-packages`, con `BASH_DEFAULT_TIMEOUT_MS=900000` para que la N3 quepa en un comando, y el script del entorno busca el repositorio en lugar de suponer dónde está;
+- **GitHub, por REST:** las skills usan `gh api`, porque el proxy de la nube da 403 a GraphQL (las órdenes `issue` y `pr` de `gh`, y `gh project`);
+- **el tablero** no se puede mover desde la nube: la skill dice qué ficha mover y a qué columna, y la mueve Pedro.
+
 ## Papeles
 
 | Quién | Qué hace |
 | --- | --- |
 | Pedro | Prioriza (de Backlog a Próximo), aprueba los planes, revisa los PR, escribe `@codex review` en las tareas críticas y fusiona; después, `/clear` y `/sincronizar`. |
-| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues, revisa el plan y el PR, recalcula los valores a mano y completa las métricas del PR. Desde la 5.4 escribe él mismo en GitHub, con `add_repo` y `gh api` REST: las «Notas del chat» de cada issue, su revisión y las métricas en el PR, y los issues del Backlog ([portabilidad.md](portabilidad.md#7-github-como-gestor-de-trabajo-implantado), §7). |
+| El chat | Lleva la sesión conceptual, escribe las especificaciones y los issues y completa las métricas del PR. Su revisión va a la medida (desde el hito 7): el **plan**, en las tareas críticas o con conceptos nuevos, recalculando los valores a mano, y además lo que marque el revisor del plan; el **PR**, ligera, con el CI y lo que el plan interpretaba, que es lo que hizo falta en todo el hito 5. Desde la 5.4 escribe él mismo en GitHub, con `add_repo` y `gh api` REST: las «Notas del chat» de cada issue, su revisión y las métricas en el PR, y los issues del Backlog ([portabilidad.md](portabilidad.md#7-github-como-gestor-de-trabajo-implantado), §7). |
 | Claude Code | Con `/tarea-edsim N`: plan, rama, commits con N1, `/code-review` y sus correcciones, una sola N3, entrada del anexo, push, PR y ficha. Con `/sincronizar`: comprueba la fusión, actualiza `main`, borra la rama y revisa el tablero. |
+| `@claude` (piloto, 7.0) | Claude en GitHub Actions (`.github/workflows/claude.yml`, solo el de menciones). Responde únicamente a los comentarios, revisiones o issues de `pdromer0` cuyo texto **empieza** por `@claude` (una mención en medio no lo activa, porque el chat también escribe como `pdromer0`). Sirve para un ajuste pequeño en un PR abierto; mete su commit en la rama, y quien siga en local hace `git pull --ff-only`. La acción solo se ejecuta si el `claude.yml` es idéntico al de `main`: un cambio al workflow se prueba después de fusionarlo. |
+| El revisor del plan | Subagente `revisor-plan` de Claude Code, solo en las tareas con la etiqueta `critica`: revisa el plan con un contexto limpio antes de que lo vea Pedro y devuelve lo que interpreta, sus diferencias con las notas del chat y los valores que no cuadran. Si trae dudas, Pedro las lleva al chat con solo esas secciones. |
 | Codex | Implementa las tareas con la etiqueta `quien:codex` siguiendo [tarea.md](tarea.md) y pide permiso para el push; en las tareas críticas, revisa el PR cuando Pedro escribe `@codex review`. |
 
 ## Reglas
@@ -94,4 +113,6 @@ En las tareas de proceso, la especificación y su anexo son `docs/proceso/<tarea
 
 ## Tras la fusión
 
-`/sincronizar [N]` hace, en este orden, lo que antes se hacía a mano: comprueba que el árbol está limpio y que el PR está en `MERGED`; actualiza `main` con `git pull --ff-only` y comprueba que contiene la fusión; borra la rama local solo si todos sus commits entraron en el PR; `git fetch --prune`; `uv sync --all-packages --extra kafka` si la fusión cambió `uv.lock` o `pyproject.toml`; comprueba que los issues que cierra el PR están cerrados y en «Hecho»; y muestra las fichas de «Próximo». La skill está en [.claude/skills/sincronizar/SKILL.md](../../.claude/skills/sincronizar/SKILL.md).
+`/sincronizar [N]` hace, en este orden, lo que antes se hacía a mano: comprueba que el árbol está limpio y que el PR está fusionado (por REST, `merged` es `true`); actualiza `main` con `git pull --ff-only` y comprueba que contiene la fusión; borra la rama local solo si todos sus commits entraron en el PR; `git fetch --prune`; `uv sync --all-packages --extra kafka` si la fusión cambió `uv.lock` o `pyproject.toml`; comprueba que los issues que cierra el PR están cerrados y en «Hecho»; y muestra las fichas de «Próximo». La skill está en [.claude/skills/sincronizar/SKILL.md](../../.claude/skills/sincronizar/SKILL.md).
+
+**Al cerrar un hito**, tras fusionar la tarea de cierre, Pedro crea la etiqueta y la Release se publica con `/cerrar-hito N` (el issue de cierre), que con el issue ya cerrado va directamente a la Release: se puede lanzar sola, en otra sesión, cuando la etiqueta existe y la Release no. La crean Claude Code en local o Pedro; nunca el chat ni una sesión en la nube, a los que GitHub responde HTTP 403.
