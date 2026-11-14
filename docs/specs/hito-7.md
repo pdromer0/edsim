@@ -1028,10 +1028,26 @@ Las seis, con el subagente `mutante` en paralelo, sobre `ca5fbe9`.
   - validar el log cuesta el 8 % de `record`;
   - depender de `edsim.live.schemas`, que solo importa el catálogo; la frontera lo vigila.
 
+**El revisor del plan frente al chat**
+
+La comparación que pedía el criterio de aceptación del #115, de la revisión del chat del #129 (añadida en la 7.2, para no pagar otra vuelta del CI en la 7.1):
+
+| Hallazgo sobre el plan | Revisor | Chat |
+| --- | --- | --- |
+| El test de frontera «como el de `profiles/`» sí existía (`tests/test_sampler.py:218`): error de hecho del plan | Sí | Lo confirmó |
+| La edad literal convierte 20…90 en 2…9 | Sí | Lo amplió (21/31/41 → 12/13/14; 99 → 100) y Pedro decidió |
+| `retraso_min` con dos significados según la fila | Sí | Pedro decidió una sola definición |
+| Dados y perfil del escenario L incompletos | Sí | De acuerdo |
+| Traslado de `validate_run_id` sin declarar | Sí | De acuerdo |
+| `description` heredada de los esquemas | Sí | De acuerdo |
+| Horas del escenario L y de sus variantes | Recalculadas: cuadran | Cuadran |
+| La hora del minuto 0, ¿falla en horario de verano? | No | Comprobado: no, porque `TIMEZONE` es +01:00 fijo |
+
+**Conclusión:** el revisor encontró los seis puntos que cambiaron el plan, incluido el único error de hecho. El chat no añadió nada que lo cambiara. En las críticas siguientes (la 7.4 y la 7.5), la revisión del chat del plan puede ser ligera, salvo en lo que el revisor marque como dudoso.
+
 **Pendiente**
 
-- **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2.
-- **La comparación de las dos revisiones del plan** (la del revisor y la del chat): la cierra el chat.
+- **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2 (hecho allí).
 
 ### Tarea 7.5: Postgres con TimescaleDB y consumidor de bronce
 
