@@ -796,6 +796,7 @@ El coste por tarea es una estimación con las medidas de la tabla «Cuánto cues
 - Repartir los tests `slow` en jobs del CI aparte, cada uno en su máquina, para bajar el tiempo típico y el peor caso.
 - N1 automático con `pytest-testmon`: solo sigue el código Python, así que un cambio en `config/` o `tests/data/` seguiría pidiendo N2. Comprobar antes que admite pytest 9.2.
 - **Hecho (#81, [anexo](proceso/p3.md)):** saltar los tests del CI cuando el PR solo cambia documentación, con un job previo (`cambios`) y un `if:` en cada job de tests, y no con `paths-ignore` (un check obligatorio que no se ejecuta bloquea la fusión).
+- **Hecho (#131, [anexo](proceso/p3.md)):** límite de tiempo por test con `pytest-timeout` (60 s por defecto; los `slow`, la integración y los notebooks, aparte) y tope común (`tests/runaway.py`) en los dobles que se llaman en bucle.
 - Volver a mirar `loadgroup` cuando xdist publique una versión que admita pytest 9.2.
 
 ### Qué añadió el hito 6

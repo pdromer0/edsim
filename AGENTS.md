@@ -84,6 +84,8 @@ una; el sello vive en `.cache/edsim/`, fuera de `.git`. El de Codex formatea ant
 `uv run pytest tests/test_x.py` sigue en serie, y solo los scripts piden `-n`. El CI va en serie:
 en el runner, xdist no llega al 60 % de la serie.
 
+Cada test tiene un límite de tiempo (`pytest-timeout`, método `signal`, con su `setup` y `teardown`): 60 s por defecto (`timeout` en `pyproject.toml` y en `app/pyproject.toml`; la app lee el suyo), 600 s los `slow` del núcleo (`tests/conftest.py`), 180 s la integración y 1800 s los notebooks (sus `conftest.py`). Un test que lo pasa falla con «Timeout (>60.0s) from pytest-timeout» y la traza de dónde estaba; los demás siguen, también con xdist. Un test legítimo que lo supere se marca con `@pytest.mark.timeout(N)` o se sube el valor de su zona, midiendo antes. No corta un bucle dentro de código C (una operación larga de NumPy) hasta que vuelve a Python.
+
 Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06 con Kafka necesita el broker (`docker compose up --wait` y `edsim directo preparar`) y el extra en `.venv` (`uv sync --all-packages --extra kafka`); en modo rápido, nada de eso. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
 `--nbmake-timeout` (300 s por defecto) es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. El límite que importa es el de la celda más larga; el de 600 s deja margen en máquinas lentas.
@@ -105,6 +107,7 @@ Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06
 
 - Código, nombres y docstrings del paquete en inglés: `src/` y `app/src/`.
 - Tests, cada zona con su práctica ([ADR 0015](docs/decisiones/0015-idiomas-del-proyecto.md)): los del núcleo (`tests/`) llevan nombres de los tests (`test_…`), docstrings y comentarios en español, como material de aprendizaje; las funciones auxiliares y las fixtures pueden ir en inglés, como los identificadores del paquete que usan. Los de la app (`app/tests/`), en inglés, como el código de la app. Los identificadores que un test importa del paquete siguen en inglés.
+- Un doble de prueba que se llama en bucle lleva un tope que lanza un error claro. Si registra cada llamada (una lista que crece) y un bucle del código real puede llamarlo sin fin, cuenta las llamadas y lanza `RunawayLoop` al pasar el tope, con `check_calls` de `tests/runaway.py` (ejemplos: `FakeBronzeConsumer.consume` y `FakeProducer`). El límite de tiempo por test es la red general y salta tarde: a 60 s, un registro que crece a 60 MB/s ya pesa 3,5 GB. El tope corta antes.
 - Documentación, especificaciones y mensajes de commit en español.
 - Claves de los ficheros de configuración (TOML) en español, como en el diseño.
 - Commits con prefijo `feat`, `fix`, `refactor`, `docs`, `test`, `chore` o `ci`, p. ej. `feat(sim): cola M/M/1 con SimPy`.
