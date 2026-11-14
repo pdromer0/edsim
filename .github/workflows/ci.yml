@@ -62,7 +62,7 @@ jobs:
                 *.md) tipo=doc ;;
                 *) tipo=código ;;
               esac
-              echo "$tipo  $ruta"
+              echo "$tipo  $ruta" | tee -a "$GITHUB_STEP_SUMMARY"
               if [ "$tipo" != doc ]; then
                 otros=$((otros + 1))
               fi
