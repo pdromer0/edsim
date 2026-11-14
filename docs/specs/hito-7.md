@@ -1057,7 +1057,7 @@ Issue #119, rama `feat/h7-almacen`, Claude Code; cierra también el #91 (la cons
 - **`bronze.py` no valida con el catálogo:** lo registrado tiene campos a `null` y `record_corrected`. Exige solo las claves que llenan columnas, con sus tipos, y deja las demás en `valor`. Manda a `rechazados` todo lo que se sabe que rompe el `INSERT` (un entero fuera de `integer`, NaN e infinito, NUL, sustitutos sueltos, UTF-8 roto, horas sin zona), porque un mensaje así bloquearía el consumidor: releería el mismo lote para siempre.
 - **La red de seguridad**, para lo que nadie previó: si el `INSERT` del lote falla por un dato, el lote se repite fila a fila con un `SAVEPOINT` por fila, y solo la que falla va a `rechazados`, con el mensaje de Postgres. Un error que no es de datos se propaga sin confirmar.
 - **Se inyecta un almacén, no la conexión:** las transacciones, los savepoints y la red viven en `consumer.py`, sobre las primitivas de `PostgresBronze`, y se prueban en rápidos con `tests/fake_store.py`. La integración prueba lo que el falso solo imita: `ON CONFLICT`, su recuento y el error de Postgres.
-- **`--run` cuenta en bronce, desde el último `inicio`:** así termina un consumidor relanzado, que no vuelve a ver lo ya confirmado, y no lo engaña una publicación anterior de la misma ejecución. Por eso el `inicio` tiene que llegar antes que el censo (el `flush`).
+- **`--run` cuenta en bronce, desde el último `inicio`:** así termina un consumidor relanzado, que no vuelve a ver lo ya confirmado, y no lo engaña una publicación anterior de la misma ejecución. Por eso el `inicio` tiene que llegar antes que el censo (el `flush`). Y la da por completa solo con el consumidor al día, cuando el último `consume` volvió vacío: una publicación nueva puede estar aún en Kafka (ajuste de la revisión del PR).
 - **`read_bronze_lines`** en lugar de `read_bronze_records`: `Record` era de la 7.1, sin fusionar cuando se planeó la 7.5.
 - **El grupo de la integración es único** (`edsim-bronce-test-<8 hex>`): con `edsim-bronce`, un test movería los offsets del consumidor de Pedro. Por eso la integración llama a las funciones y no a `edsim almacen consumir`, que se prueba en rápidos con dobles y Pedro comprueba a mano.
 - **El extremo a extremo y el de parar y relanzar son un solo test**, publicado con `edsim directo lanzar --velocidad max`: la primera pasada para cuando bronce tiene algo de la ejecución, y el test exige 0 < guardados < publicados antes de relanzar, para no pasar vacío.
@@ -1072,7 +1072,7 @@ Recalculados con `python3` sin importar `edsim` (el código, en el plan y en el 
 
 **Medidas**
 
-- El job de integración antes: `tests-kafka`, 1:30 (CI de `main`, `cdde0a4`). Después, `tests-integracion`: el tiempo, en el PR.
+- El job de integración antes: `tests-kafka`, 1:30 (CI de `main`, `cdde0a4`). Después, `tests-integracion`: 1:46 (`7268d1b`), con 28 tests en 60 s; el script, arranque 0:32, pytest 1:04 y total 1:37.
 - En local, `scripts/tests-integracion.sh` antes del cambio: 1:16. Después no se midió en local (ver «Proceso»).
 - N3 (`scripts/tests-completos.sh`, en la nube): 16:18 en verde: lint 0:01, formato 0:00, núcleo 4.184 tests en 11:19 (con xdist), app 316 en 3:45 y notebooks 6 en 1:13.
 
@@ -1087,7 +1087,7 @@ Recalculados con `python3` sin importar `edsim` (el código, en el plan y en el 
 | V17 | Sin el límite de `integer` en `schema_version` | Falla solo el caso de 2³¹ | 1 falla (`[value10-schema_version]`), 63 pasan |
 | V18 | `--run` cuenta en memoria | Falla solo «relanzar con `--run` termina» | 2 fallan, 32 pasan: el predicho y `…cuenta_desde_la_ultima_publicacion`, porque los `event_id` de las dos publicaciones se solapan y el recuento en memoria da 3 = 3 |
 | V19 | El aplicador no registra la migración | Fallan 3 | 3 fallan, 27 pasan: los mismos |
-| V20 | `tests-integracion` sin `needs`/`if` | No es un test | El diff de `ci.yml` los conserva; el CI del PR, en el PR |
+| V20 | `tests-integracion` sin `needs`/`if` | No es un test | El diff de `ci.yml` los conserva, y en el CI del PR el job corrió después de `cambios` y pasó |
 | V21 | Sin la red de seguridad | Falla el de la fila que Postgres no acepta | 1 falla, 33 pasan: el mismo |
 
 Las rápidas, con el subagente `mutante` en paralelo, sobre `5b8fef4`, el merge de `main`; V16, repetida sobre `bd6457f`, el commit del tope.
@@ -1110,6 +1110,17 @@ Las rápidas, con el subagente `mutante` en paralelo, sobre `5b8fef4`, el merge 
   - Ctrl+C mientras se conecta espera a los timeouts de conexión, pero no tapa el error;
   - el error de `commit` de Kafka sigue saliendo con su traza (código 1), como decidió el plan: traducirlo pediría importar `confluent_kafka` fuera de `live/kafka.py`.
 
+**Ajustes de la revisión del PR**
+
+Codex encontró dos fallos, los dos ciertos (análisis del chat en el PR). Un commit por arreglo, con el test escrito antes y ejecutado contra el código sin arreglar:
+
+| Hallazgo | Predicción del test sin el arreglo | Observado | Arreglo |
+| --- | --- | --- | --- |
+| `--run` daba por completa una publicación vieja: miraba `progress` antes del primer `consume`, así que con la publicación 1 completa en bronce y la 2 en Kafka terminaba sin leerla | Termina sin llamar a `consume` | `assert 0 == 2` en `consumer.consumes`: termina con 0 llamadas. Con el arreglo, guarda la 2 (5 filas: el `inicio`, 3 eventos y el `fin`) en dos llamadas, la segunda vacía | `progress` tras cada `consume`; completa solo si además ese `consume` volvió vacío (`6345783`) |
+| Un JSON muy anidado lanzaba `RecursionError`, que no es `ValueError`, se escapaba de `to_row` y bloqueaba la partición | Con 1.100 niveles falla `_check_strings`; con 100.000, ya `json.loads` (comprobado antes con `python3`) | Los dos con `RecursionError`, en `bronze.py:233` y en el decodificador de `json`. Con el arreglo, los dos van a `rechazados`; de 900 a 1.100 niveles no se escapa nada (hasta 995, fila de `eventos`; desde 1.000, rechazo) | Los dos sitios convierten `RecursionError` en `_Unreadable`, con el motivo «JSON demasiado anidado» (`690f6ac`) |
+
+Una sola N3 tras los dos: 13:36 en verde (lint 0:00, formato 0:00, núcleo 4.187 tests en 8:17 con xdist, app 316 en 4:01 y notebooks 6 en 1:18).
+
 **Proceso**
 
 - **La sesión local se interrumpió tres veces**, porque WSL se quedaba sin memoria durante las versiones incorrectas. La primera vez había siete mutantes en paralelo con Docker levantado; la segunda, dos mutantes a la vez con Docker levantado: el portátil, con 16 GB, al 96 % y VmmemWSL en 6,4 GB. Se resolvió así: reinicio, WSL limitado a 7 GB con 8 GB de swap, Docker Desktop cerrado salvo para la integración y los mutantes de uno en uno. La tercera, también durante las versiones incorrectas, llevó lo que quedaba a la nube: el merge, las siete versiones incorrectas en paralelo (repitiendo V13, V17 y V19, cuyos resultados locales no se guardaron en el repositorio), la revisión y la N3.
@@ -1121,3 +1132,4 @@ Las rápidas, con el subagente `mutante` en paralelo, sobre `5b8fef4`, el merge 
 - `read_bronze_records` (con `Record`) y `registro comparar --postgres`: tarea 7.3.
 - «Con el perfil realista, la cuenta cuadra con lo leído de bronce»: tarea 7.4.
 - Lo de la memoria de WSL, para `docs/proceso/portabilidad.md`, si Pedro lo pide.
+- `--run` con otro productor publicando sin parar en los mismos topics: `consume` no vuelve nunca vacío, así que `--run` espera hasta el `timeout` (código 1) aunque bronce ya tenga la ejecución. No pasa en los tests ni con un solo directo; si hace falta, «al día» podría ser un lote con menos mensajes que `batch_size`.
