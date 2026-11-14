@@ -198,4 +198,3 @@ def load_record_profiles(path: str | Path) -> RecordProfiles:
     if problems:
         raise ValueError(f"{path}: {'; '.join(problems)}")
     return RecordProfiles({name: _profile(name, trees[name]) for name in PROFILE_NAMES})
-
