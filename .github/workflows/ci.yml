@@ -78,7 +78,7 @@ jobs:
 
   tests:
     needs: cambios
-    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
+    if: ${{ needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -93,7 +93,7 @@ jobs:
 
   notebooks:
     needs: cambios
-    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
+    if: ${{ needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -106,7 +106,7 @@ jobs:
 
   tests-app:
     needs: cambios
-    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
+    if: ${{ needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,7 +118,7 @@ jobs:
   # productor, directo de un día y órdenes. Obligatorio en la protección de main desde la 6.4.
   tests-kafka:
     needs: cambios
-    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
+    if: ${{ needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
