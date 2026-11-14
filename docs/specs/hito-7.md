@@ -335,13 +335,14 @@ Con miles de pacientes, esto dice, por ejemplo, cuánto sale de alto el censo de
 
 ### La función
 
-`record(events, profile, seed, *, horizon, run_id) -> Recording`, en `edsim.clinical_record`:
+`record(events, profile, seed, *, horizon, run_id, dice) -> Recording`, en `edsim.clinical_record`. En la 7.1, `dice` es obligatorio; la 7.2 lo hace opcional, con el flujo de la semilla por defecto:
 
 - `events`: el log verdadero completo de una ejecución (los `Event` de `eventos.jsonl`, en su orden).
 - `profile`: un perfil cargado de `config/registro_clinico.toml`.
 - `seed`: la semilla del registro (por defecto, la de la ejecución).
 - `horizon`: el horizonte en minutos (`días × 1.440`).
 - `run_id`: el de la ejecución verdadera.
+- `dice`: de dónde salen los 13 números (`Roll`) de cada evento verdadero de paciente: un objeto con `roll()`. Los tests los fijan a mano.
 - Devuelve `Recording(run_id, records, notebook, info)`: el `run_id` derivado, los `Record` en orden de emisión, las filas de la libreta y los datos para `registro.json`.
 
 Es pura: el mismo log, el mismo perfil y la misma semilla dan los mismos bytes. No importa SimPy ni el motor.
