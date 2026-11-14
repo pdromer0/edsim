@@ -299,6 +299,7 @@ PRODUCER_CLIENT = "productor"
 CONTROL_CLIENT = "órdenes"
 ADMIN_CLIENT = "administración"
 READER_CLIENT = "lector"
+BRONZE_CLIENT = "bronce"
 """Names of the clients in the warnings and in the summary of librdkafka."""
 
 
@@ -830,6 +831,52 @@ def read_run(
         messages=messages,
         unreadable=unreadable,
     )
+
+
+# --- The consumer of bronze (milestone 7) ----------------------------------------------
+
+BRONZE_GROUP = "edsim-bronce"
+"""The fixed group of the consumer of bronze: stopped and launched again, it goes on where
+it left off (docs/specs/hito-7.md, H7-8)."""
+
+
+def bronze_consumer_config(
+    bootstrap: str, group_id: str = BRONZE_GROUP, watch: BrokerWatch | None = None
+) -> dict[str, object]:
+    """The configuration of the consumer of bronze.
+
+    ``enable.auto.commit=false``: the offsets are committed by hand, after saving
+    (``edsim.store.consumer``). ``auto.offset.reset=earliest``: the first time, the group
+    starts at the first message. The ``client.id`` is the group, so the console shows it.
+    """
+    return _with_watch(
+        {
+            "bootstrap.servers": bootstrap,
+            "group.id": group_id,
+            "client.id": group_id,
+            "enable.auto.commit": False,
+            "auto.offset.reset": "earliest",
+        },
+        watch,
+        BRONZE_CLIENT,
+    )
+
+
+def connect_bronze_consumer(
+    bootstrap: str, *, group_id: str = BRONZE_GROUP, watch: BrokerWatch | None = None
+):
+    """A ``confluent_kafka.Consumer`` for bronze, subscribed to ``READ_TOPICS``.
+
+    The tests of integration pass a group of their own: with ``edsim-bronce`` they would move
+    the offsets of the real consumer.
+
+    Raises:
+        MissingKafkaExtraError: If the ``kafka`` extra is not installed.
+    """
+    kafka = import_confluent_kafka()
+    consumer = kafka.Consumer(bronze_consumer_config(bootstrap, group_id, watch))
+    consumer.subscribe(list(READ_TOPICS))
+    return consumer
 
 
 class OrderNotDeliveredError(RuntimeError):
