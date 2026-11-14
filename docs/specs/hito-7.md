@@ -1323,3 +1323,69 @@ Una sola N3 tras los dos: 13:36 en verde (lint 0:00, formato 0:00, núcleo 4.187
 - «Con el perfil realista, la cuenta cuadra con lo leído de bronce»: tarea 7.4.
 - Lo de la memoria de WSL, para `docs/proceso/portabilidad.md`, si Pedro lo pide.
 - `--run` con otro productor publicando sin parar en los mismos topics: `consume` no vuelve nunca vacío, así que `--run` espera hasta el `timeout` (código 1) aunque bronce ya tenga la ejecución. No pasa en los tests ni con un solo directo; si hace falta, «al día» podría ser un lote con menos mensajes que `batch_size`.
+
+### Tarea 7.4: Directo y reemisión con el registro clínico
+
+**Qué se hizo**
+
+Issue #118, rama `feat/h7-directo-registro`, Claude Code (Opus, en local). Tarea crítica: revisor del plan, `/code-review high` y `@codex review`. Un commit por paso, más los de la revisión:
+
+- **Las ayudas de `record`** (`d41f849`): `_event_drafts` (los despistes de un hecho) y `_finish` (el registro de un borrador numerado) salen de `record()` sin cambiar un byte.
+- **La sala de espera** (`1c1609e`): `RecordStream` en `clinical_record/record.py`.
+- **El `inicio` con registro** (`89b2b51`): `RecordInfo` en `RunInfo.record`, el bloque `registro` en `run_start_json` y `parse_run_message`, el esquema de `ed.runs` ampliado y `LiveTracker` que lo rechaza.
+- **`run_live` con lo registrado** (`d5252fe`): la sala en el directo, `recorded_census`, `RecordedLog` y los sumideros con `Record`.
+- **La reemisión** (`1693505`): `replay_records` (aditivo en `__all__` de `edsim.runs`), `with_recording` y `prepare_replay(record_profile=…)`.
+- **La CLI** (`092c0c5`): `--registro`, `--semilla-registro` y `--registros` en `lanzar` y `reemitir`.
+- **El lento** (`a5c115b`) y **la integración** (`2a7b1ac`); **la especificación y `AGENTS.md`** (`f0776cd`).
+
+**Decisiones del diff**
+
+- **La sala suelta con `s ≤ peek()`**, con el montículo por la clave de emisión completa (ver «Precisiones de la 7.4» en la especificación). Comprueba también que no llega un hecho anterior a una cota ya soltada: si llegara, la cota no era `peek()`.
+- **Lotes y directo comparten los despistes, no la ordenación:** `record` ordena todo de una vez; la sala, con el montículo. Así «directo = lotes» compara dos ordenaciones distintas.
+- **La reemisión usa `record`** (la especificación), no la sala: `RecordedLog` suelta los registros ya ordenados con la misma regla, `s ≤ peek()`.
+- **Los registros viajan como los eventos:** `route` y las cabeceras no cambian; el valor es `record_json`.
+- **`censo.episodios`** cuenta los episodios entre los registros del censo; el texto de la CLI dice «episodios con registros».
+- **Un perfil de cualquier nombre** se puede publicar desde el código (`RecordInfo` no exige los tres del fichero); la CLI los limita con `choices`.
+
+**Medidas**
+
+- `record` con `config/`, 14 días y semilla 2026, de 2,2 a 2,5 s por perfil; las huellas de `registrado.jsonl` y `defectos.csv` de los tres perfiles, iguales antes y después del refactor.
+- El lento «directo = lotes» de lo registrado: de 1,1 s (v2) a 2,3 s (v3) por caso.
+- N3 (`scripts/tests-completos.sh`, en local): 13:50 en verde (lint 0:00, formato 0:00, núcleo 4.651 tests en 10:08 con xdist, app 316 en 2:46 y notebooks 6 en 0:56).
+- `scripts/tests-integracion.sh`, en local: 33 tests en 1:47, 1:58 en total (arranque 0:09). La primera vez fallaron los dos nuevos (sobraba un `fetchall`, `0aa1fb8`) y `test_consumidor_en_vivo_igual_a_batch[hito4]`, con una latencia de −25 ms frente al mínimo de −5 ms (el reloj del broker, por delante del de WSL); en la segunda, todo en verde.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, dos a la vez, sobre `2a7b1ac` (V11 y V12) y `f0776cd` (las demás):
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V11 | La sala ordena y suelta por la hora verdadera del hecho | Fallan 13: la tabla de L, los mismos bytes que `record` (4), el directo de L, su censo, la reemisión = sala (2) y los 4 lentos | 13 fallan, 172 pasan: los mismos |
+| V12 | Con la sala, el directo publica también la verdad | Fallan 9 (7 del directo y 2 de la CLI) | 10 fallan: los 9 y `la_reemision_publica_lo_mismo_que_la_sala[1000.0]`. `RecordedLog` ya tiene todos los registros y suelta el 1 en el censo, antes del paso de L1, y la sala después: con la verdad colada, los dos lados se intercalan distinto |
+| V32 | Los abiertos del censo, según lo registrado | Fallan 6: el censo con `W` = 1.140, la reemisión = lotes y los 4 lentos | 6 fallan, 179 pasan: los mismos |
+| V33 | Se numera solo lo publicado | Fallan 6: el censo con `W` = 1.140, la reemisión = lotes y los 4 lentos | 6 fallan, 179 pasan: los mismos |
+| V35 | La reemisión no compara la carpeta | Fallan 3: los dos casos del lanzador y el de la CLI | 3 fallan, 159 pasan: los mismos |
+| V36 | La sala ordena por `(s, llegada)` (propuesta del revisor del plan) | Falla 1: duplicado y corrección a la misma hora | 1 falla, 141 pasan: el mismo |
+
+La predicción de V12 se corrigió antes de lanzarla, al escribir los tests: el plan contaba también el censo con `W` = 1.140, que no puede fallar, porque con ese `W` no queda verdad en el directo.
+
+**Revisión**
+
+`/code-review high main...feat/h7-directo-registro`, diez hallazgos:
+
+- **Corregidos** (`15ee6ce`, `5fe44a8`): una carpeta que no es un registro daba código 2 en vez de 1; una sola serialización de `registrado.jsonl` para escribir y comparar; el log de la reemisión se abría antes de que pudiera fallar `replay_records`; `RecordedLog.ready(NaN)`; `Record` solo para anotar en `census.py` y `status.py`; el valor por defecto de `--registros` en un solo sitio.
+- **Explicados:**
+  - `read_run` sobre un derivado puede fallar en `from_json` antes del aviso de `LiveTracker`: `read_run` es para la verdad, y leer lo registrado con él sigue siendo un error;
+  - la reemisión carga el log y los registros enteros, como `record_run`: lo pide la especificación (`record`);
+  - `_replay` carga los perfiles dos veces, la primera para el error de uso con el nombre de la opción;
+  - un `perfil` cualquiera en el bloque `registro`: ver «Decisiones del diff».
+
+**Proceso**
+
+- **`pytest-timeout` no estaba en el `.venv` de Pedro** (ni en la caché de uv): el límite de 60 s de #131 no se había aplicado nunca en local. Con el `uv sync` del paso 0, la N2 cayó tres veces en `test_every_minute_matches_curves_full_fold_and_cards` (28 s solo, 73 s con xdist). Por decisión de Pedro, ese test lleva `@pytest.mark.timeout(180)` (`521caa3`).
+
+**Pendiente**
+
+- **La 7.6** (#120): el notebook puede publicar con `--registro` y leer bronce.
+- **`read_run` con lo registrado:** si hace falta un mensaje claro en cualquier orden, mirar el `run_id` derivado antes de `from_json`.
+- **Los otros tests rápidos cerca del límite con xdist** (de 24 a 41 s, los de `test_cli_calibracion.py`): vigilarlos.
