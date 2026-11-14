@@ -1058,6 +1058,80 @@ La comparación que pedía el criterio de aceptación del #115, de la revisión 
 
 - **El flujo real del dado** (hijo 10 de `child_streams(semilla, 11)`), la carga de los perfiles y `record_run`: tarea 7.2 (hecho allí).
 
+### Tarea 7.2: Perfiles del registro clínico y `registro generar`
+
+**Qué se hizo**
+
+Issue #116, rama `feat/h7-perfiles-registro`, Claude Code (Sonnet, en la nube). Tarea no crítica: sin revisor del plan, `/code-review medium`. Un commit por paso, más los de la tabla de la 7.1 y la revisión:
+
+- **El dado real** (`c96c247`): `StreamDice(seed)` en `edsim.clinical_record.record`, y `record(..., dice=None)` lo usa por defecto.
+- **La carga** (`5b6e98d`): `clinical_record/profiles.py` con `load_record_profiles`, `RecordProfiles` y `PROFILE_NAMES`.
+- **El fichero** (`0c1c583`): `config/registro_clinico.toml`, los tres perfiles, con el estado y la fuente de cada valor.
+- **`record_run`** (`9be4508`): `runs/recorded.py`, aditivo en `__all__` de `edsim.runs` (`record_run`, `RecordRunResult`).
+- **La CLI** (`44cbc80`): `edsim registro validar` y `generar`, con los textos en `clinical_record/report.py`.
+- **Documentación** (`f9a5ae4`, `a9db3ae`): la tabla «el revisor del plan frente al chat» en la entrada de la 7.1 (nota 1 del chat del 14), el resultado de la búsqueda de fuentes, las filas de «Fuentes» y los comandos de `AGENTS.md`.
+
+**Decisiones del diff**
+
+- **El flujo:** hijo 10 de `child_streams(semilla, 11)`, una llamada `random(13)` por tirada. Los `z_*` son la inversa de la normal de su uniforme, con `max(u, 2⁻⁵³)` para que u = 0 dé −8,21 y no un error. Se eligió así, y no `standard_normal`, porque el *ziggurat* gasta un número variable de bits y su flujo puede cambiar entre versiones de numpy: con uniformes el consumo es fijo de verdad. `StreamDice` vive en `record.py`, junto a `Roll` y `Dice`, y no en un `dice.py`: `Roll` está en `record.py` y el módulo nuevo habría sido un import circular.
+- **La carga** recorre cada perfil contra una plantilla de claves y junta todos los errores, cada uno con su perfil y su clave. El `limpio` exige 0 en las tasas y los desfases; sus `minutos` solo han de ser válidos. Un entero de 400 cifras, que `float()` no traga, es un error con su clave.
+- **`record_run`:** comprobaciones previas sin tocar el disco (perfil, semilla, `run_id` derivado, destino, lectura del log); carpeta temporal oculta dentro de la ejecución (`.registros-<perfil>-s<semilla>-…`), la copia de los perfiles dentro de ella y el perfil cargado de la copia; renombrado final. `registro.json` no lleva fecha: la misma verdad, perfil y semilla dan los mismos bytes. Añade `huella` (la de la copia) a lo que devuelve `record`. Un registro que ya existe es un `FileExistsError`: no hay `--forzar`.
+- **`RunLogError`**, un `ValueError` de los datos (una línea que no es un evento, o un log de otra ejecución), para que la CLI distinga el código 1 (datos) del 2 (uso).
+- **La inclusión «realista ⊂ hostil»** se cumple con dos salvedades que salen de las tasas: la corrección va al revés (el hostil corrige menos, 0,3 frente a 0,5), y el vacío se une al erróneo, porque `destino` es el único campo de `disposition_decided` y `patient_departed`. El test de inclusión exige que cada despiste ocurra de verdad.
+- **Valores:** ninguno cambia. Ninguna fuente da tasas de olvido, vacío, erróneo, duplicado o corrección: todos quedan «orientativo» y el fichero lo dice, con las fuentes de los órdenes de magnitud de los tiempos (Gordon 2008, Ward 2013 y un estudio de 1994 sobre relojes, los tres vistos solo por sus resúmenes).
+
+**Valores a mano** (código independiente de `edsim`; completo en el PR)
+
+- La tirada 1 de la semilla 2026: `[0,640905; 0,145248; −0,514496; 0,091152; 0,751757; 0,309891; 0,793521; 0,72415; 0,872385; −0,632064; 0,588579; −0,298706; 0,556176]`. `spawn(11)[10]` es `SeedSequence(2026, spawn_key=(10,))` y distinto de los hijos 0 a 9.
+- La proporción de `con_despistes` con los relojes de la especificación (pregunta del chat): 66,8 % de lo escrito con el realista y 100 % con el hostil, calculada antes (36.539 frente a 18.154 `bien`) y observada después (36.538 frente a 18.152).
+
+**Medidas** (`config/`, 14 días, semilla 2026: 54.968 hechos de pacientes y 86 de recursos)
+
+- La ejecución, 4,4 s; cada `registro generar`, de 5,6 a 6,1 s; cada carpeta, 25 a 26 MB.
+- La cuenta cuadra con los tres perfiles:
+
+| Perfil | `bien` | `con_despistes` | Perdidos | Pendientes | Registros | Duplicados | Correcciones |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| limpio | 54.968 | 0 | 0 | 0 | 55.054 | 0 | 0 |
+| realista | 18.152 | 36.538 | 262 | 16 | 55.118 | 263 | 79 |
+| hostil | 0 | 52.137 | 2.738 | 93 | 54.639 | 2.086 | 330 |
+
+- Las tasas observadas, por sistema, frente a las del perfil (script independiente, que lee solo el log, la libreta y el TOML): en las 28 comparaciones, |z| ≤ 1,97 (la mayor, el retraso de laboratorio del hostil, −1,97), y los cuatro relojes coinciden.
+- N3 (`scripts/tests-completos.sh`, en la nube): 15:12 en verde: lint 0:00, formato 0:00, núcleo 9:17 (con xdist), app 316 tests en 4:33 y notebooks 6 en 1:21.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante` en paralelo, sobre `6737d01`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V7 | Un dado distinto por perfil | Fallan 15: 14 de la inclusión (7 por semilla) y «`record` sin `dice` = con `StreamDice(seed)`» | 15 fallan, 67 pasan: los mismos |
+| V8 | `record_run` reescribe `eventos.jsonl` | Fallan 3: las huellas antes y después (una por ejecución) | 4 fallan, 25 pasan: los 3 y `…la_ejecucion_sigue_siendo_valida_para_el_catalogo`, que no estaba previsto: el zip de `archive` guarda el `mtime` de cada fichero. No es un fallo del test, pero no sirve solo (el zip redondea a 2 s); la huella con `mtime_ns` sí |
+| V22 | Un `limpio` con algo distinto de 0 se carga | Fallan 18 (17 casos y el de los errores juntos) | 18 fallan, 137 pasan: los mismos |
+| V23 | `StreamDice` toma 12 números | Fallan 4 (las dos tiradas, el consumo y 2 de los 3 bordes) | 4 fallan, 109 pasan: los mismos |
+| V24 | `record_run` escribe sin carpeta temporal | Fallan 7 (5 de `record_run` y 2 de la CLI) | 7 fallan, 37 pasan: los mismos |
+| V25 | La semilla por defecto es 0 | Fallan 2 (uno de `record_run` y uno de la CLI) | 2 fallan, 42 pasan: los mismos |
+
+**Revisión**
+
+`/code-review medium main...feat/h7-perfiles-registro`, siete hallazgos:
+
+- **Corregidos** (`d266051`):
+  - `_check_finite` dejaba escapar un `OverflowError` con un entero sin `float` (un perfil en código);
+  - un `generar` concurrente recibía un `OSError` crudo en lugar de `FileExistsError`;
+  - `MINUTES_PER_DAY` repetida.
+- **Explicados:**
+  - todo `ValueError` de `record()` pasa a `RunLogError`: hoy todas las comprobaciones previas están antes, así que solo puede ser el log;
+  - el truco de los permisos se repite de `simulate_run` (cuatro líneas);
+  - `_read_events` carga el log tres veces en memoria (21 MB hoy);
+  - el test de los bordes del dado sustituye el atributo privado `_rng`.
+
+**Pendiente**
+
+- **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
+- **La 7.4** (#118): `--registro` en `directo lanzar` y `reemitir` usa `StreamDice` y `load_record_profiles`.
+- **Si algún día hace falta sobrescribir un registro:** hoy no hay `--forzar`; se borra la carpeta a mano.
+
 ### Tarea 7.5: Postgres con TimescaleDB y consumidor de bronce
 
 **Qué se hizo**
