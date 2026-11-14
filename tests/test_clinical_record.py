@@ -13,9 +13,24 @@ reserva) a 0,99, por encima de toda tasa, y todas las z a 0, salvo lo que diga c
 import dataclasses
 import importlib
 import math
-from datetime import date
 
 import pytest
+from registro_factory import (
+    DERIVED,
+    HORIZON,
+    RUN,
+    SEED,
+    START,
+    HandDice,
+    clean_profile,
+    eid,
+    iso,
+    make_profile,
+    make_roll,
+    run_l,
+    scenario_l,
+    scenario_l_dice,
+)
 
 from edsim.clinical_record import (
     CORRECTION,
@@ -29,7 +44,6 @@ from edsim.clinical_record import (
     WITH_SLIPS,
     NotebookRow,
     Record,
-    RecordProfile,
     Roll,
     Timed,
     account,
@@ -44,124 +58,6 @@ from edsim.engine.events import (
     to_json,
 )
 from edsim.lognormal import Z90
-
-START = date(2026, 1, 5)
-RUN = "r2026"
-SEED = 7
-DERIVED = "r2026_prueba_s7"
-HORIZON = 1440.0
-QUIET = 0.99
-"""Un uniforme por encima de todas las tasas del perfil `prueba`: ningún despiste."""
-
-
-def iso(clock: str) -> str:
-    """La hora del día 5 de enero de 2026, como la escribe `event_time`."""
-    return f"2026-01-05T{clock}.000+01:00"
-
-
-def eid(number: int) -> str:
-    return f"{DERIVED}-{number:09d}"
-
-
-def make_roll(**changes: float) -> Roll:
-    """Una tirada con la regla por defecto (u = 0,99, z = 0) y los cambios dados."""
-    values = {f.name: (0.0 if f.name.startswith("z_") else QUIET) for f in dataclasses.fields(Roll)}
-    values.update(changes)
-    return Roll(**values)
-
-
-class HandDice:
-    """Un dado que devuelve las tiradas dadas, en orden, y cuenta cuántas se pidieron."""
-
-    def __init__(self, rolls=(), default=None):
-        self.rolls = list(rolls)
-        self.default = default
-        self.calls = 0
-
-    def roll(self) -> Roll:
-        self.calls += 1
-        if self.rolls:
-            return self.rolls.pop(0)
-        if self.default is None:
-            raise AssertionError("the test gave fewer rolls than patient events")
-        return self.default
-
-
-def make_profile(name="prueba", **changes) -> RecordProfile:
-    values = {
-        "name": name,
-        "forget": 0.005,
-        "empty": 0.01,
-        "wrong": 0.01,
-        "duplicate": Timed(0.005, (0.5, 2.0)),
-        "correction": Timed(0.5, (135.0, 720.0)),
-        "delay": {
-            "admision": Timed(0.10, (1.0, 5.0)),
-            "triaje": Timed(0.60, (7.0, 15.0)),
-            "his": Timed(0.70, (10.0, 45.0)),
-            "lab": Timed(0.05, (1.0, 3.0)),
-        },
-        "clock": {"admision": 0.0, "triaje": 2.0, "his": 0.0, "lab": -1.0},
-    }
-    values.update(changes)
-    return RecordProfile(**values)
-
-
-def clean_profile() -> RecordProfile:
-    zero = Timed(0.0, (1.0, 2.0))
-    return make_profile(
-        name="limpio",
-        forget=0.0,
-        empty=0.0,
-        wrong=0.0,
-        duplicate=zero,
-        correction=zero,
-        delay=dict.fromkeys(("admision", "triaje", "his", "lab"), zero),
-        clock=dict.fromkeys(("admision", "triaje", "his", "lab"), 0.0),
-    )
-
-
-def scenario_l():
-    """El log verdadero del escenario L, en la versión 4, con el minuto 0 a las 0:00."""
-    sink = MemorySink()
-    log = EventLog(RUN, START, sink, schema_version=4)
-    log.emit("patient_arrived", 1020.0, arrival_id=1, medio="propios_medios")
-    log.emit("patient_registered", 1022.5, arrival_id=1, edad=54, sexo="mujer")
-    log.emit("triage_completed", 1024.2, arrival_id=1, nivel=3, motivo="dolor_toracico")
-    log.emit("patient_arrived", 1028.0, arrival_id=2, medio="ambulancia")
-    log.emit("assessment_started", 1060.0, arrival_id=1, tipo="inicial", pool="medicos", box=1)
-    log.emit("patient_departed", 1135.0, arrival_id=1, destino="alta")
-    return sink.events
-
-
-def scenario_l_dice(u_wrong_l3=0.005) -> HandDice:
-    return HandDice(
-        [
-            make_roll(),  # L1
-            make_roll(),  # L2
-            make_roll(  # L3
-                u_delay=0.0,
-                u_wrong=u_wrong_l3,
-                u_wrong_field=0.0,
-                u_wrong_value=0.9,
-                u_correction=0.0,
-            ),
-            make_roll(),  # L4
-            make_roll(u_duplicate=0.0),  # L5
-            make_roll(u_forget=0.0),  # L6
-        ]
-    )
-
-
-def run_l(profile=None, u_wrong_l3=0.005):
-    return record(
-        scenario_l(),
-        profile or make_profile(),
-        SEED,
-        horizon=HORIZON,
-        run_id=RUN,
-        dice=scenario_l_dice(u_wrong_l3),
-    )
 
 
 def table(recording):
