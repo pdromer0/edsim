@@ -1,22 +1,32 @@
-"""Fixtures de los tests de integración contra un Kafka real (H6-3).
+"""Fixtures de los tests de integración contra un Kafka y un Postgres reales (H6-3, H7-10).
 
 Esta carpeta está fuera de `testpaths`: solo corre cuando se pide, con
-`uv run --extra kafka pytest tests_integracion`, normalmente desde
+`uv run --extra kafka --extra postgres pytest tests_integracion`, normalmente desde
 `scripts/tests-integracion.sh`, que levanta el `compose.yaml` si hace falta.
+
+Los datos de Pedro no se tocan: cada sesión crea su propia base de datos
+(`edsim_test_<8 hex>`), la prepara con `edsim almacen preparar` y la borra al acabar.
 
 Cada espera tiene un límite explícito (`TIMEOUT`): ningún test puede quedarse colgado.
 """
 
 import os
+import subprocess
+import sys
 import uuid
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
+import psycopg
 import pytest
 from confluent_kafka import KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient
 from kafka_testing import BROKER_TIMEOUT, DEFAULT_BOOTSTRAP, TIMEOUT, TOPIC_PART, reachable
+from psycopg import sql
 
 from edsim.live.kafka import TopicsReport, ensure_topics
 from edsim.live.topics import TOPIC_CONFIG, Topic
+from edsim.store.postgres import DEFAULT_URL
 
 LISTENER_HINT = (
     "Suele ser una dirección anunciada que no se alcanza desde aquí: el cliente vuelve a llamar "
@@ -115,3 +125,61 @@ def make_topic(bootstrap: str, admin: AdminClient):
                 # Un topic cuya creación falló no existe: no hay nada que borrar.
                 if exc.args[0].code() != KafkaError.UNKNOWN_TOPIC_OR_PART:
                     raise
+
+
+EDSIM = str(Path(sys.executable).with_name("edsim"))
+
+
+def database_url(url: str, name: str) -> str:
+    """`url` con otra base de datos: la ruta de la URL es su nombre."""
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{name}"))
+
+
+@pytest.fixture(scope="session")
+def postgres_admin() -> str:
+    """La URL del Postgres de `compose.yaml` (o `EDSIM_POSTGRES`), comprobada: si no responde,
+    los tests fallan con un mensaje que dice cómo levantarlo."""
+    url = os.environ.get("EDSIM_POSTGRES", DEFAULT_URL)
+    try:
+        psycopg.connect(url, connect_timeout=BROKER_TIMEOUT).close()
+    except psycopg.OperationalError as exc:
+        pytest.fail(
+            f"No responde Postgres en {url} ({str(exc).strip()}). Levántalo con «docker compose "
+            "up --wait» o ejecuta scripts/tests-integracion.sh; para otro, EDSIM_POSTGRES=URL.",
+            pytrace=False,
+        )
+    return url
+
+
+@pytest.fixture(scope="session")
+def bronze_database(postgres_admin: str):
+    """Una base de datos nueva para la sesión, preparada con la CLI; se borra al acabar.
+
+    Devuelve su URL y lo que imprimió `edsim almacen preparar` la primera vez.
+    """
+    name = f"edsim_test_{uuid.uuid4().hex[:8]}"
+    with psycopg.connect(postgres_admin, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    url = database_url(postgres_admin, name)
+    try:
+        result = subprocess.run(
+            [EDSIM, "almacen", "preparar", "--postgres", url],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TIMEOUT,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        yield url, result.stdout
+    finally:
+        with psycopg.connect(postgres_admin, autocommit=True) as admin:
+            admin.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
+            )
+
+
+@pytest.fixture(scope="session")
+def bronze_url(bronze_database) -> str:
+    """La URL de la base de datos de la sesión, con las migraciones aplicadas."""
+    return bronze_database[0]
