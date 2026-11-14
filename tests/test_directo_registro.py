@@ -13,7 +13,11 @@ Cada test dice qué error pilla:
   la grabación entera, con huecos (V33); una corrección de un episodio cerrado va al directo;
 - la reemisión (`RecordedLog`) publica lo mismo que la sala;
 - `parar` con registros en la sala: el `fin` cuenta solo lo publicado;
-- los errores de uso: sala sin `registro` en el `inicio`, o al revés.
+- los errores de uso: sala sin `registro` en el `inicio`, o al revés;
+- el lanzador: la reemisión con registro es lo registrado por lotes, con y sin carpeta, y una
+  carpeta que no coincide es un error (V35); el directo se anuncia con el derivado;
+- el lento, «directo = lotes» de lo registrado por versión del catálogo, con un motor de verdad
+  y el perfil realista: el único que pilla la sala de espera con miles de hechos (V11).
 """
 
 import re
@@ -34,21 +38,32 @@ from registro_factory import (
     scenario_l_dice,
 )
 from runaway import check_calls
+from test_directo import ARRIVALS, CASES, DAYS, RUN_ID, SCRIPT, write_v2_log
+from test_directo import HORIZON as HORIZON_3D
+from test_directo import SEED as SEED_3D
+from test_directo import W as W_3D
 from test_launch import REPLAY_RUN, save_run
 
 from edsim.arrivals.profile import load_profile
 from edsim.clinical_record import (
+    CORRECTION,
+    DUPLICATE,
+    LOST,
+    WITH_SLIPS,
     Record,
     RecordStream,
     load_record_profiles,
+    record,
     record_from_json,
     record_json,
 )
 from edsim.engine.center import load_center
-from edsim.engine.events import read_events
-from edsim.live.clock import FakeClock
+from edsim.engine.engine import simulate_ed, start_ed
+from edsim.engine.events import MemorySink, read_events, to_json
+from edsim.live.clock import FAKE_WALL_START, FakeClock
 from edsim.live.control import STOP, Command, NoControl, ScriptedControl
 from edsim.live.directo import (
+    EngineSource,
     LogSource,
     MemoryLiveSink,
     RecordedLog,
@@ -71,15 +86,14 @@ TRUE_INFO = RunInfo(RUN, "replay", 4, 2026, START, False)
 class TimedSink(MemoryLiveSink):
     """Un MemoryLiveSink que anota el instante del reloj de cada publicación, con tope."""
 
-    LIMIT = 10_000
-
-    def __init__(self, clock: FakeClock) -> None:
+    def __init__(self, clock: FakeClock, limit: int = 100_000) -> None:
         super().__init__()
         self.clock = clock
+        self.limit = limit
         self.times: list[float] = []
 
     def _note(self) -> None:
-        check_calls(len(self.times) + 1, self.LIMIT, "TimedSink")
+        check_calls(len(self.times) + 1, self.limit, "TimedSink")
         self.times.append(round(self.clock.monotonic(), 6))
 
     def start(self, message):
@@ -321,3 +335,115 @@ def test_con_registro_el_directo_se_anuncia_con_el_run_id_derivado(models):
     # Un --run-id de 50 caracteres: el derivado tendría 65.
     with pytest.raises(ValueError, match="derived run_id"):
         with_recording(live_prepared(models, "x" * 50), realista, 2026)
+
+
+# --- Directo = lotes de lo registrado (lento, por versión del catálogo) --------------------
+
+SLOW_CASES = ("v1", "v2", "v3", "v4")
+"""Los casos de «directo = batch» del hito 6, uno por versión: v1, v3 y v4 con el motor y
+v2 con un log (`LogSource`); los cuatro con la sala de espera, `RecordStream`."""
+
+
+@pytest.fixture(scope="module")
+def v2_log(tmp_path_factory):
+    return write_v2_log(tmp_path_factory.mktemp("v2") / "eventos.jsonl")
+
+
+def run_recorded_case(case: str, v2_path: Path):
+    """Lo registrado por lotes y en directo de un caso, con el perfil realista de `config/`."""
+    center_file, profiles_file, version, anchored = CASES[case]
+    assert not anchored
+    clock = FakeClock(wall_start=FAKE_WALL_START)
+    profile = load_profile(ARRIVALS)
+    if case == "v2":
+        batch = list(read_events(v2_path))
+        source = LogSource(read_events(v2_path), HORIZON_3D)
+    else:
+        center = load_center(DATA / center_file)
+        profiles = None if profiles_file is None else load_profiles(profiles_file)
+        sink = MemorySink()
+        simulate_ed(center, profile, DAYS, SEED_3D, sink=sink, run_id=RUN_ID, profiles=profiles)
+        batch = sink.events
+        buffer = MemorySink()
+        ed = start_ed(center, profile, DAYS, SEED_3D, sink=buffer, run_id=RUN_ID, profiles=profiles)
+        source = EngineSource(ed, buffer)
+
+    realista = load_record_profiles(PROFILES_FILE)["realista"]
+    recording = record(batch, realista, SEED_3D, horizon=HORIZON_3D, run_id=RUN_ID)
+    room = RecordStream(realista, SEED_3D, horizon=HORIZON_3D, run_id=RUN_ID)
+    info = RunInfo(
+        recording.run_id,
+        "replay" if case == "v2" else "directo",
+        version,
+        SEED_3D,
+        profile.start_date,
+        False,
+        RecordInfo(RUN_ID, "realista", SEED_3D),
+    )
+    control = ScriptedControl(clock, SCRIPT)
+    live = TimedSink(clock)
+    end = run_live(
+        source,
+        Pacer(clock, 60, (0.0, 0.0)),
+        control,
+        live,
+        start=W_3D,
+        horizon=HORIZON_3D,
+        run_info=info,
+        recording=room,
+    )
+    return batch, recording, live, end, control
+
+
+def line(item) -> str:
+    """La línea de lo publicado: la de `registrado.jsonl` de un registro, o la de la verdad."""
+    return record_json(item) if isinstance(item, Record) else to_json(item)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", SLOW_CASES)
+def test_directo_igual_a_lotes_de_lo_registrado(case, v2_log):
+    """Con la misma verdad, el perfil realista y la semilla 2026, lo publicado (censo y
+    directo) es `registrado.jsonl` filtrado como el directo, byte a byte, con las órdenes del
+    hito 6 en medio. Es el único test que pilla los errores de la sala de espera con un motor
+    de verdad (V11) y que la verdad no viaja (V12) con los cuatro catálogos."""
+    batch, recording, live, end, control = run_recorded_case(case, v2_log)
+    expected = filtered_records(recording.records, batch, W_3D)
+
+    assert {e.schema_version for e in batch} == {CASES[case][2]}
+    assert [line(i) for i in live.events] == [record_json(r) for r in expected]
+    assert (end.reason, end.sim_time, end.published) == ("horizonte", HORIZON_3D, len(expected))
+    assert end.run_id == recording.run_id
+    assert end.last_event_id == expected[-1].event_id
+    assert [command for _, _, command in control.delivered] == [c for _, c in SCRIPT]
+
+    # Guardas: el caso ocurre.
+    census_size = live.run_start.census_events
+    initial, direct = live.events[:census_size], live.events[census_size:]
+    assert any(r.episode_id is None for r in initial)  # recursos
+    assert any(r.episode_id is not None for r in initial)  # pacientes
+    rows = {row.record_id: row for row in recording.notebook if row.record_id is not None}
+    kinds = {rows[r.event_id].kind for r in direct}
+    assert {DUPLICATE, CORRECTION, WITH_SLIPS} <= kinds
+    assert any(row.kind == LOST for row in recording.notebook)
+    # Desorden: dentro de un episodio, un registro sale detrás de otro de un hecho posterior.
+    fact = {r.event_id: int(rows[r.event_id].fact_id[-9:]) for r in direct}
+    last: dict[str, int] = {}
+    disorder = False
+    for r in direct:
+        if r.episode_id is not None and rows[r.event_id].kind != CORRECTION:
+            disorder |= fact[r.event_id] < last.get(r.episode_id, -1)
+            last[r.episode_id] = max(last.get(r.episode_id, -1), fact[r.event_id])
+    assert disorder
+    # Un registro de un episodio que la verdad cerró antes de W, en el directo (retrasado,
+    # duplicado o corregido después de W).
+    before = [e for e in batch if e.sim_time < W_3D]
+    terminal = ("patient_departed", "patient_left_wbs")
+    closed = {e.episode_id for e in before if e.event_type in terminal}
+    assert any(r.episode_id in closed for r in direct)
+    # V32: un episodio cerrado en la verdad antes de W sin su salida registrada antes de W
+    # (olvidada o retrasada): con los abiertos de lo registrado entraría en el censo.
+    departed_written = {
+        r.episode_id for r in recording.records if r.event_type in terminal and r.sim_time < W_3D
+    }
+    assert closed - departed_written
