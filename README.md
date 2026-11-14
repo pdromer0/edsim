@@ -89,8 +89,9 @@ uv run edsim almacen consumir --run RUN_ID             # hasta tener toda esa ej
 scripts/tests-integracion.sh
 ```
 
-Si Kafka y Postgres ya están en marcha, los usa y los deja así. Si no, los levanta y los baja
-al terminar (sin borrar el volumen de Postgres). Ejecuta `tests_integracion/`, que no forma
+Si Kafka y Postgres ya están en marcha, los usa y los deja así. Si no, levanta lo que falta y,
+al terminar, baja solo eso: un Kafka que ya estaba en marcha sigue con sus topics (y nunca borra
+el volumen de Postgres). Ejecuta `tests_integracion/`, que no forma
 parte de `uv run pytest`; cada sesión crea su propia base de datos y la borra al acabar. Para
 probar contra otro broker u otro Postgres: `EDSIM_KAFKA=host:puerto` y `EDSIM_POSTGRES=URL`,
 con `uv run --extra kafka --extra postgres pytest tests_integracion`.

@@ -2,9 +2,12 @@
 # Tests de integración contra un Kafka y un Postgres reales (tests_integracion/), en local y en
 # el CI (job tests-integracion).
 #
-# Si Kafka y Postgres de compose.yaml ya están sanos, los usa y los deja en marcha. Si no, los
-# levanta con docker compose up --wait y los baja al salir (sin -v: el volumen de Postgres, con
-# los datos de Pedro, se queda; los tests usan una base de datos propia y la borran). Ejecuta
+# Si Kafka y Postgres de compose.yaml ya están sanos, los usa y los deja en marcha. Si no, levanta
+# lo que falta con docker compose up --wait y, al salir, baja solo eso: con los dos parados,
+# docker compose down; con uno ya en marcha (el Kafka del notebook 06, que no tiene volumen),
+# docker compose rm -sf del otro, y el que estaba sigue con sus topics. Nunca con -v: el volumen
+# de Postgres, con los datos de Pedro, se queda; los tests usan una base de datos propia y la
+# borran. Ejecuta
 # pytest con los extras kafka y postgres y uv.lock tal cual (--locked), imprime los tiempos y
 # sale con el código de pytest. Si algo falla, imprime antes el final del registro de los dos.
 set -u
@@ -34,11 +37,21 @@ sano() {
   [ "$(docker compose ps "$1" --format '{{.Health}}' 2>/dev/null)" = healthy ]
 }
 
+# Lo que este script levantó: vacío si no levantó nada, «todo» si no había nada en marcha, o
+# los servicios que faltaban (la consola va con Kafka).
+levantados=()
+
 bajar() {
   local inicio
   inicio=$(date +%s)
-  echo "tests-integracion.sh: docker compose down"
-  docker compose down
+  if [ "${levantados[*]}" = todo ]; then
+    echo "tests-integracion.sh: docker compose down"
+    docker compose down
+  else
+    # Solo lo que levantó el script: el servicio que ya estaba en marcha sigue igual.
+    echo "tests-integracion.sh: docker compose rm -sf ${levantados[*]}"
+    docker compose rm -sf "${levantados[@]}"
+  fi
   resumen+=("bajada     $(duracion $(($(date +%s) - inicio)))")
   imprimir_resumen
 }
@@ -51,10 +64,20 @@ imprimir_resumen() {
 
 total_inicio=$(date +%s)
 levantado=false
-if sano kafka && sano postgres; then
+if sano kafka; then kafka_sano=true; else kafka_sano=false; fi
+if sano postgres; then postgres_sano=true; else postgres_sano=false; fi
+if $kafka_sano && $postgres_sano; then
   echo "tests-integracion.sh: Kafka y Postgres de compose.yaml ya están sanos; se usan y se dejan en marcha"
 else
-  # Lo levanta este script: lo baja al salir, pase lo que pase.
+  # Lo que falta lo levanta este script, y al salir lo baja, pase lo que pase; lo que ya estaba
+  # en marcha se usa y se deja.
+  if ! $kafka_sano && ! $postgres_sano; then
+    levantados=(todo)
+  elif $kafka_sano; then
+    levantados=(postgres)
+  else
+    levantados=(kafka console)
+  fi
   levantado=true
   trap bajar EXIT
   echo "tests-integracion.sh: docker compose up --wait --wait-timeout $WAIT_TIMEOUT"
