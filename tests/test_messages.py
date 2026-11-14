@@ -1,4 +1,4 @@
-"""Mensajes de ed.runs y ed.control (tarea 6.4).
+"""Mensajes de ed.runs y ed.control (tarea 6.4; el bloque `registro`, tarea 7.4).
 
 El inicio y el fin del directo a mano de la 6.3 se comparan con su texto literal, en el
 orden de claves de la especificación. Las órdenes se prueban con los mensajes a mano del
@@ -13,7 +13,7 @@ from test_directo import run_hand
 
 from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.control import MAX_SPEED, PAUSE, RESUME, SPEED, STOP, Command
-from edsim.live.directo import RunEnd, RunInfo, RunStart
+from edsim.live.directo import RecordInfo, RunEnd, RunInfo, RunStart
 from edsim.live.messages import (
     control_json,
     parse_control,
@@ -145,6 +145,66 @@ def test_un_mensaje_que_no_es_json():
         parse_run_message(b"no es json")
     with pytest.raises(ValueError, match="object"):
         parse_run_message("[1]")
+
+
+# --- ed.runs con --registro (tarea 7.4) ------------------------------------------------
+
+HAND_RECORD_START = {
+    **HAND_START,
+    "run_id": "rcenso_realista_s7",
+    "registro": {"origen": "rcenso", "perfil": "realista", "semilla": 7},
+}
+RECORD_INFO = RecordInfo("rcenso", "realista", 7)
+
+
+def record_start() -> RunStart:
+    info = RunInfo("rcenso_realista_s7", "replay", 3, 2026, SCENARIO_START, False, RECORD_INFO)
+    return RunStart(info, 120.0, 180.0, 60.0, 2, 6)
+
+
+def test_el_inicio_con_registro_lleva_el_bloque_al_final_y_el_run_id_derivado():
+    """El texto exacto: las claves del hito 6, en su orden, y detrás `registro`."""
+    assert run_start_json(record_start()) == json.dumps(HAND_RECORD_START, ensure_ascii=False)
+    assert parse_run_message(json.dumps(HAND_RECORD_START)) == record_start()
+
+
+def test_sin_registro_el_inicio_no_cambia():
+    """El mismo `inicio` del hito 6, byte a byte: ni la clave `registro` ni un `null`."""
+    assert "registro" not in run_start_json(parse_run_message(json.dumps(HAND_START)))
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"registro": None}, "registro must be"),
+        ({"registro": {"origen": "rcenso", "perfil": "realista"}}, "registro must be"),
+        ({"registro": {**HAND_RECORD_START["registro"], "huella": "x"}}, "registro must be"),
+        ({"registro": {**HAND_RECORD_START["registro"], "semilla": -1}}, "seed of the record"),
+        ({"registro": {**HAND_RECORD_START["registro"], "semilla": True}}, "seed of the record"),
+        ({"registro": {**HAND_RECORD_START["registro"], "origen": ""}}, "origin"),
+        ({"run_id": "rcenso"}, "is 'rcenso_realista_s7', not 'rcenso'"),
+    ],
+    ids=["nulo", "falta-semilla", "clave-de-mas", "semilla-negativa", "semilla-bool",
+         "origen-vacio", "run-id-del-origen"],
+)  # fmt: skip
+def test_un_inicio_con_registro_no_valido(change, match):
+    with pytest.raises(ValueError, match=match):
+        parse_run_message(json.dumps({**HAND_RECORD_START, **change}))
+
+
+def test_el_run_id_de_lo_registrado_tiene_que_caber():
+    """El derivado de un origen de 50 caracteres con `realista` y semilla 2026 tiene 65."""
+    origin = "x" * 50
+    with pytest.raises(ValueError, match="1–64 ASCII"):
+        RunInfo(
+            f"{origin}_realista_s2026", "directo", 3, 2026, SCENARIO_START, False,
+            RecordInfo(origin, "realista", 2026),
+        )  # fmt: skip
+
+
+def test_un_registro_que_no_es_record_info_no_vale():
+    with pytest.raises(ValueError, match="record must be a RecordInfo"):
+        RunInfo("r", "directo", 3, 2026, SCENARIO_START, False, {"origen": "r"})
 
 
 # --- ed.control ------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from edsim.live.directo import (
     REASON_HORIZON,
     REASON_INTERRUPT,
     REASON_STOP,
+    RecordInfo,
     RunEnd,
     RunInfo,
     RunStart,
@@ -36,6 +37,8 @@ FORMAT_VERSION = 1
 
 START = "inicio"
 END = "fin"
+RECORD = "registro"
+"""The optional block of an ``inicio`` published with ``--registro`` (task 7.4)."""
 
 KNOWN_CONTROL_DIFFERENCES: Mapping[str, str] = MappingProxyType(
     {
@@ -62,25 +65,33 @@ def run_start_json(message: RunStart) -> str:
     """The ``inicio`` of ``ed.runs``, one line of JSON without a final newline.
 
     ``velocidad`` is a number or ``"max"``; ``inicio_directo`` and
-    ``horizonte`` are simulated minutes.
+    ``horizonte`` are simulated minutes. A run published with ``--registro``
+    (``info.record``) adds, after ``censo``, the block ``registro`` with ``origen``,
+    ``perfil`` and ``semilla`` (docs/specs/hito-7.md, task 7.4); without it, the
+    message is the one of milestone 6, byte for byte.
     """
     info = message.info
-    return _dumps(
-        {
-            "tipo": START,
-            "version": FORMAT_VERSION,
-            "run_id": info.run_id,
-            "modo": info.mode,
-            "schema_version": info.schema_version,
-            "semilla": info.seed,
-            "fecha_inicio": info.start_date.isoformat(),
-            "inicio_directo": message.live_start,
-            "horizonte": message.horizon,
-            "velocidad": message.speed,
-            "anclado": info.anchored,
-            "censo": {"episodios": message.census_episodes, "eventos": message.census_events},
+    data = {
+        "tipo": START,
+        "version": FORMAT_VERSION,
+        "run_id": info.run_id,
+        "modo": info.mode,
+        "schema_version": info.schema_version,
+        "semilla": info.seed,
+        "fecha_inicio": info.start_date.isoformat(),
+        "inicio_directo": message.live_start,
+        "horizonte": message.horizon,
+        "velocidad": message.speed,
+        "anclado": info.anchored,
+        "censo": {"episodios": message.census_episodes, "eventos": message.census_events},
+    }
+    if info.record is not None:
+        data[RECORD] = {
+            "origen": info.record.origin,
+            "perfil": info.record.profile,
+            "semilla": info.record.seed,
         }
-    )
+    return _dumps(data)
 
 
 def run_end_json(message: RunEnd) -> str:
@@ -140,7 +151,9 @@ def parse_run_message(text: bytes | str) -> RunStart | RunEnd:
     """The ``inicio`` or the ``fin`` in a message of ``ed.runs``: what a consumer reads.
 
     The inverse of ``run_start_json`` and ``run_end_json``: parsing their text gives back
-    the same ``RunStart`` or ``RunEnd``. The keys must be exactly those of the format.
+    the same ``RunStart`` or ``RunEnd``. The keys must be exactly those of the format; an
+    ``inicio`` may also have the block ``registro``, whose ``run_id`` must then be the
+    derived one.
 
     Raises:
         ValueError: If the text is not a message of ``ed.runs`` of version 1.
@@ -157,6 +170,8 @@ def parse_run_message(text: bytes | str) -> RunStart | RunEnd:
     expected = {START: _START_KEYS, END: _END_KEYS}.get(kind)
     if expected is None:
         raise ValueError(f"tipo must be {START!r} or {END!r}, got {kind!r}")
+    if kind == START and RECORD in data:
+        expected = expected | {RECORD}
     if data.keys() != expected:
         missing = sorted(expected - data.keys())
         unknown = sorted(data.keys() - expected)
@@ -182,6 +197,12 @@ def parse_run_message(text: bytes | str) -> RunStart | RunEnd:
         raise ValueError(f"censo must be {{episodios, eventos}}, got {census!r}")
     if not isinstance(data["fecha_inicio"], str):
         raise ValueError(f"fecha_inicio must be a date, got {data['fecha_inicio']!r}")
+    record = None
+    if RECORD in data:
+        block = data[RECORD]
+        if not isinstance(block, dict) or block.keys() != {"origen", "perfil", "semilla"}:
+            raise ValueError(f"registro must be {{origen, perfil, semilla}}, got {block!r}")
+        record = RecordInfo(block["origen"], block["perfil"], block["semilla"])
     info = RunInfo(
         run_id=data["run_id"],
         mode=data["modo"],
@@ -189,6 +210,7 @@ def parse_run_message(text: bytes | str) -> RunStart | RunEnd:
         seed=data["semilla"],
         start_date=date.fromisoformat(data["fecha_inicio"]),
         anchored=data["anclado"],
+        record=record,
     )
     return RunStart(
         info=info,

@@ -41,6 +41,7 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from edsim.arrivals.rate import MINUTES_PER_DAY
+from edsim.clinical_record import derived_run_id
 from edsim.engine.events import SCHEMA_VERSIONS, TIMEZONE, Event, MemorySink
 from edsim.finite import to_float
 from edsim.live.census import census, open_episodes
@@ -189,20 +190,55 @@ class LogSource:
 # --- What the run announces ----------------------------------------------------------
 
 
+def _check_seed(name: str, seed: object) -> int:
+    if isinstance(seed, bool) or not isinstance(seed, numbers.Integral) or seed < 0:
+        raise ValueError(f"{name} must be an integer >= 0, got {seed!r}")
+    return int(seed)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordInfo:
+    """What a run published with ``--registro`` is the record of (the block ``registro``).
+
+    Attributes:
+        origin: The ``run_id`` of the true run (``origen``).
+        profile: The profile of the slips (``perfil``).
+        seed: The seed of the recording (``semilla``).
+
+    Raises:
+        ValueError: If a field is not valid.
+    """
+
+    origin: str
+    profile: str
+    seed: int
+
+    def __post_init__(self) -> None:
+        for name in ("origin", "profile"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be a non-empty string, got {value!r}")
+        object.__setattr__(self, "seed", _check_seed("seed of the record", self.seed))
+
+
 @dataclass(frozen=True, slots=True)
 class RunInfo:
     """What the caller knows of the run, for the ``inicio`` of ``ed.runs``.
 
     Attributes:
-        run_id: Identifier of the run, the same as in its events.
+        run_id: Identifier of the run, the same as in its events; with ``record``, the
+            derived run ``<origen>_<perfil>_s<semilla>``.
         mode: ``"directo"`` or ``"replay"``.
         schema_version: Version of the catalog of its events.
-        seed: Seed of the run (``semilla``).
+        seed: Seed of the run (``semilla``); with ``record``, the one of the true run.
         start_date: Date of minute 0 (``fecha_inicio``).
         anchored: Whether it is anchored to the calendar (``anclado``).
+        record: What it is the record of, if it publishes what was written down
+            (docs/specs/hito-7.md, task 7.4); ``None`` if it publishes the truth.
 
     Raises:
-        ValueError: If a field is not valid.
+        ValueError: If a field is not valid, or ``run_id`` is not the derived run of
+            ``record``.
     """
 
     run_id: str
@@ -211,6 +247,7 @@ class RunInfo:
     seed: int
     start_date: date
     anchored: bool
+    record: RecordInfo | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.run_id, str) or not self.run_id:
@@ -226,20 +263,25 @@ class RunInfo:
                 f"schema_version must be one of {sorted(SCHEMA_VERSIONS)}, "
                 f"got {self.schema_version!r}"
             )
-        if (
-            isinstance(self.seed, bool)
-            or not isinstance(self.seed, numbers.Integral)
-            or self.seed < 0
-        ):
-            raise ValueError(f"seed must be an integer >= 0, got {self.seed!r}")
+        seed = _check_seed("seed", self.seed)
         # datetime is a subclass of date: a date-time must not pass as a date.
         if not isinstance(self.start_date, date) or isinstance(self.start_date, datetime):
             raise ValueError(f"start_date must be a date without time, got {self.start_date!r}")
         if not isinstance(self.anchored, bool):
             raise ValueError(f"anchored must be True or False, got {self.anchored!r}")
+        if self.record is not None:
+            if not isinstance(self.record, RecordInfo):
+                raise ValueError(f"record must be a RecordInfo or None, got {self.record!r}")
+            info = self.record
+            derived = derived_run_id(info.origin, info.profile, info.seed)
+            if self.run_id != derived:
+                raise ValueError(
+                    f"the run_id of the record of {info.origin!r} with {info.profile!r} and "
+                    f"seed {info.seed} is {derived!r}, not {self.run_id!r}"
+                )
         # The dataclass is frozen: object.__setattr__ is the standard way to set
         # fields during construction.
-        object.__setattr__(self, "seed", int(self.seed))
+        object.__setattr__(self, "seed", seed)
 
 
 @dataclass(frozen=True, slots=True)

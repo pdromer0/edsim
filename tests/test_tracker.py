@@ -21,7 +21,15 @@ from edsim.engine.scenarios import SCENARIO_START
 from edsim.live.census import census, live_events
 from edsim.live.clock import FakeClock
 from edsim.live.control import MAX_SPEED, NoControl
-from edsim.live.directo import LIVE, LogSource, MemoryLiveSink, RunInfo, run_live
+from edsim.live.directo import (
+    LIVE,
+    LogSource,
+    MemoryLiveSink,
+    RecordInfo,
+    RunInfo,
+    RunStart,
+    run_live,
+)
 from edsim.live.launch import prepare_live, run_prepared
 from edsim.live.pacer import Pacer
 from edsim.live.tracker import LOCATIONS, LiveTracker, ReceivedEvent, fold_states
@@ -431,3 +439,22 @@ def test_el_abandono_cierra_y_el_pasillo_se_ve_en_el_estado():
     assert tracker.states[r1].location() == "waiting_bed" and tracker.states[r1].hallway
     assert tracker.states[q].left and q not in tracker.open_episodes()
     assert tracker.open_episodes() == {episode(1), episode(2), episode(4)}
+
+
+def test_lo_registrado_no_es_para_el_tracker():
+    """`LiveTracker` es para la verdad (tarea 7.4): un `inicio` con registro es un error claro,
+    no un fallo de sus comprobaciones de orden más tarde."""
+    info = RunInfo(
+        "rocupa_realista_s7",
+        LIVE,
+        3,
+        2026,
+        SCENARIO_START,
+        False,
+        RecordInfo("rocupa", "realista", 7),
+    )
+    tracker = LiveTracker("rocupa_realista_s7")
+
+    with pytest.raises(ValueError, match="written down of rocupa .*bronze"):
+        tracker.start(RunStart(info, 120.0, 180.0, 60.0, 0, 0))
+    assert tracker.run_start is None
