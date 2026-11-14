@@ -55,8 +55,15 @@ class FakeBronzeConsumer:
         self.crash_on_commit = crash_on_commit
         self.commits: list[bool] = []
         self.log = log if log is not None else []
+        self.closed = False
+        self.on_consume = None  # si se da, se llama antes de cada consume
+
+    def close(self):
+        self.closed = True
 
     def consume(self, num_messages, timeout):
+        if self.on_consume is not None:
+            self.on_consume()
         batch = []
         for key in sorted(self.broker.partitions):
             log = self.broker.partitions[key]
