@@ -15,7 +15,69 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decide si el PR solo cambia documentación (tarea P.3, issue #81). Los demás jobs esperan a
+  # este y se saltan con un «if:» a nivel de job, no con «paths-ignore»: un workflow que no se
+  # ejecuta deja sus checks obligatorios en «Pending» y bloquea la fusión, mientras que un job
+  # saltado por un «if:» informa como superado (documentación de GitHub, «Troubleshooting
+  # required status checks»).
+  #
+  # Se mira el PR entero, no el último commit: HEAD es el commit de fusión de prueba
+  # (refs/pull/N/merge, lo que prueban los jobs) y HEAD^1 es la base con la que se construyó.
+  #
+  # Es documentación, por este orden: nada con extensión .py, .pyi o .ipynb (ruff los lee aunque
+  # estén en docs/); todo lo que cuelga de docs/ y app/docs/; nada bajo las carpetas de código,
+  # datos, notebooks y scripts (ni siquiera un .md); y los .md del resto (README, AGENTS,
+  # CLAUDE, skills). Todo lo demás cuenta como código: workflows, pyproject.toml, uv.lock,
+  # compose.yaml, plantillas yml...
+  #
+  # Fallo seguro: ante cualquier duda se ejecuta todo. Un diff vacío, un HEAD sin segundo padre,
+  # un push a main o un fallo de este job dejan «solo_docs» distinto de «true», y el «!cancelled()»
+  # hace que los demás jobs corran aunque este falle (sin él, un «needs» fallido los saltaría, y
+  # un job saltado cuenta como superado).
+  cambios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      solo_docs: ${{ steps.clasificar.outputs.solo_docs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: clasificar
+        shell: bash
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: |
+          solo_docs=false
+          if [ "$EVENTO" = pull_request ] && git rev-parse --verify -q 'HEAD^2' > /dev/null; then
+            git diff --name-only -z --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/cambiados"
+            n=0
+            otros=0
+            while IFS= read -r -d '' ruta; do
+              n=$((n + 1))
+              case "$ruta" in
+                *.py | *.pyi | *.ipynb) tipo=código ;;
+                docs/* | app/docs/*) tipo=doc ;;
+                src/* | tests/* | app/src/* | app/tests/* | tests_integracion/* | config/* | schemas/* | notebooks/* | scripts/*) tipo=código ;;
+                *.md) tipo=doc ;;
+                *) tipo=código ;;
+              esac
+              echo "$tipo  $ruta" | tee -a "$GITHUB_STEP_SUMMARY"
+              if [ "$tipo" != doc ]; then
+                otros=$((otros + 1))
+              fi
+            done < "$RUNNER_TEMP/cambiados"
+            if [ "$n" -gt 0 ] && [ "$otros" -eq 0 ]; then
+              solo_docs=true
+            fi
+          fi
+          echo "solo_docs=$solo_docs"
+          echo "solo_docs=$solo_docs" >> "$GITHUB_OUTPUT"
+          echo "Solo documentación: $solo_docs" >> "$GITHUB_STEP_SUMMARY"
+
   tests:
+    needs: cambios
+    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -29,6 +91,8 @@ jobs:
       - run: uv run pytest
 
   notebooks:
+    needs: cambios
+    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +104,8 @@ jobs:
           EDSIM_NB_RAPIDO: "1"
 
   tests-app:
+    needs: cambios
+    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,6 +116,8 @@ jobs:
   # Integración contra un Kafka real, con el mismo compose.yaml que en local (H6-16): topics,
   # productor, directo de un día y órdenes. Obligatorio en la protección de main desde la 6.4.
   tests-kafka:
+    needs: cambios
+    if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
