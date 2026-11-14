@@ -19,6 +19,9 @@ dependencies = [
 # Cliente de Kafka para el modo directo (hito 6). Solo lo importa edsim.live.kafka, dentro de
 # funciones: el núcleo se importa y se prueba sin él.
 kafka = ["confluent-kafka>=2.16.1,<2.17"]
+# Cliente de Postgres para la capa bronce (hito 7). Solo lo importa edsim.store.postgres, dentro
+# de funciones, como el de Kafka.
+postgres = ["psycopg[binary]>=3.3.9,<3.4"]
 
 [project.scripts]
 edsim = "edsim.cli:main"
