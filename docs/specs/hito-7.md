@@ -591,9 +591,9 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 
 ## Especificación: la comparación
 
-`compare(truth, records, notebook) -> Comparison`, en `edsim.clinical_record.compare`:
+`compare(truth, records, notebook, *, horizon, warmup=0.0) -> Comparison`, en `edsim.clinical_record.compare` (el horizonte y el calentamiento, en minutos, los necesita el censo medio; el origen del reloj sale de la verdad):
 
-- **Conciliación:** los recuentos de cada `clase` de la libreta, comprobando la cuenta; la distribución del retraso (`recorded_time` − `event_time` sin el desfase) por sistema, con mediana y p90; los recuentos por tipo de despiste.
+- **Conciliación:** los recuentos de cada `clase` de la libreta, comprobando la cuenta (si no cuadra, `ReconciliationError` con todos los problemas: es un error, no un número); la distribución del retraso (`recorded_time` − `event_time`, que ya no lleva el desfase) por sistema, con mediana y p90, de los registros escritos para su propio hecho (`bien` y `con_despistes`); y la clase `con_despistes` desglosada por tipo de despiste (reloj, retraso, valor erróneo y campo vacío, que se solapan, y cuántas son solo reloj).
 - **Indicadores ingenuos**, la misma función sobre la verdad y sobre lo registrado:
 
   | Indicador | Cómo se calcula a lo ingenuo |
@@ -612,7 +612,7 @@ La tabla de migraciones aplicadas es `public.migraciones (version integer PRIMAR
 | --- | --- | --- |
 | `edsim registro validar` | `--registros FICHERO` | Comprueba `config/registro_clinico.toml` |
 | `edsim registro generar RUN_ID` | `--perfil P` (obligatorio), `--semilla N`, `--registros FICHERO`, `--ejecuciones DIR` | Escribe lo registrado en la carpeta de la ejecución e imprime la cuenta |
-| `edsim registro comparar RUN_ID` | `--perfil P`, `--semilla N`, `--ejecuciones DIR`, `--postgres [URL]` | La conciliación y los indicadores; con `--postgres`, lo registrado sale de bronce |
+| `edsim registro comparar RUN_ID` | `--perfil P` (obligatorio), `--semilla N`, `--ejecuciones DIR`, `--postgres [URL]` | La conciliación y los indicadores; con `--postgres`, lo registrado sale de la última publicación de la ejecución derivada en bronce (la verdad y la libreta, siempre de ficheros) |
 | `edsim directo lanzar` y `reemitir` | Las de hoy, más `--registro P`, `--semilla-registro N` y `--registros FICHERO` | Con `--registro`, publican solo lo registrado |
 | `edsim almacen preparar` | `--postgres URL` | Aplica las migraciones que falten e imprime cuáles |
 | `edsim almacen consumir` | `--kafka`, `--postgres`, `--run RUN_ID`, `--timeout S` | El consumidor de bronce |
