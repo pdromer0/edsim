@@ -61,6 +61,7 @@ addopts = "--strict-markers"
 # el 14-nov-2026: el test rápido más lento tarda 30 s en serie. Los `slow` (hasta 158 s), la
 # integración y los notebooks llevan el suyo, en sus `conftest.py`.
 timeout = 60
+timeout_method = "signal"  # explícito: sin SIGALRM falla, no cae a `thread`, que mata el proceso
 markers = [
     "slow: tests estadísticos largos; el hook de Claude Code los excluye",
 ]
