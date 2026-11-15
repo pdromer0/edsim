@@ -1398,12 +1398,13 @@ Issue #120, rama `feat/h7-notebook`, Claude Code (Sonnet, en la nube; el modo no
 
 - **El notebook** (`5c9c731`): `notebooks/07_persistencia.ipynb`, 44 celdas, sin resultados. Lo escribió un script del *scratchpad* (no se versiona) y quedó formateado con `ruff format`.
 - **Un fallo del modo normal** (`fix(notebooks)`): `record_run` lee por defecto `config/registro_clinico.toml` relativo al directorio de trabajo, y el notebook corre desde `notebooks/`; se le pasa el fichero con ruta absoluta.
+- **Los ajustes de la revisión propia** (`fix(notebooks): 07 tras la revisión propia`): ver «Revisión».
 - **La documentación:** esta entrada, `README.md` y `AGENTS.md` (los comandos y requisitos del 07) y la corrección de la frase del reloj en «Valores orientativos de partida».
 
 **Decisiones del diff**
 
 - **Sin lógica propia.** El notebook llama a `EventLog`, `record`, `compare`, `format_comparison`, `simulate_ed`, `simulate_run`, `record_run`, `read_recorded_run`, `read_bronze_lines`, `read_bronze_records`, `to_row` y `save_batch`; la CLI (`edsim directo reemitir`, `almacen preparar`, `almacen consumir` y `registro comparar`) va por `subprocess`, como el 06. Lo único que escribe él es lo que un lector necesita para ver el fenómeno: el dado a mano de Lucía (una clase con `roll()`, que es el protocolo `Dice`), el perfil de Lucía (`dataclasses.replace` sobre el realista), las agrupaciones del doble clic y los recuentos de despistes.
-- **Las secciones 1 a 6 corren en memoria en los dos modos** y son idénticas; la 7 es la única que usa disco y servicios. Una sola ejecución (14 días, 2 de calentamiento, semilla 2026) alimenta todo, porque con ella salen las cifras que citan las notas (censo +29 % y ×4); con 7 días, +12 % y ×2,7.
+- **Las secciones 2 a 6 corren en memoria en los dos modos** y son idénticas; la 7 es la única que usa disco y servicios. Una sola ejecución (14 días, 2 de calentamiento, semilla 2026) alimenta todo, porque con ella salen las cifras que citan las notas (censo +29 % y ×4); con 7 días, +12 % y ×2,7.
 - **Los `assert` comprueban estructura, no cifras:** la tabla de L (horas y `sim_time` de los siete registros), la cuenta de L, el subconjunto de olvidos y de erróneos entre perfiles, doble clic = filas `duplicado`, el reloj del hostil en todas las filas, y en la sección 7, que bronce tiene tantas filas como registros, que la relectura guarda 0 y repite todas, que la republicación da el doble de filas y los mismos `event_id`, y que `compare` da lo mismo con ficheros, con bronce y en memoria. La única tolerancia es la de 1 min en el tiempo hasta el médico del hostil frente a la resta de los relojes (−8 min; sale −7,83 por los hechos olvidados o vacíos).
 - **Reemisión con `--calentamiento 0`** (W = 0, sin censo), como `tests_integracion/test_directo_registro.py`: bronce recibe los 55.118 registros y la cuenta se puede reconciliar.
 - **La relectura de Kafka** se enseña volviendo a guardar con `save_batch` cinco mensajes que bronce ya tiene (reconstruidos con `KafkaMessage` desde sus coordenadas y su `ingest_time`), el mismo camino del consumidor; no relanzando `almacen consumir`, que usa un grupo fijo.
@@ -1436,13 +1437,18 @@ Cinco, aplicadas en el árbol de trabajo sobre el notebook ya confirmado y deshe
 | V2 | La celda de Kafka y Postgres sin el guardia del modo rápido | Falla el 07 en modo rápido | 1 falla. **La predicción no pillaba el motivo:** la primera vez falló con `FileNotFoundError: config/registro_clinico.toml` (un fallo real del modo normal, ver «Qué se hizo»); tras corregirlo, falla en `edsim almacen preparar` con «Falta el extra postgres» |
 | V3 | La mediana del triaje del perfil de Lucía en 5 min (la de `config/`) | Falla el 07 en las horas de L3 | 1 falla (`AssertionError`); 2,4 s |
 | V4 | El subconjunto de olvidos al revés (hostil ⊆ realista) | Falla el 07 | 1 falla (`AssertionError`); 14 s |
-| V5 | El signo del reloj de admisión al revés en la resta del tiempo hasta el médico | Falla el 07 en la comprobación de −8 min | 1 falla (`AssertionError`); 15 s |
+| V5 | El reloj de admisión sumado en vez de restado en lo esperado del tiempo hasta el médico (−2 en vez de −8 min) | Falla el 07 en la comprobación del hostil | 1 falla (`AssertionError`); 14 s |
 
 No cambia ningún fichero del paquete: los tests del núcleo y de la app no pueden verse afectados, y los otros seis notebooks siguen pasando (83 s los siete, con el 07 sin mutar).
 
 **Revisión**
 
-Pendiente de la ronda de `/code-review`.
+`/code-review medium main...feat/h7-notebook`, siete hallazgos:
+
+- **Corregidos** (un commit): las referencias a secciones del propio notebook (la de Kafka y Postgres es la 7, no la 6, y las que corren en memoria son de la 2 a la 6); el `assert` del tiempo hasta el médico comparaba con −8 escrito a mano, y ahora con lo esperado de los relojes del perfil (HIS menos admisión), también para el realista; la numeración de la libreta de L por la posición (`L1`…, registro 1…) y no por el sufijo del identificador; la gráfica del censo, sin el ternario; las celdas de la sección 7 se pueden volver a ejecutar (la republicación acepta más de dos publicaciones, y la carpeta temporal se borra en la última celda, no al final de la comparación).
+- **Explicados:**
+  - La sección 7 no se ejecuta en el CI ni la ejecuté yo: no hay Docker en la nube. Es lo que pide el issue (Pedro la ejecuta en local); las cifras que da el texto («55.118», «263», «110.236») llevan «con los valores por defecto» y los `assert` comprueban estructura, no esas cifras. El `assert` de que la conciliación de bronce es la de la memoria depende de que `record` sea determinista, y se comprobó sin servicios (ver «Medidas»).
+  - `RAIZ = Path("..")` y `EDSIM = Path(sys.executable).with_name("edsim")` son la convención del 06 (el notebook se ejecuta desde `notebooks/` y con el kernel de `.venv`); `record_run` era el único sitio que dependía del directorio de trabajo, y se corrigió.
 
 **Pendiente**
 
