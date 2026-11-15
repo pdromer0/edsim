@@ -198,6 +198,22 @@ y se abre en Cursor con el kernel de `.venv` (o con
 Con `EDSIM_NB_RAPIDO=1` corre sin Docker ni el extra, con el directo en memoria. Mientras
 corre, Redpanda Console muestra su grupo (`edsim-lector-…`) en *Consumer Groups*.
 
+El notebook `notebooks/07_persistencia.ipynb` cuenta el hito 7: Lucía y el escenario L, los
+ocho despistes del registro clínico, el truco del dado con los tres perfiles, la tabla «verdad
+frente a registrado» y las dos clases de duplicados. En modo normal sigue hasta Postgres:
+reemite lo registrado, lo consume a bronce y lo consulta con SQL. Necesita Docker y los dos
+extras:
+
+```bash
+docker compose up --wait
+uv sync --all-packages --extra kafka --extra postgres
+uv run edsim directo preparar
+uv run edsim almacen preparar
+```
+
+Con `EDSIM_NB_RAPIDO=1` corre en memoria, sin Docker ni extras, en unos 15 s: salta las celdas
+de Kafka y Postgres.
+
 ## Flujo de trabajo
 
 GitHub Flow: cada tarea en una rama corta que entra en `main` por pull request, con el CI (lint, formato y tests) en verde.
