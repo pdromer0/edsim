@@ -10,7 +10,7 @@ Cuando una decisión es difícil de revertir, afecta a varias partes del sistema
 
 ## Nombres
 
-`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y un ADR nuevo toma el número de su decisión (hoy, a partir del 0084), no el primero que falte. Los del 0067 al 0079, las decisiones del hito 5, se escribieron en su cierre.
+`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y un ADR nuevo toma el número de su decisión (hoy, a partir del 0100), no el primero que falte. Los del 0067 al 0079, las decisiones del hito 5, y los del 0084 al 0099, las del hito 7, se escribieron en su cierre.
 
 ## Plantilla
 
@@ -123,5 +123,21 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0081. GitHub como gestor del trabajo: issues, milestones, tablero y dependencias nativas](0081-github-como-gestor-del-trabajo.md)
 - [0082. El ciclo de cada tarea se escribe una vez en `tarea.md` y lo ejecutan las skills](0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md)
 - [0083. Una sola N3, después de la revisión propia](0083-una-sola-n3-tras-la-revision-propia.md)
+- [0084. El simulador del registro clínico: la verdad y lo registrado](0084-simulador-del-registro-clinico.md)
+- [0085. El registro clínico es una función pura de la verdad; con `--registro`, por Kafka solo viaja lo registrado](0085-registro-clinico-funcion-pura-de-la-verdad.md)
+- [0086. Los ocho despistes, con la corrección tardía como evento propio](0086-ocho-despistes-y-correccion-tardia.md)
+- [0087. Tres perfiles y el truco del dado: el perfil es solo el umbral](0087-tres-perfiles-y-el-truco-del-dado.md)
+- [0088. La libreta `defectos.csv` y lo registrado como ejecución derivada, renumerada](0088-libreta-y-ejecucion-derivada.md)
+- [0089. Postgres con TimescaleDB en `compose.yaml`; `psycopg` 3 en un extra y en un solo módulo](0089-postgres-con-timescaledb-en-compose.md)
+- [0090. `bronce.eventos`, partida por la hora de llegada, con clave (`event_id`, `ingest_time`)](0090-bronce-eventos-partida-por-la-hora-de-llegada.md)
+- [0091. El consumidor de bronce: guarda y después apunta, con inserción idempotente](0091-consumidor-al-menos-una-vez-idempotente.md)
+- [0092. Migraciones SQL numeradas, con un aplicador propio](0092-migraciones-sql-propias.md)
+- [0093. Tres capas de tests y el job `tests-integracion`, con Kafka y Postgres](0093-tres-capas-de-tests-y-tests-integracion.md)
+- [0094. En el hito 8, plata con la forma de las tablas de un HIS](0094-plata-con-la-forma-de-un-his.md)
+- [0095. La verdad no se carga en Postgres en el hito 7](0095-la-verdad-no-se-carga-en-postgres.md)
+- [0096. Una sola comparación con la verdad, en Python, en el paquete](0096-una-sola-comparacion-en-python.md)
+- [0097. La app no cambia en el hito 7; el registro clínico va a su fase 2](0097-la-app-no-cambia-en-el-hito-7.md)
+- [0098. Una tarea 7.0 de proceso con siete mejoras del flujo](0098-tarea-7-0-de-proceso.md)
+- [0099. Ocho tareas en dos pistas y la etiqueta `v0.7-hito7`](0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md)
 
-El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Los del 0067 al 0079, las decisiones del hito 5, se escribieron al cerrarlo (tarea 5.8), después de los de la P.2 y del 0083.
+El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Los del 0067 al 0079, las decisiones del hito 5, se escribieron al cerrarlo (tarea 5.8), después de los de la P.2 y del 0083. Los del 0084 al 0099, las decisiones del hito 7, se escribieron al cerrarlo (tarea 7.7).
