@@ -22,6 +22,7 @@ El diseño preveía una «capa de observación» que metiera defectos en los dat
 
 - La documentación habla de «la verdad» y «lo registrado», también en el notebook 07 y en la CLI (`edsim registro …`).
 - El código usa el nombre en inglés (`clinical_record`, `Record`), como manda la convención de idiomas (ADR 0015).
+- La [ADR 0006](0006-log-de-eventos-y-ground-truth.md), que nombraba la «capa de observación», lleva una nota de actualización con el nombre nuevo.
 
 ## Qué cambió al implementarla
 
