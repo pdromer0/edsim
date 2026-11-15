@@ -1,6 +1,6 @@
 # Hito 7 — Persistencia
 
-> **Estado:** especificación aprobada el 13 de noviembre de 2026; sin empezar. El original está en este repositorio.
+> **Estado:** cerrado con la tarea 7.7 y la etiqueta `v0.7-hito7`. Especificación aprobada el 13 de noviembre de 2026; el original está en este repositorio.
 
 Al terminar el hito 7, EDsim produce datos **imperfectos, como los de un hospital real**, los **guarda en una base de datos** y puede **decir exactamente en qué se equivocan**. El motor sigue dando la verdad. Una pieza nueva, el **simulador del registro clínico**, la convierte en **lo registrado**: lo que el personal anota, con retrasos, duplicados, olvidos y errores. Lo registrado viaja por Kafka hasta Postgres con TimescaleDB, y una comparación dice qué le pasó a cada hecho y cuánto se desvían los indicadores.
 
@@ -868,6 +868,17 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 | Alembic, Flyway o Sqitch | Si crecen las migraciones | |
 | ClickHouse o DuckDB para la analítica pesada | Si Postgres se queda corto | |
 | Avro y registro de esquemas | v1 | Caso de uso «evolución de esquemas» |
+| Un test inestable: `test_consumidor_en_vivo_igual_a_batch[hito4]` falló una vez con −25 ms de latencia (7.4) | Backlog, sin issue | Compara el reloj del broker, en Docker, con el de WSL, que son dos máquinas |
+| La parada de `almacen consumir --run` en una republicación (7.6) | Backlog, sin issue | Depende de que el grupo se forme dentro del primer `consume` de 1 s, lo que hoy asegura el `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` de `compose.yaml`; con el retraso por defecto (3 s), pararía sin leer la publicación nueva. Remedio posible: no darla por completa hasta tener asignación y estar al día con la marca alta de cada partición. Relacionado: con otro productor publicando sin parar en los mismos topics, `--run` llega al `timeout` (7.5) |
+| `compare`: la comprobación opcional de las filas de corrección; que `registro comparar` lea la cuenta de `registro.json` (7.3) | Si hace falta | Hoy la tercera igualdad de la cuenta la comprueba `generar` |
+| `fecha_inicio` en `run.json` (7.3) | Si hace falta | Quitaría la deducción del origen del reloj en `compare` |
+| Un mensaje claro de `read_run` con lo registrado, en cualquier orden (7.4) | Si hace falta | Mirar el `run_id` derivado antes de `from_json` |
+| `--forzar` en `registro generar` (7.2) | Si hace falta | Hoy se borra la carpeta a mano |
+| Un hook `PreToolUse` que analice los argumentos de `gh api` (7.0) | Backlog, sin issue | Más robusto que las reglas con comodines de `.claude/settings.json` |
+| Las reglas de Codex por REST (7.0) | Si una tarea de Codex va a la nube | `.codex/rules/edsim.rules` sigue con `gh pr create` y `gh pr view` |
+| Los rápidos cerca del límite de 60 s con xdist (7.4) | Vigilar | De 24 a 41 s, los de `test_cli_calibracion.py` |
+
+Las nueve últimas filas las añadió el cierre (7.7): son los pendientes del anexo que el hito no arregló.
 
 ## Fuentes y para aprender más
 
@@ -944,7 +955,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 | --- | --- | --- | --- |
 | 1 | La regex sin `(?i)` | Los 12 PR que cierran issues dan distinto; los 28 restantes, igual | 12 distintos y 28 iguales |
 | 2 | «Fusionado» por `merge_commit_sha` no nulo | Con el PR de la 7.0 abierto, daría «fusionado» | Abierto, con `merged` falso y `merge_commit_sha` relleno (el merge de prueba): habría dado «fusionado». Justo al crearlo era nulo, porque GitHub lo calcula en segundo plano |
-| 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Pendiente, tras la fusión |
+| 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Comprobado tras la fusión, el 14 de noviembre, con dos comentarios en el #114: el A, que empieza por la mención, se ejecutó; la respuesta del bot y el B, que solo la nombra en medio, salieron *skipped* (anotado en la 7.7) |
 | 4 | Prueba de humo del revisor: un plan falso de la 7.1 con tres errores sembrados y cuatro apartados de control | Marca los tres y ninguno de control | Se cumple. Veredicto «dudas (16)»; S1 (el reloj en `sim_time`), error, y ve que choca con el 1.031,2 del propio plan; S2 (100 pasa a 1), sospechosa; S3, error, con 1.166,2 y 19:28:12 recalculados; ningún control como error |
 
 **Revisión**
@@ -968,7 +979,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 
 **Pendiente**
 
-- **La condición nueva de `claude.yml`**, tras la fusión (el piloto ya funcionó con la de `main`): un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude.
+- **La condición nueva de `claude.yml`**, tras la fusión (el piloto ya funcionó con la de `main`): un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude. [Hecho el 14 de noviembre: ver la versión incorrecta 3.]
 - **El primer uso real del revisor del plan**, en la 7.1, comparado con la revisión del chat del mismo plan.
 - **Un hook `PreToolUse` para `gh api`** (hallazgo de la revisión), en lugar de las reglas con comodines: propuesta para el Backlog.
 - **Las reglas de Codex** (`.codex/rules/edsim.rules`) siguen con `gh pr create` y `gh pr view`: Codex trabaja en local y pide permiso para todo lo que usa la red; se cambia si una tarea de Codex va a la nube.
@@ -1137,7 +1148,7 @@ Con el subagente `mutante` en paralelo, sobre `6737d01`:
 
 **Pendiente**
 
-- **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
+- **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj [corregido en la 7.6: en el realista manda el retraso; el reloj, en el hostil]; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
 - **La 7.4** (#118): `--registro` en `directo lanzar` y `reemitir` usa `StreamDice` y `load_record_profiles`.
 - **Si algún día hace falta sobrescribir un registro:** hoy no hay `--forzar`; se borra la carpeta a mano.
 
@@ -1163,7 +1174,7 @@ Issue #117, rama `feat/h7-comparacion`, Claude Code (Sonnet, en la nube). Tarea 
 - **`compare` recibe `horizon` y `warmup`** (minutos), que la especificación no listaba: el censo medio los necesita. El origen del reloj se deduce del primer evento de la verdad con la misma fórmula que `event_time()`. `--perfil` es obligatorio en `comparar`.
 - **Indicadores ingenuos**: el primer registro de cada tipo de cada episodio, en el orden dado (el de emisión); `assessment_started` solo con `tipo == "inicial"`; el censo cuenta `llegada <= H < salida` en cada hora en punto de `[calentamiento, horizonte)`; el reparto por nivel, sobre los `triage_completed` con un nivel entero de 1 a 5, duplicados incluidos; las llegadas, todos los `patient_arrived`. Los `record_corrected` no se leen.
 - **El retraso por sistema** es `recorded_time - event_time` de los registros `bien` y `con_despistes` (el desfase se cancela: se suma a las dos horas); los duplicados y las correcciones no entran.
-- **`con_despistes` desglosado** (nota del chat de la tarde): con reloj, con retraso, con valor erróneo, con campo vacío (se solapan) y solo reloj. Con la ejecución de `config/`, el reloj domina: 17,5 % de la clase es solo reloj en el realista y 22,2 % en el hostil, pero el reloj aparece en el 100 % del hostil.
+- **`con_despistes` desglosado** (nota del chat de la tarde): con reloj, con retraso, con valor erróneo, con campo vacío (se solapan) y solo reloj. Con la ejecución de `config/`, el reloj domina [corregido en la 7.6: en el realista manda el retraso; el reloj, en el hostil]: 17,5 % de la clase es solo reloj en el realista y 22,2 % en el hostil, pero el reloj aparece en el 100 % del hostil.
 - **Traducción de errores de Postgres** compartida (`_postgres_errors`) entre `bronze_store` y `read_bronze_lines`: sin las tablas o con la conexión perdida, el mismo error que el consumidor, no una traza.
 
 **Valores a mano** (código independiente de `edsim`; completo en el PR)
