@@ -1413,6 +1413,7 @@ Issue #120, rama `feat/h7-notebook`, Claude Code (Sonnet, en la nube; el modo no
 
 **Medidas**
 
+- N3 (`scripts/tests-completos.sh`, en la nube): 14:54 en verde (lint 0:00, formato 0:00, núcleo 9:47, app 3:44, notebooks 1:23).
 - Modo rápido: el notebook, 14 s (11 s dentro del kernel); los siete notebooks, 83 s en total (el 04 tarda 21 s, el 03 18 s, el 07 14 s). Muy por debajo de los 1.800 s de #131.
 - Cifras de la ejecución (14 días, 2 de calentamiento, semilla 2026, 55.054 hechos):
 
