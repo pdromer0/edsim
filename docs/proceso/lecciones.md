@@ -40,6 +40,8 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Una comprobación en vivo ve lo que ningún test mira, como el ruido de una biblioteca con el servicio caído (6.5).
 - Dos validadores del mismo contrato comparados con una colección de casos encuentran huecos que nadie buscaba (6.4).
 - Una carrera aparece en pocos intentos de muchos: se mide muchas veces antes de dar algo por estable (6.4).
+- Un doble que guarda cada llamada y que el código real puede llamar sin fin necesita un tope: con V16, un bucle contra el consumidor falso llenó la memoria de WSL en un minuto. El límite de tiempo por test salta tarde; el tope corta antes (7.5, #131).
+- Un test que compara relojes de dos máquinas (el broker en Docker y WSL) tiene una holgura que nadie controla: −25 ms de latencia una vez (7.4).
 
 ## Datos, formatos y código
 
@@ -54,6 +56,8 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Una equivalencia que el diseño da por hecha se comprueba en el código de la biblioteca antes de apoyarse en ella (6.2). Antes de cambiar un parámetro, se lee en ese código de dónde sale el comportamiento (6.6).
 - Estado persistente y widgets son capas distintas; los formatos compartidos viven en un solo sitio; la clave de una caché es lo que cambia la respuesta (app).
 - Antes de cambiar un fichero que leen muchos, como `config/`, primero el inventario de sus lectores y las copias congeladas de lo antiguo. Los lectores que afirman el significado antiguo pasan a las copias, y el diff demuestra que sus cifras no cambian. Los notebooks también son lectores (5.4, 5.6).
+- Para que el consumo de un flujo aleatorio sea fijo, se sacan uniformes y se transforman: `standard_normal` (el *ziggurat*) gasta un número variable de bits (7.2).
+- Un consumidor que relee el mismo lote tras un fallo se bloquea para siempre con un mensaje que rompe el `INSERT`: lo que no se puede guardar va a una tabla de rechazados, y una red fila a fila recoge lo que nadie previó (7.5).
 
 ## Tiempo real y servicios
 
@@ -65,6 +69,7 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - «Caído» se decide con el estado, no con un error suelto (6.6).
 - Un lector de un topic compartido filtra antes de validar: un mensaje roto de otro no puede tumbarlo (6.6).
 - Una imagen configurada solo con variables puede perder sus valores por defecto: se lee su código antes de fiarse del ejemplo (6.1).
+- Un comportamiento que depende de la configuración del broker se apunta como tal: la parada de `--run` en una republicación funciona por `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` (7.6).
 
 ## Rendimiento de los tests
 
@@ -87,5 +92,8 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Los errores de los planes están en lo que interpretan sin que lo diga la especificación, no en la aritmética. Los tests no los ven, porque nacen de la misma interpretación: la ven Pedro y el chat al revisar el plan (5.4 a 5.7).
 - En una sesión en la nube, GitHub solo responde por REST: `gh issue view` y `gh project` usan GraphQL y el proxy los rechaza. El issue se lee con `gh api` y el tablero lo mueve Pedro o el workflow (5.7).
 - Dos skills con un número cada una se confunden: `/tarea-edsim` lleva el del issue y `/sincronizar`, el del PR (5.7).
+- Después de fusionar cualquier PR, también de la nube o de una tarea de proceso, `/sincronizar`: hace el `uv sync`. Tras el #132 solo se hizo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4 (7.4).
+- Las cifras de las notas del chat también se miden, y una predicción se contrasta con la configuración real antes de darla por probable: la nota sobre `con_despistes` estaba mal, y el fallo predicho en el #136 no ocurrió (7.6).
+- En local, como mucho dos mutantes a la vez, con WSL limitado (`.wslconfig`, `memory=7GB` y `swap=8GB` en 16 GB) y Docker cerrado salvo para la integración (7.5).
 
-El porqué de las seis lecciones de la P.2 está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la lección de la 5.2, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md); el de las del hito 5, en el [balance del hito](../specs/hito-5.md#balance-del-hito).
+El porqué de las seis lecciones de la P.2 está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la lección de la 5.2, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md); el de las del hito 5, en el [balance del hito](../specs/hito-5.md#balance-del-hito), y el de las del hito 7, en el [suyo](../specs/hito-7.md#balance-del-hito).
