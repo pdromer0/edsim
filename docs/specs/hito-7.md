@@ -900,6 +900,86 @@ Consultadas el 13 de noviembre de 2026, y las de la 7.2 el 14. Las de «para apr
 
 **Cálculos propios de esta especificación.** Las horas del escenario L, calculadas en Python en el chat. Los valores orientativos son de criterio, con las fuentes de la tabla como órdenes de magnitud.
 
+## Balance del hito
+
+Escrito en la tarea 7.7. El hito deja a EDsim con datos imperfectos, como los de un hospital: los guarda en Postgres y dice exactamente en qué se equivocan. El motor no cambió.
+
+### Qué se entregó y dónde
+
+| Pieza | Dónde |
+| --- | --- |
+| Simulador del registro clínico: los ocho despistes, el dado, la libreta y la cuenta | `src/edsim/clinical_record/`, [ADR 0084](../decisiones/0084-simulador-del-registro-clinico.md) a [0088](../decisiones/0088-libreta-y-ejecucion-derivada.md) |
+| Perfiles limpio, realista y hostil, y `edsim registro validar` y `generar` | `config/registro_clinico.toml`, [ADR 0087](../decisiones/0087-tres-perfiles-y-el-truco-del-dado.md) |
+| Lo registrado en el directo y en la reemisión | `edsim directo … --registro`, [ADR 0085](../decisiones/0085-registro-clinico-funcion-pura-de-la-verdad.md) |
+| Postgres con TimescaleDB, `bronce` y el consumidor | `compose.yaml`, `src/edsim/store/`, [ADR 0089](../decisiones/0089-postgres-con-timescaledb-en-compose.md) a [0092](../decisiones/0092-migraciones-sql-propias.md) |
+| La comparación con la verdad | `edsim.clinical_record.compare`, `edsim registro comparar`, [ADR 0096](../decisiones/0096-una-sola-comparacion-en-python.md) |
+| Tests en tres capas y el job `tests-integracion` | `tests_integracion/`, [ADR 0093](../decisiones/0093-tres-capas-de-tests-y-tests-integracion.md) |
+| Notebook 07 | `notebooks/07_persistencia.ipynb` |
+| Lo que se aplaza: plata y la verdad en el hito 8, la app en su fase 2 | [Para versiones posteriores](#para-versiones-posteriores), [ADR 0094](../decisiones/0094-plata-con-la-forma-de-un-his.md), [0095](../decisiones/0095-la-verdad-no-se-carga-en-postgres.md) y [0097](../decisiones/0097-la-app-no-cambia-en-el-hito-7.md) |
+| Lo aprendido | [diario](../diario/hito-7.md), [lecciones](../proceso/lecciones.md) |
+| Proceso: la 7.0 y las dos pistas | [ADR 0098](../decisiones/0098-tarea-7-0-de-proceso.md), [ADR 0099](../decisiones/0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md), [portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba) §14 |
+
+### Cifras
+
+- **Tiempo:** del primer PR, el de la 7.0, abierto el 13 de noviembre a las 22:05 UTC, al de la 7.6, fusionado el 15 a las 11:14 UTC: 37 h. Son ocho issues (#114 a #121) y un PR por tarea.
+- **Los PR de la 7.0 a la 7.6**, con sus commits y los minutos de la apertura a la fusión, sacados de `gh api repos/pdromer0/edsim/pulls/N` y un script, en el orden en que se fusionaron:
+
+  | Tarea | PR | Commits | Apertura → fusión |
+  | --- | --- | --- | --- |
+  | 7.0 | #126 | 16 | 791 min (abierto de noche, fusionado por la mañana) |
+  | 7.1 | #129 | 10 | 43 min |
+  | 7.5 | #130 | 22 | 68 min |
+  | 7.2 | #133 | 10 | 123 min |
+  | 7.3 | #134 | 12 | 18 min |
+  | 7.4 | #135 | 14 | 19 min |
+  | 7.6 | #136 | 7 | 76 min |
+
+  Entre medias entraron dos PR de la P.3: el #127 (#81, saltar los tests cuando un PR solo cambia documentación) y el #132 (#131, el límite de tiempo por test).
+- **Issues que salieron del hito:**
+  - **#131**, el límite de tiempo por test y el tope de los dobles, por el cuelgue de la 7.5: cerrado por el #132;
+  - **abiertos**, de la sesión conceptual: #122 (la fase 2 de la app con el registro clínico) y #123 (un HIS simulado con CDC);
+  - **cerrados de paso:** #110 (el revisor del plan, en la 7.0) y #91 (la consola en `127.0.0.1`, en la 7.5).
+- **N3:**
+  - en la nube, seis: 17:18 (7.1), 15:12 (7.2), 12:52 (7.3), 16:18 y 13:36 (7.5, antes y después de los ajustes de Codex) y 14:54 (7.6). La mediana es 15:03;
+  - en local, una: 13:50 (7.4);
+  - la 7.0 no tuvo N3: era una rama de documentación, skills y permisos, y Pedro la autorizó sin ella.
+- **Paradas para decidir con Pedro durante la implementación:** dos. Una en la 7.4: el límite de 180 s de `test_every_minute_matches_curves_full_fold_and_cards`. Otra en la 7.5: la integración sin ejecutar en local, porque la hizo el CI. Las demás decisiones nuevas llegaron como ajustes al plan: `retraso_min` y la edad literal en la 7.1, y la última publicación de `--postgres` en la 7.3.
+- **Interrupciones:** la sesión local de la 7.5 se cortó tres veces, porque WSL se quedaba sin memoria (ver «Lecciones del hito»).
+
+### Los pilotos de la 7.0, medidos
+
+- **El revisor del plan:**
+  - en la 7.1, encontró los seis puntos que cambiaron el plan, incluido el único error de hecho, y el chat no añadió nada que lo cambiara (tabla en la entrada de la 7.1);
+  - en la 7.4, dos dudas, las dos aplicadas: una fue V36;
+  - en la 7.5, sus ajustes y los del chat dieron la segunda versión del plan, con diez cambios.
+
+  La prueba de humo de la 7.0 tardó 117 s y gastó unos 43.000 tokens.
+- **La revisión del chat**, dos casos del hito:
+  - **La nota de la 7.6 sobre `con_despistes` estaba mal.** El 66,8 % era la parte de la clase, no lo que pesa el reloj dentro de ella: en el realista manda el retraso. Claude Code lo midió y lo corrigió.
+  - **En el #136, el chat predijo un fallo que no ocurrió:** que la republicación pararía sin leer. No falló porque `compose.yaml` pone `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` (queda en «Para versiones posteriores»).
+  - **La lección:** las cifras de las notas también se miden, y una predicción se contrasta con la configuración real antes de darla por probable.
+- **`@claude` en el PR:** 43 s del comentario al commit en el piloto de la 7.0, y la condición nueva de `claude.yml` comprobada el 14 de noviembre (versión incorrecta 3 de la 7.0).
+- **La nube por defecto:** la 7.1, la 7.2, la 7.3 y la 7.6, y la segunda mitad de la 7.5. Funcionó sin GraphQL, con las skills por REST y el tablero movido por Pedro. No fue más rápida: la mediana de la N3 en la nube, 15:03, frente a 13:50 en local en la 7.4, con un núcleo de entre 4.071 y 4.651 tests. En la 5.7, con menos tests, fue al revés: 10:41 frente a 13:52.
+- **Dos pistas:** la 7.5 se hizo en paralelo con la 7.1, y las dos se fusionaron el 14 de noviembre, primero la 7.1. La 7.5 trajo `main` con un merge (`5b8fef4`), como pedían las «Precisiones» de las dos pistas.
+
+### Lecciones del hito
+
+- **El cuelgue de WSL durante la 7.5.** La versión incorrecta V16 dejó un bucle sin fin contra un doble que guardaba cada llamada, y la memoria se agotó. De ahí salió el #131: `pytest-timeout`, y `RunawayLoop` con `check_calls` en los dobles que se llaman en bucle. Ya está en `AGENTS.md`.
+- **`.wslconfig` con `memory=7GB` y `swap=8GB`** en un portátil de 16 GB, y como mucho dos mutantes a la vez en local ([portabilidad.md](../proceso/portabilidad.md#3-entorno-desde-cero-windows-con-wsl2-probado) §3).
+- **Después de fusionar cualquier PR, también si la rama era de la nube, `/sincronizar`**, que hace el `uv sync`. Tras el #131 se hizo solo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4.
+
+### Propuestas de velocidad
+
+Salen de lo que costó tiempo en el hito. Ninguna se implanta aquí: cada una, si se aprueba, va en su tarea.
+
+1. **Un hook `PreToolUse` para `gh api`**, que lea el método, los campos y la ruta, en lugar de las reglas con comodines de `.claude/settings.json`. En la revisión de la 7.0 hubo que corregir cuatro reglas.
+2. **Avisar al abrir la sesión si el `.venv` no está al día con `uv.lock`**, en el hook `SessionStart` y sin red. Tras el #132, el límite de 60 s no se aplicó en local hasta la 7.4, y nadie lo vio: cuando por fin se aplicó, un test que lo superaba tumbó la N2 tres veces seguidas.
+3. **Medir la nube antes de mantenerla por defecto para la N3.** En este hito no fue más rápida que el portátil; su ventaja es dejar el portátil libre. `flujo.md` justifica la regla con las cifras de la 5.7.
+4. **Dos pistas también en el hito 8**, si sus tareas se reparten en zonas que no se tocan, como las de este hito.
+5. **El chat contrasta sus predicciones con la configuración real** (`compose.yaml`, `config/`) antes de darlas por probables, y mide las cifras de sus notas.
+
+**Pendiente de comprobar:** el salto de los tests del #81 (PR #127) queda para el primer PR que solo toque ficheros `.md`. Este no lo es, porque cambia `config/` y `.gitignore`.
+
 ## Anexo: guía de referencia del hito 7
 
 Una entrada por tarea, escrita al cerrarla: qué se hizo, conceptos, decisiones del diff, medidas, versiones incorrectas (predicción frente a observado), revisión, lecciones y pendientes.
