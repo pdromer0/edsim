@@ -18,3 +18,6 @@ resultados/
 # Worktrees de Claude Code (subagente mutante): nunca se versionan, y ruff no revisa
 # su código mutado si alguno se queda en disco
 .claude/worktrees/
+
+# Ajustes del editor
+.vscode/
