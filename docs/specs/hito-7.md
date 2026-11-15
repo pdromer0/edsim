@@ -656,7 +656,7 @@ La 7.2 busca fuentes mejores y cambia lo que haga falta en su plan, con el estad
 - **Apoyan órdenes de magnitud de los tiempos:** Gordon 2008 (también con sensores pasivos: 1,1 min antes), Ward 2013 (la mediana de la evaluación clínica, 3 min antes tras implantar un HIS) y un estudio de 1994 en urgencias de Indianápolis, donde el 55 % de los relojes difería 1 min o más del UTC.
 - **No apoyan ninguna tasa de olvido, campo vacío, valor erróneo, duplicado ni corrección.** Los duplicados de la literatura (del 5 al 10 % de historias duplicadas) son de identidad del paciente, no de un registro anotado dos veces; y la mala clasificación del triaje (infratriaje y sobretriaje) es criterio clínico, no tecleo.
 - **Límite:** NCBI y PubMed no se podían abrir desde la nube; las cifras vienen de los resúmenes de la búsqueda, no de los artículos.
-- **Con los relojes de arriba**, la clase `con_despistes` de la libreta es sobre todo «este sistema tiene el reloj desajustado»: en 14 días de `config/`, el 66,8 % de lo escrito con el realista y el 100 % con el hostil.
+- **La clase `con_despistes` de la libreta es grande** (medido en la 7.6, con 14 días de `config/` y semilla 2026: el 66,7 % de los hechos escritos con el realista y el 99,8 % con el hostil; la 7.2 anotó el 66,8 %, de otra ejecución), y **no es «sobre todo el reloj»**: dentro de la clase, en el realista manda el **retraso** (en el 81,7 % de las filas, por las tasas de 0,60 en el triaje y 0,70 en el HIS; el reloj, en el 32,6 %), y en el hostil, el **reloj** (en el 100 %, porque los cuatro sistemas lo tienen desajustado).
 
 ## Estructura del código
 
@@ -1389,3 +1389,69 @@ La predicción de V12 se corrigió antes de lanzarla, al escribir los tests: el 
 - **La 7.6** (#120): el notebook puede publicar con `--registro` y leer bronce.
 - **`read_run` con lo registrado:** si hace falta un mensaje claro en cualquier orden, mirar el `run_id` derivado antes de `from_json`.
 - **Los otros tests rápidos cerca del límite con xdist** (de 24 a 41 s, los de `test_cli_calibracion.py`): vigilarlos.
+
+### Tarea 7.6: Notebook `07_persistencia`
+
+**Qué se hizo**
+
+Issue #120, rama `feat/h7-notebook`, Claude Code (Sonnet, en la nube; el modo normal, con Docker, lo ejecuta Pedro en local). Tarea no crítica: sin revisor del plan, `/code-review medium`. Un commit por paso:
+
+- **El notebook** (`5c9c731`): `notebooks/07_persistencia.ipynb`, 44 celdas, sin resultados. Lo escribió un script del *scratchpad* (no se versiona) y quedó formateado con `ruff format`.
+- **Un fallo del modo normal** (`fix(notebooks)`): `record_run` lee por defecto `config/registro_clinico.toml` relativo al directorio de trabajo, y el notebook corre desde `notebooks/`; se le pasa el fichero con ruta absoluta.
+- **Los ajustes de la revisión propia** (`fix(notebooks): 07 tras la revisión propia`): ver «Revisión».
+- **La documentación:** esta entrada, `README.md` y `AGENTS.md` (los comandos y requisitos del 07) y la corrección de la frase del reloj en «Valores orientativos de partida».
+
+**Decisiones del diff**
+
+- **Sin lógica propia.** El notebook llama a `EventLog`, `record`, `compare`, `format_comparison`, `simulate_ed`, `simulate_run`, `record_run`, `read_recorded_run`, `read_bronze_lines`, `read_bronze_records`, `to_row` y `save_batch`; la CLI (`edsim directo reemitir`, `almacen preparar`, `almacen consumir` y `registro comparar`) va por `subprocess`, como el 06. Lo único que escribe él es lo que un lector necesita para ver el fenómeno: el dado a mano de Lucía (una clase con `roll()`, que es el protocolo `Dice`), el perfil de Lucía (`dataclasses.replace` sobre el realista), las agrupaciones del doble clic y los recuentos de despistes.
+- **Las secciones 2 a 6 corren en memoria en los dos modos** y son idénticas; la 7 es la única que usa disco y servicios. Una sola ejecución (14 días, 2 de calentamiento, semilla 2026) alimenta todo, porque con ella salen las cifras que citan las notas (censo +29 % y ×4); con 7 días, +12 % y ×2,7.
+- **Los `assert` comprueban estructura, no cifras:** la tabla de L (horas y `sim_time` de los siete registros), la cuenta de L, el subconjunto de olvidos y de erróneos entre perfiles, doble clic = filas `duplicado`, el reloj del hostil en todas las filas, y en la sección 7, que bronce tiene tantas filas como registros, que la relectura guarda 0 y repite todas, que la republicación da el doble de filas y los mismos `event_id`, y que `compare` da lo mismo con ficheros, con bronce y en memoria. La única tolerancia es la de 1 min en el tiempo hasta el médico del hostil frente a la resta de los relojes (−8 min; sale −7,83 por los hechos olvidados o vacíos).
+- **Reemisión con `--calentamiento 0`** (W = 0, sin censo), como `tests_integracion/test_directo_registro.py`: bronce recibe los 55.118 registros y la cuenta se puede reconciliar.
+- **La relectura de Kafka** se enseña volviendo a guardar con `save_batch` cinco mensajes que bronce ya tiene (reconstruidos con `KafkaMessage` desde sus coordenadas y su `ingest_time`), el mismo camino del consumidor; no relanzando `almacen consumir`, que usa un grupo fijo.
+- **La clase `con_despistes` no la domina el reloj en el realista** (ver «Pendiente» y la corrección de «Valores orientativos de partida»). El notebook lo dice con el desglose de `compare`.
+- **La ejecución guardada de la sección 7 va a una carpeta temporal**, nunca a `resultados/ejecuciones/`, y se borra al final de la celda.
+
+**Medidas**
+
+- N3 (`scripts/tests-completos.sh`, en la nube): 14:54 en verde (lint 0:00, formato 0:00, núcleo 9:47, app 3:44, notebooks 1:23).
+- Modo rápido: el notebook, 14 s (11 s dentro del kernel); los siete notebooks, 83 s en total (el 04 tarda 21 s, el 03 18 s, el 07 14 s). Muy por debajo de los 1.800 s de #131.
+- Cifras de la ejecución (14 días, 2 de calentamiento, semilla 2026, 55.054 hechos):
+
+  | Perfil | Registros | bien / con_despistes / duplicado / corrección / perdido / pendiente | Censo medio (verdad → registrado) | Hasta el médico | Hasta el triaje |
+  | --- | --- | --- | --- | --- | --- |
+  | limpio | 55.054 | 55.054 / 0 / 0 / 0 / 0 / 0 | 39,37 → 39,37 | 14,89 → 14,89 | 8,87 → 8,87 |
+  | realista | 55.118 | 18.238 / 36.538 / 263 / 79 / 262 / 16 | 39,37 → 50,74 (+28,9 %) | 14,89 → 14,90 | 8,87 → 10,89 |
+  | hostil | 54.639 | 86 / 52.137 / 2.086 / 330 / 2.738 / 93 | 39,37 → 155,83 (×3,96) | 14,89 → 7,06 (−7,83) | 8,87 → 12,93 |
+
+- Fantasmas (salidas olvidadas): 25 de los 262 olvidos del realista y 220 de los 2.738 del hostil. Olvidos del realista ⊆ olvidos del hostil: sí. Dobles clics: 263 grupos = 263 filas `duplicado`.
+- **Desglose de `con_despistes`:** realista, 36.538 filas: retraso 81,7 %, reloj 32,6 %, solo reloj 17,5 %, 160 erróneos, 528 vacíos; hostil, 52.137 filas: reloj 100 %, retraso 75,6 %, solo reloj 22,2 %.
+- **Lo que no se pudo ejecutar en la nube** (no hay Docker): la sección 7 con Kafka y Postgres. Sí se comprobó, sin servicios, lo que la rodea: `simulate_run`, `record_run` (55.118 registros, la misma cuenta que en memoria), `edsim directo reemitir … --calentamiento 0 --registro realista --memoria` (publica 55.118, 0 de censo y 55.118 en directo), `edsim registro comparar` con ficheros, y que la comparación desde ficheros es igual a la de memoria (`Comparison` entera).
+- **Lo que debe salir en modo normal** (Pedro): tras publicar y consumir, `bronce.eventos` con **55.118** filas y 55.118 `event_id` distintos para el run derivado; `bronce.ejecuciones` con un `inicio` y un `fin`; **263** dobles clics; la relectura, `saved=0, repeated=5`; tras republicar, **110.236** filas y 55.118 `event_id`; `read_bronze_lines` con 55.118 líneas; y `registro comparar --postgres` igual que con ficheros salvo la línea del origen.
+
+**Versiones incorrectas**
+
+Cinco, aplicadas en el árbol de trabajo sobre el notebook ya confirmado y deshechas con `git checkout` (sin el subagente `mutante`: el cambio es de un solo fichero y no hay worktree que aislar). Cada una, ejecutada con `EDSIM_NB_RAPIDO=1 pytest --nbmake notebooks/07_persistencia.ipynb`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | El dado de L6 sin forzar el olvido | Falla el 07 en un `assert` de L | 1 falla (`AssertionError`, en la lista de horas de L, antes que en la cuenta); 2,5 s |
+| V2 | La celda de Kafka y Postgres sin el guardia del modo rápido | Falla el 07 en modo rápido | 1 falla. **La predicción no pillaba el motivo:** la primera vez falló con `FileNotFoundError: config/registro_clinico.toml` (un fallo real del modo normal, ver «Qué se hizo»); tras corregirlo, falla en `edsim almacen preparar` con «Falta el extra postgres» |
+| V3 | La mediana del triaje del perfil de Lucía en 5 min (la de `config/`) | Falla el 07 en las horas de L3 | 1 falla (`AssertionError`); 2,4 s |
+| V4 | El subconjunto de olvidos al revés (hostil ⊆ realista) | Falla el 07 | 1 falla (`AssertionError`); 14 s |
+| V5 | El reloj de admisión sumado en vez de restado en lo esperado del tiempo hasta el médico (−2 en vez de −8 min) | Falla el 07 en la comprobación del hostil | 1 falla (`AssertionError`); 14 s |
+
+No cambia ningún fichero del paquete: los tests del núcleo y de la app no pueden verse afectados, y los otros seis notebooks siguen pasando (83 s los siete, con el 07 sin mutar).
+
+**Revisión**
+
+`/code-review medium main...feat/h7-notebook`, siete hallazgos:
+
+- **Corregidos** (un commit): las referencias a secciones del propio notebook (la de Kafka y Postgres es la 7, no la 6, y las que corren en memoria son de la 2 a la 6); el `assert` del tiempo hasta el médico comparaba con −8 escrito a mano, y ahora con lo esperado de los relojes del perfil (HIS menos admisión), también para el realista; la numeración de la libreta de L por la posición (`L1`…, registro 1…) y no por el sufijo del identificador; la gráfica del censo, sin el ternario; las celdas de la sección 7 se pueden volver a ejecutar (la republicación acepta más de dos publicaciones, y la carpeta temporal se borra en la última celda, no al final de la comparación).
+- **Explicados:**
+  - La sección 7 no se ejecuta en el CI ni la ejecuté yo: no hay Docker en la nube. Es lo que pide el issue (Pedro la ejecuta en local); las cifras que da el texto («55.118», «263», «110.236») llevan «con los valores por defecto» y los `assert` comprueban estructura, no esas cifras. El `assert` de que la conciliación de bronce es la de la memoria depende de que `record` sea determinista, y se comprobó sin servicios (ver «Medidas»).
+  - `RAIZ = Path("..")` y `EDSIM = Path(sys.executable).with_name("edsim")` son la convención del 06 (el notebook se ejecuta desde `notebooks/` y con el kernel de `.venv`); `record_run` era el único sitio que dependía del directorio de trabajo, y se corrigió.
+
+**Pendiente**
+
+- **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte.
+- **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes.
