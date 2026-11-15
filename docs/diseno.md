@@ -591,7 +591,8 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 | Página del registro clínico, lectura de bronce, directo en vivo y fantasmas en el Replay | Fase 2 de la app (#122) | Decisión 97: la comparación ya está en el paquete |
 | Un HIS simulado con base de datos transaccional y CDC | Backlog (#123) | El escenario más realista de extracción |
 | Despistes en los eventos de recursos, anotación anticipada, pacientes duplicados | Versiones posteriores | |
-| El test de latencia inestable, la parada de `almacen consumir --run` en una republicación y lo opcional de `compare` | Backlog, sin issue | Detalle en la especificación |
+| El test de latencia inestable y la parada de `almacen consumir --run` en una republicación | Backlog, sin issue | Detalle en la especificación |
+| Lo opcional de `compare` y los demás pendientes pequeños del anexo (`fecha_inicio`, `read_run`, `--forzar`, el hook de `gh api`, las reglas de Codex) | Si hace falta | Cada uno, con su destino, en la especificación |
 
 ### App web
 
