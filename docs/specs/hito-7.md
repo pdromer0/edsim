@@ -876,7 +876,7 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 | `--forzar` en `registro generar` (7.2) | Si hace falta | Hoy se borra la carpeta a mano |
 | Un hook `PreToolUse` que analice los argumentos de `gh api` (7.0) | Backlog, sin issue | Más robusto que las reglas con comodines de `.claude/settings.json` |
 | Las reglas de Codex por REST (7.0) | Si una tarea de Codex va a la nube | `.codex/rules/edsim.rules` sigue con `gh pr create` y `gh pr view` |
-| Los rápidos cerca del límite de 60 s con xdist (7.4) | Vigilar | De 24 a 41 s, los de `test_cli_calibracion.py` |
+| Los rápidos cerca del límite de 60 s con xdist (7.4) | Vigilar | De 24 a 41 s, los de `test_cli_calibracion.py`. En la 7.7, `test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas` pasó de 60 s en la N2 con la máquina cargada; solo y en serie, 22,6 s |
 
 Las nueve últimas filas las añadió el cierre (7.7): son los pendientes del anexo que el hito no arregló.
 
@@ -1546,3 +1546,92 @@ No cambia ningún fichero del paquete: los tests del núcleo y de la app no pued
 
 - **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte. [Hecho en la 7.7.]
 - **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes. [Hecho: Pedro la ejecutó en local con Docker y pasa entera (nota del #121, 15 de noviembre).]
+
+### Tarea 7.7: Cierre del hito 7
+
+**Qué se hizo**
+
+Issue #121, rama `docs/h7-cierre`, Claude Code (Opus, en local), con `/cerrar-hito` (su primer uso). Sin la etiqueta `critica`, pero con `/code-review high` por petición de Pedro; `@codex review` lo pide Pedro en el PR. Un commit por bloque, más los de la revisión:
+
+- **Los ADR 0084 a 0099** (`355b66d`), uno por decisión, con las alternativas descartadas y cuándo tendrían sentido (petición de Pedro), «Qué cambió al implementarla» con la tarea y el commit, y el índice al día. Una nota de actualización en la ADR 0006, que nombraba la «capa de observación» (`4cb4804`).
+- **Esta especificación:**
+  - el estado;
+  - la versión incorrecta 3 de la 7.0, comprobada el 14 de noviembre;
+  - las notas entre corchetes de la 7.2, la 7.3 y la 7.6;
+  - nueve filas de «Para versiones posteriores» con los pendientes del anexo (`8a8d4c5`);
+  - el «Balance del hito» (`e032569`, `f991413`).
+- **El diseño** (`e0cc333`, `a1daea7`), con el visto bueno de Pedro al plan:
+  - «capa de observación» pasa a «simulador del registro clínico»;
+  - los tres tiempos del sobre, lo registrado en el catálogo, bronce en las capas, Postgres sin perfil y el árbol del repositorio;
+  - la hoja de ruta con el hito 7 cerrado y lo aplazado;
+  - las decisiones 84 a 99.
+- **El diario** `docs/diario/hito-7.md` (`3231f8c`), con «Pedro sabe explicar» y «Reflexiones de Pedro» vacía.
+- **La app** (`f04a395`): `incrementos.md` gana la sección del hito 7, sin incremento, con lo que va a la fase 2 (#122).
+- **El proceso** (`1c439bb`):
+  - ocho lecciones;
+  - la §14 de `portabilidad.md` con los pilotos del hito;
+  - `flujo.md`: `/sincronizar` tras cualquier fusión.
+- **Fuera de la documentación:** el comentario de `config/registro_clinico.toml` (`3166f4e`, `00cbf97`) y `.vscode/` en `.gitignore` (`2391479`).
+- **La portada:** `AGENTS.md` y `README.md` (`67ea47f`), y la tabla de tamaños de `docs/README.md`.
+
+**Decisiones del diff**
+
+- **La fase 2 de la app, como sección del hito 7 en `incrementos.md`:** no existía sección de fase 2. Lleva una nota: la comparación tendrá que exponerse en `__all__` de `edsim.runs`, porque la app solo importa de ahí.
+- **Los pendientes del anexo, en «Para versiones posteriores», sin abrir issues:** la búsqueda en GitHub no encontró ninguno.
+- **El anexo no se reescribe:** lo que el hito corrigió va entre corchetes, con la tarea que lo corrigió.
+- **«Un registro» es cada fila** (ajuste de Pedro al plan): lo registrado con un perfil y una semilla es la ejecución derivada. Se aplica en el diseño, también donde el plan decía «de cada registro».
+- **El cuelgue de WSL fue en la 7.5**, con V16, como dice su anexo (ajuste de Pedro al plan: la nota del chat decía la 7.1).
+- **`portabilidad.md` §3 no cambia:** ya tenía el `.wslconfig` con su porqué.
+- **El diario fecha cada entrada con la fusión de su PR** en hora `+01:00`: la 7.4 queda en el 15 de noviembre.
+
+**Valores a mano**
+
+- **Los PR del balance:** los commits, la apertura y la fusión, por REST (`pulls/N`), y los minutos con `python3`. El hito, 37 h; la mediana de las N3 en la nube, 15:03.
+- **El comentario del TOML:** 36.538 / (18.238 + 36.538) = 66,70 % y 52.137 / (86 + 52.137) = 99,84 %, de los hechos escritos. Sobre todos los registros escritos serían el 66,3 % y el 95,4 % (hallazgo de la revisión).
+- **Un descuadre resuelto:** el cuerpo del #136 dice que se abrió a las 00:35, y la API, a las 09:58 UTC. El balance usa la API.
+
+**Medidas**
+
+- **Sin N3**, con el permiso de Pedro (`tarea.md` §4): la rama es documentación, un comentario de `config/` y `.gitignore`. El CI corre entero, porque `config/` cuenta como código.
+- **Antes del push:**
+  - `ruff check` y `ruff format --check`;
+  - `edsim registro validar`, que sigue en verde (en el `diff` del TOML solo cambian líneas de comentario);
+  - los 222 tests de `test_registro_perfiles.py`, `test_record_run.py` y `test_cli_registro.py`;
+  - un script de enlaces, sin problemas en los enlaces relativos de los markdown cambiados;
+  - un comando que comprueba que cada ADR del 0084 al 0099 tiene fichero, está en el índice y está en el registro del diseño: 0 fallos.
+
+  La salida completa de cada uno, en el PR.
+- **La huella del TOML** cambia con el comentario (de `9082cf8f5e54` a `20885c3352a2`); ningún test ni documento la fija.
+- **La N2 del hook Stop falló una vez:** `test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas` pasó de 60 s con xdist mientras corría `/code-review high` en segundo plano. Solo y en serie, 22,6 s. Es el pendiente de la 7.4, y su fila de «Para versiones posteriores» lo anota. Se repitió con la máquina libre (resultado en el PR).
+
+**Versiones incorrectas**
+
+A mano en el árbol de trabajo, deshechas con `git checkout`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Una línea del comentario del TOML sin el `#` | `registro validar` falla con un error de TOML. Fallan `test_el_fichero_real_tiene_los_valores_de_la_especificacion` (los tres perfiles) y `test_el_limpio_real_no_tiene_nada_distinto_de_cero` | `registro validar` sale con código 2 («Expected '=' after a key», línea 35). Fallan 3 y pasan 152: la predicción contaba un perfil de más, porque el test del fichero real solo lleva `realista` y `hostil` |
+| V2 | Un ancla del balance que no existe | El script de enlaces la marca, con fichero y línea | La marca: `hito-7.md:918`, código 1 |
+| V3 | El 0091 fuera del índice | El comando de los ADR la marca | «0091: no está en el índice», código 1 |
+
+**Revisión**
+
+`/code-review high main...docs/h7-cierre`, diez hallazgos, todos de documentación. Comprobó con su propio script los enlaces y, por REST, las cifras de los PR del balance.
+
+- **Corregidos:**
+  - `docs/README.md` seguía con el hito 7 en curso y los tamaños viejos;
+  - «tras el #131» era el #132 (`f991413`);
+  - el 66,7 % y el 99,8 % son de los hechos escritos, no de todo lo escrito (`00cbf97`, también en la ADR 0087);
+  - V36 descartó la propuesta del revisor de la 7.4, no la aplicó (`f991413`, también en la ADR 0098 y en `portabilidad.md`);
+  - la frase de `con_despistes` la escribió la 7.2 (`f991413`);
+  - en el diseño, lo opcional de `compare` iba con otro destino que en la especificación (`a1daea7`);
+  - los dos pendientes de la 7.6 seguían abiertos (`f991413`);
+  - el 4.071 no tenía fuente: es del PR #129 (`f991413`);
+  - la ADR 0006 seguía con «capa de observación» (`4cb4804`).
+- **Explicado:** faltaba esta entrada, que es el último paso antes del push.
+
+**Pendiente**
+
+- **Pedro, tras la fusión:** la etiqueta `v0.7-hito7` sobre la fusión de este PR y, después, `/cerrar-hito 121`, que con el issue cerrado va directa a la Release. Los pasos, en el PR.
+- **Las propuestas de velocidad del balance**, por decidir.
+- **La comprobación del salto del #81**, en el primer PR que solo toque `.md`.
