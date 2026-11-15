@@ -379,3 +379,18 @@ Issue #75, rama `docs/h5-cierre`, Claude Code. Lo que la 5.8 cambió en la app:
 | Replay tenía dos «¿Qué estoy viendo?»; queda uno, `render_replay_help()` | `help.py`, `views/replay.py` | `test_replay_has_a_single_help_with_the_plan_and_the_bed` |
 | Ayudas de Ejecuciones (la versión del catálogo), Simular (36 boxes derivados y #103) y Resultados (qué enseña el interruptor «Ver la verdad») | `help.py` | `test_simulate_help_explains_the_derived_boxes_and_the_missing_load` y la aserción de Ejecuciones |
 | El manual: el recorrido «Primeros pasos con el hito 5», la censura del cumplimiento, Comparar entre catálogos, la probabilidad de ingreso solo con el hito 4, los 36 boxes y «Ver la verdad» en Resultados | `app/README.md` | Revisión de Pedro |
+
+## Hito 7 — Persistencia
+
+Especificación del hito: [Hito 7 — Persistencia](../../../docs/specs/hito-7.md).
+
+**Estado: sin incremento.** La app no cambia en el hito 7 (decisión 97, H7-14; [ADR 0097](../../../docs/decisiones/0097-la-app-no-cambia-en-el-hito-7.md)): no hay tarea de app ni etiqueta `app-v…`, y el manual y las ayudas siguen como en el hito 5. Lo eligió Pedro; la recomendación era la página del registro clínico desde ficheros.
+
+### Lo que va a la fase 2 (#122)
+
+- **Una página «Registro clínico»:** elegir el perfil en Simular y ver, desde ficheros, la conciliación, la distribución del retraso y la tabla «verdad frente a registrado». La comparación ya está en el paquete (`edsim.clinical_record.compare`), pero la app solo importa lo que declara `__all__` de `edsim.runs`: la tarea tendrá que exponerla allí, como ya están `record_run` y `read_recorded_run`.
+- **Una página que lea `bronce.eventos`** de Postgres.
+- **El directo en vivo** desde Kafka.
+- **Los pacientes «fantasma»** (salidas olvidadas) moviéndose en el Replay.
+
+Las tres últimas atan la app a Docker: encajan con la fase 2, cuando haya una API entre medias. La primera, desde ficheros, podría ir antes en un incremento pequeño, si Pedro lo pide.
