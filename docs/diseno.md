@@ -216,7 +216,7 @@ El motor es una simulación de eventos discretos con SimPy que corre siempre en 
 
 ```mermaid
 ---
-title: "El motor escribe un único log del que salen la verdad y lo observado"
+title: "El motor escribe un único log del que salen la verdad y lo registrado"
 ---
 flowchart TD
     subgraph motor["motor de simulación (SimPy)"]
@@ -230,7 +230,7 @@ flowchart TD
     control["API de control<br/>pausa, velocidad, shocks"] --> motor
     motor --> log["log de eventos<br/>verdad, inmutable"]
     log --> gt["ground truth<br/>Parquet separado"]
-    log --> obs["capa de observación<br/>ruido, retrasos, huecos"]
+    log --> obs["simulador del registro clínico<br/>despistes y libreta"]
     obs --> stream["stream<br/>Apache Kafka"]
     obs --> almacen["almacén<br/>Postgres, Parquet"]
     classDef destacado fill:#1f6feb26,stroke:#1f6feb,stroke-width:2px
@@ -241,19 +241,19 @@ En azul, el log de eventos, la única salida del motor.
 
 Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm7MghHtMV9#a4cbaae8-f8fa).
 
-El log de eventos es la única salida del motor; el ground truth y la capa de observación se derivan de él.
+El log de eventos es la única salida del motor; el ground truth y lo registrado se derivan de él.
 
 - **SimPy:** cada paciente es un proceso que recorre la máquina de estados; los pools son recursos con prioridad (nivel de triaje, luego orden de llegada) y desalojo para el nivel 1.
 - **Pacer propio:** permite cambiar la velocidad en caliente (×1, ×10, ×60), pausar, y anclar el reloj al calendario real para que el dashboard muestre "ahora".
 - **Calentamiento:** 24–48 h simuladas a máxima velocidad sin emitir antes de empezar. En el directo, al terminarlo se publica el censo inicial: los eventos del calentamiento de los episodios que siguen abiertos y los de recursos, en su orden (hito 6). Más adelante, arranque desde una foto guardada.
 - **Tres modos de uso:** directo (pacer, publica en vivo, admite shocks), batch (sin pacer, réplicas en paralelo) y replay (re-emite una ejecución guardada, determinista y rebobinable; llega en el hito 6, con el directo).
 - **Un flujo aleatorio por fuente de azar:** llegadas, motivos, tiempos y paciencia tienen flujos independientes derivados de la semilla con `SeedSequence` de NumPy. Esto habilita los números aleatorios comunes en los experimentos.
-- **Tres tiempos por evento:** `event_time` (cuándo ocurrió), `recorded_time` (cuándo se registró) e `ingest_time` (cuándo llegó al broker).
+- **Tres tiempos por evento:** `event_time` (cuándo ocurrió), `recorded_time` (cuándo se anotó: en la verdad es igual a `event_time`, y en lo registrado lo pone el registro clínico) e `ingest_time` (cuándo llegó al broker: nulo en el mensaje; el consumidor de bronce lo copia de la marca `LogAppendTime`).
 - **Plano de control:** en el hito 6, el topic `ed.control`, con las órdenes `velocidad`, `pausar`, `reanudar` y `parar` que publica `edsim directo control`. Más adelante, una API FastAPI publicará en el mismo topic las órdenes para pausar, cambiar la velocidad, modificar la plantilla o lanzar shocks. Cada orden queda registrada: el topic es en sí un registro.
 
 ## Modelo de datos
 
-Todos los eventos comparten un sobre común y lo específico va en el `payload`; el ground truth se guarda aparte y una capa de observación introduce defectos realistas configurables.
+Todos los eventos comparten un sobre común y lo específico va en el `payload`; el ground truth se guarda aparte, y el simulador del registro clínico (hito 7) convierte la verdad en lo registrado, con despistes configurables.
 
 ### Sobre común
 
@@ -307,31 +307,35 @@ Todos los eventos comparten un sobre común y lo específico va en el `payload`;
 
 Lo oculto para el hospital (gravedad real, nivel real, calidad del triaje, banda de edad y tiempos de respuesta de las pruebas; desde el hito 5, también la paciencia, el destino sorteado de quien se fue y la espera de cama base) no está en ningún catálogo: va al ground truth.
 
+**Lo registrado (hito 7, decisión 86).** Los mismos eventos de pacientes, con el payload anulable (el campo vacío), más `record_corrected` (la corrección tardía de un valor erróneo), en los esquemas `registro-v1` a `registro-v4` de `schemas/`. Los eventos de recursos pasan tal cual.
+
 ### Topics
 
 - `ed.patient.events` (3 particiones), con clave `episode_id` para conservar el orden por episodio.
 - `ed.resource.events` (clave `recurso`), `ed.runs` (un mensaje `inicio` y otro `fin` por ejecución, con clave `run_id`) y `ed.control` (órdenes al simulador). Los crea y comprueba `edsim directo preparar`; el broker no los autocrea (hito 6).
 - `ed.system.events` y `ed.snapshots` no se crean hasta que existan los shocks y `system_snapshot`.
-- El valor de cada mensaje es la línea del JSONL tal cual, con `ingest_time` nulo. La hora de llegada es la marca de tiempo del broker (`LogAppendTime`), que el consumidor del hito 7 copiará en `ingest_time`.
+- El valor de cada mensaje es la línea del JSONL tal cual, con `ingest_time` nulo. La hora de llegada es la marca de tiempo del broker (`LogAppendTime`), que el consumidor de bronce (hito 7) copia en `ingest_time`. Con `--registro`, por Kafka solo viaja lo registrado (decisión 85).
 - Esquemas en JSON Schema en la v0 (uno por versión del catálogo, generados, en `schemas/`); Avro con un registro de esquemas (Apicurio o Karapace) más adelante.
 
 ### Ground truth
 
-Una fila por episodio con gravedad latente, paciencia, calidad del triaje (correcto, infra o sobre), tiempos reales por etapa, causa del abandono y los defectos de observación inyectados.
+Una fila por episodio con gravedad latente, paciencia, calidad del triaje (correcto, infra o sobre), tiempos reales por etapa y causa del abandono. Los despistes de lo registrado van aparte, en la libreta `defectos.csv` de lo registrado con cada perfil y semilla (decisión 88).
 
-### Defectos de la capa de observación
+### El simulador del registro clínico
 
-Retraso de registro, desorden, duplicados, campos vacíos, valores erróneos, eventos olvidados (pacientes "fantasma"), desfase de reloj entre sistemas y correcciones tardías. Cada defecto tiene tasa configurable y hay tres perfiles: limpio, realista y hostil.
+Convierte la verdad en lo registrado, con ocho despistes: retraso, desorden, duplicado, campo vacío, valor erróneo, olvido (pacientes "fantasma"), reloj desajustado y corrección tardía (decisiones 84 a 88). Tres perfiles, limpio, realista y hostil, en `config/registro_clinico.toml`; un dado por evento y despiste, con el perfil como umbral y semilla propia. Lo registrado con un perfil y una semilla es una ejecución derivada (`r2026_realista_s2026`) en `registros/<perfil>-s<semilla>/` de la ejecución, renumerada en orden de anotación, con su libreta `defectos.csv` y una cuenta que cuadra siempre. `edsim registro comparar` dice qué le pasó a cada hecho y cuánto se desvían los indicadores (decisión 96).
 
 ### Capas de almacenamiento
 
 | Capa | Contenido | Tecnología |
 | --- | --- | --- |
-| Bronce | Eventos tal como llegan | Postgres / Parquet |
+| Bronce | Eventos tal como llegan: `bronce.eventos` (hito 7) | Postgres con TimescaleDB, partida por `ingest_time` |
 | Plata | Deduplicados y tipados: `episodios`, `intervalos_estado`, `ocupacion_recursos` | dbt |
 | Oro | KPIs por hora y turno; tablas de features "a fecha de" | dbt |
 
 Postgres con TimescaleDB para lo operacional y en tiempo real; Parquet con DuckDB para lo analítico, particionado por `run_id` y fecha.
+
+Desde el hito 7, bronce vive en Postgres con TimescaleDB y lo llena `edsim almacen consumir` (al menos una vez, con inserción idempotente; decisiones 89 a 92). Plata (con la forma de las tablas de un HIS, decisión 94) y oro llegan con dbt en el hito 8; Parquet con DuckDB, para el camino por lotes, en el hito 8 o 9.
 
 ## Diseño de experimentos
 
@@ -443,7 +447,7 @@ El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batc
 
 ### Perfiles de Docker Compose
 
-- `core`: simulador, API, Kafka, Redpanda Console y Postgres. En el hito 6, `kafka` y `console` van sin perfil, porque son la base y arrancan siempre; el simulador, la API y Postgres entran en `core` cuando existan.
+- `core`: simulador, API, Kafka, Redpanda Console y Postgres. En los hitos 6 y 7, `kafka`, `console` y `postgres` van sin perfil (decisión 89), porque son la base y arrancan siempre; el simulador y la API entran en `core` cuando existan.
 - `analytics`: dbt, DuckDB, Metabase y Jupyter.
 - `realtime`: Grafana y consumidores de streaming.
 - `ml`: MLflow y entorno de modelos.
@@ -454,9 +458,9 @@ El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.
 
 ```
 edsim/
-├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6); store (hito 7)
+├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6); clinical_record y store (hito 7)
 ├── app/            # EDsim Lab (Streamlit), paquete edsim-app
-├── config/         # centro, llegadas, perfiles y objetivos (TOML)
+├── config/         # centro, llegadas, perfiles, objetivos y registro clínico (TOML)
 ├── schemas/        # JSON Schema de los eventos y de los mensajes (hito 6)
 ├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6) y Postgres (hito 7)
 ├── notebooks/      # un notebook por hito
@@ -539,8 +543,8 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 - **4 · Perfiles clínicos:** población adulta, 17 motivos, gravedad latente y triaje con error, pruebas por tipo y duraciones por nivel real y motivo, tres relojes, sala de resultados para los niveles 4 y 5 y primera calibración con la ventana anual.
 - **5 · Cierre del flujo:** abandono, destino, boarding simple y ground truth. Cerrado con la tarea 5.8 y la etiqueta `v0.5-hito5`, después del 6 (decisión 48).
 - **6 · Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
-- **7 · Persistencia:** consumidor hacia Postgres/Timescale y capa de observación con defectos. Es el siguiente, con la fase «motor v0» cerrada (hitos 3 a 5).
-- **8 · Analítica:** dbt (medallón) y Grafana.
+- **7 · Persistencia:** simulador del registro clínico, Postgres con TimescaleDB (bronce) y consumidor de Kafka. Cerrado con la tarea 7.7 y la etiqueta `v0.7-hito7`.
+- **8 · Analítica:** dbt (medallón) y Grafana. Es el siguiente.
 - **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow.
 - **10 · Modelos:** casos de uso de ML, uno a uno.
 
@@ -575,6 +579,20 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 | Carga prevista del modelo del hito 5 | Backlog (#103) | Simular avisa de que no existe |
 | Rendimiento de la app | Tarea de proceso | Doble lectura del Replay, tabla de Episodios, límite de `AppTest` |
 
+**Aplazado en el hito 7**, con su destino ([especificación](specs/hito-7.md#para-versiones-posteriores)):
+
+| Qué | Adónde | Nota |
+| --- | --- | --- |
+| Limpiar lo registrado (deduplicar, aplicar correcciones, tipar), plata y oro con dbt | Hito 8 | Y volver a comparar con la verdad: cuánto se acerca lo limpiado |
+| Plata con la forma de un HIS | Hito 8 | Decisión 94: `paciente`, `episodio`, `triaje`, `prueba`, `valoracion`, `destino` |
+| Esquema `verdad` en Postgres y permisos por capa | Hito 8 | Decisión 95 |
+| El registro clínico por defecto en el directo, Quix Streams, KPIs por ventana y retención de Timescale | Hito 8 | Cuando Grafana lea de Postgres |
+| Parquet y DuckDB para el camino por lotes | Hito 8 o 9 | «Capas de almacenamiento» |
+| Página del registro clínico, lectura de bronce, directo en vivo y fantasmas en el Replay | Fase 2 de la app (#122) | Decisión 97: la comparación ya está en el paquete |
+| Un HIS simulado con base de datos transaccional y CDC | Backlog (#123) | El escenario más realista de extracción |
+| Despistes en los eventos de recursos, anotación anticipada, pacientes duplicados | Versiones posteriores | |
+| El test de latencia inestable, la parada de `almacen consumir --run` en una republicación y lo opcional de `compare` | Backlog, sin issue | Detalle en la especificación |
+
 ### App web
 
 La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al cerrar el hito 3, una tarea pequeña en los hitos siguientes y la aplicación completa después del hito 6 o de la v0. Decisión y especificación de la fase 1: App web — fase 1.
@@ -584,6 +602,8 @@ Fase 1 cerrada el 5 de noviembre de 2026 con la etiqueta `app-v0.1.0`: EDsim Lab
 Incremento del hito 4 (tareas 4.8a, 4.8b y 4.8c): la app simula y muestra el modelo clínico, con las etiquetas `app-v0.2.0` y `app-v0.2.1` y las ADR APP-0004 (perfiles de solo lectura) y APP-0005 (Simular solo crea ejecuciones clínicas). Especificación y anexo: App web — incrementos.
 
 Incremento del hito 5 (tareas 5.4 y 5.5, las dos de Claude Code): la app abre y simula el modelo del hito 5, con el abandono, los cuatro destinos, la espera de cama y el pasillo, «Ver la verdad» con el desenlace sorteado y la espera de cama editable en Simular. Etiqueta `app-v0.3.0` y decisión 78; el cierre del hito (5.8) añadió el manual y la versión del catálogo en Ejecuciones. Especificación y anexo: [App web — incrementos](../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama).
+
+Hito 7: sin incremento (decisión 97); la página del registro clínico, la lectura de bronce, el directo en vivo y los fantasmas en el Replay van a la fase 2 (#122). Ver [App web — incrementos](../app/docs/specs/incrementos.md#hito-7--persistencia).
 
 ## Metodología de trabajo con Claude Code y Cursor
 
@@ -823,7 +843,7 @@ Tras la 7.5, el script tarda en el portátil de Pedro lo que dice el anexo de la
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), las 67 a 79, del hito 5 (H5-1 a H5-13, sesión conceptual del 9 y el 10 de noviembre, con sus ADR desde la tarea 5.8), y las 80 a 83, de las tareas de proceso, ya con su ADR; cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), las 67 a 79, del hito 5 (H5-1 a H5-13, sesión conceptual del 9 y el 10 de noviembre, con sus ADR desde la tarea 5.8), las 80 a 83, de las tareas de proceso, ya con su ADR, y las 84 a 99, del hito 7 (H7-1 a H7-16, sesión conceptual del 13 de noviembre, con sus ADR desde la tarea 7.7); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -910,6 +930,22 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 81 | GitHub gestor del trabajo: un issue por tarea, etiquetas, milestones, tablero «EDsim», dependencias nativas que mandan sobre el cuerpo del issue y notas del chat como comentario ([ADR 0081](decisiones/0081-github-como-gestor-del-trabajo.md)) | El estado se actualiza solo, junto al código, y las dependencias se pueden comprobar (tarea P.2) |
 | 82 | El ciclo de cada tarea se escribe una vez en `docs/proceso/tarea.md` y lo ejecutan las skills `/tarea-edsim` y `/sincronizar`, con la N3 y `/code-review` en paralelo ([ADR 0082](decisiones/0082-ciclo-de-cada-tarea-en-tarea-md-y-skills.md); matizada por la decisión 83) | Un cambio de proceso se toca una vez, no en cada prompt (tarea P.2) |
 | 83 | Antes del push, primero `/code-review`, la clasificación de todos sus hallazgos y las correcciones con N1; después, una sola N3, que se repite una vez si falla, no por corrección; lo mismo en los ajustes de la revisión ([ADR 0083](decisiones/0083-una-sola-n3-tras-la-revision-propia.md)) | La N3 en paralelo con la revisión se pierde casi siempre: en la 5.2, 14 de sus 32 min de N3 (issue #100) |
+| 84 | La pieza que mete los despistes es el **simulador del registro clínico** (`edsim.clinical_record`), y sus datos, **lo registrado** frente a **la verdad**; sustituye a «capa de observación» ([ADR 0084](decisiones/0084-simulador-del-registro-clinico.md)) | Dice quién se equivoca y que se equivoca a propósito |
+| 85 | El registro clínico es una función pura de la verdad, para lotes, directo y reemisión; con `--registro`, por Kafka solo viaja lo registrado, igual byte a byte en directo que por lotes ([ADR 0085](decisiones/0085-registro-clinico-funcion-pura-de-la-verdad.md)) | Nadie lee la verdad desde el broker; un solo código, con la comprobación del hito 6 |
+| 86 | Los ocho despistes, con retraso y reloj por sistema; la corrección tardía como `record_corrected` en los esquemas `registro-v*`; erróneos solo en nivel, edad, motivo y destino; un duplicado es otro registro; solo en eventos de pacientes ([ADR 0086](decisiones/0086-ocho-despistes-y-correccion-tardia.md)) | Un error sin su corrección cuenta media historia; los límites abaratan sin perder la lección |
+| 87 | Tres perfiles (limpio, realista y hostil) en `config/registro_clinico.toml`; un dado por evento y despiste con consumo fijo y el perfil como umbral; semilla propia ([ADR 0087](decisiones/0087-tres-perfiles-y-el-truco-del-dado.md)) | Comparar perfiles mide el perfil, no el azar (decisión 43) |
+| 88 | La libreta `defectos.csv`; lo registrado con un perfil y una semilla es una ejecución derivada, renumerada en orden de anotación; lo anotado tras el horizonte no se escribe; la cuenta cuadra siempre ([ADR 0088](decisiones/0088-libreta-y-ejecucion-derivada.md)) | Sin huecos ni marcas que regalen las soluciones (decisión 28) |
+| 89 | Postgres con TimescaleDB en `compose.yaml` (`2.31.0-pg17`), sin perfil y solo en `127.0.0.1`; `psycopg` 3 en el extra `postgres`, en un solo módulo; el consumidor fuera de Docker ([ADR 0089](decisiones/0089-postgres-con-timescaledb-en-compose.md)) | SQL estándar con funciones de tiempo; el patrón de las decisiones 49, 62 y 65 |
+| 90 | `bronce.eventos`: el sobre en columnas, el payload en JSON y las coordenadas de Kafka; hypertable por `ingest_time`; clave única (`event_id`, `ingest_time`); `bronce.ejecuciones` y `bronce.rechazados` ([ADR 0090](decisiones/0090-bronce-eventos-partida-por-la-hora-de-llegada.md)) | La hora de llegada es fiable y siempre existe; Timescale exige la columna de partición en la clave |
+| 91 | Consumidor con `confluent-kafka`: guarda un lote con `ON CONFLICT DO NOTHING` y después confirma; `ingest_time` desde `LogAppendTime`; grupo `edsim-bronce`; los ilegibles, a `rechazados`; continuo o hasta el fin de una ejecución ([ADR 0091](decisiones/0091-consumidor-al-menos-una-vez-idempotente.md)) | Al menos una vez con inserción idempotente |
+| 92 | Migraciones SQL numeradas en el paquete, con un aplicador propio (`edsim almacen preparar`) y una transacción por migración ([ADR 0092](decisiones/0092-migraciones-sql-propias.md)) | Pocas tablas, el SQL a la vista, sin ORM en el núcleo |
+| 93 | Tres capas de tests; cada test dice qué error pilla; una base de datos por sesión; el job `tests-integracion` (antes `tests-kafka`), con Kafka y Postgres, obligatorio ([ADR 0093](decisiones/0093-tres-capas-de-tests-y-tests-integracion.md)) | La decisión 50, sin tests caros que no aporten; el consumidor necesita los dos servicios |
+| 94 | En el hito 8, plata con la forma de las tablas de un HIS; un HIS simulado con CDC, al Backlog (#123) ([ADR 0094](decisiones/0094-plata-con-la-forma-de-un-his.md)) | En un hospital, analítica recibe tablas de un HIS, no eventos |
+| 95 | La verdad no se carga en Postgres hasta el hito 8 ([ADR 0095](decisiones/0095-la-verdad-no-se-carga-en-postgres.md)) | Una sola comparación, sin duplicarla en SQL |
+| 96 | Una sola comparación, en Python, en el paquete: conciliación, retraso e indicadores ingenuos, igual con ficheros que con bronce ([ADR 0096](decisiones/0096-una-sola-comparacion-en-python.md)) | La usan la CLI, el notebook, los tests y la fase 2 de la app |
+| 97 | La app no cambia en el hito 7; el registro clínico va a su fase 2 (#122) ([ADR 0097](decisiones/0097-la-app-no-cambia-en-el-hito-7.md)) | Sin tarea de app en el hito; la comparación queda lista en el paquete |
+| 98 | Una tarea 7.0 de proceso con siete mejoras: formato del plan, revisor del plan, skills por REST, nube por defecto, revisión del chat a la medida, Release lanzable sola y `@claude` ([ADR 0098](decisiones/0098-tarea-7-0-de-proceso.md)) | Las propuestas del balance del hito 5 y el piloto pospuesto |
+| 99 | Ocho tareas en dos pistas tras la 7.0, dos ramas abiertas como mucho, `@codex review` en la 7.1, la 7.4 y la 7.5, etiqueta `v0.7-hito7` ([ADR 0099](decisiones/0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md)) | El registro clínico y la persistencia apenas comparten código |
 
 ### Preguntas resueltas
 
