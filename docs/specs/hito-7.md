@@ -950,23 +950,23 @@ Escrito en la tarea 7.7. El hito deja a EDsim con datos imperfectos, como los de
 
 - **El revisor del plan:**
   - en la 7.1, encontró los seis puntos que cambiaron el plan, incluido el único error de hecho, y el chat no añadió nada que lo cambiara (tabla en la entrada de la 7.1);
-  - en la 7.4, dos dudas, las dos aplicadas: una fue V36;
+  - en la 7.4, dos dudas, las dos aplicadas; una, su propuesta de ordenar la sala por `(s, llegada)`, se aplicó como la versión incorrecta V36, que la descartó;
   - en la 7.5, sus ajustes y los del chat dieron la segunda versión del plan, con diez cambios.
 
   La prueba de humo de la 7.0 tardó 117 s y gastó unos 43.000 tokens.
 - **La revisión del chat**, dos casos del hito:
-  - **La nota de la 7.6 sobre `con_despistes` estaba mal.** El 66,8 % era la parte de la clase, no lo que pesa el reloj dentro de ella: en el realista manda el retraso. Claude Code lo midió y lo corrigió.
+  - **Una nota del chat sobre `con_despistes` estaba mal.** Decía, como la 7.2, que la clase era «sobre todo el reloj»; el 66,8 % que anotó la 7.2 era la parte de la clase, no lo que pesa el reloj dentro de ella: en el realista manda el retraso. Claude Code lo midió en la 7.6 y lo corrigió.
   - **En el #136, el chat predijo un fallo que no ocurrió:** que la republicación pararía sin leer. No falló porque `compose.yaml` pone `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` (queda en «Para versiones posteriores»).
   - **La lección:** las cifras de las notas también se miden, y una predicción se contrasta con la configuración real antes de darla por probable.
 - **`@claude` en el PR:** 43 s del comentario al commit en el piloto de la 7.0, y la condición nueva de `claude.yml` comprobada el 14 de noviembre (versión incorrecta 3 de la 7.0).
-- **La nube por defecto:** la 7.1, la 7.2, la 7.3 y la 7.6, y la segunda mitad de la 7.5. Funcionó sin GraphQL, con las skills por REST y el tablero movido por Pedro. No fue más rápida: la mediana de la N3 en la nube, 15:03, frente a 13:50 en local en la 7.4, con un núcleo de entre 4.071 y 4.651 tests. En la 5.7, con menos tests, fue al revés: 10:41 frente a 13:52.
+- **La nube por defecto:** la 7.1, la 7.2, la 7.3 y la 7.6, y la segunda mitad de la 7.5. Funcionó sin GraphQL, con las skills por REST y el tablero movido por Pedro. No fue más rápida: la mediana de la N3 en la nube, 15:03, frente a 13:50 en local en la 7.4, con un núcleo de entre 4.071 tests (la 7.1, según su PR, el #129) y 4.651 (la 7.4). En la 5.7, con menos tests, fue al revés: 10:41 frente a 13:52.
 - **Dos pistas:** la 7.5 se hizo en paralelo con la 7.1, y las dos se fusionaron el 14 de noviembre, primero la 7.1. La 7.5 trajo `main` con un merge (`5b8fef4`), como pedían las «Precisiones» de las dos pistas.
 
 ### Lecciones del hito
 
 - **El cuelgue de WSL durante la 7.5.** La versión incorrecta V16 dejó un bucle sin fin contra un doble que guardaba cada llamada, y la memoria se agotó. De ahí salió el #131: `pytest-timeout`, y `RunawayLoop` con `check_calls` en los dobles que se llaman en bucle. Ya está en `AGENTS.md`.
 - **`.wslconfig` con `memory=7GB` y `swap=8GB`** en un portátil de 16 GB, y como mucho dos mutantes a la vez en local ([portabilidad.md](../proceso/portabilidad.md#3-entorno-desde-cero-windows-con-wsl2-probado) §3).
-- **Después de fusionar cualquier PR, también si la rama era de la nube, `/sincronizar`**, que hace el `uv sync`. Tras el #131 se hizo solo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4.
+- **Después de fusionar cualquier PR, también si la rama era de la nube, `/sincronizar`**, que hace el `uv sync`. Tras fusionar el #132 (el #131) se hizo solo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4.
 
 ### Propuestas de velocidad
 
@@ -1544,5 +1544,5 @@ No cambia ningún fichero del paquete: los tests del núcleo y de la app no pued
 
 **Pendiente**
 
-- **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte.
-- **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes.
+- **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte. [Hecho en la 7.7.]
+- **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes. [Hecho: Pedro la ejecutó en local con Docker y pasa entera (nota del #121, 15 de noviembre).]
