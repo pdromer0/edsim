@@ -22,3 +22,7 @@ No se documentaron alternativas.
 - Todos los eventos comparten un sobre común y llevan tres tiempos: `event_time`, `recorded_time` e `ingest_time`. Con ellos se construyen features "a fecha de".
 - La capa de observación se deriva del log e inyecta defectos configurables, con tres perfiles: limpio, realista y hostil.
 - El modo replay puede re-emitir una ejecución guardada de forma determinista.
+
+## Nota de actualización (2026-11-15)
+
+La «capa de observación» se llama, desde el hito 7, **simulador del registro clínico**, y sus datos, **lo registrado** ([ADR 0084](0084-simulador-del-registro-clinico.md)). Los defectos inyectados no van al ground truth, sino a la libreta `defectos.csv` de lo registrado con cada perfil y semilla ([ADR 0088](0088-libreta-y-ejecucion-derivada.md)). La decisión no cambia: la verdad sigue separada de lo que ve el hospital.

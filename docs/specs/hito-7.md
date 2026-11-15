@@ -1,6 +1,6 @@
 # Hito 7 — Persistencia
 
-> **Estado:** especificación aprobada el 13 de noviembre de 2026; sin empezar. El original está en este repositorio.
+> **Estado:** cerrado con la tarea 7.7 y la etiqueta `v0.7-hito7`. Especificación aprobada el 13 de noviembre de 2026; el original está en este repositorio.
 
 Al terminar el hito 7, EDsim produce datos **imperfectos, como los de un hospital real**, los **guarda en una base de datos** y puede **decir exactamente en qué se equivocan**. El motor sigue dando la verdad. Una pieza nueva, el **simulador del registro clínico**, la convierte en **lo registrado**: lo que el personal anota, con retrasos, duplicados, olvidos y errores. Lo registrado viaja por Kafka hasta Postgres con TimescaleDB, y una comparación dice qué le pasó a cada hecho y cuánto se desvían los indicadores.
 
@@ -868,6 +868,17 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 | Alembic, Flyway o Sqitch | Si crecen las migraciones | |
 | ClickHouse o DuckDB para la analítica pesada | Si Postgres se queda corto | |
 | Avro y registro de esquemas | v1 | Caso de uso «evolución de esquemas» |
+| Un test inestable: `test_consumidor_en_vivo_igual_a_batch[hito4]` falló una vez con −25 ms de latencia (7.4) | Backlog, sin issue | Compara el reloj del broker, en Docker, con el de WSL, que son dos máquinas |
+| La parada de `almacen consumir --run` en una republicación (7.6) | Backlog, sin issue | Depende de que el grupo se forme dentro del primer `consume` de 1 s, lo que hoy asegura el `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` de `compose.yaml`; con el retraso por defecto (3 s), pararía sin leer la publicación nueva. Remedio posible: no darla por completa hasta tener asignación y estar al día con la marca alta de cada partición. Relacionado: con otro productor publicando sin parar en los mismos topics, `--run` llega al `timeout` (7.5) |
+| `compare`: la comprobación opcional de las filas de corrección; que `registro comparar` lea la cuenta de `registro.json` (7.3) | Si hace falta | Hoy la tercera igualdad de la cuenta la comprueba `generar` |
+| `fecha_inicio` en `run.json` (7.3) | Si hace falta | Quitaría la deducción del origen del reloj en `compare` |
+| Un mensaje claro de `read_run` con lo registrado, en cualquier orden (7.4) | Si hace falta | Mirar el `run_id` derivado antes de `from_json` |
+| `--forzar` en `registro generar` (7.2) | Si hace falta | Hoy se borra la carpeta a mano |
+| Un hook `PreToolUse` que analice los argumentos de `gh api` (7.0) | Backlog, sin issue | Más robusto que las reglas con comodines de `.claude/settings.json` |
+| Las reglas de Codex por REST (7.0) | Si una tarea de Codex va a la nube | `.codex/rules/edsim.rules` sigue con `gh pr create` y `gh pr view` |
+| Los rápidos cerca del límite de 60 s con xdist (7.4) | Vigilar | De 24 a 41 s, los de `test_cli_calibracion.py`. En la 7.7, `test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas` pasó de 60 s en la N2 con la máquina cargada; solo y en serie, 22,6 s |
+
+Las nueve últimas filas las añadió el cierre (7.7): son los pendientes del anexo que el hito no arregló.
 
 ## Fuentes y para aprender más
 
@@ -888,6 +899,86 @@ Consultadas el 13 de noviembre de 2026, y las de la 7.2 el 14. Las de «para apr
 | `psycopg` 3 | [Documentación](https://www.psycopg.org/psycopg3/docs/basic/) | Transacciones, `executemany` y `COPY` |
 
 **Cálculos propios de esta especificación.** Las horas del escenario L, calculadas en Python en el chat. Los valores orientativos son de criterio, con las fuentes de la tabla como órdenes de magnitud.
+
+## Balance del hito
+
+Escrito en la tarea 7.7. El hito deja a EDsim con datos imperfectos, como los de un hospital: los guarda en Postgres y dice exactamente en qué se equivocan. El motor no cambió.
+
+### Qué se entregó y dónde
+
+| Pieza | Dónde |
+| --- | --- |
+| Simulador del registro clínico: los ocho despistes, el dado, la libreta y la cuenta | `src/edsim/clinical_record/`, [ADR 0084](../decisiones/0084-simulador-del-registro-clinico.md) a [0088](../decisiones/0088-libreta-y-ejecucion-derivada.md) |
+| Perfiles limpio, realista y hostil, y `edsim registro validar` y `generar` | `config/registro_clinico.toml`, [ADR 0087](../decisiones/0087-tres-perfiles-y-el-truco-del-dado.md) |
+| Lo registrado en el directo y en la reemisión | `edsim directo … --registro`, [ADR 0085](../decisiones/0085-registro-clinico-funcion-pura-de-la-verdad.md) |
+| Postgres con TimescaleDB, `bronce` y el consumidor | `compose.yaml`, `src/edsim/store/`, [ADR 0089](../decisiones/0089-postgres-con-timescaledb-en-compose.md) a [0092](../decisiones/0092-migraciones-sql-propias.md) |
+| La comparación con la verdad | `edsim.clinical_record.compare`, `edsim registro comparar`, [ADR 0096](../decisiones/0096-una-sola-comparacion-en-python.md) |
+| Tests en tres capas y el job `tests-integracion` | `tests_integracion/`, [ADR 0093](../decisiones/0093-tres-capas-de-tests-y-tests-integracion.md) |
+| Notebook 07 | `notebooks/07_persistencia.ipynb` |
+| Lo que se aplaza: plata y la verdad en el hito 8, la app en su fase 2 | [Para versiones posteriores](#para-versiones-posteriores), [ADR 0094](../decisiones/0094-plata-con-la-forma-de-un-his.md), [0095](../decisiones/0095-la-verdad-no-se-carga-en-postgres.md) y [0097](../decisiones/0097-la-app-no-cambia-en-el-hito-7.md) |
+| Lo aprendido | [diario](../diario/hito-7.md), [lecciones](../proceso/lecciones.md) |
+| Proceso: la 7.0 y las dos pistas | [ADR 0098](../decisiones/0098-tarea-7-0-de-proceso.md), [ADR 0099](../decisiones/0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md), [portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba) §14 |
+
+### Cifras
+
+- **Tiempo:** del primer PR, el de la 7.0, abierto el 13 de noviembre a las 22:05 UTC, al de la 7.6, fusionado el 15 a las 11:14 UTC: 37 h. Son ocho issues (#114 a #121) y un PR por tarea.
+- **Los PR de la 7.0 a la 7.6**, con sus commits y los minutos de la apertura a la fusión, sacados de `gh api repos/pdromer0/edsim/pulls/N` y un script, en el orden en que se fusionaron:
+
+  | Tarea | PR | Commits | Apertura → fusión |
+  | --- | --- | --- | --- |
+  | 7.0 | #126 | 16 | 791 min (abierto de noche, fusionado por la mañana) |
+  | 7.1 | #129 | 10 | 43 min |
+  | 7.5 | #130 | 22 | 68 min |
+  | 7.2 | #133 | 10 | 123 min |
+  | 7.3 | #134 | 12 | 18 min |
+  | 7.4 | #135 | 14 | 19 min |
+  | 7.6 | #136 | 7 | 76 min |
+
+  Entre medias entraron dos PR de la P.3: el #127 (#81, saltar los tests cuando un PR solo cambia documentación) y el #132 (#131, el límite de tiempo por test).
+- **Issues que salieron del hito:**
+  - **#131**, el límite de tiempo por test y el tope de los dobles, por el cuelgue de la 7.5: cerrado por el #132;
+  - **abiertos**, de la sesión conceptual: #122 (la fase 2 de la app con el registro clínico) y #123 (un HIS simulado con CDC);
+  - **cerrados de paso:** #110 (el revisor del plan, en la 7.0) y #91 (la consola en `127.0.0.1`, en la 7.5).
+- **N3:**
+  - en la nube, seis: 17:18 (7.1), 15:12 (7.2), 12:52 (7.3), 16:18 y 13:36 (7.5, antes y después de los ajustes de Codex) y 14:54 (7.6). La mediana es 15:03;
+  - en local, una: 13:50 (7.4);
+  - la 7.0 no tuvo N3: era una rama de documentación, skills y permisos, y Pedro la autorizó sin ella.
+- **Paradas para decidir con Pedro durante la implementación:** dos. Una en la 7.4: el límite de 180 s de `test_every_minute_matches_curves_full_fold_and_cards`. Otra en la 7.5: la integración sin ejecutar en local, porque la hizo el CI. Las demás decisiones nuevas llegaron como ajustes al plan: `retraso_min` y la edad literal en la 7.1, y la última publicación de `--postgres` en la 7.3.
+- **Interrupciones:** la sesión local de la 7.5 se cortó tres veces, porque WSL se quedaba sin memoria (ver «Lecciones del hito»).
+
+### Los pilotos de la 7.0, medidos
+
+- **El revisor del plan:**
+  - en la 7.1, encontró los seis puntos que cambiaron el plan, incluido el único error de hecho, y el chat no añadió nada que lo cambiara (tabla en la entrada de la 7.1);
+  - en la 7.4, dos dudas, las dos aplicadas; una, su propuesta de ordenar la sala por `(s, llegada)`, se aplicó como la versión incorrecta V36, que la descartó;
+  - en la 7.5, sus ajustes y los del chat dieron la segunda versión del plan, con diez cambios.
+
+  La prueba de humo de la 7.0 tardó 117 s y gastó unos 43.000 tokens.
+- **La revisión del chat**, dos casos del hito:
+  - **Una nota del chat sobre `con_despistes` estaba mal.** Decía, como la 7.2, que la clase era «sobre todo el reloj»; el 66,8 % que anotó la 7.2 era la parte de la clase, no lo que pesa el reloj dentro de ella: en el realista manda el retraso. Claude Code lo midió en la 7.6 y lo corrigió.
+  - **En el #136, el chat predijo un fallo que no ocurrió:** que la republicación pararía sin leer. No falló porque `compose.yaml` pone `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` (queda en «Para versiones posteriores»).
+  - **La lección:** las cifras de las notas también se miden, y una predicción se contrasta con la configuración real antes de darla por probable.
+- **`@claude` en el PR:** 43 s del comentario al commit en el piloto de la 7.0, y la condición nueva de `claude.yml` comprobada el 14 de noviembre (versión incorrecta 3 de la 7.0).
+- **La nube por defecto:** la 7.1, la 7.2, la 7.3 y la 7.6, y la segunda mitad de la 7.5. Funcionó sin GraphQL, con las skills por REST y el tablero movido por Pedro. No fue más rápida: la mediana de la N3 en la nube, 15:03, frente a 13:50 en local en la 7.4, con un núcleo de entre 4.071 tests (la 7.1, según su PR, el #129) y 4.651 (la 7.4). En la 5.7, con menos tests, fue al revés: 10:41 frente a 13:52.
+- **Dos pistas:** la 7.5 se hizo en paralelo con la 7.1, y las dos se fusionaron el 14 de noviembre, primero la 7.1. La 7.5 trajo `main` con un merge (`5b8fef4`), como pedían las «Precisiones» de las dos pistas.
+
+### Lecciones del hito
+
+- **El cuelgue de WSL durante la 7.5.** La versión incorrecta V16 dejó un bucle sin fin contra un doble que guardaba cada llamada, y la memoria se agotó. De ahí salió el #131: `pytest-timeout`, y `RunawayLoop` con `check_calls` en los dobles que se llaman en bucle. Ya está en `AGENTS.md`.
+- **`.wslconfig` con `memory=7GB` y `swap=8GB`** en un portátil de 16 GB, y como mucho dos mutantes a la vez en local ([portabilidad.md](../proceso/portabilidad.md#3-entorno-desde-cero-windows-con-wsl2-probado) §3).
+- **Después de fusionar cualquier PR, también si la rama era de la nube, `/sincronizar`**, que hace el `uv sync`. Tras fusionar el #132 (el #131) se hizo solo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4.
+
+### Propuestas de velocidad
+
+Salen de lo que costó tiempo en el hito. Ninguna se implanta aquí: cada una, si se aprueba, va en su tarea.
+
+1. **Un hook `PreToolUse` para `gh api`**, que lea el método, los campos y la ruta, en lugar de las reglas con comodines de `.claude/settings.json`. En la revisión de la 7.0 hubo que corregir cuatro reglas.
+2. **Avisar al abrir la sesión si el `.venv` no está al día con `uv.lock`**, en el hook `SessionStart` y sin red. Tras el #132, el límite de 60 s no se aplicó en local hasta la 7.4, y nadie lo vio: cuando por fin se aplicó, un test que lo superaba tumbó la N2 tres veces seguidas.
+3. **Medir la nube antes de mantenerla por defecto para la N3.** En este hito no fue más rápida que el portátil; su ventaja es dejar el portátil libre. `flujo.md` justifica la regla con las cifras de la 5.7.
+4. **Dos pistas también en el hito 8**, si sus tareas se reparten en zonas que no se tocan, como las de este hito.
+5. **El chat contrasta sus predicciones con la configuración real** (`compose.yaml`, `config/`) antes de darlas por probables, y mide las cifras de sus notas.
+
+**Pendiente de comprobar:** el salto de los tests del #81 (PR #127) queda para el primer PR que solo toque ficheros `.md`. Este no lo es, porque cambia `config/` y `.gitignore`.
 
 ## Anexo: guía de referencia del hito 7
 
@@ -944,7 +1035,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 | --- | --- | --- | --- |
 | 1 | La regex sin `(?i)` | Los 12 PR que cierran issues dan distinto; los 28 restantes, igual | 12 distintos y 28 iguales |
 | 2 | «Fusionado» por `merge_commit_sha` no nulo | Con el PR de la 7.0 abierto, daría «fusionado» | Abierto, con `merged` falso y `merge_commit_sha` relleno (el merge de prueba): habría dado «fusionado». Justo al crearlo era nulo, porque GitHub lo calcula en segundo plano |
-| 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Pendiente, tras la fusión |
+| 3 | `claude.yml` con `contains` (lo de `main`) | Tras la fusión, un comentario que solo menciona `@claude` en medio sale *skipped* con `startsWith`; con `contains` se habría ejecutado | Comprobado tras la fusión, el 14 de noviembre, con dos comentarios en el #114: el A, que empieza por la mención, se ejecutó; la respuesta del bot y el B, que solo la nombra en medio, salieron *skipped* (anotado en la 7.7) |
 | 4 | Prueba de humo del revisor: un plan falso de la 7.1 con tres errores sembrados y cuatro apartados de control | Marca los tres y ninguno de control | Se cumple. Veredicto «dudas (16)»; S1 (el reloj en `sim_time`), error, y ve que choca con el 1.031,2 del propio plan; S2 (100 pasa a 1), sospechosa; S3, error, con 1.166,2 y 19:28:12 recalculados; ningún control como error |
 
 **Revisión**
@@ -968,7 +1059,7 @@ Issue #114 (cierra también el #110), rama `chore/h7-proceso`, Claude Code (Opus
 
 **Pendiente**
 
-- **La condición nueva de `claude.yml`**, tras la fusión (el piloto ya funcionó con la de `main`): un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude.
+- **La condición nueva de `claude.yml`**, tras la fusión (el piloto ya funcionó con la de `main`): un comentario de Pedro que empieza por `@claude` se ejecuta; uno que solo lo menciona sale *skipped* (versión incorrecta 3). Hasta entonces, el chat escribe «arroba claude» y Pedro no asigna issues cuyo cuerpo contenga @claude. [Hecho el 14 de noviembre: ver la versión incorrecta 3.]
 - **El primer uso real del revisor del plan**, en la 7.1, comparado con la revisión del chat del mismo plan.
 - **Un hook `PreToolUse` para `gh api`** (hallazgo de la revisión), en lugar de las reglas con comodines: propuesta para el Backlog.
 - **Las reglas de Codex** (`.codex/rules/edsim.rules`) siguen con `gh pr create` y `gh pr view`: Codex trabaja en local y pide permiso para todo lo que usa la red; se cambia si una tarea de Codex va a la nube.
@@ -1137,7 +1228,7 @@ Con el subagente `mutante` en paralelo, sobre `6737d01`:
 
 **Pendiente**
 
-- **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
+- **La 7.3** (#117): la conciliación verá la clase `con_despistes` dominada por el reloj [corregido en la 7.6: en el realista manda el retraso; el reloj, en el hostil]; el desglose «por tipo de despiste» lo separa. `registro comparar` lee `registros/<perfil>-s<semilla>/`.
 - **La 7.4** (#118): `--registro` en `directo lanzar` y `reemitir` usa `StreamDice` y `load_record_profiles`.
 - **Si algún día hace falta sobrescribir un registro:** hoy no hay `--forzar`; se borra la carpeta a mano.
 
@@ -1163,7 +1254,7 @@ Issue #117, rama `feat/h7-comparacion`, Claude Code (Sonnet, en la nube). Tarea 
 - **`compare` recibe `horizon` y `warmup`** (minutos), que la especificación no listaba: el censo medio los necesita. El origen del reloj se deduce del primer evento de la verdad con la misma fórmula que `event_time()`. `--perfil` es obligatorio en `comparar`.
 - **Indicadores ingenuos**: el primer registro de cada tipo de cada episodio, en el orden dado (el de emisión); `assessment_started` solo con `tipo == "inicial"`; el censo cuenta `llegada <= H < salida` en cada hora en punto de `[calentamiento, horizonte)`; el reparto por nivel, sobre los `triage_completed` con un nivel entero de 1 a 5, duplicados incluidos; las llegadas, todos los `patient_arrived`. Los `record_corrected` no se leen.
 - **El retraso por sistema** es `recorded_time - event_time` de los registros `bien` y `con_despistes` (el desfase se cancela: se suma a las dos horas); los duplicados y las correcciones no entran.
-- **`con_despistes` desglosado** (nota del chat de la tarde): con reloj, con retraso, con valor erróneo, con campo vacío (se solapan) y solo reloj. Con la ejecución de `config/`, el reloj domina: 17,5 % de la clase es solo reloj en el realista y 22,2 % en el hostil, pero el reloj aparece en el 100 % del hostil.
+- **`con_despistes` desglosado** (nota del chat de la tarde): con reloj, con retraso, con valor erróneo, con campo vacío (se solapan) y solo reloj. Con la ejecución de `config/`, el reloj domina [corregido en la 7.6: en el realista manda el retraso; el reloj, en el hostil]: 17,5 % de la clase es solo reloj en el realista y 22,2 % en el hostil, pero el reloj aparece en el 100 % del hostil.
 - **Traducción de errores de Postgres** compartida (`_postgres_errors`) entre `bronze_store` y `read_bronze_lines`: sin las tablas o con la conexión perdida, el mismo error que el consumidor, no una traza.
 
 **Valores a mano** (código independiente de `edsim`; completo en el PR)
@@ -1453,5 +1544,94 @@ No cambia ningún fichero del paquete: los tests del núcleo y de la app no pued
 
 **Pendiente**
 
-- **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte.
-- **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes.
+- **El comentario de `config/registro_clinico.toml`** (líneas «Con estos relojes, la clase “con_despistes” …») repite la frase que esta tarea corrige en la especificación: el reloj domina en el hostil, no en el realista. `config/` pide confirmación de Pedro al editarse; va a la 7.7 (cierre) o a un `docs(config)` aparte. [Hecho en la 7.7.]
+- **La sección 7 del notebook, sin ejecutar por mí:** Pedro la ejecuta con los comandos del PR; si algún valor no sale como arriba, se corrige en una ronda de ajustes. [Hecho: Pedro la ejecutó en local con Docker y pasa entera (nota del #121, 15 de noviembre).]
+
+### Tarea 7.7: Cierre del hito 7
+
+**Qué se hizo**
+
+Issue #121, rama `docs/h7-cierre`, Claude Code (Opus, en local), con `/cerrar-hito` (su primer uso). Sin la etiqueta `critica`, pero con `/code-review high` por petición de Pedro; `@codex review` lo pide Pedro en el PR. Un commit por bloque, más los de la revisión:
+
+- **Los ADR 0084 a 0099** (`355b66d`), uno por decisión, con las alternativas descartadas y cuándo tendrían sentido (petición de Pedro), «Qué cambió al implementarla» con la tarea y el commit, y el índice al día. Una nota de actualización en la ADR 0006, que nombraba la «capa de observación» (`4cb4804`).
+- **Esta especificación:**
+  - el estado;
+  - la versión incorrecta 3 de la 7.0, comprobada el 14 de noviembre;
+  - las notas entre corchetes de la 7.2, la 7.3 y la 7.6;
+  - nueve filas de «Para versiones posteriores» con los pendientes del anexo (`8a8d4c5`);
+  - el «Balance del hito» (`e032569`, `f991413`).
+- **El diseño** (`e0cc333`, `a1daea7`), con el visto bueno de Pedro al plan:
+  - «capa de observación» pasa a «simulador del registro clínico»;
+  - los tres tiempos del sobre, lo registrado en el catálogo, bronce en las capas, Postgres sin perfil y el árbol del repositorio;
+  - la hoja de ruta con el hito 7 cerrado y lo aplazado;
+  - las decisiones 84 a 99.
+- **El diario** `docs/diario/hito-7.md` (`3231f8c`), con «Pedro sabe explicar» y «Reflexiones de Pedro» vacía.
+- **La app** (`f04a395`): `incrementos.md` gana la sección del hito 7, sin incremento, con lo que va a la fase 2 (#122).
+- **El proceso** (`1c439bb`):
+  - ocho lecciones;
+  - la §14 de `portabilidad.md` con los pilotos del hito;
+  - `flujo.md`: `/sincronizar` tras cualquier fusión.
+- **Fuera de la documentación:** el comentario de `config/registro_clinico.toml` (`3166f4e`, `00cbf97`) y `.vscode/` en `.gitignore` (`2391479`).
+- **La portada:** `AGENTS.md` y `README.md` (`67ea47f`), y la tabla de tamaños de `docs/README.md`.
+
+**Decisiones del diff**
+
+- **La fase 2 de la app, como sección del hito 7 en `incrementos.md`:** no existía sección de fase 2. Lleva una nota: la comparación tendrá que exponerse en `__all__` de `edsim.runs`, porque la app solo importa de ahí.
+- **Los pendientes del anexo, en «Para versiones posteriores», sin abrir issues:** la búsqueda en GitHub no encontró ninguno.
+- **El anexo no se reescribe:** lo que el hito corrigió va entre corchetes, con la tarea que lo corrigió.
+- **«Un registro» es cada fila** (ajuste de Pedro al plan): lo registrado con un perfil y una semilla es la ejecución derivada. Se aplica en el diseño, también donde el plan decía «de cada registro».
+- **El cuelgue de WSL fue en la 7.5**, con V16, como dice su anexo (ajuste de Pedro al plan: la nota del chat decía la 7.1).
+- **`portabilidad.md` §3 no cambia:** ya tenía el `.wslconfig` con su porqué.
+- **El diario fecha cada entrada con la fusión de su PR** en hora `+01:00`: la 7.4 queda en el 15 de noviembre.
+
+**Valores a mano**
+
+- **Los PR del balance:** los commits, la apertura y la fusión, por REST (`pulls/N`), y los minutos con `python3`. El hito, 37 h; la mediana de las N3 en la nube, 15:03.
+- **El comentario del TOML:** 36.538 / (18.238 + 36.538) = 66,70 % y 52.137 / (86 + 52.137) = 99,84 %, de los hechos escritos. Sobre todos los registros escritos serían el 66,3 % y el 95,4 % (hallazgo de la revisión).
+- **Un descuadre resuelto:** el cuerpo del #136 dice que se abrió a las 00:35, y la API, a las 09:58 UTC. El balance usa la API.
+
+**Medidas**
+
+- **Sin N3**, con el permiso de Pedro (`tarea.md` §4): la rama es documentación, un comentario de `config/` y `.gitignore`. El CI corre entero, porque `config/` cuenta como código.
+- **Antes del push:**
+  - `ruff check` y `ruff format --check`;
+  - `edsim registro validar`, que sigue en verde (en el `diff` del TOML solo cambian líneas de comentario);
+  - los 222 tests de `test_registro_perfiles.py`, `test_record_run.py` y `test_cli_registro.py`;
+  - un script de enlaces, sin problemas en los enlaces relativos de los markdown cambiados;
+  - un comando que comprueba que cada ADR del 0084 al 0099 tiene fichero, está en el índice y está en el registro del diseño: 0 fallos.
+
+  La salida completa de cada uno, en el PR.
+- **La huella del TOML** cambia con el comentario (de `9082cf8f5e54` a `20885c3352a2`); ningún test ni documento la fija.
+- **La N2 del hook Stop falló una vez:** `test_la_comprobacion_con_la_ventana_anual_usa_sus_fechas` pasó de 60 s con xdist mientras corría `/code-review high` en segundo plano. Solo y en serie, 22,6 s. Es el pendiente de la 7.4, y su fila de «Para versiones posteriores» lo anota. Se repitió con la máquina libre (resultado en el PR).
+
+**Versiones incorrectas**
+
+A mano en el árbol de trabajo, deshechas con `git checkout`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Una línea del comentario del TOML sin el `#` | `registro validar` falla con un error de TOML. Fallan `test_el_fichero_real_tiene_los_valores_de_la_especificacion` (los tres perfiles) y `test_el_limpio_real_no_tiene_nada_distinto_de_cero` | `registro validar` sale con código 2 («Expected '=' after a key», línea 35). Fallan 3 y pasan 152: la predicción contaba un perfil de más, porque el test del fichero real solo lleva `realista` y `hostil` |
+| V2 | Un ancla del balance que no existe | El script de enlaces la marca, con fichero y línea | La marca: `hito-7.md:918`, código 1 |
+| V3 | El 0091 fuera del índice | El comando de los ADR la marca | «0091: no está en el índice», código 1 |
+
+**Revisión**
+
+`/code-review high main...docs/h7-cierre`, diez hallazgos, todos de documentación. Comprobó con su propio script los enlaces y, por REST, las cifras de los PR del balance.
+
+- **Corregidos:**
+  - `docs/README.md` seguía con el hito 7 en curso y los tamaños viejos;
+  - «tras el #131» era el #132 (`f991413`);
+  - el 66,7 % y el 99,8 % son de los hechos escritos, no de todo lo escrito (`00cbf97`, también en la ADR 0087);
+  - V36 descartó la propuesta del revisor de la 7.4, no la aplicó (`f991413`, también en la ADR 0098 y en `portabilidad.md`);
+  - la frase de `con_despistes` la escribió la 7.2 (`f991413`);
+  - en el diseño, lo opcional de `compare` iba con otro destino que en la especificación (`a1daea7`);
+  - los dos pendientes de la 7.6 seguían abiertos (`f991413`);
+  - el 4.071 no tenía fuente: es del PR #129 (`f991413`);
+  - la ADR 0006 seguía con «capa de observación» (`4cb4804`).
+- **Explicado:** faltaba esta entrada, que es el último paso antes del push.
+
+**Pendiente**
+
+- **Pedro, tras la fusión:** la etiqueta `v0.7-hito7` sobre la fusión de este PR y, después, `/cerrar-hito 121`, que con el issue cerrado va directa a la Release. Los pasos, en el PR.
+- **Las propuestas de velocidad del balance**, por decidir.
+- **La comprobación del salto del #81**, en el primer PR que solo toque `.md`.
