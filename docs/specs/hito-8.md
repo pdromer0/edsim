@@ -1116,3 +1116,101 @@ Cada una aplicada con el árbol limpio, observada y deshecha con `git restore`:
 
 - **La 8.5** (#144): el paso al final de cada construcción que dé `USAGE` sobre `plata` y `oro` a `hospital` (la configuración `grants` de dbt no lo hace); y sus construcciones llevan `--exclude-resource-type unit_test`.
 - **La 8.9** (#148): la memoria de `registro generar` con un año (4,3 GiB) al medir todo levantado; la base `edsim_medida` y la ejecución `r365` quedan en el equipo de Pedro (586 MB y 1,2 GB) hasta que decida borrarlas.
+
+### Tarea 8.5: Oro, las tres construcciones y la prueba de punta a punta
+
+**Qué se hizo**
+
+Issue #144, rama `feat/h8-oro`, Claude Code (Opus, en local, con Postgres). Tarea crítica: revisor del plan, `/code-review high` y `@codex review`. Un commit por paso, más los de la revisión:
+
+- **Parámetros** (`29d714c`): `preparacion.parametros`, el origen, W y el horizonte de cada ejecución, del `inicio` de bronce o de `verdad.dias`; `tests_integracion/dbt_testing.py` con lo común de los tests de dbt.
+- **El censo y los cinco** (`4b21e6a`): `oro.censo` y `oro.kpi_ejecucion` con la ventana; `primero` admite una lista de tipos y una condición; unit test del censo.
+- **El resto de oro** (`8309a5a`): las semillas con su test frente a `centro.toml`, `oro.cohorte`, `kpi_hora`, `kpi_turno` y `calidad`; unit tests de la cohorte y de quien sigue dentro.
+- **Permisos** (`a68fc24`): `grants` según la hoja y el `USAGE` de los esquemas en el `on-run-end`.
+- **`laboratorio.tres_columnas`** (`e54be5f`).
+- **Punta a punta** (`cdad75d`): la fixture de sesión y siete tests.
+- **Documentación** (`c73714e`).
+- **Revisión** (`0f869cb`, `3817ac0`, `21497f9`, `32f62ce`, `8249b4c`).
+
+**Decisiones del diff**
+
+- **La ventana (D1 de las notas del chat):** los cinco indicadores cuentan los registros con `event_time` ≥ origen + W; el censo, todos. Sin la ventana, las llegadas del calentamiento, que una reemisión no deja en bronce, sesgarían «limpio − verdad». La referencia de Python filtra igual y llama a las funciones de `compare.py`, que no cambia.
+- **El censo, como un torniquete:** una suma acumulada de llegadas (+1) y salidas (−1) por la primera hora en punto que las ve, no un cruce de cada hora con cada estancia, que con un año serían ~10⁹ comparaciones. La ocupación de boxes despliega cada estancia en sus horas, que son pocas, para contar boxes distintos.
+- **La cohorte** (`oro.cohorte`) tiene una fila por episodio con su hora y su turno de llegada. `kpi_hora` y `kpi_turno` agrupan por ella, y V10 vive ahí. La hora y el turno salen de aritmética entera sobre `k`, las horas desde el origen (una medianoche), y no dependen de la zona de la sesión.
+- **Sigue dentro o salida olvidada:** sin salida, sigue dentro si su última anotación es de las últimas 24 h de la ejecución. Medido con 14 días de `config/` y el perfil realista, con la semilla 2026 del registro (79 sin salida):
+
+  | Margen | Olvidadas (abiertas de verdad) | Dentro (ya salidas de verdad) |
+  | --- | --- | --- |
+  | 12 h | 23 (2) | 56 (6) |
+  | 24 h | 22 (1) | 57 (6) |
+  | 48 h | 20 (0) | 59 (7) |
+
+  Con la semilla 7: 59 sin salida; a 24 h, 25 olvidadas (0 abiertas) y 34 dentro (0 salidas). La verdad, que no olvida nada, da 1 olvidada a 24 h con la semilla 2026 y 0 con la 7. El plan llevaba otra tabla, calculada por error con la semilla 1 del registro; la cazó el revisor del plan.
+- **Los permisos:** `+grants` en `dbt_project.yml` con Jinja que dbt renderiza a una lista, y que necesita el valor por defecto (`var('hoja', 'hospital')`), porque el fichero se lee antes que sus propias `vars`. El `USAGE` lo da `dar_uso_de_esquemas` con los `schemas` de cada construcción.
+- **`tres_columnas` es una tabla larga** de nueve KPI, con `run_id_registrado`, y lee las tres hojas como fuentes.
+- **Las medias de oro, con aritmética exacta:** un `avg` de `double precision` depende del orden de las filas, y la misma ejecución en dos hojas daba distinto el último bit.
+- **`greatest` ignora los nulos en Postgres:** traducido sin más del `max(salida, llegada)` de Python, quien no tenía salida salía al llegar. La comparación con Python lo cazó (censo medio 62,4 frente a 67,375).
+
+**Valores a mano**
+
+Los del plan, ejecutados con código independiente de los modelos y recalculados por el revisor del plan:
+
+- el censo `{16: 2, 17: 2, 18: 3}`;
+- la cohorte: P en la hora de las 16, tarde del 5, con 6 y 32 min; R en la noche del 5; S en la mañana del 6;
+- quien sigue dentro: U olvidada, V y Z dentro;
+- la ocupación de boxes (añadida en la revisión): 2, 1 y 2 boxes.
+
+La referencia de la punta a punta (3 días, semilla 2026, horas 24 a 71):
+
+| Hoja | Llegadas | Censo medio | Triaje (min) | Médico (min) |
+| --- | --- | --- | --- | --- |
+| verdad | 705 | 67,375 | 13,926008 | 44,585617 |
+| realista, ingenuo | 705 | 68,791667 | 15,935433 | 44,585617 |
+
+La hoja del hospital da 702 llegadas con el realista: quita los 3 dobles clics de la ventana. En la ingenua, esos 3 tapan por casualidad 3 llegadas perdidas.
+
+**Medidas**
+
+- La fixture de la punta a punta (ejecución, registro, bronce, `cargar-verdad` y las cuatro construcciones): 39 s en el portátil; el módulo, 50 s. Con cinco mutantes en paralelo, unos 250 s cada uno.
+- `test_analitica.py` (la hoja del hospital con sus 17 unit tests): 8,4 s.
+- Una hoja entera, con sus tests de datos, sobre los 3 días: unos 9 s.
+- N3 (`scripts/tests-completos.sh`): 17 min 45 s (núcleo 13:12, app 3:22, notebooks 1:11).
+- `scripts/tests-integracion.sh`: 3 min 56 s, 47 tests (pytest 3:45).
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, cada una en su worktree y sobre lo commiteado:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V9 | El censo cuenta al que sale justo a la hora en punto | Falla solo `censo_a_la_hora_en_punto`; la punta a punta pasa | Así: 3 en vez de 2 a las 17:00; los 7 de la punta a punta pasan |
+| V10 | Las esperas, por la hora del triaje | Falla solo `cohorte_de_llegada` | Así: P a las 17:00; la punta a punta pasa |
+| V11 | Las llegadas, desde `plata.episodio` | Falla solo la comparación ingenua, 702 frente a 705 | Así |
+| M1 | `dar_uso_de_esquemas` sin `USAGE` para `hospital` | Falla solo el test de permisos | Así: `preparacion.registros` denegado |
+| M2 | `sigue_dentro` con `event_time` | Falla solo `cohorte_sigue_dentro` | Así: V olvidada |
+
+La corrección de la ocupación se comprobó también a mano: sin la condición de que el episodio siga dentro, falla `ocupacion_de_boxes`.
+
+**Revisión**
+
+`/code-review high main...feat/h8-oro`, diez hallazgos:
+
+- **Corregidos:**
+  - el filtro de `fecha_inicio` antes de elegir el último `inicio`, y la consulta copiada en `tres_columnas` (`0f869cb`, macro `ultimo_inicio`);
+  - las ejecuciones sin parámetros, que desaparecían sin aviso: `calidad.sin_parametros` (`0f869cb`);
+  - el box de una salida olvidada, ocupado para siempre, y las estancias anteriores a la ventana desplegadas para nada (`3817ac0`, con unit test);
+  - las copias del nivel legible y de las estancias (`3817ac0`, macros);
+  - la documentación de `tres_columnas` con una hoja sin construir (`21497f9`);
+  - el test de permisos, que no veía un `SELECT` de más tapado por el `USAGE`, y `ORO` definido dos veces (`8249b4c`).
+- **Al corregir apareció otro defecto:** las medias de `kpi_turno` dependían del orden de las filas (`32f62ce`).
+- **Explicados:**
+  - en un directo, `kpi_hora` tiene filas de las horas aún futuras (declarado en el plan; va a la 8.7);
+  - `with_user` se importa de `test_verdad`, como ya importa `test_verdad` de `test_almacen`.
+- **La regla de quien sigue dentro también tiene un coste en la ocupación:** un paciente de verdad en un box, esperando cama más de 24 h sin anotar nada, deja de contar. En la verdad de la punta a punta, la ocupación máxima pasa de 36 a 35. Se prefirió a que las salidas olvidadas llenen los 36 boxes en un año.
+
+**Pendiente**
+
+- **La 8.6** (#145): sus paneles sobre la base de la fixture `analitica` de `conftest.py`.
+- **La 8.7** (#146):
+  - `censo` y `kpi_hora` tienen todas las horas de la ventana, también las futuras de un directo, con el censo y la ocupación del momento: hay que cortarlas en el ahora de la ejecución o dejar que Grafana no las pida;
+  - la duración de las construcciones con un año, sobre todo la de la ocupación, que despliega las estancias en horas.
