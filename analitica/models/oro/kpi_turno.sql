@@ -41,15 +41,19 @@ with parametros as (
             as inicio,
         count(*) as horas,
         sum(llegadas) as llegadas,
-        avg(censo::double precision) as censo_medio,
+        sum(censo)::double precision / count(*)::double precision as censo_medio,
         {%- for n in range(1, 6) %}
         sum(nivel_{{ n }}) as nivel_{{ n }},
         {%- endfor %}
         sum(sin_nivel) as sin_nivel,
-        avg(ocupacion_pct) as ocupacion_media_pct,
+        -- Las medias, con aritmética exacta: un avg de double precision depende del orden en
+        -- que se suman las filas, y la misma ejecución en dos hojas podría diferir en el último
+        -- bit (lo vio «oro limpio = oro verdad»). La ocupación, con enteros; la razón, en numeric.
+        100 * sum(boxes_ocupados)::double precision
+            / nullif(sum(boxes), 0)::double precision as ocupacion_media_pct,
         sum(desplazamientos) as desplazamientos,
         sum(salidas_espera_resultados) as salidas_espera_resultados,
-        avg(pacientes_por_medico) as pacientes_por_medico_medio
+        avg(censo::numeric / nullif(medicos, 0))::double precision as pacientes_por_medico_medio
     from horas
     group by run_id, fecha_turno, turno
 
