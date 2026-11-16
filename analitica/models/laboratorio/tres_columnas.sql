@@ -13,28 +13,16 @@
     {{ exceptions.raise_compiler_error("laboratorio.tres_columnas se construye con la hoja hospital (dbt build --select tag:laboratorio), no con '" ~ var('hoja') ~ "': iría a otro esquema") }}
 {%- endif %}
 
-with inicios as (
+with registrados as (
 
-    select
-        run_id,
-        mensaje,
-        row_number() over (
-            partition by run_id
-            order by ingest_time desc, kafka_offset desc
-        ) as orden
-    from {{ source('bronce', 'ejecuciones') }}
-    where tipo = 'inicio'
-        and mensaje -> 'registro' is not null
-
-), registrados as (
-
+    -- El bloque registro del último inicio de cada ejecución; sin él, no es un registro.
     select
         mensaje -> 'registro' ->> 'origen' as run_id,
         run_id as run_id_registrado,
         mensaje -> 'registro' ->> 'perfil' as perfil,
         (mensaje -> 'registro' ->> 'semilla')::bigint as semilla
-    from inicios
-    where orden = 1
+    from ({{ ultimo_inicio() }}) as ultimo
+    where mensaje -> 'registro' is not null
 
 ), verdad as (
 

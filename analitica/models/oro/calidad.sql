@@ -2,12 +2,22 @@
     oro.calidad: los avisos de calidad del dato, una fila por ejecución, (run_id). Ver el bloque
     de documentación «calidad» en oro.md.
 
+    Una fila por cada ejecución con registros, tenga o no parámetros: una ejecución sin inicio
+    utilizable (el consumidor empezó tarde, o la retención del topic se llevó el inicio) no sale
+    en el resto de oro, y aquí queda a la vista con sin_parametros.
+
     Sale de las señales de plata, de la cohorte (los sin salida, repartidos entre los que siguen
     dentro y las salidas olvidadas) y de la preparación: los campos vacíos, las correcciones
     aplicadas, las que no encontraron su registro y los duplicados quitados. Todo con la
     ejecución entera, no solo la ventana.
 #}
-with parametros as (
+with ejecuciones as (
+
+    select distinct run_id from {{ ref('registros_vigentes') }}
+    union
+    select run_id from {{ ref('parametros') }}
+
+), parametros as (
 
     select * from {{ ref('parametros') }}
 
@@ -88,7 +98,8 @@ with parametros as (
 )
 
 select
-    p.run_id,
+    x.run_id,
+    p.run_id is null as sin_parametros,
     coalesce(e.episodios, 0) as episodios,
     coalesce(e.sin_llegada, 0) as sin_llegada,
     coalesce(e.sin_salida, 0) as sin_salida,
@@ -102,7 +113,8 @@ select
     coalesce(vi.registros_corregidos, 0) as registros_corregidos,
     coalesce(s.correcciones_sin_registro, 0) as correcciones_sin_registro,
     coalesce(vi.duplicados_quitados, 0) as duplicados_quitados
-from parametros as p
+from ejecuciones as x
+left join parametros as p using (run_id)
 left join episodios as e using (run_id)
 left join valoraciones as va using (run_id)
 left join ubicaciones as u using (run_id)

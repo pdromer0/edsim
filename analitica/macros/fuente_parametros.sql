@@ -4,7 +4,8 @@
 
     - hospital e ingenuo: del mensaje inicio de bronce.ejecuciones (fecha_inicio,
       inicio_directo y horizonte; edsim.live.messages). Una ejecución publicada dos veces tiene
-      dos inicio: vale el último que llegó. Un inicio sin fecha_inicio no da fila.
+      dos inicio: vale el último que llegó (macro ultimo_inicio). Si al último le falta
+      fecha_inicio, la ejecución no da fila: no se recurre a uno anterior.
     - verdad: de verdad.dias. El día 0 es la fecha del minuto 0, y calentamiento y dias van en
       días. El hospital no lee la verdad: por eso cada hoja tiene su fuente.
 
@@ -21,19 +22,8 @@
         ((mensaje ->> 'fecha_inicio') || 'T00:00:00+01:00')::timestamptz as origen,
         (mensaje ->> 'inicio_directo')::double precision as calentamiento_min,
         (mensaje ->> 'horizonte')::double precision as horizonte_min
-    from (
-        select
-            run_id,
-            mensaje,
-            row_number() over (
-                partition by run_id
-                order by ingest_time desc, kafka_offset desc
-            ) as orden
-        from {{ source('bronce', 'ejecuciones') }}
-        where tipo = 'inicio'
-            and mensaje ->> 'fecha_inicio' is not null
-    ) as inicios
-    where orden = 1
+    from ({{ ultimo_inicio() }}) as ultimo
+    where mensaje ->> 'fecha_inicio' is not null
     {%- elif hoja == 'verdad' -%}
     select
         run_id,

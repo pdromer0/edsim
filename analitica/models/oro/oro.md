@@ -65,6 +65,8 @@ Las sumas y las medias salen de las horas de `kpi_hora`; las medianas, de las fi
 {% docs calidad %}
 Una fila por ejecución: (`run_id`), los avisos de calidad del dato, con la ejecución entera.
 
+Es la única tabla de oro con todas las ejecuciones que tienen registros, tengan o no parámetros. Una ejecución sin un `inicio` utilizable (el consumidor empezó tarde, o la retención del topic se llevó el mensaje) no tiene origen ni ventana y no sale en el resto de oro; aquí aparece con `sin_parametros`.
+
 - De plata: los episodios sin llegada y sin salida, las valoraciones y las ubicaciones sin pareja y los triajes con tiempo negativo.
 - De la cohorte: los sin salida repartidos entre `siguen_dentro` y `salidas_olvidadas` (ver «cohorte»).
 - De la preparación: los campos vacíos (en total y por campo), los registros corregidos, los duplicados quitados y las **correcciones sin registro**: las que no encuentran su registro en `registros_vigentes` (D3 de la 8.1). Se cuentan contra `registros_vigentes`, no contra `registros`: una corrección a una copia que la limpieza quitó tampoco se aplica, y así queda a la vista.

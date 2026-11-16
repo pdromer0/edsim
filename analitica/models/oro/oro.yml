@@ -161,8 +161,13 @@ models:
     columns:
       - name: run_id
         data_tests: [not_null]
+      - name: sin_parametros
+        description: >
+          La ejecución tiene registros pero no parámetros (le falta un inicio con fecha_inicio):
+          no sale en el resto de oro, y sus salidas_olvidadas y siguen_dentro quedan a 0.
       - name: sin_salida
-        description: Episodios sin salida; la suma de salidas_olvidadas y siguen_dentro.
+        description: >
+          Episodios sin salida; con parámetros, la suma de salidas_olvidadas y siguen_dentro.
       - name: campos_vacios_por_campo
         description: Un objeto con los campos del payload vacíos (null) y cuántas veces.
       - name: registros_corregidos
