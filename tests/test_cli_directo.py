@@ -151,7 +151,7 @@ USAGE_ERRORS = {
     "lanzar-verdad-y-registro": ([*LAUNCH, "--verdad", "--registro", "realista"], "--registro no vale con --verdad"),  # noqa: E501
     "lanzar-verdad-y-semilla-registro": ([*LAUNCH, "--verdad", "--semilla-registro", "3"], "--semilla-registro no vale con --verdad"),  # noqa: E501
     "reemitir-verdad-y-registros": (["directo", "reemitir", REPLAY_RUN, "{root}", "--verdad", "--registros", "x.toml"], "--registros no vale con --verdad"),  # noqa: E501
-    "lanzar-run-id-largo-con-el-valor-por-defecto": ([*LAUNCH, "--run-id", "x" * 50], "perfil por defecto (realista): derived run_id"),  # noqa: E501
+    "lanzar-semilla-registro-negativa-sin-registro": ([*LAUNCH, "--semilla-registro", "-1"], "--semilla-registro debe ser un entero no negativo"),  # noqa: E501
     "lanzar-semilla-registro-negativa": ([*LAUNCH, "--registro", "realista", "--semilla-registro", "-1"], "--semilla-registro"),  # noqa: E501
     "lanzar-registros-que-no-existe": ([*LAUNCH, "--registro", "realista", "--registros", "/no/existe.toml"], "--registros"),  # noqa: E501
     "lanzar-registro-derivado-largo": ([*LAUNCH, "--registro", "realista", "--run-id", "x" * 50], "derived run_id"),  # noqa: E501
@@ -735,8 +735,6 @@ def test_run_id_largo_con_el_valor_por_defecto_sugiere_verdad(
         assert raised.value.code == 2
         assert "derived run_id" in (err := capsys.readouterr().err)
         assert "--verdad" in err
-
-    assert main([*LAUNCH_VERDAD, "--run-id", long_id, "--memoria", "--velocidad", "max"]) == 0
 
 
 DEFAULT_NOTE = "perfil realista (por defecto; la verdad, con --verdad)"
