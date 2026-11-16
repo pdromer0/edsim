@@ -478,7 +478,7 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
   - `verdad.dias`: las columnas de `ground_truth_dias.csv`; clave (`run_id`, `dia`).
   - `verdad.libreta`: `run_id_origen` (la ejecución verdadera, por la que se borra y se recarga), `run_id` derivado, `perfil`, `semilla` y las once columnas de `defectos.csv` (`registro`, `hecho`, `clase`, `retraso_min`, `desfase_min`, `campo_vacio`, `campo_erroneo`, `valor_verdadero`, `valor_registrado`, `duplicado_de`, `corrige`).
 - Los roles `hospital` y `laboratorio`, con contraseñas de desarrollo iguales a su nombre. Los roles son de todo el servidor, no de una base: la migración los crea solo si no existen, porque las bases de prueba de cada sesión comparten servidor.
-- `laboratorio` lee `bronce` y `verdad`; `hospital`, ninguno de los dos. Los permisos de los esquemas de dbt los pone dbt (`grants`).
+- `laboratorio` lee `bronce` y `verdad`; `hospital`, ninguno de los dos. Los permisos de los esquemas de dbt los pone dbt: `grants` da `SELECT` en cada tabla al crearla, y el `on-run-end` (`dar_uso_de_esquemas`, 8.5) da `USAGE` en los esquemas, que `grants` no da.
 
 ### `edsim almacen cargar-verdad RUN_ID [--ejecuciones DIR] [--postgres URL]`
 
@@ -497,7 +497,11 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
 | `oro.kpi_turno` | (`run_id`, fecha, turno) | El informe por turno |
 | `oro.kpi_ejecucion` | (`run_id`) | Los cinco indicadores del hito 7 en su ventana, para la tabla de tres columnas y la comprobación con Python |
 | `oro.calidad` | (`run_id`) | Los avisos de calidad del dato |
+| `oro.censo` | (`run_id`, hora) | El censo a cada hora en punto de la ventana (añadida en la 8.5: la comparten `kpi_hora` y `kpi_ejecucion`) |
+| `oro.cohorte` | (`run_id`, `episode_id`) | Cada episodio con su hora y su turno de llegada, sus esperas y si sigue dentro (añadida en la 8.5: la comparten `kpi_hora`, `kpi_turno` y `calidad`) |
 | `laboratorio.tres_columnas` | (`run_id` de la verdad, perfil, semilla, KPI) | Verdad, ingenuo, limpio y las diferencias |
+
+Los parámetros de cada ejecución (el origen, W y el horizonte) están en `preparacion.parametros` (8.5). En las hojas `hospital` e `ingenuo` salen del último `inicio` de `bronce.ejecuciones`, y en la `verdad`, de `verdad.dias`: el hospital no lee la verdad.
 
 ### Las definiciones
 
@@ -511,7 +515,13 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
 | Mediana hasta el médico | Lo mismo, al primer `assessment_started` de tipo `inicial` |
 | Reparto por nivel | Porcentaje de cada nivel entre los `triage_completed` de `registros_vigentes` con nivel legible |
 
-**Por hora y por turno**, las esperas se apuntan a la hora (o al turno) de llegada, con los **pendientes** (llegados sin triaje o sin médico aún). Los turnos empiezan a las 8, a las 15 y a las 22 (`[turnos].inicio` de `centro.toml`, en la semilla `turnos.csv`).
+**La ventana** (D1 de la 8.5, notas del chat del #144). En `kpi_ejecucion`, un registro cuenta si su `event_time` es ≥ origen + W: las llegadas, las medianas (con los dos registros dentro) y el reparto por nivel se calculan sobre esos registros, y el censo, con todos. Una reemisión solo deja en bronce, de antes de W, el censo inicial (los eventos de los episodios abiertos en W): sin la ventana, «limpio − verdad» mezclaría los despistes con las llegadas del calentamiento que faltan. La prueba de punta a punta filtra igual en Python antes de llamar a las funciones de `compare.py`, que no cambia.
+
+**Por hora y por turno**, las esperas se apuntan a la hora (o al turno) de llegada, con los **pendientes** (llegados sin triaje o sin médico aún). Los turnos empiezan a las 8, a las 15 y a las 22 (`[turnos].inicio` de `centro.toml`, en la semilla `turnos.csv`). Precisiones de la 8.5:
+
+- las llegadas por hora son registros por la hora de su `event_time`, como en `kpi_ejecucion`;
+- la noche pertenece a la fecha en que empieza, y el turno que corta W o el horizonte sale con sus `horas` y `completo` falso;
+- un episodio sin salida **sigue dentro** si su última anotación es de las últimas 24 h de la ejecución (`margen_sin_salida_min`); si no, su **salida se olvidó**. Los pendientes son los que siguen dentro. Ningún margen separa del todo, porque las esperas de cama dejan días sin anotar: con 14 días y el perfil realista, el de 24 h clasifica mal 1 de 22 olvidadas y 6 de 57 que siguen dentro (detalle en el anexo).
 
 **Los nuevos:**
 
@@ -670,7 +680,7 @@ dbt no entra en el job `tests` (D1 de la 8.1, que cambia la decisión 111): ese 
 | V6 | 8.3 | Emparejar valoraciones sin la señal: cada fin con el último inicio anterior, aunque ya tenga pareja | Falla solo el unit test del inicio olvidado al final |
 | V7 | 8.4 | `cargar-verdad` sin borrar antes | Falla el test de cargar dos veces (recuentos dobles) |
 | V8 | 8.4 | `hospital` con lectura en `verdad` | Falla el test de permisos |
-| V9 | 8.5 | El censo cuenta al que sale justo a la hora en punto | Fallan el unit test del censo y «verdad SQL = verdad Python» |
+| V9 | 8.5 | El censo cuenta al que sale justo a la hora en punto | Falla solo el unit test del censo. La predicción de partida decía también «verdad SQL = verdad Python», pero en la ejecución de 3 días ninguna de las 1035 salidas cae justo en una hora en punto (medido en el plan de la 8.5): solo un dato fabricado vigila esa frontera |
 | V10 | 8.5 | Las esperas por hora del triaje | Falla el unit test de la cohorte (la espera cae en la hora de las 17) |
 | V11 | 8.5 | Las llegadas desde `plata.episodio` | Falla «ingenuo SQL = ingenuo Python» con el perfil realista (los duplicados de llegada no cuentan) |
 | V12 | 8.2 | `--verdad` con `--registro` aceptado | Falla el test de la CLI |
