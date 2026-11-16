@@ -149,8 +149,9 @@ def test_dos_ficheros_con_el_mismo_numero_son_un_error(tmp_path):
         load_migrations(tmp_path)
 
 
-def test_el_paquete_trae_la_001_bronce():
+def test_el_paquete_trae_la_001_bronce_y_la_002_verdad():
     migrations = load_migrations()
 
-    assert [(m.version, m.name) for m in migrations] == [(1, "bronce")]
+    assert [(m.version, m.name) for m in migrations] == [(1, "bronce"), (2, "verdad")]
     assert "by_range('ingest_time')" in migrations[0].sql
+    assert "CREATE SCHEMA IF NOT EXISTS verdad" in migrations[1].sql
