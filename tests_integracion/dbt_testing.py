@@ -98,6 +98,10 @@ def run_dbt(url: str, args: list[str], folder: Path) -> DbtRun:
     return DbtRun(result.returncode, result.stdout[-6000:] + result.stderr[-2000:], status)
 
 
+ORO = ("calidad", "censo", "cohorte", "kpi_ejecucion", "kpi_hora", "kpi_turno")
+"""Las tablas de oro (decisión 106, H8-7), en orden alfabético."""
+
+
 # --- Los datos de la punta a punta ---------------------------------------------------------------
 
 RUN_ID = "e2e"

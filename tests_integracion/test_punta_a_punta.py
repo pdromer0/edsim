@@ -27,7 +27,7 @@ from collections import Counter
 
 import psycopg
 import pytest
-from dbt_testing import RUN_ID, SEED, derived
+from dbt_testing import ORO, RUN_ID, SEED, derived
 from test_verdad import with_user
 
 from edsim.clinical_record.compare import _hours, _ms, _naive_indicators, _origin
@@ -47,8 +47,6 @@ KPIS = (
     "mediana_medico_min",
     *(f"pct_nivel_{n}" for n in range(1, 6)),
 )
-
-ORO = ("calidad", "censo", "cohorte", "kpi_ejecucion", "kpi_hora", "kpi_turno")
 
 
 def reference(items, truth, horizon: float, warmup: float) -> dict[str, float | None]:
@@ -220,11 +218,16 @@ def read(url: str, role: str, table: str) -> int | str:
 def test_hospital_lee_su_hoja_y_no_la_verdad(analitica):
     """Pilla un esquema sin USAGE (los grants de dbt solo dan SELECT en las tablas), una tabla
     reconstruida sin su permiso y una hoja de la verdad o del laboratorio legible por `hospital`.
-    Cada tabla tiene filas: un SELECT que funcione no cuenta cero."""
+    Cada tabla tiene filas: un SELECT que funcione no cuenta cero.
+
+    El SELECT de cada tabla se mira también aparte del USAGE de su esquema: sin él, un `grants`
+    que diera SELECT de más a `hospital` en la verdad pasaría inadvertido, porque el USAGE que
+    falta ya le deniega la lectura."""
     hospital_sheet = ("preparacion.registros", "plata.episodio", "oro.kpi_hora", "oro.turnos")
     hidden = (
         "verdad_preparacion.registros",
         "verdad_oro.kpi_ejecucion",
+        "verdad_oro.turnos",
         "ingenuo_oro.kpi_ejecucion",
         "laboratorio.tres_columnas",
     )
@@ -234,10 +237,22 @@ def test_hospital_lee_su_hoja_y_no_la_verdad(analitica):
         for role in ("hospital", "laboratorio")
         for t in (*hospital_sheet, *hidden)
     }
+    with connect(analitica.url) as connection:
+        granted = {
+            (role, t): connection.execute(
+                "SELECT has_table_privilege(%s, %s, 'SELECT')", (role, t)
+            )[0][0]
+            for role in ("hospital", "laboratorio")
+            for t in (*hospital_sheet, *hidden)
+        }
 
     for table in hospital_sheet:
         assert isinstance(seen["hospital", table], int) and seen["hospital", table] > 0, table
+        assert granted["hospital", table], table
     for table in hidden:
         assert seen["hospital", table] == "denegado", table
+        assert not granted["hospital", table], table
     for table in (*hospital_sheet, *hidden):
-        assert seen["laboratorio", table] > 0, table
+        count = seen["laboratorio", table]
+        assert isinstance(count, int) and count > 0, table
+        assert granted["laboratorio", table], table

@@ -12,7 +12,7 @@ dbt se lanza con `run_dbt` de `dbt_testing.py`, en su propio entorno (`analitica
 """
 
 import pytest
-from dbt_testing import run_dbt
+from dbt_testing import ORO, run_dbt
 
 from edsim.store.postgres import connect
 
@@ -49,9 +49,6 @@ PLATA = (
     "valoracion",
 )
 """Las ocho tablas de plata (decisión 104, H8-5), en orden alfabético."""
-
-ORO = ("calidad", "censo", "cohorte", "kpi_ejecucion", "kpi_hora", "kpi_turno")
-"""Las tablas de oro (decisión 106, H8-7), en orden alfabético."""
 
 SEMILLAS = ("maestro_boxes", "turnos")
 """Las semillas, en el esquema oro."""
