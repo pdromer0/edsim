@@ -476,7 +476,7 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
   - `verdad.eventos`: las columnas de `bronce.eventos` menos las de Kafka, `valor` y `recibido`, con clave (`run_id`, `event_id`). Una tabla normal, no una hypertable: Timescale exigiría la columna de partición en la clave, y la verdad se carga entera y no crece en directo.
   - `verdad.episodios`: las 65 columnas de `ground_truth_episodios.csv`, con sus nombres; los tipos los decide el plan. Clave (`run_id`, `episodio`).
   - `verdad.dias`: las columnas de `ground_truth_dias.csv`; clave (`run_id`, `dia`).
-  - `verdad.libreta`: `run_id` derivado, `perfil`, `semilla` y las once columnas de `defectos.csv` (`registro`, `hecho`, `clase`, `retraso_min`, `desfase_min`, `campo_vacio`, `campo_erroneo`, `valor_verdadero`, `valor_registrado`, `duplicado_de`, `corrige`).
+  - `verdad.libreta`: `run_id_origen` (la ejecución verdadera, por la que se borra y se recarga), `run_id` derivado, `perfil`, `semilla` y las once columnas de `defectos.csv` (`registro`, `hecho`, `clase`, `retraso_min`, `desfase_min`, `campo_vacio`, `campo_erroneo`, `valor_verdadero`, `valor_registrado`, `duplicado_de`, `corrige`).
 - Los roles `hospital` y `laboratorio`, con contraseñas de desarrollo iguales a su nombre. Los roles son de todo el servidor, no de una base: la migración los crea solo si no existen, porque las bases de prueba de cada sesión comparten servidor.
 - `laboratorio` lee `bronce` y `verdad`; `hospital`, ninguno de los dos. Los permisos de los esquemas de dbt los pone dbt (`grants`).
 
@@ -485,7 +485,7 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
 - Lee la ejecución guardada con `edsim.runs` y carga sus cuatro tablas; la libreta, de cada carpeta `registros/<perfil>-s<semilla>/` que exista (las escribe `edsim registro generar`; una reemisión no las escribe).
 - Una transacción por ejecución: borra lo que haya de ese `run_id` y escribe con `COPY` de psycopg. Ejecutarla dos veces deja lo mismo.
 - Lógica en `edsim.store` (lectura y filas, sin conectar; la carga, con la conexión), con la CLI fina.
-- **Por medir en la 8.4:** cuánto tarda y cuánto ocupa un año de `r2026` (unos 1,4 millones de eventos, estimación sin medir: 55.118 registros en los 14 días del notebook 07).
+- **Medido en la 8.4** (año `r365`, semilla 2026): 1.386.002 eventos, 109.910 episodios y 1.395.175 filas de libreta con el perfil realista; se cargan en 56,6 s con 153 MiB de memoria pico y ocupan 577 MB en Postgres. Detalle en el anexo.
 
 ## Especificación: oro
 
@@ -1029,3 +1029,80 @@ Con todas ellas, los 40 tests de datos siguen en verde: comprueban la forma, no 
 
 - **La 8.5** (#144): su prueba de punta a punta construye plata con datos, y con ella sus tests de datos en el CI.
 - **La 8.7** (#146): mide un año. Si plata pesa, el primer candidato es leer `registros_vigentes` una sola vez por modelo y agrupar por tipo con `filter`.
+
+### Tarea 8.4: La verdad en Postgres y los roles
+
+**Qué se hizo**
+
+Issue #143, rama `feat/h8-verdad`, Claude Code (Sonnet, en local, con Postgres), en paralelo con la 8.3. Tarea no crítica: `/code-review medium`. Un commit por paso, más el de la revisión:
+
+- **Migración** (`88ee95d`): `002_verdad.sql` con el esquema `verdad` (eventos, episodios, dias y libreta), los roles `hospital` y `laboratorio` y los permisos. `edsim almacen preparar` la aplica.
+- **`RunStore.open_file`** (`bbef315`): la lectura en flujo de un fichero de la ejecución, con las comprobaciones de `read_file`.
+- **`store/truth.py`** (`fd06d87`): de la ejecución guardada a las filas de las cuatro tablas, sin conectar.
+- **`load_truth`** (`45f8f8e`): borra y copia con `COPY`, todo en una transacción.
+- **`edsim almacen cargar-verdad`** (`6dde459`).
+- **Integración** (`2c82eaf`): `tests_integracion/test_verdad.py`.
+- **Revisión** (`f792a67`): un error de lectura durante la carga es un error de datos.
+
+**Decisiones del diff**
+
+- **La libreta lleva `run_id_origen`.** La especificación da el `run_id` derivado; con solo ese, recargar una ejecución no sabe qué filas borrar si desapareció una carpeta de `registros/`. Es el nombre que ya usa `registro.json`.
+- **Tipos de `verdad.episodios`**, clasificados con los datos de `h8demo`: `bigint` para `llegada` (llega a 10^12) y `semilla`; `boolean` para `pruebas`, `pedida_*` y `alterada_*`; `double precision` para el resto de los sorteos; `respuesta_pruebas`, la única anulable (siempre vacía con el modelo clínico). `text` en `valor_verdadero` y `valor_registrado` de la libreta: son enteros o textos según el campo.
+- **Las filas se dan de una en una** (generadores) y las celdas de los CSV se pasan a `COPY` como texto: Postgres las lee por el tipo de su columna. `''` es `NULL`. Solo se comprueban la cabecera exacta, el número de celdas y el `run_id` de cada fila; los eventos pasan por `from_json`.
+- **D1:** una ejecución de otro esquema es un `TruthError` antes de conectar, con su esquema y «regenérala con `edsim motor simular`». **D2:** `ALTER DEFAULT PRIVILEGES` para que lo que cree `edsim` después nazca legible para `laboratorio`.
+- **Roles:** se captura `duplicate_object` y también `unique_violation`, el error de dos `CREATE ROLE` cruzados. `hospital` no tiene `USAGE` en `bronce` ni en `verdad`: un esquema nuevo no lo da a `PUBLIC`.
+- **`laboratorio` lee las tablas de bronce que ya tenían chunks** (comprobado a mano con una hypertable con una fila anterior a la 002): el `GRANT` sobre la hypertable llega a sus chunks.
+- **La CLI separa dos fases:** hasta tener las filas listas, un error de la ejecución es de uso (código 2); después de conectar, un fichero que falla al leerse es un error de datos (código 1).
+
+**Valores a mano**
+
+Un recuento independiente de los ficheros de `h8demo` (14 días, `registros/realista-s2026`), con `csv` y `open`: 55.054 eventos, 4.439 episodios (65 columnas), 14 días (15 columnas) y 55.397 filas de libreta (11 columnas). `cargar-verdad` cargó esas cuatro cifras, y las del año `r365` coinciden con el recuento de sus ficheros.
+
+**Medidas**
+
+Un año (`r365`, semilla 2026, `edsim motor simular --run-id r365 --dias 365`), medido con `/usr/bin/time -v` en un WSL de 7 GB, con Kafka y Postgres levantados:
+
+| Paso | Tiempo | Memoria pico |
+| --- | --- | --- |
+| `motor simular` | 3 min 28 s | 2,0 GiB |
+| `registro generar --perfil realista` | 2 min 44 s | 4,3 GiB |
+| `cargar-verdad` (base vacía) | 56,6 s | 153 MiB |
+| `cargar-verdad` (recarga: borra y escribe) | 62,1 s | 152 MiB |
+
+- **Recuentos de `r365`:** 1.386.002 eventos (la estimación de la especificación era 1,4 millones; la proyección desde los 14 días daba 1.435.336), 109.910 episodios, 365 días y 1.395.175 filas de libreta con el perfil realista.
+- **Ficheros:** 588 MB la ejecución y 644 MB la carpeta `registros/`.
+- **En Postgres** (`pg_total_relation_size`): eventos 279 MB, libreta 235 MB, episodios 63 MB, días 128 kB; **577 MB** `verdad` y 586 MB la base entera.
+- **El WSL aguanta la carga con holgura** (153 MiB). El paso caro en memoria es `registro generar` (4,3 GiB), de la 7.2: es lo que habría que vigilar con la memoria de todo levantado (8.9).
+- **El contrato con la 8.1:** con `h8demo` cargada en una base de prueba, `dbt build --select preparacion --vars '{hoja: verdad}' --exclude-resource-type unit_test` construye `verdad_preparacion.registros` y `registros_vigentes`, las dos con 55.054 filas. Sin `--exclude-resource-type unit_test`, el unit test `l_escenario_completo` falla («column ingest_time does not exist»): sus datos son de bronce y no valen con `hoja: verdad`.
+
+**Versiones incorrectas**
+
+Cada una aplicada con el árbol limpio, observada y deshecha con `git restore`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V7 | `cargar-verdad` sin el `DELETE` previo | Falla `test_cargar_verdad_dos_veces…` | Falla ese y también `test_cargar_otra_ejecucion…`, que recarga la primera al final (no lo había previsto); `test_permisos…` pasa. La segunda carga sale con error de clave duplicada en `verdad.eventos`, no con «recuentos dobles» |
+| V8 | `hospital` con `USAGE` y `SELECT` en `verdad` | Falla `test_permisos…` | Falla solo ese; los dos de carga pasan |
+| M3 | Dos columnas de `episodios` intercambiadas | Falla el test rápido de episodios | Falla solo ese (20 de 21 pasan); en integración, `dos_veces` falla también: el tipo de la columna no admite el valor |
+| M4 | El `DELETE` sin `WHERE run_id` | Falla `test_cargar_otra_ejecucion…` | Falla solo ese (con `WHERE %s IS NOT NULL`, mi primer intento, todo falló por el tipo del parámetro; repetido con un `DELETE` sin `WHERE`) |
+| M5 | La 002 sin `ALTER DEFAULT PRIVILEGES` | Falla `test_permisos…` | Falla solo ese |
+| M6 | `CREATE ROLE` sin proteger | Falla `test_dos_bases…` | Falla ese y `test_permisos…`: los dos preparan su propia base en la fixture y el error sale ahí |
+| M7 | Una transacción por tabla | Falla `test_una_carga_que_falla…` | Falla solo ese (3 de 4 pasan) |
+
+**Revisión**
+
+`/code-review medium main...feat/h8-verdad`, ocho hallazgos:
+
+- **Corregidos** (`f792a67`): un byte que no es UTF-8 durante la carga salía como `UnicodeDecodeError` suelto y, con la conexión abierta, con código 2. Ahora es un `TruthError` con el fichero y la línea a partir de la que falla (Python descodifica por bloques) y código 1.
+- **Explicados:**
+  - los eventos se leen dos veces (`from_json` y `json.loads`): el año entero carga en 56,6 s con 153 MiB; quitar la validación del catálogo es lo único que lo evitaría;
+  - `''` es `NULL`, también en la libreta: `defectos.csv` escribe `None` como `''` y `read_notebook_csv` lo lee igual, así que no hay otra cosa que conservar; en una columna `NOT NULL`, Postgres nombra la columna en su error;
+  - una deriva entre las constantes de columnas y la migración daría un `UndefinedColumn` con su detalle; `dos_veces` carga las cuatro tablas y lo cazaría;
+  - la cabecera se mira antes de conectar y otra vez al leer: es lo que impide que un CSV roto toque la base;
+  - las contraseñas de desarrollo y el `CREATE ROLE` son los de la especificación: un candado, no seguridad; en compose, `edsim` es superusuario;
+  - una carpeta que no es `<perfil>-s<semilla>` en `registros/` es un error (decisión del plan, §2.8): el mensaje nombra la entrada.
+
+**Pendiente**
+
+- **La 8.5** (#144): el paso al final de cada construcción que dé `USAGE` sobre `plata` y `oro` a `hospital` (la configuración `grants` de dbt no lo hace); y sus construcciones llevan `--exclude-resource-type unit_test`.
+- **La 8.9** (#148): la memoria de `registro generar` con un año (4,3 GiB) al medir todo levantado; la base `edsim_medida` y la ejecución `r365` quedan en el equipo de Pedro (586 MB y 1,2 GB) hasta que decida borrarlas.
