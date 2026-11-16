@@ -45,6 +45,7 @@
             *,
             lag(papel) over orden_del_episodio as papel_anterior,
             lead(papel) over orden_del_episodio as papel_siguiente,
+            coalesce(lead(papel) over orden_del_episodio <> 'apertura', false) as le_sigue_un_cierre,
             lead(event_type) over orden_del_episodio as siguiente_event_type,
             lead(event_time) over orden_del_episodio as siguiente_event_time,
             lead(recorded_time) over orden_del_episodio as siguiente_recorded_time,
@@ -70,14 +71,10 @@
             v.event_time as ap_event_time,
             v.recorded_time as ap_recorded_time,
             v.payload as ap_payload,
-            case when v.papel_siguiente in ('cierre', 'salida') then v.siguiente_event_type end
-                as ci_event_type,
-            case when v.papel_siguiente in ('cierre', 'salida') then v.siguiente_event_time end
-                as ci_event_time,
-            case when v.papel_siguiente in ('cierre', 'salida') then v.siguiente_recorded_time end
-                as ci_recorded_time,
-            case when v.papel_siguiente in ('cierre', 'salida') then v.siguiente_payload end
-                as ci_payload,
+            case when v.le_sigue_un_cierre then v.siguiente_event_type end as ci_event_type,
+            case when v.le_sigue_un_cierre then v.siguiente_event_time end as ci_event_time,
+            case when v.le_sigue_un_cierre then v.siguiente_recorded_time end as ci_recorded_time,
+            case when v.le_sigue_un_cierre then v.siguiente_payload end as ci_payload,
             case
                 when v.papel_siguiente = 'apertura' then true
                 when v.papel_siguiente is null then s.episode_id is not null
