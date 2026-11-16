@@ -875,3 +875,54 @@ E y R se añadieron en la revisión. Cada uno falla con su mutación (los desemp
 - **La 8.3** (#142): plata lee `registros_vigentes`, y amplía la selección del test de integración.
 - **La 8.5** (#144): `oro.calidad` cuenta las correcciones sin registro, desde `registros` (D3), y las construcciones de punta a punta van con `--exclude-resource-type unit_test`.
 - **La medida de D1 en el CI:** lo que añade el sync de `analitica/` al job `tests-integracion`, en el PR.
+
+
+### Tarea 8.2: El directo publica lo registrado por defecto
+
+**Qué se hizo**
+
+Issue #141, rama `feat/h8-directo-registro`, Claude Code (Sonnet, en la nube, sin Docker). Tarea no crítica: `/code-review medium`. Un commit por paso, más el de la revisión:
+
+- **La CLI y sus tests** (`19b85f2`): `--verdad` en `lanzar` y `reemitir`; sin `--verdad` ni `--registro`, el perfil pasa a `realista`; `--verdad` con `--registro`, `--semilla-registro` o `--registros` es un error de uso.
+- **Integración** (`40ce669`): `--verdad` en `LAUNCH`, `LAUNCH_H5` y la reemisión que se compara con el log, y en el docstring de `test_almacen.py`.
+- **Documentación y notebook 06** (`69ea91a`): `--verdad` en la celda del modo normal, `README.md` y `AGENTS.md`.
+- **Revisión** (`d9b5bde`): `reemitir` también sugiere `--verdad` si el `run_id` derivado no cabe.
+
+**Decisiones del diff**
+
+- **Solo cambia `src/edsim/cli.py`.** `prepare_live`, `with_recording` y `prepare_replay` siguen recibiendo el perfil explícito: las huellas de los hitos 3 a 7, los notebooks que llaman al paquete y la app no se ven afectados.
+- **`--registro` conserva `default=None`** para distinguir «no escrito» de «`realista` escrito». `_check_record_options` guarda `args.registro_por_defecto` y pone `realista` si falta; con `--verdad`, `args.registro` queda en `None` (la verdad), como antes.
+- **D1, la cabecera avisa:** sin `--registro` escrito, `perfil realista (por defecto; la verdad, con --verdad)`; con `--registro realista` escrito, la línea de siempre (la fija el `startswith` del test explícito).
+- **Un `--run-id` de más de 49 caracteres falla con el valor por defecto** (el derivado pasa de 64). El mensaje no habla de un `--registro` que nadie escribió y apunta a `--verdad`, en `lanzar` y en `reemitir`.
+- **Tests:** `LAUNCH` se queda (lo usan los de errores de uso, los de `--registro` y los del valor por defecto) y `LAUNCH_VERDAD` lo lleva a la verdad; los de solo-error siguen en `LAUNCH`. Las tres filas `*-sin-registro` pasan a ser las tres de `--verdad`. Dos tests nuevos del valor por defecto (`lanzar` con `--semilla 9`, para que una semilla fija de 2026 no pase, y `reemitir`) y uno del `run_id` largo. D3: sin test nuevo para `--verdad`; lo cubren los tests de la verdad.
+- **Notebook 06:** `--verdad` solo en el modo normal (D2: nadie lo ejecuta; leído a mano). El 07 ya pasaba `--registro realista`.
+
+**Valores a mano** (código independiente del paquete; completo en el PR)
+
+- Los `run_id` derivados: `d1_realista_s2026` (17), `rcli_realista_s9` y, con el automático, `r2026_20261116T153000_realista_s2026` (36 caracteres, como decían las notas). Con `x` * 49 el derivado mide 64 y cabe; con 50, 65 y no.
+
+**Medidas**
+
+- `lanzar --memoria --velocidad max` con los 14 días de `config/`: 5,7 s con `--verdad` y 7,7 s por defecto (el registro de toda la ejecución se calcula al arrancar).
+- A mano: por defecto `d1_realista_s2026` con su aviso; `--verdad`, `d1`; `--registro hostil --semilla-registro 7`, `d1_hostil_s7`; `--verdad --registro hostil`, código 2.
+- Los de `tests_integracion/` no se pueden ejecutar en la nube (sin Docker): los comprueba el job `tests-integracion` del CI.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, sobre `69ea91a`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V12 | `--verdad` con `--registro` aceptado | Falla solo `lanzar-verdad-y-registro` | Falla solo esa fila (72 de 73 pasan). Falla con un `TypeError` al cargar perfiles con `None`, no con «conectó con Kafka»: el test lo detecta igual |
+| El valor por defecto solo en `lanzar` | Falla solo `test_reemitir_por_defecto_publica_solo_lo_registrado_realista` | Falla solo `test_reemitir_por_defecto_publica_solo_lo_registrado_realista`: `reemitir` publicaba la verdad con el `run_id` sin derivar (72 de 73 pasan) |
+
+**Revisión**
+
+`/code-review medium main...feat/h8-directo-registro`, cinco hallazgos:
+
+- **Corregidos:** `reemitir` no daba la pista de `--verdad` con un `run_id` largo; su test no comprobaba la pista (`d9b5bde`).
+- **Explicados:** el arranque de `lanzar` calcula todo el registro (+2 s en 14 días, medido, y es el diseño de H8-11); `registro_por_defecto` en el `Namespace` lo fija la comprobación que pasan los dos comandos; `--semilla-registro` sin `--registro` ya no es un error, porque el valor por defecto está activo, y la especificación lo pide.
+
+**Pendiente**
+
+- Nada. La 8.9 escribe el ADR de la decisión 110.
