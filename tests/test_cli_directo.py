@@ -57,7 +57,10 @@ MODEL = [
     str(DATA / "perfiles_ejemplo.toml"),
 ]
 LAUNCH = ["directo", "lanzar", *MODEL, "--dias", "2", "--calentamiento", "1"]
-"""Un directo pequeño de tests/data: 2 días, W = 1 día."""
+"""Un directo pequeño de tests/data: 2 días, W = 1 día. Sin `--verdad` ni `--registro`:
+publica lo registrado realista, el valor por defecto (H8-11)."""
+LAUNCH_VERDAD = [*LAUNCH, "--verdad"]
+"""El mismo directo, pero publicando la verdad, como en el hito 6."""
 
 
 def batch_of(run_id: str) -> list:
@@ -144,13 +147,15 @@ USAGE_ERRORS = {
     "preparar-kafka-sin-puerto": (["directo", "preparar", "--kafka", "sinpuerto"], "HOST:PUERTO"),
     # --registro (tarea 7.4)
     "lanzar-registro-desconocido": ([*LAUNCH, "--registro", "otro"], "invalid choice: 'otro'"),
-    "lanzar-semilla-registro-sin-registro": ([*LAUNCH, "--semilla-registro", "3"], "--semilla-registro solo vale con --registro"),  # noqa: E501
-    "lanzar-registros-sin-registro": ([*LAUNCH, "--registros", "x.toml"], "--registros solo vale con --registro"),  # noqa: E501
+    # --verdad (tarea 8.2): cada opción del registro es un error con ella
+    "lanzar-verdad-y-registro": ([*LAUNCH, "--verdad", "--registro", "realista"], "--registro no vale con --verdad"),  # noqa: E501
+    "lanzar-verdad-y-semilla-registro": ([*LAUNCH, "--verdad", "--semilla-registro", "3"], "--semilla-registro no vale con --verdad"),  # noqa: E501
+    "reemitir-verdad-y-registros": (["directo", "reemitir", REPLAY_RUN, "{root}", "--verdad", "--registros", "x.toml"], "--registros no vale con --verdad"),  # noqa: E501
+    "lanzar-semilla-registro-negativa-sin-registro": ([*LAUNCH, "--semilla-registro", "-1"], "--semilla-registro debe ser un entero no negativo"),  # noqa: E501
     "lanzar-semilla-registro-negativa": ([*LAUNCH, "--registro", "realista", "--semilla-registro", "-1"], "--semilla-registro"),  # noqa: E501
     "lanzar-registros-que-no-existe": ([*LAUNCH, "--registro", "realista", "--registros", "/no/existe.toml"], "--registros"),  # noqa: E501
     "lanzar-registro-derivado-largo": ([*LAUNCH, "--registro", "realista", "--run-id", "x" * 50], "derived run_id"),  # noqa: E501
     "reemitir-registro-desconocido": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "otro"], "invalid choice"),  # noqa: E501
-    "reemitir-registros-sin-registro": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registros", "x.toml"], "--registros solo vale"),  # noqa: E501
     "reemitir-semilla-registro-negativa": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "limpio", "--semilla-registro", "-2"], "--semilla-registro"),  # noqa: E501
     "reemitir-registros-que-no-existe": (["directo", "reemitir", REPLAY_RUN, "{root}", "--registro", "limpio", "--registros", "/no/existe.toml"], "--registros"),  # noqa: E501
 }  # fmt: skip
@@ -176,7 +181,7 @@ def test_errores_de_uso_antes_de_conectar(case, saved, sin_conexion, capsys):
 
 
 def test_lanzar_en_memoria_a_velocidad_maxima(sinks, capsys):
-    code = main([*LAUNCH, "--memoria", "--velocidad", "max", "--run-id", "rcli"])
+    code = main([*LAUNCH_VERDAD, "--memoria", "--velocidad", "max", "--run-id", "rcli"])
 
     assert code == 0
     [live] = sinks
@@ -204,7 +209,7 @@ def test_lanzar_en_memoria_a_velocidad_maxima(sinks, capsys):
 def test_lanzar_sin_run_id_usa_la_semilla_y_la_hora(sinks, monkeypatch, capsys):
     use_clock(monkeypatch, FakeClock(wall_start=datetime(2026, 11, 6, 16, 23, tzinfo=UTC)))
 
-    assert main([*LAUNCH, "--memoria", "--velocidad", "max"]) == 0
+    assert main([*LAUNCH_VERDAD, "--memoria", "--velocidad", "max"]) == 0
 
     [live] = sinks
     assert "run_id r2026_20261106T172300 ·" in capsys.readouterr().out
@@ -214,7 +219,17 @@ def test_lanzar_sin_run_id_usa_la_semilla_y_la_hora(sinks, monkeypatch, capsys):
 def test_lanzar_anclado_en_memoria(sinks, monkeypatch):
     # 10:30 en +01:00 con 2 días de calentamiento: desde el 9 de marzo, W = 3.510.
     use_clock(monkeypatch, FakeClock(wall_start=datetime(2026, 3, 11, 9, 30, tzinfo=UTC)))
-    argv = ["directo", "lanzar", *MODEL, "--dias", "3", "--calentamiento", "2", "--anclar"]
+    argv = [
+        "directo",
+        "lanzar",
+        *MODEL,
+        "--dias",
+        "3",
+        "--calentamiento",
+        "2",
+        "--anclar",
+        "--verdad",
+    ]
 
     assert main([*argv, "--memoria", "--velocidad", "max", "--run-id", "ranclado"]) == 0
 
@@ -236,7 +251,7 @@ def replay_lines(root: Path, start: float) -> list[str]:
 
 
 def test_reemitir_en_memoria(saved, sinks, capsys):
-    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(saved)]
+    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(saved), "--verdad"]
 
     assert main([*argv, "--memoria", "--velocidad", "max"]) == 0
 
@@ -251,7 +266,7 @@ def test_reemitir_en_memoria(saved, sinks, capsys):
 
 
 def test_reemitir_con_otro_calentamiento(saved, sinks):
-    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(saved)]
+    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(saved), "--verdad"]
 
     assert main([*argv, "--calentamiento", "0", "--memoria", "--velocidad", "max"]) == 0
 
@@ -273,7 +288,7 @@ def test_ctrl_c_en_memoria(sinks, monkeypatch, capsys):
     use_clock(monkeypatch, FakeClock(interrupt_at=30))
     expected = batch_of("rctrlc")
 
-    code = main([*LAUNCH, "--memoria", "--velocidad", "60", "--run-id", "rctrlc"])
+    code = main([*LAUNCH_VERDAD, "--memoria", "--velocidad", "60", "--run-id", "rctrlc"])
 
     assert code == 130
     [live] = sinks
@@ -329,7 +344,7 @@ def test_sin_el_extra_sale_con_1_y_dice_como_instalarlo(argv, saved, sin_extra, 
 
 
 def test_sin_el_extra_lanzar_en_memoria_funciona(sin_extra, sinks):
-    assert main([*LAUNCH, "--memoria", "--velocidad", "max", "--run-id", "rsinextra"]) == 0
+    assert main([*LAUNCH_VERDAD, "--memoria", "--velocidad", "max", "--run-id", "rsinextra"]) == 0
     assert sinks[0].run_end.reason == "horizonte"
 
 
@@ -439,7 +454,7 @@ class FakeControl:
         self.closed = True
 
 
-KAFKA_LAUNCH = [*LAUNCH, "--velocidad", "max", "--run-id", "rkafka"]
+KAFKA_LAUNCH = [*LAUNCH_VERDAD, "--velocidad", "max", "--run-id", "rkafka"]
 
 
 def test_lanzar_comprueba_los_topics_sin_crearlos(monkeypatch):
@@ -608,7 +623,7 @@ def test_lanzar_con_un_corte_avisa_dos_veces(monkeypatch, capsys):
     use_clock(monkeypatch, FakeClock())
     kafka = KafkaFake(monkeypatch, CutProducer(cuts=[(100, 200)]))
 
-    assert main([*LAUNCH, "--velocidad", "60", "--run-id", "rcorte"]) == 0
+    assert main([*LAUNCH_VERDAD, "--velocidad", "60", "--run-id", "rcorte"]) == 0
 
     out = capsys.readouterr()
     warnings = kafka_warnings(out.err)
@@ -701,6 +716,66 @@ def test_lanzar_en_memoria_con_registro_publica_solo_lo_registrado(sinks, capsys
         "config/registro_clinico.toml (huella "
     )
     assert out[5].startswith("Censo de lo registrado en W = 1440 min: ")
+
+
+def test_run_id_largo_con_el_valor_por_defecto_sugiere_verdad(
+    saved, tmp_path, sin_conexion, capsys
+):
+    # 50 caracteres caben solos, pero con el sufijo _realista_s2026 son 65: lanzar y reemitir
+    # lo dicen y apuntan a --verdad, que no deriva el run_id.
+    long_id = "x" * 50
+    save_run(tmp_path, long_id)
+    cases = [
+        [*LAUNCH, "--run-id", long_id],
+        ["directo", "reemitir", long_id, "--ejecuciones", str(tmp_path)],
+    ]
+    for argv in cases:
+        with pytest.raises(SystemExit) as raised:
+            main(argv)
+        assert raised.value.code == 2
+        assert "derived run_id" in (err := capsys.readouterr().err)
+        assert "--verdad" in err
+
+
+DEFAULT_NOTE = "perfil realista (por defecto; la verdad, con --verdad)"
+
+
+def test_lanzar_por_defecto_publica_solo_lo_registrado_realista(sinks, capsys):
+    # Sin --registro ni --verdad; la semilla 9 (no la 2026 por defecto) demuestra que el
+    # registro usa la semilla de la ejecución y no una fija.
+    code = main([*LAUNCH, "--memoria", "--velocidad", "max", "--run-id", "rcli", "--semilla", "9"])
+
+    assert code == 0
+    [live] = sinks
+    assert live.events and all(isinstance(r, Record) for r in live.events)
+    assert {r.run_id for r in live.events} == {"rcli_realista_s9"}
+    assert live.run_start.info.record == RecordInfo("rcli", "realista", 9)
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "Directo · run_id rcli_realista_s9 · velocidad máxima · en memoria"
+    assert out[4].startswith(
+        f"Solo lo registrado de rcli · {DEFAULT_NOTE} · semilla 9 · perfiles "
+        "config/registro_clinico.toml (huella "
+    )
+
+
+def test_reemitir_por_defecto_publica_solo_lo_registrado_realista(saved, sinks, capsys):
+    # reemitir sigue otro camino que lanzar tras la comprobación: prepare_replay en vez de
+    # with_recording, así que el valor por defecto se prueba también aquí.
+    argv = ["directo", "reemitir", REPLAY_RUN, "--ejecuciones", str(saved)]
+
+    assert main([*argv, "--memoria", "--velocidad", "max"]) == 0
+
+    [live] = sinks
+    derived = f"{REPLAY_RUN}_realista_s2026"
+    assert live.events and all(isinstance(r, Record) for r in live.events)
+    assert {r.run_id for r in live.events} == {derived}
+    assert live.run_start.info.record == RecordInfo(REPLAY_RUN, "realista", 2026)
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith(f"Replay · run_id {derived} · ")
+    assert out[3].startswith(
+        f"Solo lo registrado de {REPLAY_RUN} · {DEFAULT_NOTE} · semilla 2026 · perfiles "
+    )
+    assert out[4] == "Sin registros/realista-s2026/: calculado con record"
 
 
 def test_lanzar_con_registro_y_kafka_solo_manda_registros_del_derivado(monkeypatch, capsys):

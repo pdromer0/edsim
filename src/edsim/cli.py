@@ -21,10 +21,12 @@ and before any file is created.
 by its horizon or by an order ``parar``, and if ``preparar`` or ``control`` do
 their job; 130 with Ctrl+C, after publishing the end; 1 if a message is not
 delivered, the topics are missing or differ, the broker does not answer or the
-``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka. With
-``--registro`` (docs/specs/hito-7.md, task 7.4), ``lanzar`` and ``reemitir`` publish only
-what was written down, with the derived ``run_id``; ``reemitir`` ends with 1 if the true log
-is unreadable or ``registros/<perfil>-s<semilla>/`` is not what ``record`` gives.
+``kafka`` extra is missing; 2 for usage errors, before connecting to Kafka. ``lanzar`` and
+``reemitir`` publish only what was written down (docs/specs/hito-7.md, task 7.4), with the
+``realista`` profile unless ``--registro`` says another one and with the derived ``run_id``
+(docs/specs/hito-8.md, task 8.2); ``--verdad`` publishes the truth instead, and with
+``--registro``, ``--semilla-registro`` or ``--registros`` is a usage error. ``reemitir`` ends with
+1 if the true log is unreadable or ``registros/<perfil>-s<semilla>/`` is not what ``record`` gives.
 
 ``almacen`` (docs/specs/hito-7.md, "CLI"): 0 if ``preparar`` applies what is missing, if
 ``consumir`` stops with Ctrl+C or, with ``--run``, if bronze holds the whole run; 1 if
@@ -237,6 +239,8 @@ SENSITIVITY_CSV = "sensibilidad_{knob}.csv"
 DEFAULT_BOOTSTRAP = "localhost:9092"
 DEFAULT_SPEED = 60.0
 DEFAULT_RUNS = "resultados/ejecuciones"
+DEFAULT_RECORD_PROFILE = "realista"
+"""What ``directo lanzar`` and ``reemitir`` publish without ``--registro`` or ``--verdad``."""
 
 
 def parse_rhos(text: str) -> tuple[float, ...]:
@@ -1020,15 +1024,25 @@ def _check_kafka_log(args: argparse.Namespace, parser: argparse.ArgumentParser) 
 
 
 def _check_record_options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """``--semilla-registro`` and ``--registros`` only with ``--registro``; the default file."""
-    if args.registro is None:
+    """What ``lanzar`` and ``reemitir`` publish: what was written down, unless ``--verdad``.
+
+    With ``--verdad`` none of the record options is valid and ``args.registro`` stays ``None``
+    (the truth). Without it, a missing ``--registro`` becomes ``DEFAULT_RECORD_PROFILE`` and
+    ``args.registro_por_defecto`` says so, for the header; the profiles file gets its default.
+    """
+    if args.verdad:
         for option, value in (
+            ("--registro", args.registro),
             ("--semilla-registro", args.semilla_registro),
             ("--registros", args.registros),
         ):
             if value is not None:
-                parser.error(f"{option} solo vale con --registro")
+                parser.error(f"{option} no vale con --verdad")
+        args.registro_por_defecto = False
         return
+    args.registro_por_defecto = args.registro is None
+    if args.registro is None:
+        args.registro = DEFAULT_RECORD_PROFILE
     if args.semilla_registro is not None and args.semilla_registro < 0:
         parser.error(
             f"--semilla-registro debe ser un entero no negativo; se recibió {args.semilla_registro}"
@@ -1037,10 +1051,15 @@ def _check_record_options(args: argparse.Namespace, parser: argparse.ArgumentPar
         args.registros = DEFAULT_PROFILES_FILE
 
 
-def _record_line(origin: str, info, profiles_file, fingerprint: str) -> str:
-    """The header line of a run published with ``--registro``."""
+def _record_line(origin: str, info, profiles_file, fingerprint: str, by_default: bool) -> str:
+    """The header line of a run published with what was written down.
+
+    ``by_default`` is true when ``--registro`` was not written: the line says so and how to
+    get the truth instead.
+    """
+    note = " (por defecto; la verdad, con --verdad)" if by_default else ""
     return (
-        f"Solo lo registrado de {origin} · perfil {info.profile} · semilla {info.seed}"
+        f"Solo lo registrado de {origin} · perfil {info.profile}{note} · semilla {info.seed}"
         f" · perfiles {profiles_file} (huella {fingerprint})"
     )
 
@@ -1090,8 +1109,15 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         try:
             prepared = with_recording(prepared, record_profiles[args.registro], seed)
         except ValueError as error:
+            if args.registro_por_defecto:
+                parser.error(
+                    f"perfil por defecto ({args.registro}): {error}; "
+                    "prueba un --run-id más corto o --verdad"
+                )
             parser.error(f"--registro: {error}")
-        record_line = "\n" + _record_line(run_id, prepared.info.record, args.registros, fingerprint)
+        record_line = "\n" + _record_line(
+            run_id, prepared.info.record, args.registros, fingerprint, args.registro_por_defecto
+        )
     watch = None if args.memoria else _broker_watch(args, parser)
     anchored = ", anclado al calendario" if args.anclar else ""
     print(
@@ -1124,14 +1150,21 @@ def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)
         return 1
     except (OSError, ValueError) as error:
-        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+        hint = ""
+        if args.registro_por_defecto and "derived run_id" in str(error):
+            hint = "; prueba --verdad, que no deriva el run_id"
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}{hint}")
     watch = None if args.memoria else _broker_watch(args, parser)
     info = prepared.info
     record_line = ""
     if prepared.replayed is not None:
         replayed = prepared.replayed
         record_line = "\n" + _record_line(
-            args.run_id, info.record, args.registros, replayed.fingerprint
+            args.run_id,
+            info.record,
+            args.registros,
+            replayed.fingerprint,
+            args.registro_por_defecto,
         )
         record_line += (
             f"\nCoincide, byte a byte, con {replayed.checked}"
@@ -1530,26 +1563,34 @@ def _add_live_options(parser: argparse.ArgumentParser) -> None:
     )
     _add_kafka_log_option(parser)
     parser.add_argument(
+        "--verdad",
+        action="store_true",
+        help="publica la verdad, como en el hito 6, en vez de lo registrado (por defecto, lo "
+        f"registrado con el perfil {DEFAULT_RECORD_PROFILE}); no vale con --registro, "
+        "--semilla-registro ni --registros",
+    )
+    parser.add_argument(
         "--registro",
         choices=PROFILE_NAMES,
         default=None,
         metavar="PERFIL",
-        help="publica solo lo registrado con ese perfil del registro clínico (limpio, realista "
-        "u hostil), nunca la verdad, con el run_id derivado <run_id>_<perfil>_s<semilla>",
+        help="perfil del registro clínico (limpio, realista u hostil) con el que se publica "
+        f"lo registrado, nunca la verdad (por defecto: {DEFAULT_RECORD_PROFILE}), con el "
+        "run_id derivado <run_id>_<perfil>_s<semilla>; no vale con --verdad",
     )
     parser.add_argument(
         "--semilla-registro",
         type=int,
         default=None,
         metavar="N",
-        help="semilla del registro (por defecto: la de la ejecución); solo con --registro",
+        help="semilla del registro (por defecto: la de la ejecución); no vale con --verdad",
     )
     parser.add_argument(
         "--registros",
         default=None,
         metavar="FICHERO",
         help=f"perfiles del registro clínico en TOML (por defecto: {DEFAULT_PROFILES_FILE}); "
-        "solo con --registro",
+        "no vale con --verdad",
     )
 
 

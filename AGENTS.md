@@ -62,10 +62,10 @@ scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y not
 scripts/tests-integracion.sh  # contra Kafka y Postgres reales: levanta compose.yaml si hace falta
 uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
 uv run edsim directo preparar    # crea los topics de Kafka (Kafka levantado)
-uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe
+uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe: publica lo registrado realista (hito 8)
 uv run edsim directo lanzar --registro-kafka FICHERO  # guarda lo que escribe librdkafka (sin la opción, solo su recuento al final)
-uv run edsim directo lanzar --registro realista  # publica solo lo registrado, con el run_id derivado (también reemitir; --semilla-registro, --registros)
-uv run edsim directo reemitir RUN_ID --registro realista  # lo registrado de una ejecución guardada; si existe registros/, lo compara byte a byte
+uv run edsim directo lanzar --verdad  # publica la verdad, como en el hito 6 (también reemitir); sin ella, lo registrado realista, con el run_id derivado; --registro PERFIL, --semilla-registro y --registros no valen con --verdad
+uv run edsim directo reemitir RUN_ID  # lo registrado realista de una ejecución guardada; si existe registros/, lo compara byte a byte
 uv run edsim almacen preparar    # aplica las migraciones de bronce (Postgres levantado)
 uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa ejecución; sin --run, hasta Ctrl+C
 uv run edsim registro validar    # comprueba config/registro_clinico.toml: los tres perfiles del registro clínico

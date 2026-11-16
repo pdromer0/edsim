@@ -116,16 +116,25 @@ calienta sin emitir, después publica el censo (la historia de los pacientes que
 dentro) y luego cada evento cuando le toca. Detalle en
 [docs/specs/hito-6.md](docs/specs/hito-6.md), piezas 1 y 6.
 
+**Qué publica.** Desde el hito 8, `lanzar` y `reemitir` publican **lo registrado** con el
+perfil `realista` del registro clínico (el simulador del hito 7), con el `run_id` derivado
+`<run_id>_<perfil>_s<semilla>`. La verdad, como en el hito 6, se pide con `--verdad`; así
+un olvido no llena el cuadro «Urgencias» con la verdad. `--registro limpio|hostil` cambia
+el perfil, y `--semilla-registro` y `--registros`, la semilla y el fichero de perfiles;
+ninguna de las tres vale con `--verdad`.
+
 **Preparar y lanzar.**
 
 ```bash
 docker compose up --wait
 uv run edsim directo preparar   # crea los cuatro topics; la segunda vez dice «Ya estaban»
-uv run edsim directo lanzar     # 14 días de config/ a ×60: una hora simulada por minuto real
+uv run edsim directo lanzar     # 14 días de config/ a ×60: una hora simulada por minuto real; lo registrado realista
+uv run edsim directo lanzar --verdad  # lo mismo, pero publica la verdad
 ```
 
-`lanzar` imprime su `run_id` (como `r2026_20261109T172300`: la semilla y la hora de
-arranque), el censo y una línea de estado cada 10 s:
+`lanzar` imprime su `run_id` (como `r2026_20261109T172300`, la semilla y la hora de
+arranque, y con el sufijo `_realista_s2026` si publica lo registrado), el censo y una
+línea de estado cada 10 s:
 
 ```
 +10 s · 2026-01-07T00:10:08.215+01:00 (minuto 2890.1) · ×60 · 533 publicados · retraso 0.6 ms · 0 pendientes
@@ -138,14 +147,14 @@ los tres casos publica el mensaje `fin` en `ed.runs`. Opciones: las del modelo d
 `max`), `--anclar` (empieza hoy, a la hora real), `--kafka HOST:PUERTO` y `--memoria`
 (sin Kafka, para probar).
 
-**Mandar órdenes**, desde otra terminal y con el `run_id` de la cabecera. El directo las
-atiende en menos de 0,2 s:
+**Mandar órdenes**, desde otra terminal y con el `run_id` de la cabecera (el derivado, si
+publica lo registrado). El directo las atiende en menos de 0,2 s:
 
 ```bash
-uv run edsim directo control --run r2026_20261109T172300 --velocidad 600
-uv run edsim directo control --run r2026_20261109T172300 --pausar
-uv run edsim directo control --run r2026_20261109T172300 --reanudar
-uv run edsim directo control --run r2026_20261109T172300 --parar
+uv run edsim directo control --run r2026_20261109T172300_realista_s2026 --velocidad 600
+uv run edsim directo control --run r2026_20261109T172300_realista_s2026 --pausar
+uv run edsim directo control --run r2026_20261109T172300_realista_s2026 --reanudar
+uv run edsim directo control --run r2026_20261109T172300_realista_s2026 --parar
 ```
 
 **Ver los mensajes** en Redpanda Console (<http://localhost:8080>):
@@ -160,7 +169,8 @@ uv run edsim directo control --run r2026_20261109T172300 --parar
 
 ```bash
 uv run edsim motor simular --run-id r2026                   # la guarda en resultados/ejecuciones/r2026
-uv run edsim directo reemitir r2026 --velocidad max         # la publica de golpe
+uv run edsim directo reemitir r2026 --velocidad max         # publica de golpe lo registrado realista
+uv run edsim directo reemitir r2026 --velocidad max --verdad  # los mismos bytes del log, la verdad
 ```
 
 Sin el broker en marcha, `lanzar`, `reemitir`, `preparar` y `control` avisan en 10 s:

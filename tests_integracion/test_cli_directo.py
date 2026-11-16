@@ -42,8 +42,9 @@ MODEL = [
     "--perfiles",
     str(DATA / "perfiles_ejemplo.toml"),
 ]
-LAUNCH = ["directo", "lanzar", *MODEL, "--dias", "2", "--calentamiento", "1"]
-"""Un directo de tests/data con sala: 2 días, W = 1 día, semilla 2026."""
+LAUNCH = ["directo", "lanzar", *MODEL, "--dias", "2", "--calentamiento", "1", "--verdad"]
+"""Un directo de tests/data con sala: 2 días, W = 1 día, semilla 2026. Con `--verdad`: sin ella,
+`lanzar` publica lo registrado realista (tarea 8.2) y estos tests comparan con la verdad."""
 MODEL_H5 = [
     "--centro",
     str(DATA / "centro_h5_ejemplo.toml"),
@@ -52,7 +53,7 @@ MODEL_H5 = [
     "--perfiles",
     str(DATA / "perfiles_h5_ejemplo.toml"),
 ]
-LAUNCH_H5 = ["directo", "lanzar", *MODEL_H5, "--dias", "2", "--calentamiento", "1"]
+LAUNCH_H5 = ["directo", "lanzar", *MODEL_H5, "--dias", "2", "--calentamiento", "1", "--verdad"]
 """El mismo directo con los ejemplos del hito 5: un log de la versión 4 (tarea 5.4)."""
 
 PAUSE_SETTLE = 0.5
@@ -350,7 +351,7 @@ def test_reemitir_publica_los_mismos_bytes(bootstrap, edsim_topics, tmp_path):
     try:
         before = watermarks(consumer)
         code = main(["directo", "reemitir", run_id, "--ejecuciones", str(tmp_path),
-                     "--velocidad", "max", "--kafka", bootstrap])  # fmt: skip
+                     "--velocidad", "max", "--kafka", bootstrap, "--verdad"])  # fmt: skip
         events, runs, _ = of_run(read_range(consumer, before, watermarks(consumer)), run_id)
     finally:
         consumer.close()
