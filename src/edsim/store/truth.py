@@ -24,7 +24,7 @@ import csv
 import json
 import re
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -112,6 +112,24 @@ class _Recording:
     profile: str
     seed: int
     derived_run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TruthLoad:
+    """What ``load_truth`` wrote.
+
+    Attributes:
+        run_id: The run.
+        counts: The rows written to each table, by name (``eventos``, ``episodios``, ``dias`` and
+            ``libreta``).
+        recordings: ``<perfil>-s<semilla>`` of each recording whose notebook was loaded.
+        seconds: Real seconds the load took, from the connection to the commit.
+    """
+
+    run_id: str
+    counts: Mapping[str, int]
+    recordings: tuple[str, ...]
+    seconds: float
 
 
 def truth_run(store: RunStore, run_id: str) -> TruthRun:

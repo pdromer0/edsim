@@ -13,6 +13,10 @@ savepoints and the inserts with ``ON CONFLICT DO NOTHING``, each returning how m
 in. An error of the data (``psycopg.DataError``, ``psycopg.IntegrityError``, or a text the
 client cannot encode) becomes ``StoreDataError``, which the consumer's safety net handles.
 
+**The truth** (``load_truth``) writes the four tables of ``verdad`` of a saved run in one
+transaction: it deletes what the run already had there and copies the new rows with ``COPY``, so
+loading twice leaves the same, and a load that fails leaves the previous one.
+
 **The reading** (``read_bronze_lines``) gives back what was published of a run, as it came:
 the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id``, from the
 **last publication** of the run (see ``READ_LINES``). ``read_bronze_records`` builds the
@@ -20,6 +24,7 @@ the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id
 """
 
 import re
+import time
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import astuple
@@ -29,6 +34,7 @@ from edsim.clinical_record import Record, record_from_json
 from edsim.store.bronze import EventRow, RejectedRow, RunRow
 from edsim.store.consumer import RunProgress, StoreDataError
 from edsim.store.migrations import Migration, MigrationError, apply_migrations
+from edsim.store.truth import TruthError, TruthLoad, TruthRun, TruthTable
 
 DEFAULT_URL = "postgresql://edsim:edsim@localhost:5432/edsim"
 """The Postgres of ``compose.yaml``."""
@@ -340,3 +346,50 @@ def bronze_store(url: str = DEFAULT_URL) -> Iterator[PostgresBronze]:
     """
     with connect(url) as connection, _postgres_errors(url):
         yield PostgresBronze(connection)
+
+
+def _copy_table(connection: PostgresConnection, table: TruthTable) -> int:
+    """``COPY`` the rows of ``table`` into ``verdad``; how many went in."""
+    columns = ", ".join(table.columns)
+    statement = f"COPY {table.qualified_name} ({columns}) FROM STDIN"  # names of the code
+    with connection.raw.cursor() as cursor:
+        with cursor.copy(statement) as copy:
+            for row in table.rows():
+                copy.write_row(row)
+        return cursor.rowcount
+
+
+def load_truth(url: str, run: TruthRun) -> TruthLoad:
+    """Write the truth of ``run`` into ``verdad``, replacing what that run had there.
+
+    One transaction for the whole run: it deletes the rows of ``run.run_id`` in the four tables
+    (the ledger by ``run_id_origen``) and copies the new ones with ``COPY``, one table after
+    the other.
+    Loading the same run twice leaves the same rows; loading another run does not touch this one;
+    and a failure in any table, the last included, rolls everything back.
+
+    Raises:
+        MissingPostgresExtraError: If the ``postgres`` extra is not installed.
+        DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
+        edsim.store.migrations.MigrationError: If the tables of ``verdad`` are missing.
+        TruthError: If a file is not what the engine wrote (from the rows) or Postgres refuses a
+            value (a text in a number column, a repeated key).
+    """
+    psycopg = import_psycopg()
+    started = time.monotonic()
+    counts: dict[str, int] = {}
+    with connect(url) as connection, _postgres_errors(url):
+        try:
+            with connection.transaction():
+                for table in run.tables:
+                    connection.execute(
+                        f"DELETE FROM {table.qualified_name} WHERE {table.run_column} = %s",
+                        (run.run_id,),
+                    )
+                for table in run.tables:
+                    counts[table.name] = _copy_table(connection, table)
+        except (psycopg.DataError, psycopg.IntegrityError) as error:
+            raise TruthError(
+                f"Postgres rechazó la carga de {run.run_id}: {_detail(error)}"
+            ) from error
+    return TruthLoad(run.run_id, counts, run.recordings, time.monotonic() - started)
