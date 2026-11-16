@@ -77,3 +77,22 @@ sources:
           - name: fecha
           - name: calentamiento
           - name: dias
+
+  # La tabla de tres columnas (tag laboratorio) lee kpi_ejecucion de las tres hojas como
+  # fuentes: con ref() leería solo la de la hoja que se construye. Se construye aparte, con las
+  # tres hojas ya construidas.
+  - name: oro
+    description: El oro de la hoja del hospital, limpiado.
+    schema: oro
+    tables:
+      - name: kpi_ejecucion
+  - name: verdad_oro
+    description: El oro de la hoja verdad.
+    schema: verdad_oro
+    tables:
+      - name: kpi_ejecucion
+  - name: ingenuo_oro
+    description: El oro de la hoja ingenuo, sin limpiar.
+    schema: ingenuo_oro
+    tables:
+      - name: kpi_ejecucion

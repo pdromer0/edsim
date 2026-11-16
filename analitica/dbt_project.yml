@@ -46,6 +46,15 @@ models:
     oro:
       +schema: oro
       +materialized: table
+    # La tabla de tres columnas se construye aparte (--select tag:laboratorio), con las tres hojas
+    # ya construidas, y solo la lee laboratorio. Las tres hojas la excluyen
+    # (--exclude tag:laboratorio).
+    laboratorio:
+      +schema: laboratorio
+      +materialized: table
+      +tags: [laboratorio]
+      +grants:
+        select: [laboratorio]
 
 seeds:
   edsim_analitica:
