@@ -299,3 +299,22 @@ def test_una_libreta_que_falta_es_un_error(recorded, tmp_path):
 
     with pytest.raises(TruthError, match=r"limpio-s3.*falta el fichero de la libreta"):
         truth_run(store, RUN)
+
+
+def test_un_byte_que_no_es_utf8_dice_el_fichero_y_la_linea(copy):
+    """Pilla un fichero con un byte roto a mitad de la carga: antes de conectar no se lee entero,
+    así que el error sale mientras se copian las filas, y debe ser un `TruthError` con su fichero
+    (con la transacción abierta, no un `UnicodeDecodeError` suelto). Python descodifica por
+    bloques: la línea es «a partir de» la última leída, no la del byte."""
+    store, path = copy
+    for filename, line_of_error in (("eventos.jsonl", 3), ("ground_truth_dias.csv", 3)):
+        original = (path / filename).read_bytes()
+        lines = original.split(b"\n")
+        lines[line_of_error - 1] = b"\xff\xfe" + lines[line_of_error - 1]
+        (path / filename).write_bytes(b"\n".join(lines))
+        name = {"eventos.jsonl": "eventos", "ground_truth_dias.csv": "dias"}[filename]
+
+        with pytest.raises(TruthError, match=rf"{filename}: a partir de la línea \d+: .*utf-8"):
+            list(table(truth_run(store, RUN), name).rows())
+
+        (path / filename).write_bytes(original)

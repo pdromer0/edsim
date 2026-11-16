@@ -1336,11 +1336,15 @@ def _store_prepare(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 def _store_load_truth(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
         run = truth_run(RunStore(args.ejecuciones), args.run_id)
-        loaded = load_truth(args.postgres, run)
     except STORE_ERRORS as error:
         return _store_failure(error)
     except (OSError, ValueError) as error:
         parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    try:
+        loaded = load_truth(args.postgres, run)
+    except (*STORE_ERRORS, OSError) as error:
+        # Connected already: a file that fails to read now is a problem of the data, not of use.
+        return _store_failure(error)
     print(format_truth_load(args.postgres, loaded))
     return 0
 

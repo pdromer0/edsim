@@ -222,6 +222,8 @@ def _check_header(reader, expected: tuple[str, ...], filename: str) -> None:
         header = next(reader, None)
     except csv.Error as error:
         raise TruthError(f"{filename}:1: {error}") from error
+    except UnicodeDecodeError as error:  # the first block holds the header
+        raise TruthError(f"{filename}: a partir de la línea 1: {error}") from error
     if header is None or tuple(header) != expected:
         raise TruthError(f"{filename}:1: la cabecera no es la esperada ({len(expected)} columnas)")
 
@@ -237,6 +239,11 @@ def _cells(reader, filename: str, width: int) -> Iterator[list[str]]:
             yield row
     except csv.Error as error:
         raise TruthError(f"{filename}:{reader.line_num}: {error}") from error
+    except UnicodeDecodeError as error:
+        # Python decodes by blocks: the bad byte is in the block after the last line read.
+        raise TruthError(
+            f"{filename}: a partir de la línea {reader.line_num + 1}: {error}"
+        ) from error
 
 
 def _nullable(row: list[str]) -> tuple:
@@ -245,36 +252,40 @@ def _nullable(row: list[str]) -> tuple:
 
 
 def _event_rows(store: RunStore, run_id: str) -> Iterator[tuple]:
-    with store.open_file(run_id, EVENTS_FILE) as source:
-        for number, line in enumerate(source, start=1):
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            try:
-                event = from_json(line)
-                # The payload from the line itself: that of the event has tuples and read-only
-                # mappings, which ``json`` cannot write.
-                payload = json.dumps(json.loads(line)["payload"], ensure_ascii=False)
-            except ValueError as error:
-                raise TruthError(f"{EVENTS_FILE}:{number}: {error}") from error
-            if event.run_id != run_id:
-                raise TruthError(
-                    f"{EVENTS_FILE}:{number}: el evento es de la ejecución {event.run_id}, "
-                    f"no de {run_id}"
+    number = 0
+    try:
+        with store.open_file(run_id, EVENTS_FILE) as source:
+            for number, line in enumerate(source, start=1):
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                try:
+                    event = from_json(line)
+                    # The payload from the line itself: that of the event has tuples and
+                    # read-only mappings, which ``json`` cannot write.
+                    payload = json.dumps(json.loads(line)["payload"], ensure_ascii=False)
+                except ValueError as error:
+                    raise TruthError(f"{EVENTS_FILE}:{number}: {error}") from error
+                if event.run_id != run_id:
+                    raise TruthError(
+                        f"{EVENTS_FILE}:{number}: el evento es de la ejecución {event.run_id}, "
+                        f"no de {run_id}"
+                    )
+                yield (
+                    event.event_id,
+                    event.event_type,
+                    event.schema_version,
+                    event.run_id,
+                    event.episode_id,
+                    event.patient_id,
+                    event.source_system,
+                    event.sim_time,
+                    event.event_time,
+                    event.recorded_time,
+                    payload,
                 )
-            yield (
-                event.event_id,
-                event.event_type,
-                event.schema_version,
-                event.run_id,
-                event.episode_id,
-                event.patient_id,
-                event.source_system,
-                event.sim_time,
-                event.event_time,
-                event.recorded_time,
-                payload,
-            )
+    except UnicodeDecodeError as error:  # raised while reading the next line
+        raise TruthError(f"{EVENTS_FILE}: a partir de la línea {number + 1}: {error}") from error
 
 
 def _csv_rows(

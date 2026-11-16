@@ -147,3 +147,17 @@ def test_cargar_verdad_sale_con_1_si_postgres_falla(runs, monkeypatch, capsys, e
     err = capsys.readouterr().err
     assert text in err
     assert "secreta" not in err
+
+
+def test_un_fichero_que_falla_al_leerse_durante_la_carga_sale_con_1(runs, monkeypatch, capsys):
+    """Pilla un error de lectura con la conexión ya abierta que acabe como error de uso (código 2):
+    antes de conectar es un error de uso; después, un problema de los datos."""
+
+    def fail(url, run):
+        raise PermissionError(13, "Permission denied", "defectos.csv")
+
+    monkeypatch.setattr(cli, "load_truth", fail)
+
+    assert cli.main(["almacen", "cargar-verdad", "hito5", "--ejecuciones", str(runs)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Error: ") and "defectos.csv" in err
