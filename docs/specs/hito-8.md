@@ -674,29 +674,29 @@ Trece decisiones candidatas, tomadas con Pedro una a una en la sesión conceptua
 
 | Tarea | Contenido | Pista | Dónde | Modelo y esfuerzo | Rama | Crítica |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8.1 | Proyecto dbt (`analitica/`, lock, `profiles.yml`, macros, fuentes), `preparacion.registros` y `registros_vigentes` con sus unit tests; la medida de la clave de duplicados; CI: `dbt parse` en `tests` y `analitica/*` en `cambios` | A | Local (Postgres) | Opus, alto | `feat/h8-dbt-limpieza` | **Sí** |
-| 8.2 | El directo publica lo registrado por defecto; `--verdad`; tests del hito 6 y notebook 06 al día | B | Nube | Sonnet, alto | `feat/h8-directo-registro` | No |
-| 8.3 | Plata: las ocho tablas, emparejamientos, señales y tests de datos | A | Local | Opus, alto | `feat/h8-plata` | No |
-| 8.4 | La verdad en Postgres: `002_verdad.sql`, roles, `cargar-verdad`, permisos y la medida de un año | B | Local (Postgres) | Sonnet, alto | `feat/h8-verdad` | No |
-| 8.5 | Oro, las semillas, las tres construcciones, `grants`, la tabla de tres columnas y la prueba de punta a punta; dbt en `tests-integracion` | A | Local | Opus, alto | `feat/h8-oro` | **Sí** |
-| 8.6 | Grafana: compose, aprovisionamiento, los tres cuadros, el reloj de la ejecución, el test de los paneles y el de arranque | B | Local (Docker y navegador) | Sonnet, alto | `feat/h8-grafana` | No |
-| 8.7 | Tiempo real: `edsim analitica refrescar` y la medida con un año; si pasa de 60 s, para | A | Local | Sonnet, alto | `feat/h8-tiempo-real` | No |
-| 8.8 | Notebook `08_analitica.ipynb`: Lucía paso a paso, la tabla de tres columnas, lo que no se arregla y cada regla frente a la libreta; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h8-notebook` | No |
-| 8.9 | Cierre con `/cerrar-hito`: ADR 0100 a 0112, diario, `docs/diseno.md` (capas, registro de decisiones y hoja de ruta, con el orquestador en el hito 9), `AGENTS.md`, `portabilidad.md`, la memoria medida, balance, Release y `v0.8-hito8` | — | Local | Opus, alto | `docs/h8-cierre` | No |
+| 8.1 (#140) | Proyecto dbt (`analitica/`, lock, `profiles.yml`, macros, fuentes), `preparacion.registros` y `registros_vigentes` con sus unit tests; la medida de la clave de duplicados; CI: `dbt parse` en `tests` y `analitica/*` en `cambios` | A | Local (Postgres) | Opus, alto | `feat/h8-dbt-limpieza` | **Sí** |
+| 8.2 (#141) | El directo publica lo registrado por defecto; `--verdad`; tests del hito 6 y notebook 06 al día | B | Nube | Sonnet, alto | `feat/h8-directo-registro` | No |
+| 8.3 (#142) | Plata: las ocho tablas, emparejamientos, señales y tests de datos | A | Local | Opus, alto | `feat/h8-plata` | No |
+| 8.4 (#143) | La verdad en Postgres: `002_verdad.sql`, roles, `cargar-verdad`, permisos y la medida de un año | B | Local (Postgres) | Sonnet, alto | `feat/h8-verdad` | No |
+| 8.5 (#144) | Oro, las semillas, las tres construcciones, `grants`, la tabla de tres columnas y la prueba de punta a punta; dbt en `tests-integracion` | A | Local | Opus, alto | `feat/h8-oro` | **Sí** |
+| 8.6 (#145) | Grafana: compose, aprovisionamiento, los tres cuadros, el reloj de la ejecución, el test de los paneles y el de arranque | B | Local (Docker y navegador) | Sonnet, alto | `feat/h8-grafana` | No |
+| 8.7 (#146) | Tiempo real: `edsim analitica refrescar` y la medida con un año; si pasa de 60 s, para | A | Local | Sonnet, alto | `feat/h8-tiempo-real` | No |
+| 8.8 (#147) | Notebook `08_analitica.ipynb`: Lucía paso a paso, la tabla de tres columnas, lo que no se arregla y cada regla frente a la libreta; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h8-notebook` | No |
+| 8.9 (#148) | Cierre con `/cerrar-hito`: ADR 0100 a 0112, diario, `docs/diseno.md` (capas, registro de decisiones y hoja de ruta, con el orquestador en el hito 9), `AGENTS.md`, `portabilidad.md`, la memoria medida, balance, Release y `v0.8-hito8` | — | Local | Opus, alto | `docs/h8-cierre` | No |
 
 **Dependencias:**
 
 | Tarea | Depende de | Por qué |
 | --- | --- | --- |
-| 8.1 | — | |
-| 8.2 | — | Solo toca `live/` y la CLI del directo |
-| 8.3 | 8.1 | Plata lee `registros_vigentes` |
-| 8.4 | — | La migración y la carga no necesitan dbt |
-| 8.5 | 8.3, 8.4 | Los roles, `cargar-verdad` y plata |
-| 8.6 | 8.5 | Las columnas de oro y la base de la prueba de punta a punta |
-| 8.7 | 8.5 | Construye la hoja del hospital entera |
-| 8.8 | 8.6, 8.7 | Junta todo |
-| 8.9 | Todas | |
+| 8.1 (#140) | — | |
+| 8.2 (#141) | — | Solo toca `live/` y la CLI del directo |
+| 8.3 (#142) | 8.1 | Plata lee `registros_vigentes` |
+| 8.4 (#143) | — | La migración y la carga no necesitan dbt |
+| 8.5 (#144) | 8.3, 8.4 | Los roles, `cargar-verdad` y plata |
+| 8.6 (#145) | 8.5 | Las columnas de oro y la base de la prueba de punta a punta |
+| 8.7 (#146) | 8.5 | Construye la hoja del hospital entera |
+| 8.8 (#147) | 8.6, 8.7 | Junta todo |
+| 8.9 (#148) | Todas | |
 
 **Calendario en dos pistas:**
 
