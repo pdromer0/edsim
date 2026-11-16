@@ -102,3 +102,54 @@ unit_tests:
         - {episode_id: U, sigue_dentro: false, salida_olvidada: true}
         - {episode_id: V, sigue_dentro: true, salida_olvidada: false}
         - {episode_id: Z, sigue_dentro: true, salida_olvidada: false}
+
+  - name: ocupacion_de_boxes
+    description: >
+      Cuatro boxes en el maestro y W = 960, H = 1140: las horas 16, 17 y 18. El box 1 tiene
+      una estancia de 15:30 a 17:00 justas y otra de 17:30 a 18:30; el 2, una abierta desde
+      las 16:00 justas de un episodio que sigue dentro; el 3, una abierta de un episodio cuya
+      salida se olvidó; el 4, una abierta con sin_pareja (su cierre se olvidó); y el 99, que no
+      está en el maestro. Salen 2, 1 y 2 boxes (50, 25 y 50 %). Pilla contar ocupado para
+      siempre el box de una salida olvidada (hallazgo de la revisión propia de la 8.5: 2 en
+      vez de 1 a las 17:00, y 3 en vez de 2 a las 18:00) o el de un cierre olvidado, contar un
+      box que no es del maestro y la frontera de la hora en punto.
+    model: kpi_hora
+    overrides: *hospital
+    given:
+      - input: ref('parametros')
+        rows:
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", fecha_origen: "2026-01-05", calentamiento_min: 960, horizonte_min: 1140, fin_horizonte: "2026-01-05 19:00:00+01"}
+      - input: ref('censo')
+        rows:
+          - {run_id: c, hora: "2026-01-05 16:00:00+01", k: 16, censo: 0}
+          - {run_id: c, hora: "2026-01-05 17:00:00+01", k: 17, censo: 0}
+          - {run_id: c, hora: "2026-01-05 18:00:00+01", k: 18, censo: 0}
+      - input: ref('maestro_boxes')
+        rows:
+          - {box: 1}
+          - {box: 2}
+          - {box: 3}
+          - {box: 4}
+      - input: ref('ubicacion')
+        rows:
+          - {run_id: c, episode_id: E1, n: 1, box: 1, entrada: "2026-01-05 15:30:00+01", salida: "2026-01-05 17:00:00.000+01", motivo_salida: espera_resultados, sin_pareja: false}
+          - {run_id: c, episode_id: E2, n: 1, box: 2, entrada: "2026-01-05 16:00:00.000+01", salida: null, motivo_salida: null, sin_pareja: false}
+          - {run_id: c, episode_id: E3, n: 1, box: 3, entrada: "2026-01-05 16:30:00+01", salida: null, motivo_salida: null, sin_pareja: false}
+          - {run_id: c, episode_id: E4, n: 1, box: 4, entrada: "2026-01-05 17:10:00+01", salida: null, motivo_salida: null, sin_pareja: true}
+          - {run_id: c, episode_id: E5, n: 1, box: 1, entrada: "2026-01-05 17:30:00+01", salida: "2026-01-05 18:30:00+01", motivo_salida: salida, sin_pareja: false}
+          - {run_id: c, episode_id: E6, n: 1, box: 99, entrada: "2026-01-05 16:10:00+01", salida: null, motivo_salida: null, sin_pareja: false}
+      - input: ref('cohorte')
+        rows:
+          - {run_id: c, episode_id: E2, k: null, sigue_dentro: true, salida_olvidada: false}
+          - {run_id: c, episode_id: E3, k: null, sigue_dentro: false, salida_olvidada: true}
+          - {run_id: c, episode_id: E4, k: null, sigue_dentro: true, salida_olvidada: false}
+          - {run_id: c, episode_id: E6, k: null, sigue_dentro: true, salida_olvidada: false}
+      - input: ref('registros_vigentes')
+        rows: []
+      - input: ref('plantilla')
+        rows: []
+    expect:
+      rows:
+        - {run_id: c, k: 16, boxes_ocupados: 2, ocupacion_pct: 50.0}
+        - {run_id: c, k: 17, boxes_ocupados: 1, ocupacion_pct: 25.0}
+        - {run_id: c, k: 18, boxes_ocupados: 2, ocupacion_pct: 50.0}

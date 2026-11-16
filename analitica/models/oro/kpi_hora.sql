@@ -44,17 +44,10 @@ with parametros as (
         run_id,
         k,
         {%- for n in range(1, 6) %}
-        count(*) filter (
-            where jsonb_typeof(payload -> 'nivel') = 'number' and payload ->> 'nivel' = '{{ n }}'
-        ) as nivel_{{ n }},
+        count(*) filter (where {{ nivel_legible() }} and payload ->> 'nivel' = '{{ n }}')
+            as nivel_{{ n }},
         {%- endfor %}
-        count(*) filter (
-            where not coalesce(
-                jsonb_typeof(payload -> 'nivel') = 'number'
-                and payload ->> 'nivel' in ('1', '2', '3', '4', '5'),
-                false
-            )
-        ) as sin_nivel
+        count(*) filter (where not {{ nivel_legible() }}) as sin_nivel
     from vigentes
     where event_type = 'triage_completed'
     group by run_id, k
@@ -76,38 +69,30 @@ with parametros as (
 
 ), estancias as (
 
-    -- Las estancias en los boxes del maestro. Una abierta con sin_pareja no cuenta como
-    -- ocupada: su cierre se olvidó, y contaría para siempre.
-    select
-        u.run_id,
-        u.box,
-        u.entrada,
-        u.salida,
-        u.motivo_salida,
-        p.origen
-    from {{ ref('ubicacion') }} as u
-    join {{ ref('maestro_boxes') }} as b using (box)
-    join parametros as p using (run_id)
-    where u.entrada is not null
-        and not (u.salida is null and u.sin_pareja)
+    -- Las de los boxes del maestro que cuentan (macro estancias_en_boxes): una abierta, solo
+    -- si su episodio sigue dentro.
+    {{ estancias_en_boxes() }}
 
 ), ocupacion as (
 
-    -- Los boxes distintos ocupados a cada hora en punto: entrada <= hora < salida, la misma
-    -- regla que el censo. Cada estancia se despliega en sus horas, que son pocas; una abierta,
-    -- hasta la última hora de la ventana. Con boxes distintos, dos estancias solapadas en el
-    -- mismo box (un cierre anotado tarde) no pasan de los boxes del maestro.
+    -- Los boxes distintos ocupados a cada hora en punto de la ventana: entrada <= hora <
+    -- salida, la misma regla que el censo. Cada estancia se despliega en sus horas, desde la
+    -- primera de la ventana; una abierta, hasta la última. Con boxes distintos, dos estancias
+    -- solapadas en el mismo box (un cierre anotado tarde) no pasan de los boxes del maestro.
     select
         e.run_id,
         k,
         count(distinct e.box) as boxes_ocupados
     from estancias as e
     join (
-        select run_id, max(k) as ultima from horas group by run_id
-    ) as fin using (run_id)
+        select run_id, min(k) as primera, max(k) as ultima from horas group by run_id
+    ) as ventana using (run_id)
     cross join lateral generate_series(
-        ceil(extract(epoch from e.entrada - e.origen) / 3600)::bigint,
-        coalesce(ceil(extract(epoch from e.salida - e.origen) / 3600)::bigint - 1, fin.ultima)
+        greatest(ceil(extract(epoch from e.entrada - e.origen) / 3600)::bigint, ventana.primera),
+        least(
+            coalesce(ceil(extract(epoch from e.salida - e.origen) / 3600)::bigint - 1, ventana.ultima),
+            ventana.ultima
+        )
     ) as k
     group by e.run_id, k
 

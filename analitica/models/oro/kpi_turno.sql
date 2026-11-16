@@ -82,15 +82,13 @@ with parametros as (
         ) as mediana_tiempo_box_min
     from (
         select
-            u.run_id,
-            u.entrada,
-            u.salida,
-            p.fecha_origen,
-            floor(extract(epoch from u.entrada - p.origen) / 3600)::bigint as k
-        from {{ ref('ubicacion') }} as u
-        join {{ ref('maestro_boxes') }} as b using (box)
-        join parametros as p using (run_id)
-        where u.entrada is not null and u.salida is not null
+            run_id,
+            entrada,
+            salida,
+            fecha_origen,
+            floor(extract(epoch from entrada - origen) / 3600)::bigint as k
+        from ({{ estancias_en_boxes() }}) as estancias
+        where salida is not null
     ) as e
     join horas as h using (run_id, k)
     {{ turno_de('e.k', 'e.fecha_origen') }}

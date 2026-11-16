@@ -69,13 +69,12 @@ with parametros as (
 
 ), triajes as (
 
-    -- Nivel legible: un número entero del 1 al 5, como el isinstance(int) de Python. Un 3.0 o
-    -- un "3" no cuentan; un nivel vacío (null) tampoco.
+    -- Nivel legible: un número entero del 1 al 5, como el isinstance(int) de Python (macro
+    -- nivel_legible).
     select
         run_id,
         payload ->> 'nivel' as nivel,
-        jsonb_typeof(payload -> 'nivel') = 'number'
-            and payload ->> 'nivel' in ('1', '2', '3', '4', '5') as legible
+        {{ nivel_legible() }} as legible
     from vigentes
     where event_type = 'triage_completed'
 

@@ -33,6 +33,7 @@ UNIT_TESTS = {
     "censo_a_la_hora_en_punto",
     "cohorte_de_llegada",
     "cohorte_sigue_dentro",
+    "ocupacion_de_boxes",
 }
 
 PREPARACION = ("parametros", "registros", "registros_vigentes")

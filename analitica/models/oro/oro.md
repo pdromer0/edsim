@@ -49,7 +49,7 @@ Una fila por hora en punto de la ventana: (`run_id`, `hora`), las series de Graf
 
 **La mediana de la última hora sale mejor de lo que será.** En el directo, de los que llegaron en la hora en curso solo han pasado por el triaje los rápidos. Por eso cada mediana lleva al lado sus pendientes.
 
-**Los boxes** son los de la semilla `maestro_boxes`. Una estancia abierta con `sin_pareja` (su cierre se olvidó) no cuenta como ocupada, porque contaría para siempre; y se cuentan boxes distintos, así que dos estancias solapadas en el mismo box por un cierre anotado tarde no pasan de 36.
+**Los boxes** son los de la semilla `maestro_boxes`, y se cuentan boxes distintos: dos estancias solapadas en el mismo box por un cierre anotado tarde no pasan de 36. Una estancia abierta solo cuenta como ocupada si su episodio sigue dentro (`oro.cohorte`): si se olvidó su cierre (`sin_pareja`) o la salida del episodio, el box contaría ocupado para siempre, y en un año de registro realista las salidas olvidadas llenarían los 36. El precio es el de la regla de quien sigue dentro: un paciente de verdad en un box, esperando cama más de 24 h sin que se anote nada, deja de contar (en la ejecución de 3 días de la punta a punta, un box de 36 en la verdad).
 
 Las horas son todas las de la ventana, también las que aún no han llegado en un directo.
 {% enddocs %}
