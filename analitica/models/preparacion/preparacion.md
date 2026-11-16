@@ -28,3 +28,16 @@ En las hojas `hospital` y `verdad`, tres reglas, **en este orden**:
 
 En la hoja `ingenuo`, como los indicadores ingenuos del hito 7, solo se aplica la regla 1: ni se quitan duplicados ni se aplican correcciones. Las columnas son las mismas, con `corregido` falso y `duplicados_quitados` a 0.
 {% enddocs %}
+
+{% docs parametros %}
+Una fila por ejecución: (`run_id`). Oro necesita saber dónde empieza el minuto 0 de cada ejecución y dónde acaban el calentamiento y el horizonte, y los eventos no lo dicen.
+
+**Cada hoja lo saca de su fuente** (notas del chat de la 8.5, punto 4). El hospital no puede leer la verdad.
+
+- En `hospital` e `ingenuo`, del mensaje `inicio` de `bronce.ejecuciones`: `fecha_inicio`, `inicio_directo` (W, en minutos) y `horizonte`. Una ejecución publicada dos veces tiene dos `inicio`: vale el último que llegó a Kafka. Un `inicio` sin `fecha_inicio` no da fila, y su ejecución no sale en oro.
+- En `verdad`, de `verdad.dias`: la fecha del día 0, y `calentamiento` y `dias`, en días.
+
+**El origen** es `fecha_inicio` a las 00:00 en `+01:00`, como `event_time` en el motor (`edsim.engine.events.event_time`). Es el mismo minuto 0 que lee `compare.py` de la verdad. Se escribe como texto ISO 8601 con su desfase: `AT TIME ZONE '+01:00'` lo leería con el signo POSIX, una hora al oeste.
+
+**La ventana** empieza en `inicio_ventana` = origen + W. Oro cuenta en ella los cinco indicadores del hito 7 (D1 de la 8.5): una reemisión solo deja en bronce, de antes de W, el censo (los eventos de los episodios abiertos en W).
+{% enddocs %}
