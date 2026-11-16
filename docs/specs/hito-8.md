@@ -943,3 +943,89 @@ Con el subagente `mutante`, sobre `69ea91a`:
 **Pendiente**
 
 - Nada. La 8.9 escribe el ADR de la decisión 110.
+
+### Tarea 8.3: Plata, las ocho tablas con la forma de un HIS
+
+**Qué se hizo**
+
+Issue #142, rama `feat/h8-plata`, Claude Code (Opus, en local, con Postgres), en paralelo con la 8.4. Tarea no crítica: `/code-review medium`. Un commit por paso, más los de la revisión:
+
+- **Las ocho tablas** (`b63edad`): `models/plata/` con su documentación (`plata.md`) y sus tests de datos (`plata.yml`); las macros `primero` y `emparejar`; los tests genéricos `clave_unica` y `relacion`.
+- **Unit tests** (`ad0f481`): el inicio olvidado al final y al principio, las estancias en box y los tramos de plantilla.
+- **Integración** (`c77fe64`): `test_analitica.py` construye `preparacion plata` y exige los unit tests, los diez modelos, los tests de datos en verde y las ocho tablas en `plata`.
+- **Especificación** (`59b08c0`): D1 a D4 en este documento, V6 precisada, la frase del anexo de la 8.1 corregida y el comando de dbt en `AGENTS.md` y en el README.
+- **Revisión** (`c4ca5cc`, `ebb90c2`): un solo booleano para el cierre en `emparejar`, y el unit test de `prueba` (D4).
+
+**Decisiones del diff**
+
+- **Todos los modelos leen solo `registros_vigentes`**, con un CTE `vigentes`: el grafo de plata es plano, y cada unit test da una sola entrada. `triaje` busca la llegada él mismo, en vez de leerla de `episodio`.
+- **Dos macros.**
+  - `primero(tipo)` da el primer registro de un tipo por orden de anotación (`recorded_time`, `event_id`); una por tipo, para que cada modelo se lea como una lista de CTE con nombre.
+  - `emparejar` empareja con `lag` y `lead` sobre el papel de cada evento (apertura, cierre o salida). Sin solapes, «el fin con la apertura abierta justo antes» es «el fin con la apertura que tiene justo antes». La usan `valoracion`, `ubicacion` y `prueba` (las rondas), así que las tres emparejan con la misma regla.
+- **Lo que el plan interpretó** (D2 a D4 no lo cubrían):
+  - la última apertura sin cierre lleva `sin_pareja` si el episodio tiene salida, y no si sigue en curso;
+  - en `ubicacion`, las salidas solo cierran una estancia abierta: en la verdad de `h8demo`, un desplazado que esperaba cama sale desde el pasillo;
+  - si una ronda de pruebas no tiene lista ni resultado, no da filas;
+  - el `event_time` de una fila es el menor de sus eventos, y su `recorded_time`, el mayor.
+- **Tests de clave compuesta propios:** `unique` y `relationships` de dbt solo admiten una columna, y H8-2 no deja usar `dbt_utils`. Los argumentos van bajo `arguments:`, la sintaxis de dbt 1.10 o posterior: `dbt parse` no da avisos.
+- **`episodio` agrupa también por `patient_id`:** un episodio con dos pacientes saldría dos veces y lo cazaría `clave_unica`.
+
+**Valores a mano** (un oráculo en Python con una variable «abierta», sin `lag` ni `lead`; completo en el PR)
+
+- Inicio olvidado al final: `n=1` de 17:40 a 17:55; `n=2`, el fin de las 19:20 suelto, con `sin_pareja`. Al principio: `n=1`, el fin de las 17:55 suelto; `n=2`, de 19:05 a 19:20.
+- Estancias: box 3 (`espera_resultados`), 5 (`desplazado`) y 7 (`salida`). Tramos: médicos 3, 5 y 4, el último abierto; enfermería 2, abierto.
+- Prueba: con la lista vacía, analítica y ECG con `sin_peticion`; con un resultado de menos, la radiografía con `sin_resultado`.
+
+**Medidas**
+
+- **`dbt build` con datos reales** (nota 8 de las notas del chat). `h8demo` (14 días, esquema 4) reemitida a una base de prueba con `realista` y `hostil`: 47.070 y 46.750 registros. Los 40 tests de datos, en verde con los dos. Los recuentos de plata, frente a un oráculo en Python que lee `bronce.eventos` sin dbt, con 0 diferencias en las 15 medidas:
+
+  | Medida | `realista` | `hostil` |
+  | --- | --- | --- |
+  | paciente / episodio | 3.776 | 3.799 |
+  | `sin_llegada` / `sin_salida` | 21 / 79 | 194 / 268 |
+  | triaje (`tiempo_negativo`) | 3.768 (0) | 3.761 (0) |
+  | valoración (`sin_pareja`) | 6.277 (65) | 6.263 (607) |
+  | ubicación (`sin_pareja`) | 4.747 (6) | 4.572 (93) |
+  | prueba (`sin_resultado` / `sin_peticion`) | 4.752 (83 / 71) | 4.694 (503 / 452) |
+  | destino | 3.612 | 3.614 |
+  | plantilla | 86 | 86 |
+
+  Con `hostil`, 30 rondas no dan filas porque les faltan la lista y el resultado (con `realista`, 0). `tiempo_negativo` no salta, como se esperaba.
+- **Tiempos:** `dbt build --select preparacion plata` con las dos ejecuciones, 2,5 s (6 s con el arranque); el test de integración, 9,9 s.
+- **Empates:** en `h8demo`, ya sin duplicados, ninguna apertura comparte instante con otro evento de su secuencia, en la verdad, en `realista` ni en `hostil`.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en paralelo, cada uno con su base de prueba y `dbt test --select test_type:unit`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V6 | Un fin suelto lleva `sin_pareja` solo si no hay ningún inicio antes | Falla solo el del inicio olvidado al final | Falla solo ese (11 de 12 pasan) |
+| V6b | `sin_pareja` siempre falso | Fallan los dos de valoración | Fallan esos dos (10 de 12 pasan) |
+| V-orden | El k-ésimo inicio con el k-ésimo cierre | Falla solo el del inicio olvidado al principio | Falla solo ese: el inicio de las 19:05 sale con el fin de las 17:55 |
+| V-motivo | Un desplazamiento como `espera_resultados` | Falla solo el de las estancias | Falla solo ese |
+| V-hasta | `hasta = desde` | Falla solo el de los tramos | Falla solo ese |
+| V-lista | `prueba` despliega solo la lista pedida (`left join`) | Falla solo el de prueba | Falla solo ese: faltan las dos filas con `sin_peticion` (12 de 13 pasan) |
+
+Con todas ellas, los 40 tests de datos siguen en verde: comprueban la forma, no la lógica.
+
+**Revisión**
+
+`/code-review medium main...feat/h8-plata`, ocho hallazgos:
+
+- **Corregidos:**
+  - D4 sin unit test (`ebb90c2`);
+  - el `case` del cierre, repetido cuatro veces (`c4ca5cc`).
+- **Explicados:**
+  - una salida cierra la estancia aunque se olvidara su `box_released` o su `patient_displaced`. Un `box_released` olvidado ya se ve como dos aperturas seguidas, porque tras los resultados el paciente vuelve a un box. Queda el desplazamiento olvidado de quien después sale desde el pasillo: 4 desplazamientos en 14 días con un 0,5 % de olvidos;
+  - el desempate por `recorded_time` antes que `event_id`: en lo registrado dan el mismo orden, y no hay aperturas empatadas (medido);
+  - `sin_pareja` del final mira si el episodio tiene salida, no si es posterior: la valoración y la salida son del mismo sistema y del mismo reloj, y `prueba` no publica `sin_pareja`;
+  - `tiempo_negativo` no compensa los relojes: así lo quiere la decisión 103, y la señal es su rastro;
+  - los tests de datos corren sobre una base vacía en el CI, y por eso la medida con datos reales; la 8.5 los ejercita con datos;
+  - el CTE `vigentes` se materializa una vez por modelo: 2,5 s con dos ejecuciones de 14 días.
+
+**Pendiente**
+
+- **La 8.5** (#144): su prueba de punta a punta construye plata con datos, y con ella sus tests de datos en el CI.
+- **La 8.7** (#146): mide un año. Si plata pesa, el primer candidato es leer `registros_vigentes` una sola vez por modelo y agrupar por tipo con `filter`.
