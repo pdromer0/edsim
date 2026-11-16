@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: registros
+    description: '{{ doc("registros") }}'
+    columns:
+      - name: event_id
+        description: Único dentro de la ejecución; en lo registrado, el número de emisión.
+      - name: event_type
+      - name: run_id
+      - name: episode_id
+        description: Nulo en los eventos de recursos.
+      - name: patient_id
+      - name: source_system
+      - name: event_time
+        description: Cuándo pasó, con el reloj del sistema que lo anotó.
+      - name: recorded_time
+        description: Cuándo se anotó, con el reloj del sistema que lo anotó.
+      - name: payload
+      - name: ingest_time
+        description: La primera llegada a Kafka. No existe en la hoja verdad.
+
+  - name: registros_vigentes
+    description: '{{ doc("registros_vigentes") }}'
+    columns:
+      - name: event_id
+        description: El del registro que se queda; en un duplicado, el del anotado primero.
+      - name: event_type
+        description: Nunca record_corrected.
+      - name: payload
+        description: El payload tal como se anotó, con la última corrección aplicada.
+      - name: corregido
+        description: Si se aplicó alguna corrección a este registro.
+      - name: duplicados_quitados
+        description: Cuántos dobles clics del mismo registro se quitaron (0 si ninguno).
