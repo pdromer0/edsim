@@ -1150,7 +1150,10 @@ def _replay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print(f"Error en los datos de {args.run_id}: {error}", file=sys.stderr, flush=True)
         return 1
     except (OSError, ValueError) as error:
-        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+        hint = ""
+        if args.registro_por_defecto and "derived run_id" in str(error):
+            hint = "; prueba --verdad, que no deriva el run_id"
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}{hint}")
     watch = None if args.memoria else _broker_watch(args, parser)
     info = prepared.info
     record_line = ""

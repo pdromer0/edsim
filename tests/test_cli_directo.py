@@ -718,6 +718,27 @@ def test_lanzar_en_memoria_con_registro_publica_solo_lo_registrado(sinks, capsys
     assert out[5].startswith("Censo de lo registrado en W = 1440 min: ")
 
 
+def test_run_id_largo_con_el_valor_por_defecto_sugiere_verdad(
+    saved, tmp_path, sin_conexion, capsys
+):
+    # 50 caracteres caben solos, pero con el sufijo _realista_s2026 son 65: lanzar y reemitir
+    # lo dicen y apuntan a --verdad, que no deriva el run_id.
+    long_id = "x" * 50
+    save_run(tmp_path, long_id)
+    cases = [
+        [*LAUNCH, "--run-id", long_id],
+        ["directo", "reemitir", long_id, "--ejecuciones", str(tmp_path)],
+    ]
+    for argv in cases:
+        with pytest.raises(SystemExit) as raised:
+            main(argv)
+        assert raised.value.code == 2
+        assert "derived run_id" in (err := capsys.readouterr().err)
+        assert "--verdad" in err
+
+    assert main([*LAUNCH_VERDAD, "--run-id", long_id, "--memoria", "--velocidad", "max"]) == 0
+
+
 DEFAULT_NOTE = "perfil realista (por defecto; la verdad, con --verdad)"
 
 
