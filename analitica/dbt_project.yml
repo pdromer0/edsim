@@ -26,8 +26,18 @@ vars:
   # de cama dejan huecos de días sin anotar, y ningún margen separa del todo).
   margen_sin_salida_min: 1440
 
+# Quién lee cada hoja (decisión 107, H8-8): la del hospital, hospital y laboratorio; las demás,
+# solo laboratorio. grants da SELECT en cada tabla y vista al crearla, en la misma transacción:
+# un lector no ve nunca una tabla reconstruida sin su permiso. El USAGE de los esquemas, que
+# grants no da, lo pone dar_uso_de_esquemas al final de cada construcción. Aquí var() necesita
+# su valor por defecto: este fichero se lee antes de que existan las vars que él mismo define.
+on-run-end:
+  - "{{ dar_uso_de_esquemas(schemas) }}"
+
 models:
   edsim_analitica:
+    +grants:
+      select: "{{ ['hospital', 'laboratorio'] if var('hoja', 'hospital') == 'hospital' else ['laboratorio'] }}"
     preparacion:
       +schema: preparacion
     plata:
@@ -39,6 +49,8 @@ models:
 
 seeds:
   edsim_analitica:
+    +grants:
+      select: "{{ ['hospital', 'laboratorio'] if var('hoja', 'hospital') == 'hospital' else ['laboratorio'] }}"
     # La capacidad y los turnos de config/centro.toml (tests/test_semillas_analitica.py lo
     # comprueba), en el esquema oro de cada hoja.
     +schema: oro
