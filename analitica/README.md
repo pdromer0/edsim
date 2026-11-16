@@ -12,9 +12,11 @@ Siempre desde esta carpeta: dbt busca aquí `dbt_project.yml` y `profiles.yml`.
 cd analitica
 uv sync --locked                       # el entorno de dbt, en analitica/.venv
 uv run dbt parse                       # comprueba Jinja, ref() y source(); no conecta
-uv run dbt build --select preparacion  # construye la preparación y pasa sus unit tests
-uv run dbt build --vars '{hoja: ingenuo}'  # otra hoja, en sus propios esquemas
+EDSIM_PG_BASE=BASE uv run dbt build --select preparacion  # construye la preparación y pasa sus unit tests
+EDSIM_PG_BASE=BASE uv run dbt build --vars '{hoja: ingenuo}'  # otra hoja, en sus propios esquemas
 ```
+
+`BASE` es una base de prueba preparada con `edsim almacen preparar --postgres URL`. Sin `EDSIM_PG_BASE`, dbt construye en la base `edsim`, la de los datos de compose.
 
 La conexión sale de `profiles.yml`: `EDSIM_PG_HOST` (`localhost`), `EDSIM_PG_PUERTO` (`5432`), `EDSIM_PG_USUARIO` (`edsim`), `EDSIM_PG_CLAVE` (`edsim`) y `EDSIM_PG_BASE` (`edsim`), con los valores de `compose.yaml` por defecto. Las pruebas usan su propia base con `EDSIM_PG_BASE`: nunca la base `edsim`.
 
@@ -28,6 +30,7 @@ La conexión sale de `profiles.yml`: `EDSIM_PG_HOST` (`localhost`), `EDSIM_PG_PU
 | `profiles.yml` | La conexión, con `env_var()` |
 | `macros/generate_schema_name.sql` | Esquemas con el nombre exacto de su capa y, fuera del hospital, la hoja delante |
 | `macros/fuente_registros.sql` | `bronce.eventos` o `verdad.eventos`, según la hoja |
+| `macros/columnas_registro.sql` | Las columnas que pasan sin tocar por la preparación, según la hoja |
 | `models/fuentes.yml` | Las tablas que dbt lee y no construye |
 | `models/preparacion/` | `registros` (vista) y `registros_vigentes` (tabla, la limpieza), con su documentación y sus unit tests |
 
