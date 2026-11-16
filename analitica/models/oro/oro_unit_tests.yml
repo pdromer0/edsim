@@ -39,3 +39,66 @@ unit_tests:
         - {run_id: c, hora: "2026-01-05 16:00:00+01", censo: 2}
         - {run_id: c, hora: "2026-01-05 17:00:00+01", censo: 2}
         - {run_id: c, hora: "2026-01-05 18:00:00+01", censo: 3}
+
+  - name: cohorte_de_llegada
+    description: >
+      W = 960 y turnos a las 8, 15 y 22. P llega a las 16:58, se tria a las 17:04 y la ve el
+      médico a las 17:30: cuenta en la hora de las 16, en la tarde del 5, con 6 y 32 min. R
+      llega el 6 a las 03:00 (la noche del 5) y S el 6 a las 08:00 justas (la mañana del 6). X
+      llega antes de la ventana y tiene su fila: la cohorte es de todos los episodios. Pilla
+      apuntar las esperas a la hora del triaje (V10: P a las 17:00) y una noche con la fecha
+      del día en que acaba.
+    model: cohorte
+    overrides: *hospital
+    given:
+      - input: ref('parametros')
+        rows:
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", fecha_origen: "2026-01-05", calentamiento_min: 960, horizonte_min: 4320, fin_horizonte: "2026-01-08 00:00:00+01"}
+      - input: ref('turnos')
+        rows:
+          - {turno: manana, inicio: 8}
+          - {turno: tarde, inicio: 15}
+          - {turno: noche, inicio: 22}
+      - input: ref('registros_vigentes')
+        rows:
+          - {run_id: c, event_id: c-01, episode_id: P, event_type: patient_arrived, event_time: "2026-01-05 16:58:00+01", recorded_time: "2026-01-05 16:58:00+01"}
+          - {run_id: c, event_id: c-02, episode_id: P, event_type: triage_completed, event_time: "2026-01-05 17:04:00+01", recorded_time: "2026-01-05 17:04:00+01", payload: '{"nivel": 3}'}
+          - {run_id: c, event_id: c-03, episode_id: P, event_type: assessment_started, event_time: "2026-01-05 17:30:00+01", recorded_time: "2026-01-05 17:30:00+01", payload: '{"tipo": "inicial"}'}
+          - {run_id: c, event_id: c-04, episode_id: R, event_type: patient_arrived, event_time: "2026-01-06 03:00:00+01", recorded_time: "2026-01-06 03:00:00+01"}
+          - {run_id: c, event_id: c-05, episode_id: S, event_type: patient_arrived, event_time: "2026-01-06 08:00:00.000+01", recorded_time: "2026-01-06 08:00:00+01"}
+          - {run_id: c, event_id: c-06, episode_id: X, event_type: patient_arrived, event_time: "2026-01-05 15:00:00+01", recorded_time: "2026-01-05 15:00:00+01"}
+    expect:
+      rows:
+        - {episode_id: P, hora_llegada: "2026-01-05 16:00:00+01", fecha_turno: "2026-01-05", turno: tarde, espera_triaje_min: 6.0, espera_medico_min: 32.0}
+        - {episode_id: R, hora_llegada: "2026-01-06 03:00:00+01", fecha_turno: "2026-01-05", turno: noche, espera_triaje_min: null, espera_medico_min: null}
+        - {episode_id: S, hora_llegada: "2026-01-06 08:00:00+01", fecha_turno: "2026-01-06", turno: manana, espera_triaje_min: null, espera_medico_min: null}
+        - {episode_id: X, hora_llegada: "2026-01-05 15:00:00+01", fecha_turno: "2026-01-05", turno: tarde, espera_triaje_min: null, espera_medico_min: null}
+
+  - name: cohorte_sigue_dentro
+    description: >
+      Tres episodios sin salida, con su última anotación (hecho → anotación): U, 09:00 →
+      09:59:59.999 del 6; V, 08:00 → 10:00:00 del 6; Z, 10:00 → 10:00 del 7, la última de la
+      ejecución. El ahora es el 7 a las 10:00 y el umbral, 24 h antes: U se olvidó la salida; V
+      y Z siguen dentro. Pilla mirar el event_time en vez de la anotación (M2: V olvidada) y un
+      umbral con < en vez de <=.
+    model: cohorte
+    overrides: {vars: {hoja: hospital, margen_sin_salida_min: 1440}}
+    given:
+      - input: ref('parametros')
+        rows:
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", fecha_origen: "2026-01-05", calentamiento_min: 960, horizonte_min: 4320, fin_horizonte: "2026-01-08 00:00:00+01"}
+      - input: ref('turnos')
+        rows:
+          - {turno: manana, inicio: 8}
+          - {turno: tarde, inicio: 15}
+          - {turno: noche, inicio: 22}
+      - input: ref('registros_vigentes')
+        rows:
+          - {run_id: c, event_id: c-01, episode_id: U, event_type: patient_arrived, event_time: "2026-01-06 09:00:00+01", recorded_time: "2026-01-06 09:59:59.999+01"}
+          - {run_id: c, event_id: c-02, episode_id: V, event_type: patient_arrived, event_time: "2026-01-06 08:00:00+01", recorded_time: "2026-01-06 10:00:00.000+01"}
+          - {run_id: c, event_id: c-03, episode_id: Z, event_type: patient_arrived, event_time: "2026-01-07 10:00:00+01", recorded_time: "2026-01-07 10:00:00+01"}
+    expect:
+      rows:
+        - {episode_id: U, sigue_dentro: false, salida_olvidada: true}
+        - {episode_id: V, sigue_dentro: true, salida_olvidada: false}
+        - {episode_id: Z, sigue_dentro: true, salida_olvidada: false}

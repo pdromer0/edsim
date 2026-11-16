@@ -31,6 +31,8 @@ UNIT_TESTS = {
     "plantilla_tramos",
     "prueba_lista_y_resultado_juntos",
     "censo_a_la_hora_en_punto",
+    "cohorte_de_llegada",
+    "cohorte_sigue_dentro",
 }
 
 PREPARACION = ("parametros", "registros", "registros_vigentes")
@@ -47,8 +49,11 @@ PLATA = (
 )
 """Las ocho tablas de plata (decisión 104, H8-5), en orden alfabético."""
 
-ORO = ("censo", "kpi_ejecucion")
+ORO = ("calidad", "censo", "cohorte", "kpi_ejecucion", "kpi_hora", "kpi_turno")
 """Las tablas de oro (decisión 106, H8-7), en orden alfabético."""
+
+SEMILLAS = ("maestro_boxes", "turnos")
+"""Las semillas, en el esquema oro."""
 
 
 # Por encima del límite de la carpeta (180 s): el sync en frío y la fixture de sesión, si este
@@ -63,6 +68,7 @@ def test_dbt_construye_la_hoja_del_hospital_y_pasa_sus_tests(bronze_url, tmp_pat
     # de datos, en verde.
     assert result.of("unit_test") == dict.fromkeys(UNIT_TESTS, "pass")
     assert result.of("model") == dict.fromkeys((*PREPARACION, *PLATA, *ORO), "success")
+    assert result.of("seed") == dict.fromkeys(SEMILLAS, "success")
     data = result.of("test")
     assert data, "ningún test de datos en el informe"
     assert set(data.values()) == {"pass"}
@@ -74,7 +80,7 @@ def test_dbt_construye_la_hoja_del_hospital_y_pasa_sus_tests(bronze_url, tmp_pat
             "ORDER BY table_schema, table_name"
         )
     assert tables == [
-        *(("oro", name, "BASE TABLE") for name in ORO),
+        *(("oro", name, "BASE TABLE") for name in sorted((*ORO, *SEMILLAS))),
         *(("plata", name, "BASE TABLE") for name in PLATA),
         ("preparacion", "parametros", "BASE TABLE"),
         ("preparacion", "registros", "VIEW"),

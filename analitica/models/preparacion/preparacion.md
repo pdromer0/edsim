@@ -21,7 +21,7 @@ En las hojas `hospital` y `verdad`, tres reglas, **en este orden**:
 
 **Lo que no cubre:**
 
-- Una corrección que apunta a un registro que no está (porque se olvidó, por ejemplo) no casa con ninguna fila. Se cuenta como aviso de calidad en `oro.calidad` (8.5), desde `registros`. Con datos de EDsim siempre da 0, porque un hecho olvidado no recibe corrección. La cuenta es para un HIS real.
+- Una corrección que apunta a un registro que no está (porque se olvidó, por ejemplo) no casa con ninguna fila. Se cuenta como aviso de calidad en `oro.calidad` (8.5), contra los `event_id` que quedan en `registros_vigentes` (D3 de la 8.1): así cuenta también una corrección a una copia que la limpieza quitó, que tampoco se aplica. Con datos de EDsim siempre da 0, porque un hecho olvidado no recibe corrección y la corrección apunta al original. La cuenta es para un HIS real.
 - Los campos vacíos se quedan `NULL`. Un olvido sin salida deja el episodio abierto, y un olvido sin llegada lo deja sin hora de llegada. Plata y oro lo señalan.
 - El reloj desajustado de un sistema no se arregla: solo deja rastro cuando un tiempo sale negativo.
 - Un valor erróneo que nadie corrigió no se detecta: el registro clínico elige valores verosímiles.

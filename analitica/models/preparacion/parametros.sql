@@ -15,6 +15,7 @@ with fuente as (
 
 select
     run_id,
+    fecha_origen,
     origen,
     calentamiento_min,
     horizonte_min,

@@ -17,6 +17,7 @@
     {%- if hoja in ('hospital', 'ingenuo') -%}
     select
         run_id,
+        (mensaje ->> 'fecha_inicio')::date as fecha_origen,
         ((mensaje ->> 'fecha_inicio') || 'T00:00:00+01:00')::timestamptz as origen,
         (mensaje ->> 'inicio_directo')::double precision as calentamiento_min,
         (mensaje ->> 'horizonte')::double precision as horizonte_min
@@ -36,6 +37,7 @@
     {%- elif hoja == 'verdad' -%}
     select
         run_id,
+        fecha as fecha_origen,
         (fecha::text || 'T00:00:00+01:00')::timestamptz as origen,
         (1440 * calentamiento)::double precision as calentamiento_min,
         (1440 * dias)::double precision as horizonte_min

@@ -21,6 +21,10 @@ vars:
   # simulación) o ingenuo (lo registrado sin limpiar). Fuera del hospital, los esquemas llevan
   # delante «<hoja>_» (macros/generate_schema_name.sql; decisión 107, H8-8).
   hoja: hospital
+  # Un episodio sin salida sigue dentro si su última anotación es de las últimas 24 h de la
+  # ejecución; si no, su salida se olvidó (oro.cohorte; medido en el plan de la 8.5: las esperas
+  # de cama dejan huecos de días sin anotar, y ningún margen separa del todo).
+  margen_sin_salida_min: 1440
 
 models:
   edsim_analitica:
@@ -32,3 +36,9 @@ models:
     oro:
       +schema: oro
       +materialized: table
+
+seeds:
+  edsim_analitica:
+    # La capacidad y los turnos de config/centro.toml (tests/test_semillas_analitica.py lo
+    # comprueba), en el esquema oro de cada hoja.
+    +schema: oro

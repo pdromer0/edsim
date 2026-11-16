@@ -49,3 +49,125 @@ models:
           nivel legible (de pct_nivel_1 a pct_nivel_5); vacío si no hay ninguno.
       - name: horas
         description: Las horas en punto de la ventana.
+
+  - name: cohorte
+    description: '{{ doc("cohorte") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: k
+        description: La hora de llegada, en horas desde el origen; vacía sin llegada.
+      - name: hora_llegada
+        description: La hora en punto en que empieza la hora de la llegada.
+      - name: fecha_turno
+        description: La fecha del turno de la llegada; la noche es de la fecha en que empieza.
+      - name: turno
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [manana, tarde, noche]
+      - name: espera_triaje_min
+        description: De la primera llegada al primer triage_completed, en minutos.
+      - name: espera_medico_min
+        description: De la primera llegada al primer assessment_started inicial, en minutos.
+      - name: estancia_min
+        description: De la primera llegada a la primera salida, en minutos.
+      - name: abandono
+        description: La primera salida es un patient_left_wbs.
+      - name: sigue_dentro
+        description: Sin salida y con alguna anotación en las últimas margen_sin_salida_min.
+      - name: salida_olvidada
+        description: Sin salida y sin anotar nada en las últimas margen_sin_salida_min.
+
+  - name: kpi_hora
+    description: '{{ doc("kpi_hora") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, hora]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: hora
+        data_tests: [not_null]
+      - name: llegadas
+        description: Los registros patient_arrived de la hora, como en kpi_ejecucion.
+      - name: censo
+        description: Los pacientes dentro a la hora en punto (oro.censo).
+      - name: mediana_triaje_min
+        description: La mediana de la espera hasta el triaje de los llegados en esa hora.
+      - name: pendientes_triaje
+        description: Los llegados en esa hora sin triaje que siguen dentro.
+      - name: mediana_medico_min
+      - name: pendientes_medico
+      - name: sin_nivel
+        description: Los triage_completed de la hora sin un nivel legible.
+      - name: se_van_sin_ser_vistos
+        description: Los llegados en esa hora cuya salida es un patient_left_wbs.
+      - name: mediana_estancia_min
+      - name: boxes_ocupados
+        description: Los boxes del maestro con una estancia a la hora en punto.
+      - name: boxes
+        description: Los boxes del maestro (la semilla maestro_boxes).
+      - name: ocupacion_pct
+      - name: mediana_tiempo_box_min
+        description: La mediana de las estancias en box que entran en esa hora.
+      - name: desplazamientos
+        description: Las estancias en box que acaban desplazadas en esa hora.
+      - name: salidas_espera_resultados
+        description: Las estancias en box liberadas en esa hora para esperar resultados.
+      - name: medicos
+        description: Los médicos de la plantilla a la hora en punto.
+      - name: pacientes_por_medico
+        description: censo / medicos.
+
+  - name: kpi_turno
+    description: '{{ doc("kpi_turno") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, fecha, turno]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: fecha
+        description: La fecha en que empieza el turno.
+        data_tests: [not_null]
+      - name: turno
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [manana, tarde, noche]
+      - name: inicio
+        description: Cuándo empieza el turno.
+      - name: horas
+        description: Las horas del turno que caen en la ventana.
+      - name: completo
+        description: El turno cae entero en la ventana; falso en el que corta W o el horizonte.
+
+  - name: calidad
+    description: '{{ doc("calidad") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: sin_salida
+        description: Episodios sin salida; la suma de salidas_olvidadas y siguen_dentro.
+      - name: campos_vacios_por_campo
+        description: Un objeto con los campos del payload vacíos (null) y cuántas veces.
+      - name: registros_corregidos
+        description: Los registros con alguna corrección aplicada.
+      - name: correcciones_sin_registro
+        description: Las correcciones cuyo registro no está en registros_vigentes.
+      - name: duplicados_quitados
+        description: Los dobles clics que quitó la limpieza.
