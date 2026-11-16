@@ -10,7 +10,7 @@ Desde el 10 de noviembre de 2026, este repositorio es la fuente de verdad de la 
 | Qué | Dónde |
 | --- | --- |
 | Diseño: visión, modelo, hoja de ruta, metodología y registro de decisiones | [diseno.md](diseno.md) |
-| Especificación de cada hito, con su anexo (lo que se hizo en cada tarea) | [specs/](specs/): [hito 0](specs/hito-0.md), [1](specs/hito-1.md), [2](specs/hito-2.md), [3](specs/hito-3.md), [4](specs/hito-4.md), [5](specs/hito-5.md), [6](specs/hito-6.md) y [7](specs/hito-7.md) |
+| Especificación de cada hito, con su anexo (lo que se hizo en cada tarea) | [specs/](specs/): [hito 0](specs/hito-0.md), [1](specs/hito-1.md), [2](specs/hito-2.md), [3](specs/hito-3.md), [4](specs/hito-4.md), [5](specs/hito-5.md), [6](specs/hito-6.md), [7](specs/hito-7.md) y [8](specs/hito-8.md) |
 | App web: fase 1 e incrementos de cada hito | [app/docs/specs/fase-1.md](../app/docs/specs/fase-1.md) e [incrementos.md](../app/docs/specs/incrementos.md) |
 | Decisiones (ADR) del núcleo | [decisiones/](decisiones/README.md) |
 | Decisiones (ADR) de la app | [app/docs/decisiones/](../app/docs/decisiones/README.md) |
@@ -33,4 +33,5 @@ Las especificaciones de los últimos hitos son largas: no se leen enteras, sino 
 | [app/docs/specs/fase-1.md](../app/docs/specs/fase-1.md) | 140 KB |
 | [specs/hito-3.md](specs/hito-3.md) | 110 KB |
 | [diseno.md](diseno.md) | 95 KB |
+| [specs/hito-8.md](specs/hito-8.md) | 70 KB |
 | [specs/hito-2.md](specs/hito-2.md) | 60 KB |
