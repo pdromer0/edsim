@@ -1,0 +1,17 @@
+# La conexión de dbt, versionada: sin secretos nuevos (decisión 101, H8-2). Los valores por
+# defecto son los del Postgres de compose.yaml; las pruebas dan su propia base con
+# EDSIM_PG_BASE, y dbt nunca prueba contra la base edsim.
+edsim_analitica:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('EDSIM_PG_HOST', 'localhost') }}"
+      port: "{{ env_var('EDSIM_PG_PUERTO', '5432') | as_number }}"
+      user: "{{ env_var('EDSIM_PG_USUARIO', 'edsim') }}"
+      password: "{{ env_var('EDSIM_PG_CLAVE', 'edsim') }}"
+      dbname: "{{ env_var('EDSIM_PG_BASE', 'edsim') }}"
+      # El esquema de los modelos sin esquema propio; los de cada capa lo sustituyen
+      # (macros/generate_schema_name.sql).
+      schema: public
+      threads: 4
