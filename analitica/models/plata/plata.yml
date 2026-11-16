@@ -1,0 +1,229 @@
+version: 2
+
+# Las ocho tablas de plata, con la forma de un HIS (docs/specs/hito-8.md, «Especificación:
+# plata»; decisión 104, H8-5). Los tests de datos corren en cada `dbt build`, sobre los datos
+# construidos: clave_unica y not_null en cada clave, relacion de cada tabla hija con episodio y
+# de episodio con paciente, y accepted_values en los valores cerrados. Ninguno da por hecho que
+# paciente y episodio van 1 a 1. Los nulos no hacen fallar accepted_values: un campo vacío del
+# registro llega a plata como NULL.
+
+models:
+  - name: paciente
+    description: '{{ doc("paciente") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, patient_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: patient_id
+        data_tests: [not_null]
+      - name: edad
+        description: Del primer patient_registered; vacía si se olvidó o llegó vacía.
+      - name: sexo
+      - name: event_time
+        description: El primer event_time de los eventos del paciente.
+      - name: recorded_time
+        description: El último recorded_time de los eventos del paciente.
+
+  - name: episodio
+    description: '{{ doc("episodio") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id]
+      - relacion:
+          arguments:
+            a: ref('paciente')
+            columnas: [run_id, patient_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: patient_id
+        data_tests: [not_null]
+      - name: llegada
+      - name: medio
+      - name: registro
+      - name: salida
+        description: El patient_departed.
+      - name: abandono
+        description: El patient_left_wbs.
+      - name: espera_abandono
+        description: Dónde esperaba al irse sin ser visto (triaje, box o medico).
+      - name: sin_llegada
+        description: No hay patient_arrived.
+      - name: sin_salida
+        description: >
+          No hay patient_departed ni patient_left_wbs: la salida se olvidó o el episodio sigue
+          en curso al acabar la ejecución.
+
+  - name: triaje
+    description: '{{ doc("triaje") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id]
+      - relacion:
+          arguments:
+            a: ref('episodio')
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: inicio
+      - name: fin
+      - name: circuito
+      - name: nivel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+      - name: motivo
+      - name: corregido
+        description: Si se aplicó alguna corrección al inicio o al fin del triaje.
+      - name: tiempo_negativo
+        description: El fin del triaje antes de la llegada.
+
+  - name: valoracion
+    description: '{{ doc("emparejamiento") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id, n]
+      - relacion:
+          arguments:
+            a: ref('episodio')
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: n
+        description: El orden de la valoración en el episodio, por la hora de su primer evento.
+        data_tests: [not_null]
+      - name: tipo
+        description: El del inicio o, si está vacío, el del fin.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [inicial, reevaluacion]
+      - name: pool
+      - name: box
+      - name: inicio
+      - name: fin
+      - name: interrumpida
+      - name: sin_pareja
+        description: La fila sale de un emparejamiento roto (ver «emparejamiento»).
+
+  - name: prueba
+    description: '{{ doc("prueba") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id, ronda, prueba]
+      - relacion:
+          arguments:
+            a: ref('episodio')
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: ronda
+        description: El orden de la ronda en el episodio; en EDsim, siempre 1.
+        data_tests: [not_null]
+      - name: prueba
+        data_tests: [not_null]
+      - name: pedida
+        description: La hora de la petición (test_ordered) de la ronda.
+      - name: resultado
+      - name: hora_resultado
+        description: La hora del resultado (test_resulted) de la ronda.
+      - name: sin_resultado
+        description: La prueba no tiene resultado (olvidado, vacío o aún pendiente).
+      - name: sin_peticion
+        description: La prueba no está en la lista pedida (olvidada o vacía).
+
+  - name: destino
+    description: '{{ doc("destino") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id]
+      - relacion:
+          arguments:
+            a: ref('episodio')
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: destino_decidido
+      - name: decision
+        description: La hora del disposition_decided.
+      - name: peticion_cama
+      - name: asignacion_cama
+      - name: servicio
+      - name: destino_real
+        description: El destino del patient_departed.
+
+  - name: ubicacion
+    description: '{{ doc("emparejamiento") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, episode_id, n]
+      - relacion:
+          arguments:
+            a: ref('episodio')
+            columnas: [run_id, episode_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: episode_id
+        data_tests: [not_null]
+      - name: n
+        description: El orden de la estancia en el episodio, por la hora de su primer evento.
+        data_tests: [not_null]
+      - name: box
+        description: El del box_assigned o, si está vacío, el del cierre.
+      - name: entrada
+      - name: salida
+      - name: motivo_salida
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [espera_resultados, desplazado, salida, abandono]
+      - name: sin_pareja
+        description: La fila sale de un emparejamiento roto (ver «emparejamiento»).
+
+  - name: plantilla
+    description: '{{ doc("plantilla") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, recurso, desde]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: recurso
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [enfermeria_triaje, medicos]
+      - name: numero
+        description: La plantilla en vigor durante el tramo.
+      - name: desde
+        data_tests: [not_null]
+      - name: hasta
+        description: El cambio siguiente del mismo recurso; vacío en el último tramo.

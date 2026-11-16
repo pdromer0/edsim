@@ -234,7 +234,7 @@ plantilla  PK (run_id, recurso, desde)   sin episodio: viene de RRHH
 ### En EDsim
 
 - **Paciente y episodio, 1:N** (H8-5, a pregunta de Pedro): ningún test ni modelo da por hecho el 1:1. Pero hoy los datos son 1:1, porque el motor no simula reingresos: `patient_id` y `episode_id` llevan el mismo número de llegada (`engine/events.py`). Es una diferencia con la realidad, escrita a propósito.
-- **Valoraciones, pruebas y ubicaciones no tienen identificador propio:** el inicio y el fin se emparejan por orden dentro del episodio (y del tipo). Un olvido descoloca las parejas; la señal `sin_pareja` lo enseña.
+- **Valoraciones, pruebas y ubicaciones no tienen identificador propio:** el inicio y el fin se emparejan **por tiempo** dentro del episodio, sin mirar el tipo (D2 de la 8.3). Cada fin va con la apertura abierta justo antes. Funciona porque las valoraciones de un paciente no se solapan, ni sus estancias en box, y las dos fichas son del mismo sistema. Un olvido rompe una pareja, y la señal `sin_pareja` lo enseña. Emparejar por orden lo haría peor: con un inicio olvidado al principio, junta un inicio con un fin anterior, y la duración sale negativa.
 - **`plantilla` viene del sistema `rrhh`**, no del HIS (`staffing_changed` es el único evento de recursos). Los eventos de recursos no pasan por los despistes (`record.py`), así que esta tabla llega limpia.
 - Todas las ejecuciones de bronce, con `run_id` en cada clave: cada ejecución es como un hospital, y lo registrado de cada perfil ya llega con su `run_id` derivado.
 
@@ -436,20 +436,37 @@ Ocho tablas (H8-5). Cada fila lleva `run_id`, la hora del acto (`event_time`) y 
 
 | Tabla | Grano y clave | Sale de | Columnas principales | Señales |
 | --- | --- | --- | --- | --- |
-| `paciente` | uno por paciente: (`run_id`, `patient_id`) | `patient_registered` | edad, sexo | — |
-| `episodio` | uno por episodio: (`run_id`, `episode_id`); FK a `paciente` | `patient_arrived`, `patient_registered`, `patient_departed`, `patient_left_wbs` | llegada, medio, registro, salida, abandono, espera al abandonar | `sin_llegada`, `sin_salida` |
+| `paciente` | uno por paciente: (`run_id`, `patient_id`) | todos los eventos de pacientes; edad y sexo, de `patient_registered` (D1 de la 8.3) | edad, sexo | — |
+| `episodio` | uno por episodio: (`run_id`, `episode_id`); FK a `paciente` | todos los eventos de pacientes; las columnas, de `patient_arrived`, `patient_registered`, `patient_departed` y `patient_left_wbs` (D1) | llegada, medio, registro, salida, abandono, espera al abandonar | `sin_llegada`, `sin_salida` |
 | `triaje` | uno por episodio: (`run_id`, `episode_id`) | `triage_started`, `triage_completed` | inicio, fin, circuito, nivel, motivo, `corregido` | `tiempo_negativo` (fin antes de la llegada) |
-| `valoracion` | una por valoración: (`run_id`, `episode_id`, `n`), `n` por orden de inicio | `assessment_started` con `assessment_ended`, emparejados por orden dentro del episodio y del tipo | tipo, pool, box, inicio, fin, interrumpida | `sin_pareja` |
-| `prueba` | una por prueba y ronda: (`run_id`, `episode_id`, `ronda`, `prueba`) | `test_ordered` y `test_resulted`, con la lista desplegada (`jsonb_array_elements`) | prueba, pedida, resultado, hora del resultado | `sin_resultado` |
+| `valoracion` | una por valoración: (`run_id`, `episode_id`, `n`), `n` por orden de inicio (o del fin, si no hay inicio) | `assessment_started` con `assessment_ended`, emparejados por tiempo dentro del episodio, sin mirar el tipo (D2) | tipo, pool, box, inicio, fin, interrumpida | `sin_pareja` |
+| `prueba` | una por prueba y ronda: (`run_id`, `episode_id`, `ronda`, `prueba`) | `test_ordered` y `test_resulted`, emparejados por tiempo, con la lista pedida y las claves del resultado desplegadas juntas (D4) | prueba, pedida, resultado, hora del resultado | `sin_resultado`, `sin_peticion` |
 | `destino` | uno por episodio: (`run_id`, `episode_id`) | `disposition_decided`, `bed_requested`, `bed_assigned` y la salida | destino decidido, petición y asignación de cama, servicio, destino real | — |
-| `ubicacion` | una por estancia en un box: (`run_id`, `episode_id`, `n`) | `box_assigned` hasta `box_released`, `patient_displaced` o la salida | box, entrada, salida, motivo de la salida (`espera_resultados`, `desplazado`, `alta`) | `sin_pareja` |
+| `ubicacion` | una por estancia en un box: (`run_id`, `episode_id`, `n`) | `box_assigned` hasta `box_released`, `patient_displaced`, `patient_departed` o `patient_left_wbs`, emparejados por tiempo (D2) | box, entrada, salida, motivo de la salida (`espera_resultados`, `desplazado`, `salida`, `abandono`; D3) | `sin_pareja` |
 | `plantilla` | un tramo por recurso: (`run_id`, `recurso`, `desde`) | `staffing_changed` | recurso, número, desde, hasta | — |
 
 «El primero de cada tipo» se toma por orden de anotación, como `compare.py`; en la hoja del hospital ya no hay duplicados, así que el primero es el único.
 
-**Tests de datos:** `unique` en la clave de cada tabla; `not_null` en las claves; `relationships` de cada tabla hija con `episodio` y de `episodio` con `paciente`; `accepted_values` en nivel (1 a 5), tipo de valoración, motivo de salida de `ubicacion` y recurso de `plantilla`. Ninguno da por hecho que paciente y episodio van 1 a 1.
+**Las cuatro decisiones de la 8.3** (notas del chat del #142). Ninguna arregla un defecto: evitan que un defecto rompa o estropee una tabla y lo dejan señalado, como la limpieza conservadora (decisión 103).
 
-**Unit test (8.3):** el emparejamiento de valoraciones con un inicio olvidado: con inicio–fin–fin, la segunda valoración sale con `sin_pareja` y la primera bien emparejada.
+- **D1.** `paciente` y `episodio` salen de todos los `patient_id` y `episode_id` de los eventos de pacientes. Si no, un olvido de admisión haría fallar `relationships` de episodio a paciente y tumbaría el `dbt build` del hospital, y ninguna tabla hija queda colgando.
+- **D2.** Las valoraciones se emparejan por tiempo dentro del episodio y sin mirar el tipo, en el orden de `event_time`, `recorded_time` y `event_id`. Un fin sin apertura justo antes queda `sin_pareja`, y una apertura seguida de otra apertura, también. La última apertura sin cierre lleva `sin_pareja` si el episodio tiene salida (el cierre se olvidó) y no la lleva si sigue en curso. `ubicacion` se empareja igual, con `box_assigned` como apertura. Sus dos salidas (`patient_departed` y `patient_left_wbs`) solo cierran una estancia abierta: quien es desplazado mientras espera cama sale desde el pasillo, sin box.
+- **D3.** `ubicacion` tiene cuatro motivos de salida. `abandono` es `patient_left_wbs` desde el box. `salida` sustituye a `alta`, porque quien sale ingresado o trasladado no se va de alta, y `alta` ya es uno de los destinos.
+- **D4.** `prueba` despliega la lista pedida y las claves del resultado juntas. `sin_resultado` marca una prueba sin resultado, y `sin_peticion`, una que no está en la lista pedida. Así, una `pruebas` vacía no hace desaparecer la ronda. Si faltan las dos, no hay prueba que nombrar, y la ronda no da filas.
+
+**Tests de datos:** clave única en cada tabla y `not_null` en las claves; relación de cada tabla hija con `episodio` y de `episodio` con `paciente`; `accepted_values` en nivel (1 a 5), tipo de valoración (`inicial`, `reevaluacion`), motivo de salida de `ubicacion` (los cuatro de D3) y recurso de `plantilla` (`enfermeria_triaje`, `medicos`). La unicidad y la relación son de clave compuesta, porque todas llevan `run_id`. `unique` y `relationships` de dbt solo admiten una columna, así que la 8.3 escribe dos tests genéricos, `clave_unica` y `relacion`. Ninguno da por hecho que paciente y episodio van 1 a 1.
+
+**Unit tests (8.3)**, cada uno con un error que no pilla ningún otro:
+
+| Test | Entrada | Debe salir | Pilla |
+| --- | --- | --- | --- |
+| Inicio olvidado al final | inicio, fin, fin | `n=1` bien emparejada; el segundo fin, `sin_pareja` | emparejar sin la señal (V6) |
+| Inicio olvidado al principio | fin, inicio, fin | el primer fin, `sin_pareja`; el inicio con el segundo fin | emparejar por orden en vez de por tiempo |
+| Estancias en box | asignado → liberado · asignado → desplazado · asignado → salida | tres estancias con `espera_resultados`, `desplazado` y `salida` | un motivo mal asignado o una estancia mal cerrada |
+| Tramos de plantilla | tres `staffing_changed` de médicos y uno de enfermería | `hasta` de cada tramo = `desde` del siguiente del mismo recurso; el último, abierto | un `hasta` mal calculado |
+| Lista y resultado juntos (añadido en la revisión de la 8.3) | una ronda con la lista vacía y su resultado; otra con un resultado de menos | las pruebas del resultado, con `sin_peticion`; la que falta, con `sin_resultado` | desplegar solo la lista pedida o solo el resultado (D4) |
+
+Los tres últimos tienen razón propia: los indicadores de boxes y recursos no están en `compare.py`, y las señales de las pruebas tampoco, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
 
 ## Especificación: la verdad en Postgres
 
@@ -650,7 +667,7 @@ dbt no entra en el job `tests` (D1 de la 8.1, que cambia la decisión 111): ese 
 | V3 | 8.1 | La clave de duplicados sin el payload | Falla H (una fila en vez de dos) |
 | V4 | 8.1 | La preparación no quita la relectura | Falla K (dos filas) |
 | V5 | 8.1 | La hoja ingenua aplica las correcciones | Falla I (nivel 3 en vez de 4) |
-| V6 | 8.3 | Emparejar valoraciones sin la señal | Falla el unit test del inicio olvidado |
+| V6 | 8.3 | Emparejar valoraciones sin la señal: cada fin con el último inicio anterior, aunque ya tenga pareja | Falla solo el unit test del inicio olvidado al final |
 | V7 | 8.4 | `cargar-verdad` sin borrar antes | Falla el test de cargar dos veces (recuentos dobles) |
 | V8 | 8.4 | `hospital` con lectura en `verdad` | Falla el test de permisos |
 | V9 | 8.5 | El censo cuenta al que sale justo a la hora en punto | Fallan el unit test del censo y «verdad SQL = verdad Python» |
@@ -829,7 +846,7 @@ Issue #140, rama `feat/h8-dbt-limpieza`, Claude Code (Opus, en local, con Postgr
 
 - **La clave de duplicados**, en la verdad de `r2026` regenerada con `edsim motor simular --run-id r2026` (esquema 4, 55.054 eventos). El `r2026` del disco era del 3 de noviembre, del modelo provisional (esquema 1): el revisor del plan lo detectó, y la medida se repitió sobre la regenerada.
   - Con la clave completa, **0 pares** de hechos reales.
-  - Sin el payload, 43 pares, todos de `staffing_changed`, y 0 de pacientes. Con datos de EDsim, el payload solo protege el caso H, pero apartar los recursos es necesario.
+  - Sin el payload, 43 pares, todos de `staffing_changed`, y 0 de pacientes. Con la clave completa, los recursos tampoco chocan (0 pares): con datos de EDsim basta cualquiera de las dos protecciones, el payload en la clave o apartar los recursos. Las dos se mantienen porque protegen casos distintos en un HIS real (corregido en la 8.3: decía que apartar los recursos era necesario).
 - **Versiones resueltas por `uv lock`:** dbt-core 1.12.7, dbt-postgres 1.11.0, dbt-adapters 1.24.5 y psycopg2-binary 2.9.13 (62 paquetes, Python 3.13). El `uv.lock` raíz no cambia.
 - **El `uv sync` de `analitica/`:** 121 s en frío en el portátil (la descarga) y 0,07 s con la caché llena; el entorno ocupa 279 MB.
 - **`dbt build --select preparacion`:** unos 5 s con diez nodos (dos modelos y ocho unit tests); el test de integración, 5,9 s.
@@ -926,3 +943,89 @@ Con el subagente `mutante`, sobre `69ea91a`:
 **Pendiente**
 
 - Nada. La 8.9 escribe el ADR de la decisión 110.
+
+### Tarea 8.3: Plata, las ocho tablas con la forma de un HIS
+
+**Qué se hizo**
+
+Issue #142, rama `feat/h8-plata`, Claude Code (Opus, en local, con Postgres), en paralelo con la 8.4. Tarea no crítica: `/code-review medium`. Un commit por paso, más los de la revisión:
+
+- **Las ocho tablas** (`b63edad`): `models/plata/` con su documentación (`plata.md`) y sus tests de datos (`plata.yml`); las macros `primero` y `emparejar`; los tests genéricos `clave_unica` y `relacion`.
+- **Unit tests** (`ad0f481`): el inicio olvidado al final y al principio, las estancias en box y los tramos de plantilla.
+- **Integración** (`c77fe64`): `test_analitica.py` construye `preparacion plata` y exige los unit tests, los diez modelos, los tests de datos en verde y las ocho tablas en `plata`.
+- **Especificación** (`59b08c0`): D1 a D4 en este documento, V6 precisada, la frase del anexo de la 8.1 corregida y el comando de dbt en `AGENTS.md` y en el README.
+- **Revisión** (`c4ca5cc`, `ebb90c2`): un solo booleano para el cierre en `emparejar`, y el unit test de `prueba` (D4).
+
+**Decisiones del diff**
+
+- **Todos los modelos leen solo `registros_vigentes`**, con un CTE `vigentes`: el grafo de plata es plano, y cada unit test da una sola entrada. `triaje` busca la llegada él mismo, en vez de leerla de `episodio`.
+- **Dos macros.**
+  - `primero(tipo)` da el primer registro de un tipo por orden de anotación (`recorded_time`, `event_id`); una por tipo, para que cada modelo se lea como una lista de CTE con nombre.
+  - `emparejar` empareja con `lag` y `lead` sobre el papel de cada evento (apertura, cierre o salida). Sin solapes, «el fin con la apertura abierta justo antes» es «el fin con la apertura que tiene justo antes». La usan `valoracion`, `ubicacion` y `prueba` (las rondas), así que las tres emparejan con la misma regla.
+- **Lo que el plan interpretó** (D2 a D4 no lo cubrían):
+  - la última apertura sin cierre lleva `sin_pareja` si el episodio tiene salida, y no si sigue en curso;
+  - en `ubicacion`, las salidas solo cierran una estancia abierta: en la verdad de `h8demo`, un desplazado que esperaba cama sale desde el pasillo;
+  - si una ronda de pruebas no tiene lista ni resultado, no da filas;
+  - el `event_time` de una fila es el menor de sus eventos, y su `recorded_time`, el mayor.
+- **Tests de clave compuesta propios:** `unique` y `relationships` de dbt solo admiten una columna, y H8-2 no deja usar `dbt_utils`. Los argumentos van bajo `arguments:`, la sintaxis de dbt 1.10 o posterior: `dbt parse` no da avisos.
+- **`episodio` agrupa también por `patient_id`:** un episodio con dos pacientes saldría dos veces y lo cazaría `clave_unica`.
+
+**Valores a mano** (un oráculo en Python con una variable «abierta», sin `lag` ni `lead`; completo en el PR)
+
+- Inicio olvidado al final: `n=1` de 17:40 a 17:55; `n=2`, el fin de las 19:20 suelto, con `sin_pareja`. Al principio: `n=1`, el fin de las 17:55 suelto; `n=2`, de 19:05 a 19:20.
+- Estancias: box 3 (`espera_resultados`), 5 (`desplazado`) y 7 (`salida`). Tramos: médicos 3, 5 y 4, el último abierto; enfermería 2, abierto.
+- Prueba: con la lista vacía, analítica y ECG con `sin_peticion`; con un resultado de menos, la radiografía con `sin_resultado`.
+
+**Medidas**
+
+- **`dbt build` con datos reales** (nota 8 de las notas del chat). `h8demo` (14 días, esquema 4) reemitida a una base de prueba con `realista` y `hostil`: 47.070 y 46.750 registros. Los 40 tests de datos, en verde con los dos. Los recuentos de plata, frente a un oráculo en Python que lee `bronce.eventos` sin dbt, con 0 diferencias en las 15 medidas:
+
+  | Medida | `realista` | `hostil` |
+  | --- | --- | --- |
+  | paciente / episodio | 3.776 | 3.799 |
+  | `sin_llegada` / `sin_salida` | 21 / 79 | 194 / 268 |
+  | triaje (`tiempo_negativo`) | 3.768 (0) | 3.761 (0) |
+  | valoración (`sin_pareja`) | 6.277 (65) | 6.263 (607) |
+  | ubicación (`sin_pareja`) | 4.747 (6) | 4.572 (93) |
+  | prueba (`sin_resultado` / `sin_peticion`) | 4.752 (83 / 71) | 4.694 (503 / 452) |
+  | destino | 3.612 | 3.614 |
+  | plantilla | 86 | 86 |
+
+  Con `hostil`, 30 rondas no dan filas porque les faltan la lista y el resultado (con `realista`, 0). `tiempo_negativo` no salta, como se esperaba.
+- **Tiempos:** `dbt build --select preparacion plata` con las dos ejecuciones, 2,5 s (6 s con el arranque); el test de integración, 9,9 s.
+- **Empates:** en `h8demo`, ya sin duplicados, ninguna apertura comparte instante con otro evento de su secuencia, en la verdad, en `realista` ni en `hostil`.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`, en paralelo, cada uno con su base de prueba y `dbt test --select test_type:unit`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V6 | Un fin suelto lleva `sin_pareja` solo si no hay ningún inicio antes | Falla solo el del inicio olvidado al final | Falla solo ese (11 de 12 pasan) |
+| V6b | `sin_pareja` siempre falso | Fallan los dos de valoración | Fallan esos dos (10 de 12 pasan) |
+| V-orden | El k-ésimo inicio con el k-ésimo cierre | Falla solo el del inicio olvidado al principio | Falla solo ese: el inicio de las 19:05 sale con el fin de las 17:55 |
+| V-motivo | Un desplazamiento como `espera_resultados` | Falla solo el de las estancias | Falla solo ese |
+| V-hasta | `hasta = desde` | Falla solo el de los tramos | Falla solo ese |
+| V-lista | `prueba` despliega solo la lista pedida (`left join`) | Falla solo el de prueba | Falla solo ese: faltan las dos filas con `sin_peticion` (12 de 13 pasan) |
+
+Con todas ellas, los 40 tests de datos siguen en verde: comprueban la forma, no la lógica.
+
+**Revisión**
+
+`/code-review medium main...feat/h8-plata`, ocho hallazgos:
+
+- **Corregidos:**
+  - D4 sin unit test (`ebb90c2`);
+  - el `case` del cierre, repetido cuatro veces (`c4ca5cc`).
+- **Explicados:**
+  - una salida cierra la estancia aunque se olvidara su `box_released` o su `patient_displaced`. Un `box_released` olvidado ya se ve como dos aperturas seguidas, porque tras los resultados el paciente vuelve a un box. Queda el desplazamiento olvidado de quien después sale desde el pasillo: 4 desplazamientos en 14 días con un 0,5 % de olvidos;
+  - el desempate por `recorded_time` antes que `event_id`: en lo registrado dan el mismo orden, y no hay aperturas empatadas (medido);
+  - `sin_pareja` del final mira si el episodio tiene salida, no si es posterior: la valoración y la salida son del mismo sistema y del mismo reloj, y `prueba` no publica `sin_pareja`;
+  - `tiempo_negativo` no compensa los relojes: así lo quiere la decisión 103, y la señal es su rastro;
+  - los tests de datos corren sobre una base vacía en el CI, y por eso la medida con datos reales; la 8.5 los ejercita con datos;
+  - el CTE `vigentes` se materializa una vez por modelo: 2,5 s con dos ejecuciones de 14 días.
+
+**Pendiente**
+
+- **La 8.5** (#144): su prueba de punta a punta construye plata con datos, y con ella sus tests de datos en el CI.
+- **La 8.7** (#146): mide un año. Si plata pesa, el primer candidato es leer `registros_vigentes` una sola vez por modelo y agrupar por tipo con `filter`.

@@ -26,3 +26,6 @@ models:
   edsim_analitica:
     preparacion:
       +schema: preparacion
+    plata:
+      +schema: plata
+      +materialized: table

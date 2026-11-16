@@ -1,11 +1,13 @@
-"""El proyecto dbt de `analitica/` contra un Postgres real (tarea 8.1, decisión 111, H8-12).
+"""El proyecto dbt de `analitica/` contra un Postgres real (tareas 8.1 y 8.3, decisión 111, H8-12).
 
-`dbt build --select preparacion` sobre la base de la sesión, la que prepara
-`edsim almacen preparar`: construye la vista `preparacion.registros` y la tabla
-`preparacion.registros_vigentes`, y pasa los ocho unit tests de la limpieza en orden de linaje.
-Pilla lo que no pilla ningún test de Python: un error de SQL o de Jinja en los modelos, una
-regla de limpieza que no da lo calculado en el plan (los unit tests) y un esquema con otro
-nombre que el de su capa.
+`dbt build --select preparacion plata` sobre la base de la sesión, la que prepara
+`edsim almacen preparar`: construye la vista `preparacion.registros`, la tabla
+`preparacion.registros_vigentes` y las ocho tablas de plata, pasa los unit tests de la limpieza
+(8.1) y de plata (8.3) en orden de linaje, y los tests de datos de plata. Pilla lo que no pilla
+ningún test de Python: un error de SQL o de Jinja en los modelos, una regla de limpieza o un
+emparejamiento que no dan lo calculado en el plan (los unit tests) y un esquema con otro nombre
+que el de su capa. Sobre una base vacía, los tests de datos pasan sin comprobar nada: la 8.3 los
+midió con datos reales (anexo de hito-8.md).
 
 dbt vive en otro entorno (`analitica/.venv`, con su propio `uv.lock`): se lanza con
 `uv run --locked` desde `analitica/`, que lo sincroniza si hace falta, y sin el `VIRTUAL_ENV`
@@ -40,7 +42,24 @@ UNIT_TESTS = {
     "i_hoja_ingenua",
     "e_empates",
     "r_recursos_tal_cual",
+    "valoracion_inicio_olvidado_al_final",
+    "valoracion_inicio_olvidado_al_principio",
+    "ubicacion_estancias_en_box",
+    "plantilla_tramos",
+    "prueba_lista_y_resultado_juntos",
 }
+
+PLATA = (
+    "destino",
+    "episodio",
+    "paciente",
+    "plantilla",
+    "prueba",
+    "triaje",
+    "ubicacion",
+    "valoracion",
+)
+"""Las ocho tablas de plata (decisión 104, H8-5), en orden alfabético."""
 
 
 def dbt_env(url: str) -> dict[str, str]:
@@ -66,13 +85,13 @@ def dbt_env(url: str) -> dict[str, str]:
 # Por encima del límite de la carpeta (180 s): el sync en frío y la fixture de sesión, si este
 # test es el primero, caben aquí.
 @pytest.mark.timeout(300)
-def test_dbt_construye_la_preparacion_y_pasa_sus_unit_tests(bronze_url, tmp_path):
+def test_dbt_construye_la_preparacion_y_plata_y_pasa_sus_tests(bronze_url, tmp_path):
     uv = shutil.which("uv")
     if uv is None:
         pytest.fail("No se encuentra uv en el PATH: dbt se lanza con «uv run».", pytrace=False)
     target = tmp_path / "target"
     result = subprocess.run(
-        [uv, "run", "--locked", "dbt", "build", "--select", "preparacion"]
+        [uv, "run", "--locked", "dbt", "build", "--select", "preparacion", "plata"]
         + ["--target-path", str(target), "--log-path", str(tmp_path / "logs")],
         cwd=ANALITICA,
         env=dbt_env(bronze_url),
@@ -84,17 +103,25 @@ def test_dbt_construye_la_preparacion_y_pasa_sus_unit_tests(bronze_url, tmp_path
 
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     # El código de salida no basta: con un selector o un nombre mal escritos, dbt no ejecuta
-    # nada y sale con 0. Los ocho unit tests y los dos modelos tienen que estar en el informe.
+    # nada y sale con 0. Los trece unit tests y los diez modelos tienen que estar en el informe,
+    # y los tests de datos de plata, en verde.
     results = json.loads((target / "run_results.json").read_text())["results"]
     status = {r["unique_id"]: r["status"] for r in results}
     unit = {uid.rsplit(".", 1)[1]: s for uid, s in status.items() if uid.startswith("unit_test.")}
     assert unit == dict.fromkeys(UNIT_TESTS, "pass")
-    assert status["model.edsim_analitica.registros"] == "success"
-    assert status["model.edsim_analitica.registros_vigentes"] == "success"
+    models = {uid.rsplit(".", 1)[1]: s for uid, s in status.items() if uid.startswith("model.")}
+    assert models == dict.fromkeys(("registros", "registros_vigentes", *PLATA), "success")
+    data = [s for uid, s in status.items() if uid.startswith("test.")]
+    assert data, "ningún test de datos en el informe"
+    assert set(data) == {"pass"}
     # Cada modelo, en el esquema exacto de su capa y con su materialización.
     with connect(bronze_url) as connection:
         tables = connection.execute(
-            "SELECT table_name, table_type FROM information_schema.tables "
-            "WHERE table_schema = 'preparacion' ORDER BY table_name"
+            "SELECT table_schema, table_name, table_type FROM information_schema.tables "
+            "WHERE table_schema IN ('preparacion', 'plata') ORDER BY table_schema, table_name"
         )
-    assert tables == [("registros", "VIEW"), ("registros_vigentes", "BASE TABLE")]
+    assert tables == [
+        *(("plata", name, "BASE TABLE") for name in PLATA),
+        ("preparacion", "registros", "VIEW"),
+        ("preparacion", "registros_vigentes", "BASE TABLE"),
+    ]

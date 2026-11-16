@@ -73,7 +73,7 @@ uv run edsim registro generar RUN_ID --perfil realista  # escribe lo registrado 
 uv run edsim registro comparar RUN_ID --perfil realista  # la conciliación y los indicadores ingenuos, verdad frente a registrado; con --postgres, lo registrado sale de bronce
 cd analitica && uv sync --locked  # el entorno de dbt: proyecto uv aparte, con su propio uv.lock (hito 8)
 cd analitica && uv run dbt parse  # comprueba Jinja, ref() y source(); no conecta
-cd analitica && EDSIM_PG_BASE=BASE uv run dbt build --select preparacion  # construye y pasa los unit tests (nunca contra la base edsim)
+cd analitica && EDSIM_PG_BASE=BASE uv run dbt build --select preparacion plata  # construye y pasa los unit tests y los de datos (nunca contra la base edsim)
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/07_persistencia.ipynb  # el notebook 07 sin Kafka ni Postgres
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
