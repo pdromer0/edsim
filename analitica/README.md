@@ -12,7 +12,7 @@ Siempre desde esta carpeta: dbt busca aquí `dbt_project.yml` y `profiles.yml`.
 cd analitica
 uv sync --locked                       # el entorno de dbt, en analitica/.venv
 uv run dbt parse                       # comprueba Jinja, ref() y source(); no conecta
-EDSIM_PG_BASE=BASE uv run dbt build --select preparacion  # construye la preparación y pasa sus unit tests
+EDSIM_PG_BASE=BASE uv run dbt build --select preparacion plata  # construye la preparación y plata, con sus unit tests y sus tests de datos
 EDSIM_PG_BASE=BASE uv run dbt build --vars '{hoja: ingenuo}'  # otra hoja, en sus propios esquemas
 ```
 
@@ -32,6 +32,10 @@ La conexión sale de `profiles.yml`: `EDSIM_PG_HOST` (`localhost`), `EDSIM_PG_PU
 | `macros/fuente_registros.sql` | `bronce.eventos` o `verdad.eventos`, según la hoja |
 | `macros/columnas_registro.sql` | Las columnas que pasan sin tocar por la preparación, según la hoja |
 | `models/fuentes.yml` | Las tablas que dbt lee y no construye |
+| `macros/primero.sql` | El primer registro de un tipo en cada episodio, por orden de anotación |
+| `macros/emparejar.sql` | El emparejamiento por tiempo de una apertura y su cierre, con `sin_pareja` |
 | `models/preparacion/` | `registros` (vista) y `registros_vigentes` (tabla, la limpieza), con su documentación y sus unit tests |
+| `models/plata/` | Las ocho tablas con la forma de un HIS, con su documentación, sus unit tests y sus tests de datos |
+| `tests/generic/` | `clave_unica` y `relacion`: unicidad y relación de una clave compuesta, que los de dbt no admiten |
 
 Los tests de dbt corren en el job `tests-integracion` del CI, desde `tests_integracion/test_analitica.py`, contra una base de prueba.

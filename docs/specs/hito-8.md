@@ -234,7 +234,7 @@ plantilla  PK (run_id, recurso, desde)   sin episodio: viene de RRHH
 ### En EDsim
 
 - **Paciente y episodio, 1:N** (H8-5, a pregunta de Pedro): ningún test ni modelo da por hecho el 1:1. Pero hoy los datos son 1:1, porque el motor no simula reingresos: `patient_id` y `episode_id` llevan el mismo número de llegada (`engine/events.py`). Es una diferencia con la realidad, escrita a propósito.
-- **Valoraciones, pruebas y ubicaciones no tienen identificador propio:** el inicio y el fin se emparejan por orden dentro del episodio (y del tipo). Un olvido descoloca las parejas; la señal `sin_pareja` lo enseña.
+- **Valoraciones, pruebas y ubicaciones no tienen identificador propio:** el inicio y el fin se emparejan **por tiempo** dentro del episodio, sin mirar el tipo (D2 de la 8.3). Cada fin va con la apertura abierta justo antes. Funciona porque las valoraciones de un paciente no se solapan, ni sus estancias en box, y las dos fichas son del mismo sistema. Un olvido rompe una pareja, y la señal `sin_pareja` lo enseña. Emparejar por orden lo haría peor: con un inicio olvidado al principio, junta un inicio con un fin anterior, y la duración sale negativa.
 - **`plantilla` viene del sistema `rrhh`**, no del HIS (`staffing_changed` es el único evento de recursos). Los eventos de recursos no pasan por los despistes (`record.py`), así que esta tabla llega limpia.
 - Todas las ejecuciones de bronce, con `run_id` en cada clave: cada ejecución es como un hospital, y lo registrado de cada perfil ya llega con su `run_id` derivado.
 
@@ -436,20 +436,36 @@ Ocho tablas (H8-5). Cada fila lleva `run_id`, la hora del acto (`event_time`) y 
 
 | Tabla | Grano y clave | Sale de | Columnas principales | Señales |
 | --- | --- | --- | --- | --- |
-| `paciente` | uno por paciente: (`run_id`, `patient_id`) | `patient_registered` | edad, sexo | — |
-| `episodio` | uno por episodio: (`run_id`, `episode_id`); FK a `paciente` | `patient_arrived`, `patient_registered`, `patient_departed`, `patient_left_wbs` | llegada, medio, registro, salida, abandono, espera al abandonar | `sin_llegada`, `sin_salida` |
+| `paciente` | uno por paciente: (`run_id`, `patient_id`) | todos los eventos de pacientes; edad y sexo, de `patient_registered` (D1 de la 8.3) | edad, sexo | — |
+| `episodio` | uno por episodio: (`run_id`, `episode_id`); FK a `paciente` | todos los eventos de pacientes; las columnas, de `patient_arrived`, `patient_registered`, `patient_departed` y `patient_left_wbs` (D1) | llegada, medio, registro, salida, abandono, espera al abandonar | `sin_llegada`, `sin_salida` |
 | `triaje` | uno por episodio: (`run_id`, `episode_id`) | `triage_started`, `triage_completed` | inicio, fin, circuito, nivel, motivo, `corregido` | `tiempo_negativo` (fin antes de la llegada) |
-| `valoracion` | una por valoración: (`run_id`, `episode_id`, `n`), `n` por orden de inicio | `assessment_started` con `assessment_ended`, emparejados por orden dentro del episodio y del tipo | tipo, pool, box, inicio, fin, interrumpida | `sin_pareja` |
-| `prueba` | una por prueba y ronda: (`run_id`, `episode_id`, `ronda`, `prueba`) | `test_ordered` y `test_resulted`, con la lista desplegada (`jsonb_array_elements`) | prueba, pedida, resultado, hora del resultado | `sin_resultado` |
+| `valoracion` | una por valoración: (`run_id`, `episode_id`, `n`), `n` por orden de inicio (o del fin, si no hay inicio) | `assessment_started` con `assessment_ended`, emparejados por tiempo dentro del episodio, sin mirar el tipo (D2) | tipo, pool, box, inicio, fin, interrumpida | `sin_pareja` |
+| `prueba` | una por prueba y ronda: (`run_id`, `episode_id`, `ronda`, `prueba`) | `test_ordered` y `test_resulted`, emparejados por tiempo, con la lista pedida y las claves del resultado desplegadas juntas (D4) | prueba, pedida, resultado, hora del resultado | `sin_resultado`, `sin_peticion` |
 | `destino` | uno por episodio: (`run_id`, `episode_id`) | `disposition_decided`, `bed_requested`, `bed_assigned` y la salida | destino decidido, petición y asignación de cama, servicio, destino real | — |
-| `ubicacion` | una por estancia en un box: (`run_id`, `episode_id`, `n`) | `box_assigned` hasta `box_released`, `patient_displaced` o la salida | box, entrada, salida, motivo de la salida (`espera_resultados`, `desplazado`, `alta`) | `sin_pareja` |
+| `ubicacion` | una por estancia en un box: (`run_id`, `episode_id`, `n`) | `box_assigned` hasta `box_released`, `patient_displaced`, `patient_departed` o `patient_left_wbs`, emparejados por tiempo (D2) | box, entrada, salida, motivo de la salida (`espera_resultados`, `desplazado`, `salida`, `abandono`; D3) | `sin_pareja` |
 | `plantilla` | un tramo por recurso: (`run_id`, `recurso`, `desde`) | `staffing_changed` | recurso, número, desde, hasta | — |
 
 «El primero de cada tipo» se toma por orden de anotación, como `compare.py`; en la hoja del hospital ya no hay duplicados, así que el primero es el único.
 
-**Tests de datos:** `unique` en la clave de cada tabla; `not_null` en las claves; `relationships` de cada tabla hija con `episodio` y de `episodio` con `paciente`; `accepted_values` en nivel (1 a 5), tipo de valoración, motivo de salida de `ubicacion` y recurso de `plantilla`. Ninguno da por hecho que paciente y episodio van 1 a 1.
+**Las cuatro decisiones de la 8.3** (notas del chat del #142). Ninguna arregla un defecto: evitan que un defecto rompa o estropee una tabla y lo dejan señalado, como la limpieza conservadora (decisión 103).
 
-**Unit test (8.3):** el emparejamiento de valoraciones con un inicio olvidado: con inicio–fin–fin, la segunda valoración sale con `sin_pareja` y la primera bien emparejada.
+- **D1.** `paciente` y `episodio` salen de todos los `patient_id` y `episode_id` de los eventos de pacientes. Si no, un olvido de admisión haría fallar `relationships` de episodio a paciente y tumbaría el `dbt build` del hospital, y ninguna tabla hija queda colgando.
+- **D2.** Las valoraciones se emparejan por tiempo dentro del episodio y sin mirar el tipo, en el orden de `event_time`, `recorded_time` y `event_id`. Un fin sin apertura justo antes queda `sin_pareja`, y una apertura seguida de otra apertura, también. La última apertura sin cierre lleva `sin_pareja` si el episodio tiene salida (el cierre se olvidó) y no la lleva si sigue en curso. `ubicacion` se empareja igual, con `box_assigned` como apertura. Sus dos salidas (`patient_departed` y `patient_left_wbs`) solo cierran una estancia abierta: quien es desplazado mientras espera cama sale desde el pasillo, sin box.
+- **D3.** `ubicacion` tiene cuatro motivos de salida. `abandono` es `patient_left_wbs` desde el box. `salida` sustituye a `alta`, porque quien sale ingresado o trasladado no se va de alta, y `alta` ya es uno de los destinos.
+- **D4.** `prueba` despliega la lista pedida y las claves del resultado juntas. `sin_resultado` marca una prueba sin resultado, y `sin_peticion`, una que no está en la lista pedida. Así, una `pruebas` vacía no hace desaparecer la ronda. Si faltan las dos, no hay prueba que nombrar, y la ronda no da filas.
+
+**Tests de datos:** clave única en cada tabla y `not_null` en las claves; relación de cada tabla hija con `episodio` y de `episodio` con `paciente`; `accepted_values` en nivel (1 a 5), tipo de valoración (`inicial`, `reevaluacion`), motivo de salida de `ubicacion` (los cuatro de D3) y recurso de `plantilla` (`enfermeria_triaje`, `medicos`). La unicidad y la relación son de clave compuesta, porque todas llevan `run_id`. `unique` y `relationships` de dbt solo admiten una columna, así que la 8.3 escribe dos tests genéricos, `clave_unica` y `relacion`. Ninguno da por hecho que paciente y episodio van 1 a 1.
+
+**Unit tests (8.3)**, cada uno con un error que no pilla ningún otro:
+
+| Test | Entrada | Debe salir | Pilla |
+| --- | --- | --- | --- |
+| Inicio olvidado al final | inicio, fin, fin | `n=1` bien emparejada; el segundo fin, `sin_pareja` | emparejar sin la señal (V6) |
+| Inicio olvidado al principio | fin, inicio, fin | el primer fin, `sin_pareja`; el inicio con el segundo fin | emparejar por orden en vez de por tiempo |
+| Estancias en box | asignado → liberado · asignado → desplazado · asignado → salida | tres estancias con `espera_resultados`, `desplazado` y `salida` | un motivo mal asignado o una estancia mal cerrada |
+| Tramos de plantilla | tres `staffing_changed` de médicos y uno de enfermería | `hasta` de cada tramo = `desde` del siguiente del mismo recurso; el último, abierto | un `hasta` mal calculado |
+
+Los dos últimos tienen razón propia: los indicadores de boxes y recursos no están en `compare.py`, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
 
 ## Especificación: la verdad en Postgres
 
@@ -650,7 +666,7 @@ dbt no entra en el job `tests` (D1 de la 8.1, que cambia la decisión 111): ese 
 | V3 | 8.1 | La clave de duplicados sin el payload | Falla H (una fila en vez de dos) |
 | V4 | 8.1 | La preparación no quita la relectura | Falla K (dos filas) |
 | V5 | 8.1 | La hoja ingenua aplica las correcciones | Falla I (nivel 3 en vez de 4) |
-| V6 | 8.3 | Emparejar valoraciones sin la señal | Falla el unit test del inicio olvidado |
+| V6 | 8.3 | Emparejar valoraciones sin la señal: cada fin con el último inicio anterior, aunque ya tenga pareja | Falla solo el unit test del inicio olvidado al final |
 | V7 | 8.4 | `cargar-verdad` sin borrar antes | Falla el test de cargar dos veces (recuentos dobles) |
 | V8 | 8.4 | `hospital` con lectura en `verdad` | Falla el test de permisos |
 | V9 | 8.5 | El censo cuenta al que sale justo a la hora en punto | Fallan el unit test del censo y «verdad SQL = verdad Python» |
@@ -829,7 +845,7 @@ Issue #140, rama `feat/h8-dbt-limpieza`, Claude Code (Opus, en local, con Postgr
 
 - **La clave de duplicados**, en la verdad de `r2026` regenerada con `edsim motor simular --run-id r2026` (esquema 4, 55.054 eventos). El `r2026` del disco era del 3 de noviembre, del modelo provisional (esquema 1): el revisor del plan lo detectó, y la medida se repitió sobre la regenerada.
   - Con la clave completa, **0 pares** de hechos reales.
-  - Sin el payload, 43 pares, todos de `staffing_changed`, y 0 de pacientes. Con datos de EDsim, el payload solo protege el caso H, pero apartar los recursos es necesario.
+  - Sin el payload, 43 pares, todos de `staffing_changed`, y 0 de pacientes. Con la clave completa, los recursos tampoco chocan (0 pares): con datos de EDsim basta cualquiera de las dos protecciones, el payload en la clave o apartar los recursos. Las dos se mantienen porque protegen casos distintos en un HIS real (corregido en la 8.3: decía que apartar los recursos era necesario).
 - **Versiones resueltas por `uv lock`:** dbt-core 1.12.7, dbt-postgres 1.11.0, dbt-adapters 1.24.5 y psycopg2-binary 2.9.13 (62 paquetes, Python 3.13). El `uv.lock` raíz no cambia.
 - **El `uv sync` de `analitica/`:** 121 s en frío en el portátil (la descarga) y 0,07 s con la caché llena; el entorno ocupa 279 MB.
 - **`dbt build --select preparacion`:** unos 5 s con diez nodos (dos modelos y ocho unit tests); el test de integración, 5,9 s.
