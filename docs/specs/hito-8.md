@@ -464,8 +464,9 @@ Ocho tablas (H8-5). Cada fila lleva `run_id`, la hora del acto (`event_time`) y 
 | Inicio olvidado al principio | fin, inicio, fin | el primer fin, `sin_pareja`; el inicio con el segundo fin | emparejar por orden en vez de por tiempo |
 | Estancias en box | asignado → liberado · asignado → desplazado · asignado → salida | tres estancias con `espera_resultados`, `desplazado` y `salida` | un motivo mal asignado o una estancia mal cerrada |
 | Tramos de plantilla | tres `staffing_changed` de médicos y uno de enfermería | `hasta` de cada tramo = `desde` del siguiente del mismo recurso; el último, abierto | un `hasta` mal calculado |
+| Lista y resultado juntos (añadido en la revisión de la 8.3) | una ronda con la lista vacía y su resultado; otra con un resultado de menos | las pruebas del resultado, con `sin_peticion`; la que falta, con `sin_resultado` | desplegar solo la lista pedida o solo el resultado (D4) |
 
-Los dos últimos tienen razón propia: los indicadores de boxes y recursos no están en `compare.py`, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
+Los tres últimos tienen razón propia: los indicadores de boxes y recursos no están en `compare.py`, y las señales de las pruebas tampoco, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
 
 ## Especificación: la verdad en Postgres
 

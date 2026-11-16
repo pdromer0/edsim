@@ -3,8 +3,9 @@
 # plan de la 8.3: un oráculo en Python que recorre los eventos con una variable «abierta», sin
 # lag ni lead (la salida, en el PR). Filas inventadas del 5 de enero de 2026, a las +01:00.
 #
-# Los dos últimos tienen razón propia: los indicadores de boxes y recursos no están en
-# compare.py, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
+# Los tres últimos tienen razón propia: los indicadores de boxes y recursos no están en
+# compare.py, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería,
+# y las señales de prueba tampoco (el de prueba se añadió en la revisión propia de la 8.3).
 # Como en la preparación, cada test fija su hoja con «overrides» y solo se comparan las
 # columnas que nombra cada «expect».
 
@@ -88,3 +89,25 @@ unit_tests:
         - {recurso: medicos, numero: 3, desde: "2026-01-05 00:00:00+01", hasta: "2026-01-05 08:00:00+01"}
         - {recurso: medicos, numero: 5, desde: "2026-01-05 08:00:00+01", hasta: "2026-01-05 15:00:00+01"}
         - {recurso: medicos, numero: 4, desde: "2026-01-05 15:00:00+01", hasta: null}
+
+  - name: prueba_lista_y_resultado_juntos
+    description: >
+      D4 de la 8.3. En el EP-000001 la lista pedida llegó vacía (un campo vacío, null): las dos
+      pruebas del resultado salen igual, con sin_peticion. En el EP-000002 falta el resultado
+      de la radiografía: sale con sin_resultado. Pilla desplegar solo la lista pedida (la ronda
+      del EP-000001 desaparecería con sus resultados) o solo el resultado.
+    model: prueba
+    overrides: *hospital
+    given:
+      - input: ref('registros_vigentes')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: test_ordered, event_time: "2026-01-05 18:00:00+01", recorded_time: "2026-01-05 18:00:00+01", payload: '{"pruebas": null}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000002, patient_id: PT-000002, event_type: test_ordered, event_time: "2026-01-05 18:10:00+01", recorded_time: "2026-01-05 18:10:00+01", payload: '{"pruebas": ["analitica", "radiografia"]}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: test_resulted, event_time: "2026-01-05 19:00:00+01", recorded_time: "2026-01-05 19:00:00+01", payload: '{"resultados": {"analitica": "normal", "ecg": "alterado"}}'}
+          - {event_id: r2026_prueba_s7-000000004, run_id: r2026_prueba_s7, episode_id: EP-000002, patient_id: PT-000002, event_type: test_resulted, event_time: "2026-01-05 19:30:00+01", recorded_time: "2026-01-05 19:30:00+01", payload: '{"resultados": {"analitica": "normal"}}'}
+    expect:
+      rows:
+        - {episode_id: EP-000001, ronda: 1, prueba: analitica, resultado: normal, sin_resultado: false, sin_peticion: true}
+        - {episode_id: EP-000001, ronda: 1, prueba: ecg, resultado: alterado, sin_resultado: false, sin_peticion: true}
+        - {episode_id: EP-000002, ronda: 1, prueba: analitica, resultado: normal, sin_resultado: false, sin_peticion: false}
+        - {episode_id: EP-000002, ronda: 1, prueba: radiografia, resultado: null, sin_resultado: true, sin_peticion: false}

@@ -46,6 +46,7 @@ UNIT_TESTS = {
     "valoracion_inicio_olvidado_al_principio",
     "ubicacion_estancias_en_box",
     "plantilla_tramos",
+    "prueba_lista_y_resultado_juntos",
 }
 
 PLATA = (
@@ -102,7 +103,7 @@ def test_dbt_construye_la_preparacion_y_plata_y_pasa_sus_tests(bronze_url, tmp_p
 
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
     # El código de salida no basta: con un selector o un nombre mal escritos, dbt no ejecuta
-    # nada y sale con 0. Los doce unit tests y los diez modelos tienen que estar en el informe,
+    # nada y sale con 0. Los trece unit tests y los diez modelos tienen que estar en el informe,
     # y los tests de datos de plata, en verde.
     results = json.loads((target / "run_results.json").read_text())["results"]
     status = {r["unique_id"]: r["status"] for r in results}
