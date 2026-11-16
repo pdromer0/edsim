@@ -42,7 +42,7 @@ def test_la_constante_de_la_marca_es_la_de_confluent_kafka():
     assert LOG_APPEND_TIME == confluent_kafka.TIMESTAMP_LOG_APPEND_TIME
 
 
-def test_preparar_aplica_la_001_una_vez_y_la_tabla_es_una_hypertable(bronze_database):
+def test_preparar_aplica_las_migraciones_una_vez_y_la_tabla_es_una_hypertable(bronze_database):
     url, first = bronze_database
     second = subprocess.run(
         [EDSIM, "almacen", "preparar", "--postgres", url],
@@ -52,13 +52,13 @@ def test_preparar_aplica_la_001_una_vez_y_la_tabla_es_una_hypertable(bronze_data
         timeout=TIMEOUT,
     )
 
-    assert first.endswith("Migraciones aplicadas: 001_bronce.sql\n")
+    assert first.endswith("Migraciones aplicadas: 001_bronce.sql, 002_verdad.sql\n")
     assert second.returncode == 0, second.stderr
     assert second.stdout.endswith("ninguna (la base de datos ya estaba al día)\n")
     with connect(url) as connection:
-        assert connection.execute("SELECT version, nombre FROM public.migraciones") == [
-            (1, "bronce")
-        ]
+        assert connection.execute(
+            "SELECT version, nombre FROM public.migraciones ORDER BY version"
+        ) == [(1, "bronce"), (2, "verdad")]
         assert connection.execute(
             "SELECT hypertable_schema, hypertable_name, column_name"
             " FROM timescaledb_information.dimensions"

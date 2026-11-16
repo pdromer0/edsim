@@ -68,6 +68,7 @@ uv run edsim directo lanzar --verdad  # publica la verdad, como en el hito 6 (ta
 uv run edsim directo reemitir RUN_ID  # lo registrado realista de una ejecución guardada; si existe registros/, lo compara byte a byte
 uv run edsim almacen preparar    # aplica las migraciones de bronce (Postgres levantado)
 uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa ejecución; sin --run, hasta Ctrl+C
+uv run edsim almacen cargar-verdad RUN_ID  # la verdad de una ejecución guardada (esquema 4) a verdad: eventos, episodios, días y libreta; dos veces deja lo mismo (hito 8)
 uv run edsim registro validar    # comprueba config/registro_clinico.toml: los tres perfiles del registro clínico
 uv run edsim registro generar RUN_ID --perfil realista  # escribe lo registrado en registros/ de la ejecución, con su libreta; no toca la verdad
 uv run edsim registro comparar RUN_ID --perfil realista  # la conciliación y los indicadores ingenuos, verdad frente a registrado; con --postgres, lo registrado sale de bronce

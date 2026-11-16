@@ -29,11 +29,13 @@ delivered, the topics are missing or differ, the broker does not answer or the
 1 if the true log is unreadable or ``registros/<perfil>-s<semilla>/`` is not what ``record`` gives.
 
 ``almacen`` (docs/specs/hito-7.md, "CLI"): 0 if ``preparar`` applies what is missing, if
-``consumir`` stops with Ctrl+C or, with ``--run``, if bronze holds the whole run; 1 if
+``consumir`` stops with Ctrl+C or, with ``--run``, if bronze holds the whole run, and if
+``cargar-verdad`` (docs/specs/hito-8.md, task 8.4) writes the truth of a run; 1 if
 ``--run`` times out or is stopped with Ctrl+C before (saying how many events are missing),
 if Postgres or the broker do not answer, a topic does not carry the broker's timestamp, the
-migrations and the database disagree or an extra is missing; 2 for usage errors, before
-connecting.
+migrations and the database disagree, an extra is missing, or ``cargar-verdad`` finds a run
+that is not of the current model or a file that is not what the engine wrote; 2 for usage
+errors, before connecting, including a run that does not exist.
 
 ``registro`` (docs/specs/hito-7.md, "CLI"): 0 if ``validar``, ``generar`` and ``comparar`` do
 their job; 1 if ``generar`` or ``comparar`` find the data unreadable or not of that run, if the
@@ -193,11 +195,18 @@ from edsim.store.postgres import (
     DatabaseUnavailableError,
     MissingPostgresExtraError,
     bronze_store,
+    load_truth,
     prepare,
     read_bronze_records,
     safe_url,
 )
-from edsim.store.report import format_consume_end, format_migrations, format_progress
+from edsim.store.report import (
+    format_consume_end,
+    format_migrations,
+    format_progress,
+    format_truth_load,
+)
+from edsim.store.truth import TruthError, truth_run
 
 DEFAULT_RHOS = "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95"
 CSV_NAME = "barrido.csv"
@@ -1296,6 +1305,7 @@ STORE_ERRORS = (
     MigrationError,
     TimestampTypeError,
     BronzeReadError,
+    TruthError,
 )
 """What ends an ``almacen`` command with code 1, besides those of Kafka."""
 
@@ -1320,6 +1330,22 @@ def _store_prepare(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     except STORE_ERRORS as error:
         return _store_failure(error)
     print(format_migrations(args.postgres, applied))
+    return 0
+
+
+def _store_load_truth(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    try:
+        run = truth_run(RunStore(args.ejecuciones), args.run_id)
+    except STORE_ERRORS as error:
+        return _store_failure(error)
+    except (OSError, ValueError) as error:
+        parser.error(f"{args.run_id} en {args.ejecuciones}: {error}")
+    try:
+        loaded = load_truth(args.postgres, run)
+    except (*STORE_ERRORS, OSError) as error:
+        # Connected already: a file that fails to read now is a problem of the data, not of use.
+        return _store_failure(error)
+    print(format_truth_load(args.postgres, loaded))
     return 0
 
 
@@ -2086,6 +2112,27 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"con --run, segundos de espera (por defecto: {RUN_TIMEOUT:g})",
     )
     store_consume.set_defaults(handler=_store_consume, subparser=store_consume)
+
+    store_load_truth = store_actions.add_parser(
+        "cargar-verdad",
+        help="lleva la verdad de una ejecución guardada a las tablas de verdad",
+        description="Carga en el esquema verdad de Postgres la verdad de una ejecución guardada: "
+        "sus eventos, la ficha de cada episodio, las llegadas de cada día y la libreta de cada "
+        "registros/<perfil>-s<semilla>/ que tenga (las escribe edsim registro generar). Borra lo "
+        "que hubiera de esa ejecución y escribe con COPY, todo en una transacción: ejecutarlo "
+        "dos veces deja lo mismo. Solo vale para ejecuciones del modelo actual (esquema 4); la "
+        "verdad no pasa por Kafka. Termina con código 1 si Postgres no responde, falta "
+        "edsim almacen preparar o la ejecución es de otro esquema.",
+    )
+    store_load_truth.add_argument("run_id", metavar="RUN_ID", help="la ejecución guardada")
+    store_load_truth.add_argument(
+        "--ejecuciones",
+        default=DEFAULT_RUNS,
+        metavar="DIR",
+        help="carpeta de las ejecuciones guardadas (por defecto: %(default)s)",
+    )
+    _add_postgres_option(store_load_truth)
+    store_load_truth.set_defaults(handler=_store_load_truth, subparser=store_load_truth)
 
     records = commands.add_parser(
         "registro",

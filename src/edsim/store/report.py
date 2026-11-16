@@ -1,7 +1,8 @@
 """The texts of ``edsim almacen`` in the terminal, in Spanish as the rest of the CLI.
 
 ``preparar`` prints the migrations it applied; ``consumir`` prints a progress line every 10
-real seconds and a summary at the end, which with ``--run`` says how many events are missing.
+real seconds and a summary at the end, which with ``--run`` says how many events are missing;
+``cargar-verdad`` prints how many rows it wrote to each table of ``verdad``.
 """
 
 from collections.abc import Sequence
@@ -9,6 +10,7 @@ from collections.abc import Sequence
 from edsim.store.consumer import ConsumeReport
 from edsim.store.migrations import Migration
 from edsim.store.postgres import safe_url
+from edsim.store.truth import TruthLoad
 
 
 def format_migrations(url: str, applied: Sequence[Migration]) -> str:
@@ -55,3 +57,26 @@ def format_consume_end(report: ConsumeReport, run_id: str | None) -> str:
     else:
         missing = f"faltan {progress.missing} de {progress.published} publicados"
     return f"{run_id}: {why}; {missing}: {counts}"
+
+
+def format_truth_load(url: str, load: TruthLoad) -> str:
+    """What ``cargar-verdad`` did: the rows of each table and the recordings of the ledger.
+
+    A run without recordings says so and how to write them: its ledger stays empty, not an error.
+    """
+    counts = load.counts
+    rows = (
+        f"{counts['eventos']} eventos · {counts['episodios']} episodios · {counts['dias']} días"
+        f" · {counts['libreta']} filas de libreta"
+    )
+    if load.recordings:
+        ledger = f"Libreta de: {', '.join(load.recordings)}"
+    else:
+        ledger = (
+            f"Sin libreta: {load.run_id} no tiene registros/ "
+            f"(la escribe edsim registro generar {load.run_id} --perfil PERFIL)"
+        )
+    return (
+        f"Postgres {safe_url(url)}\n"
+        f"{load.run_id}: verdad cargada en {load.seconds:.1f} s: {rows}\n{ledger}"
+    )

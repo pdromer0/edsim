@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, Self, TextIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from edsim.engine.events import (
@@ -335,3 +335,12 @@ class RunStore:
     def read_file(self, run_id: str, filename: str) -> bytes:
         """Read one of the format files, rejecting links and other entries."""
         return self._file(run_id, filename).read_bytes()
+
+    def open_file(self, run_id: str, filename: str) -> TextIO:
+        """Open one of the format files as UTF-8 text, to read it line by line.
+
+        The streaming counterpart of ``read_file``, with the same checks (a known name, a regular
+        file, no links), for the files that are too big to hold in memory (``eventos.jsonl`` of a
+        year weighs about 550 MB). ``newline=""``, as ``csv`` asks. The caller closes it.
+        """
+        return self._file(run_id, filename).open(encoding="utf-8", newline="")
