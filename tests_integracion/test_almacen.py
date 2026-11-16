@@ -9,7 +9,8 @@ Cada test dice qué pilla que no pille un rápido:
 - Parar y relanzar: que Kafka recuerda de verdad dónde se quedó el grupo, y que bronce acaba
   con lo publicado, byte a byte. Es también el de extremo a extremo del hito.
 
-Se publica con `edsim directo lanzar --velocidad max`, no con `reemitir`: no hace falta una
+Se publica con `edsim directo lanzar --velocidad max --verdad` (la verdad: sin `--verdad`, el
+directo publica lo registrado), no con `reemitir`: no hace falta una
 carpeta de ejecución y el productor es el mismo. Cada consumo usa un grupo propio
 (`edsim-bronce-test-<8 hex>`): con `edsim-bronce`, el test movería los offsets del grupo de
 Pedro.
