@@ -1,0 +1,154 @@
+# Unit tests de la limpieza (docs/specs/hito-8.md, «Unit tests (8.1)»), sobre el escenario L
+# del hito 7: los siete registros de tests/registro_factory.py::run_l(), del 5 de enero de 2026
+# a las +01:00. Cada valor esperado sale del cálculo del plan de la 8.1, en Python, con código
+# independiente de los modelos (la salida, en el PR).
+#
+# Un unit test da filas inventadas a un modelo y compara su salida con la esperada, sin datos
+# reales. dbt necesita aun así que los padres del modelo existan en la base, para saber los
+# tipos de sus columnas: los lanza `dbt build --select preparacion`, después de construir la
+# vista. Solo se comparan las columnas que nombra cada «expect».
+#
+# Los payloads van como texto JSON; dbt los convierte en jsonb.
+
+unit_tests:
+
+  - name: l_escenario_completo
+    description: >
+      Las tres reglas juntas, en su orden. Quedan cinco filas: el triaje (4) con nivel 3 y
+      corregido, y la valoración (5) sin su duplicado (6). La corrección (7) no sale.
+    model: registros_vigentes
+    given:
+      - input: ref('registros')
+        rows:
+          - &r1 {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: patient_arrived, event_time: "2026-01-05 17:00:00+01", recorded_time: "2026-01-05 17:00:00+01", payload: '{"medio": "propios_medios"}'}
+          - &r2 {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: patient_registered, event_time: "2026-01-05 17:02:30+01", recorded_time: "2026-01-05 17:02:30+01", payload: '{"edad": 54, "sexo": "mujer"}'}
+          - &r3 {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000002, event_type: patient_arrived, event_time: "2026-01-05 17:08:00+01", recorded_time: "2026-01-05 17:08:00+01", payload: '{"medio": "ambulancia"}'}
+          - &r4 {event_id: r2026_prueba_s7-000000004, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: triage_completed, event_time: "2026-01-05 17:06:12+01", recorded_time: "2026-01-05 17:13:12+01", payload: '{"nivel": 4, "motivo": "dolor_toracico"}'}
+          - &r5 {event_id: r2026_prueba_s7-000000005, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:00+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+          - &r6 {event_id: r2026_prueba_s7-000000006, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:30+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+          - &r7 {event_id: r2026_prueba_s7-000000007, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: record_corrected, event_time: "2026-01-05 19:28:12+01", recorded_time: "2026-01-05 19:28:12+01", payload: '{"corrige": "r2026_prueba_s7-000000004", "campos": {"nivel": 3}}'}
+    expect:
+      rows:
+        - &e1 {event_id: r2026_prueba_s7-000000001, event_type: patient_arrived, payload: '{"medio": "propios_medios"}', corregido: false, duplicados_quitados: 0}
+        - &e2 {event_id: r2026_prueba_s7-000000002, event_type: patient_registered, payload: '{"edad": 54, "sexo": "mujer"}', corregido: false, duplicados_quitados: 0}
+        - &e3 {event_id: r2026_prueba_s7-000000003, event_type: patient_arrived, payload: '{"medio": "ambulancia"}', corregido: false, duplicados_quitados: 0}
+        - {event_id: r2026_prueba_s7-000000004, event_type: triage_completed, payload: '{"nivel": 3, "motivo": "dolor_toracico"}', corregido: true, duplicados_quitados: 0}
+        - &e5 {event_id: r2026_prueba_s7-000000005, event_type: assessment_started, payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}', corregido: false, duplicados_quitados: 1}
+
+  - name: d_duplicado_del_corregido
+    description: >
+      L con el triaje duplicado: un 4′ anotado 1 min después, con el mismo nivel 4. Queda un
+      solo triaje, el 4, con nivel 3: la corrección apunta al original, y quedarse con la copia
+      dejaría el nivel erróneo.
+    model: registros_vigentes
+    given:
+      - input: ref('registros')
+        rows:
+          - *r1
+          - *r2
+          - *r3
+          - *r4
+          - *r5
+          - *r6
+          - *r7
+          - {event_id: r2026_prueba_s7-000000008, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: triage_completed, event_time: "2026-01-05 17:06:12+01", recorded_time: "2026-01-05 17:14:12+01", payload: '{"nivel": 4, "motivo": "dolor_toracico"}'}
+    expect:
+      rows:
+        - *e1
+        - *e2
+        - *e3
+        - {event_id: r2026_prueba_s7-000000004, event_type: triage_completed, payload: '{"nivel": 3, "motivo": "dolor_toracico"}', corregido: true, duplicados_quitados: 1}
+        - *e5
+
+  - name: c_dos_correcciones
+    description: >
+      L con una segunda corrección del triaje, a nivel 2, anotada después de la primera. Gana
+      la última: el 4 sale con nivel 2.
+    model: registros_vigentes
+    given:
+      - input: ref('registros')
+        rows:
+          - *r1
+          - *r2
+          - *r3
+          - *r4
+          - *r5
+          - *r6
+          - *r7
+          - {event_id: r2026_prueba_s7-000000008, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: record_corrected, event_time: "2026-01-05 19:40:00+01", recorded_time: "2026-01-05 19:40:00+01", payload: '{"corrige": "r2026_prueba_s7-000000004", "campos": {"nivel": 2}}'}
+    expect:
+      rows:
+        - *e1
+        - *e2
+        - *e3
+        - {event_id: r2026_prueba_s7-000000004, event_type: triage_completed, payload: '{"nivel": 2, "motivo": "dolor_toracico"}', corregido: true, duplicados_quitados: 0}
+        - *e5
+
+  - name: h_mismo_instante_distinto_payload
+    description: >
+      Dos peticiones de pruebas del mismo episodio a la misma hora, con distinto payload. Son
+      dos hechos reales y quedan las dos: una clave de duplicados sin el payload borraría uno.
+    model: registros_vigentes
+    given:
+      - input: ref('registros')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: test_ordered, event_time: "2026-01-05 17:50:00+01", recorded_time: "2026-01-05 17:50:00+01", payload: '{"pruebas": ["analitica"]}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: test_ordered, event_time: "2026-01-05 17:50:00+01", recorded_time: "2026-01-05 17:50:00+01", payload: '{"pruebas": ["rx"]}'}
+    expect:
+      rows:
+        - {event_id: r2026_prueba_s7-000000001, event_type: test_ordered, payload: '{"pruebas": ["analitica"]}', corregido: false, duplicados_quitados: 0}
+        - {event_id: r2026_prueba_s7-000000002, event_type: test_ordered, payload: '{"pruebas": ["rx"]}', corregido: false, duplicados_quitados: 0}
+
+  - name: k_relectura_de_kafka
+    description: >
+      Los siete registros de L en bronce, con el 5 dos veces: el mismo event_id, releído de
+      Kafka 31 min después. La preparación deja una fila por registro, la primera llegada.
+    model: registros
+    given:
+      - input: source('bronce', 'eventos')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: patient_arrived, event_time: "2026-01-05 17:00:00+01", recorded_time: "2026-01-05 17:00:00+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"medio": "propios_medios"}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: patient_registered, event_time: "2026-01-05 17:02:30+01", recorded_time: "2026-01-05 17:02:30+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"edad": 54, "sexo": "mujer"}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000002, event_type: patient_arrived, event_time: "2026-01-05 17:08:00+01", recorded_time: "2026-01-05 17:08:00+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"medio": "ambulancia"}'}
+          - {event_id: r2026_prueba_s7-000000004, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: triage_completed, event_time: "2026-01-05 17:06:12+01", recorded_time: "2026-01-05 17:13:12+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"nivel": 4, "motivo": "dolor_toracico"}'}
+          - {event_id: r2026_prueba_s7-000000005, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:00+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+          - {event_id: r2026_prueba_s7-000000006, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:30+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+          - {event_id: r2026_prueba_s7-000000007, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: record_corrected, event_time: "2026-01-05 19:28:12+01", recorded_time: "2026-01-05 19:28:12+01", ingest_time: "2026-01-05 17:59:00+01", payload: '{"corrige": "r2026_prueba_s7-000000004", "campos": {"nivel": 3}}'}
+          - {event_id: r2026_prueba_s7-000000005, run_id: r2026_prueba_s7, episode_id: EP-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:00+01", ingest_time: "2026-01-05 18:30:00+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+    expect:
+      rows:
+        - {event_id: r2026_prueba_s7-000000001, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000002, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000003, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000004, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000005, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000006, ingest_time: "2026-01-05 17:59:00+01"}
+        - {event_id: r2026_prueba_s7-000000007, ingest_time: "2026-01-05 17:59:00+01"}
+
+  - name: i_hoja_ingenua
+    description: >
+      L en la hoja ingenuo: ni se quitan duplicados ni se aplican correcciones. Seis filas: el
+      6 se queda y el 4 sigue con nivel 4. Se valida a sí mismo: si la hoja no llegara al
+      modelo, saldrían las cinco filas limpias y el test fallaría.
+    model: registros_vigentes
+    overrides:
+      vars:
+        hoja: ingenuo
+    given:
+      - input: ref('registros')
+        rows:
+          - *r1
+          - *r2
+          - *r3
+          - *r4
+          - *r5
+          - *r6
+          - *r7
+    expect:
+      rows:
+        - *e1
+        - *e2
+        - *e3
+        - {event_id: r2026_prueba_s7-000000004, event_type: triage_completed, payload: '{"nivel": 4, "motivo": "dolor_toracico"}', corregido: false, duplicados_quitados: 0}
+        - {event_id: r2026_prueba_s7-000000005, event_type: assessment_started, payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}', corregido: false, duplicados_quitados: 0}
+        - {event_id: r2026_prueba_s7-000000006, event_type: assessment_started, payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}', corregido: false, duplicados_quitados: 0}
