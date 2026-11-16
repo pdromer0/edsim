@@ -71,12 +71,17 @@ uv run edsim almacen consumir --run RUN_ID  # de Kafka a bronce hasta tener esa 
 uv run edsim registro validar    # comprueba config/registro_clinico.toml: los tres perfiles del registro clínico
 uv run edsim registro generar RUN_ID --perfil realista  # escribe lo registrado en registros/ de la ejecución, con su libreta; no toca la verdad
 uv run edsim registro comparar RUN_ID --perfil realista  # la conciliación y los indicadores ingenuos, verdad frente a registrado; con --postgres, lo registrado sale de bronce
+cd analitica && uv sync --locked  # el entorno de dbt: proyecto uv aparte, con su propio uv.lock (hito 8)
+cd analitica && uv run dbt parse  # comprueba Jinja, ref() y source(); no conecta
+cd analitica && EDSIM_PG_BASE=BASE uv run dbt build --select preparacion  # construye y pasa los unit tests (nunca contra la base edsim)
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/07_persistencia.ipynb  # el notebook 07 sin Kafka ni Postgres
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal (con Docker y los extras kafka y postgres)
 ```
+
+`analitica/` (el proyecto dbt) no es miembro del workspace: tiene su propio `pyproject.toml` y su propio `uv.lock`, y sus órdenes se lanzan desde dentro, donde dbt encuentra `dbt_project.yml` y `profiles.yml`. Sus tests corren en `scripts/tests-integracion.sh` (`tests_integracion/test_analitica.py`), no en la rápida ni en la completa.
 
 Un `uv sync` simple sincroniza solo el núcleo y desinstala la app y sus dependencias
 exclusivas. Usa `uv sync --all-packages` para el trabajo habitual. El arranque con
