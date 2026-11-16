@@ -1,0 +1,51 @@
+version: 2
+
+# Oro: los indicadores de cada ejecución (docs/specs/hito-8.md, «Especificación: oro»; decisión
+# 106, H8-7). Los tests de datos corren en cada `dbt build`: clave_unica y not_null en el grano
+# de cada tabla. La prueba de punta a punta (tests_integracion/test_punta_a_punta.py) los pasa
+# con datos.
+
+models:
+  - name: censo
+    description: '{{ doc("censo") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, hora]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: hora
+        description: La hora en punto, origen + k horas.
+        data_tests: [not_null]
+      - name: k
+        description: Horas desde el origen; las de la ventana, con W <= 60 k < horizonte.
+      - name: censo
+        description: Los episodios dentro a esa hora en punto.
+        data_tests: [not_null]
+
+  - name: kpi_ejecucion
+    description: '{{ doc("kpi_ejecucion") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: llegadas
+        description: Los registros patient_arrived de la ventana; en la hoja ingenuo, con los duplicados.
+      - name: censo_medio
+        description: La media del censo a cada hora en punto de la ventana.
+      - name: mediana_triaje_min
+        description: >
+          Minutos de la primera llegada al primer triage_completed de cada episodio con los dos
+          en la ventana; vacía si no hay ninguno.
+      - name: mediana_medico_min
+        description: Lo mismo, al primer assessment_started de tipo inicial.
+      - name: pct_nivel_1
+        description: >
+          Porcentaje de los triage_completed de la ventana con nivel 1, entre los que tienen un
+          nivel legible (de pct_nivel_1 a pct_nivel_5); vacío si no hay ninguno.
+      - name: horas
+        description: Las horas en punto de la ventana.

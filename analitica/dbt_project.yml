@@ -29,3 +29,6 @@ models:
     plata:
       +schema: plata
       +materialized: table
+    oro:
+      +schema: oro
+      +materialized: table

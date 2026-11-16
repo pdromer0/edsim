@@ -1,0 +1,41 @@
+# Unit tests de oro (docs/specs/hito-8.md, «Especificación: oro»; tarea 8.5). Cada uno pilla un
+# error que no pilla ningún otro. Los valores esperados salen del plan de la 8.5, con un script
+# en Python independiente de los modelos (la salida, en el PR). Filas inventadas del 5 y el 6 de
+# enero de 2026, a las +01:00: el origen de cada ejecución es el 5 de enero a las 00:00.
+#
+# Como en la preparación y en plata, cada test fija su hoja con «overrides» y solo se comparan
+# las columnas que nombra cada «expect».
+
+unit_tests:
+
+  - name: censo_a_la_hora_en_punto
+    description: >
+      W = 950 min (no es una hora en punto) y H = 1140: las horas k = 16, 17 y 18; la 19 no
+      entra, porque 60·19 = H. A sale justo a las 17:00 y B llega justo a las 16:00; C tiene
+      una salida anterior a su llegada (los relojes), D una llegada duplicada, E una salida sin
+      llegada y G llega a las 17:30. Salen 2, 2 y 3. Pilla contar al que sale justo a la hora
+      en punto (V9: 3 a las 17:00), no contar al que llega justo, contar a quien no tiene
+      llegada o dos veces al de la llegada duplicada, y una ventana mal redondeada.
+    model: censo
+    overrides: &hospital {vars: {hoja: hospital}}
+    given:
+      - input: ref('parametros')
+        rows:
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", calentamiento_min: 950, horizonte_min: 1140}
+      - input: ref('registros_vigentes')
+        rows:
+          - {run_id: c, event_id: c-01, episode_id: A, event_type: patient_arrived, event_time: "2026-01-05 15:30:00+01", recorded_time: "2026-01-05 15:30:00+01"}
+          - {run_id: c, event_id: c-02, episode_id: A, event_type: patient_departed, event_time: "2026-01-05 17:00:00.000+01", recorded_time: "2026-01-05 17:00:00+01"}
+          - {run_id: c, event_id: c-03, episode_id: B, event_type: patient_arrived, event_time: "2026-01-05 16:00:00.000+01", recorded_time: "2026-01-05 16:00:00+01"}
+          - {run_id: c, event_id: c-04, episode_id: C, event_type: patient_arrived, event_time: "2026-01-05 16:10:00+01", recorded_time: "2026-01-05 16:10:00+01"}
+          - {run_id: c, event_id: c-05, episode_id: C, event_type: patient_left_wbs, event_time: "2026-01-05 16:05:00+01", recorded_time: "2026-01-05 16:05:00+01"}
+          - {run_id: c, event_id: c-06, episode_id: D, event_type: patient_arrived, event_time: "2026-01-05 16:20:00+01", recorded_time: "2026-01-05 16:20:00+01"}
+          - {run_id: c, event_id: c-07, episode_id: D, event_type: patient_arrived, event_time: "2026-01-05 16:20:00+01", recorded_time: "2026-01-05 16:21:00+01"}
+          - {run_id: c, event_id: c-08, episode_id: D, event_type: patient_departed, event_time: "2026-01-05 18:30:00+01", recorded_time: "2026-01-05 18:30:00+01"}
+          - {run_id: c, event_id: c-09, episode_id: E, event_type: patient_departed, event_time: "2026-01-05 17:30:00+01", recorded_time: "2026-01-05 17:30:00+01"}
+          - {run_id: c, event_id: c-10, episode_id: G, event_type: patient_arrived, event_time: "2026-01-05 17:30:00+01", recorded_time: "2026-01-05 17:30:00+01"}
+    expect:
+      rows:
+        - {run_id: c, hora: "2026-01-05 16:00:00+01", censo: 2}
+        - {run_id: c, hora: "2026-01-05 17:00:00+01", censo: 2}
+        - {run_id: c, hora: "2026-01-05 18:00:00+01", censo: 3}

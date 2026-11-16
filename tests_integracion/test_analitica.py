@@ -30,6 +30,7 @@ UNIT_TESTS = {
     "ubicacion_estancias_en_box",
     "plantilla_tramos",
     "prueba_lista_y_resultado_juntos",
+    "censo_a_la_hora_en_punto",
 }
 
 PREPARACION = ("parametros", "registros", "registros_vigentes")
@@ -46,6 +47,9 @@ PLATA = (
 )
 """Las ocho tablas de plata (decisión 104, H8-5), en orden alfabético."""
 
+ORO = ("censo", "kpi_ejecucion")
+"""Las tablas de oro (decisión 106, H8-7), en orden alfabético."""
+
 
 # Por encima del límite de la carpeta (180 s): el sync en frío y la fixture de sesión, si este
 # test es el primero, caben aquí.
@@ -58,7 +62,7 @@ def test_dbt_construye_la_hoja_del_hospital_y_pasa_sus_tests(bronze_url, tmp_pat
     # nada y sale con 0. Los unit tests y los modelos tienen que estar en el informe, y los tests
     # de datos, en verde.
     assert result.of("unit_test") == dict.fromkeys(UNIT_TESTS, "pass")
-    assert result.of("model") == dict.fromkeys((*PREPARACION, *PLATA), "success")
+    assert result.of("model") == dict.fromkeys((*PREPARACION, *PLATA, *ORO), "success")
     data = result.of("test")
     assert data, "ningún test de datos en el informe"
     assert set(data.values()) == {"pass"}
@@ -66,9 +70,11 @@ def test_dbt_construye_la_hoja_del_hospital_y_pasa_sus_tests(bronze_url, tmp_pat
     with connect(bronze_url) as connection:
         tables = connection.execute(
             "SELECT table_schema, table_name, table_type FROM information_schema.tables "
-            "WHERE table_schema IN ('preparacion', 'plata') ORDER BY table_schema, table_name"
+            "WHERE table_schema IN ('preparacion', 'plata', 'oro') "
+            "ORDER BY table_schema, table_name"
         )
     assert tables == [
+        *(("oro", name, "BASE TABLE") for name in ORO),
         *(("plata", name, "BASE TABLE") for name in PLATA),
         ("preparacion", "parametros", "BASE TABLE"),
         ("preparacion", "registros", "VIEW"),
