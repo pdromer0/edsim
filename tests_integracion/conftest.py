@@ -15,6 +15,8 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -22,11 +24,21 @@ import psycopg
 import pytest
 from confluent_kafka import KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient
+from dbt_testing import (
+    FIRST_MS,
+    PROFILES,
+    RUN_ID,
+    DbtRun,
+    publish,
+    run_dbt,
+    simulate_and_record,
+)
 from kafka_testing import BROKER_TIMEOUT, DEFAULT_BOOTSTRAP, TIMEOUT, TOPIC_PART, reachable
 from psycopg import sql
 
 from edsim.live.kafka import TopicsReport, ensure_topics
 from edsim.live.topics import TOPIC_CONFIG, Topic
+from edsim.runs import RunStore
 from edsim.store.postgres import DEFAULT_URL
 
 TEST_TIMEOUT = 180
@@ -158,11 +170,11 @@ def postgres_admin() -> str:
     return url
 
 
-@pytest.fixture(scope="session")
-def bronze_database(postgres_admin: str):
-    """Una base de datos nueva para la sesión, preparada con la CLI; se borra al acabar.
+@contextmanager
+def new_database(postgres_admin: str):
+    """Una base de datos nueva, preparada con la CLI; se borra al salir, también si algo falla.
 
-    Devuelve su URL y lo que imprimió `edsim almacen preparar` la primera vez.
+    Da su URL y lo que imprimió `edsim almacen preparar`.
     """
     name = f"edsim_test_{uuid.uuid4().hex[:8]}"
     with psycopg.connect(postgres_admin, autocommit=True) as admin:
@@ -186,9 +198,77 @@ def bronze_database(postgres_admin: str):
 
 
 @pytest.fixture(scope="session")
+def bronze_database(postgres_admin: str):
+    """Una base de datos nueva para la sesión, preparada con la CLI; se borra al acabar.
+
+    Devuelve su URL y lo que imprimió `edsim almacen preparar` la primera vez.
+    """
+    with new_database(postgres_admin) as database:
+        yield database
+
+
+@pytest.fixture(scope="session")
 def bronze_url(bronze_database) -> str:
     """La URL de la base de datos de la sesión, con las migraciones aplicadas."""
     return bronze_database[0]
+
+
+BUILDS = {
+    "hospital": ["build", "--exclude", "tag:laboratorio"],
+    "verdad": ["build", "--exclude", "tag:laboratorio", "--vars", "{hoja: verdad}"],
+    "ingenuo": ["build", "--exclude", "tag:laboratorio", "--vars", "{hoja: ingenuo}"],
+    "laboratorio": ["build", "--select", "tag:laboratorio"],
+}
+"""Las cuatro construcciones de la punta a punta, en su orden: las tres hojas y, con ellas ya
+construidas, la tabla de tres columnas. Sin los unit tests, que ya corren en `test_analitica.py`
+(y en la hoja verdad fallarían: sus filas de prueba traen `ingest_time`, que la verdad no tiene)."""
+
+
+@dataclass(frozen=True)
+class Analitica:
+    """La base de la punta a punta, con lo que se construyó en ella.
+
+    Attributes:
+        url: La base, con bronce, la verdad y las cuatro construcciones.
+        store: Las ejecuciones guardadas: `e2e` y lo registrado con `limpio` y `realista`.
+        builds: Lo que dejó cada construcción, por su nombre en `BUILDS`.
+    """
+
+    url: str
+    store: RunStore
+    builds: dict[str, DbtRun]
+
+
+@pytest.fixture(scope="session")
+def analitica(postgres_admin: str, tmp_path_factory):
+    """La prueba de punta a punta del hito 8 (tarea 8.5, H8-12): todo lo caro, una vez.
+
+    En una base propia, para no mezclarse con lo que dejan en bronce los otros tests: una
+    ejecución de 3 días con la configuración de `config/`, lo registrado con los perfiles
+    `limpio` y `realista` escrito en bronce sin Kafka, `edsim almacen cargar-verdad` y las cuatro
+    construcciones de `BUILDS`. Falla en cuanto una construcción no sale con 0: lo que sigue no
+    tendría sentido. La 8.6 prueba sus paneles sobre esta misma base.
+    """
+    root = tmp_path_factory.mktemp("punta-a-punta")
+    with new_database(postgres_admin) as (url, _):
+        store = simulate_and_record(root / "ejecuciones")
+        for position, profile in enumerate(PROFILES):
+            publish(url, store, profile, FIRST_MS + position * 3_600_000)
+        loaded = subprocess.run(
+            [EDSIM, "almacen", "cargar-verdad", RUN_ID]
+            + ["--ejecuciones", str(store.root), "--postgres", url],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TIMEOUT,
+        )
+        assert loaded.returncode == 0, loaded.stdout + loaded.stderr
+        builds = {}
+        for name, args in BUILDS.items():
+            build = run_dbt(url, [*args, "--exclude-resource-type", "unit_test"], root / name)
+            assert build.returncode == 0, f"construcción {name}:\n{build.output}"
+            builds[name] = build
+        yield Analitica(url, store, builds)
 
 
 def pytest_collection_modifyitems(items):
