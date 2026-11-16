@@ -1,0 +1,90 @@
+# Unit tests de plata (docs/specs/hito-8.md, «Especificación: plata»; notas del chat de la 8.3,
+# punto 6). Cada uno pilla un error que no pilla ningún otro. Los valores esperados salen del
+# plan de la 8.3: un oráculo en Python que recorre los eventos con una variable «abierta», sin
+# lag ni lead (la salida, en el PR). Filas inventadas del 5 de enero de 2026, a las +01:00.
+#
+# Los dos últimos tienen razón propia: los indicadores de boxes y recursos no están en
+# compare.py, así que la prueba de punta a punta de la 8.5 (SQL frente a Python) no los vería.
+# Como en la preparación, cada test fija su hoja con «overrides» y solo se comparan las
+# columnas que nombra cada «expect».
+
+unit_tests:
+
+  - name: valoracion_inicio_olvidado_al_final
+    description: >
+      Inicio, fin, fin: el inicio de la segunda valoración se olvidó. La primera sale bien
+      emparejada y el segundo fin, con su propia fila y sin_pareja. Pilla emparejar sin la
+      señal: el segundo fin juntado otra vez con el único inicio (V6).
+    model: valoracion
+    overrides: &hospital {vars: {hoja: hospital}}
+    given:
+      - input: ref('registros_vigentes')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_started, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:00+01", payload: '{"tipo": "inicial", "pool": "medicos", "box": 1}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_ended, event_time: "2026-01-05 17:55:00+01", recorded_time: "2026-01-05 17:55:00+01", payload: '{"tipo": "inicial", "interrumpida": false}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_ended, event_time: "2026-01-05 19:20:00+01", recorded_time: "2026-01-05 19:20:00+01", payload: '{"tipo": "reevaluacion", "interrumpida": false}'}
+    expect:
+      rows:
+        - {episode_id: EP-000001, n: 1, tipo: inicial, inicio: "2026-01-05 17:40:00+01", fin: "2026-01-05 17:55:00+01", sin_pareja: false}
+        - {episode_id: EP-000001, n: 2, tipo: reevaluacion, inicio: null, fin: "2026-01-05 19:20:00+01", sin_pareja: true}
+
+  - name: valoracion_inicio_olvidado_al_principio
+    description: >
+      Fin, inicio, fin: el inicio de la primera valoración se olvidó. El primer fin queda
+      suelto, con sin_pareja, y el inicio de las 19:05 va con el fin de las 19:20. Pilla
+      emparejar por orden: juntaría el inicio de las 19:05 con el fin de las 17:55.
+    model: valoracion
+    overrides: *hospital
+    given:
+      - input: ref('registros_vigentes')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_ended, event_time: "2026-01-05 17:55:00+01", recorded_time: "2026-01-05 17:55:00+01", payload: '{"tipo": "inicial", "interrumpida": false}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_started, event_time: "2026-01-05 19:05:00+01", recorded_time: "2026-01-05 19:05:00+01", payload: '{"tipo": "reevaluacion", "pool": "medicos", "box": 1}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: assessment_ended, event_time: "2026-01-05 19:20:00+01", recorded_time: "2026-01-05 19:20:00+01", payload: '{"tipo": "reevaluacion", "interrumpida": false}'}
+    expect:
+      rows:
+        - {episode_id: EP-000001, n: 1, tipo: inicial, inicio: null, fin: "2026-01-05 17:55:00+01", sin_pareja: true}
+        - {episode_id: EP-000001, n: 2, tipo: reevaluacion, inicio: "2026-01-05 19:05:00+01", fin: "2026-01-05 19:20:00+01", sin_pareja: false}
+
+  - name: ubicacion_estancias_en_box
+    description: >
+      Tres estancias: liberada para esperar resultados, desplazada y cerrada por la salida.
+      Salen con sus tres motivos y sin señal. Pilla un motivo mal asignado o una estancia mal
+      cerrada.
+    model: ubicacion
+    overrides: *hospital
+    given:
+      - input: ref('registros_vigentes')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: box_assigned, event_time: "2026-01-05 17:10:00+01", recorded_time: "2026-01-05 17:10:00+01", payload: '{"box": 3}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: box_released, event_time: "2026-01-05 17:40:00+01", recorded_time: "2026-01-05 17:40:00+01", payload: '{"box": 3, "espera": "resultados"}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: box_assigned, event_time: "2026-01-05 18:30:00+01", recorded_time: "2026-01-05 18:30:00+01", payload: '{"box": 5}'}
+          - {event_id: r2026_prueba_s7-000000004, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: patient_displaced, event_time: "2026-01-05 18:45:00+01", recorded_time: "2026-01-05 18:45:00+01", payload: '{"box": 5, "desalojado_por": "EP-000002"}'}
+          - {event_id: r2026_prueba_s7-000000005, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: box_assigned, event_time: "2026-01-05 19:00:00+01", recorded_time: "2026-01-05 19:00:00+01", payload: '{"box": 7}'}
+          - {event_id: r2026_prueba_s7-000000006, run_id: r2026_prueba_s7, episode_id: EP-000001, patient_id: PT-000001, event_type: patient_departed, event_time: "2026-01-05 19:30:00+01", recorded_time: "2026-01-05 19:30:00+01", payload: '{"destino": "alta"}'}
+    expect:
+      rows:
+        - {episode_id: EP-000001, n: 1, box: 3, entrada: "2026-01-05 17:10:00+01", salida: "2026-01-05 17:40:00+01", motivo_salida: espera_resultados, sin_pareja: false}
+        - {episode_id: EP-000001, n: 2, box: 5, entrada: "2026-01-05 18:30:00+01", salida: "2026-01-05 18:45:00+01", motivo_salida: desplazado, sin_pareja: false}
+        - {episode_id: EP-000001, n: 3, box: 7, entrada: "2026-01-05 19:00:00+01", salida: "2026-01-05 19:30:00+01", motivo_salida: salida, sin_pareja: false}
+
+  - name: plantilla_tramos
+    description: >
+      Tres cambios de médicos y uno de enfermería a las 00:00, como en el minuto 0 real. El
+      hasta de cada tramo es el desde del siguiente del mismo recurso, y el último queda
+      abierto. Pilla un hasta mal calculado, también sin partir por recurso.
+    model: plantilla
+    overrides: *hospital
+    given:
+      - input: ref('registros_vigentes')
+        rows:
+          - {event_id: r2026_prueba_s7-000000001, run_id: r2026_prueba_s7, event_type: staffing_changed, event_time: "2026-01-05 00:00:00+01", recorded_time: "2026-01-05 00:00:00+01", payload: '{"recurso": "enfermeria_triaje", "anterior": 0, "nueva": 2}'}
+          - {event_id: r2026_prueba_s7-000000002, run_id: r2026_prueba_s7, event_type: staffing_changed, event_time: "2026-01-05 00:00:00+01", recorded_time: "2026-01-05 00:00:00+01", payload: '{"recurso": "medicos", "anterior": 0, "nueva": 3}'}
+          - {event_id: r2026_prueba_s7-000000003, run_id: r2026_prueba_s7, event_type: staffing_changed, event_time: "2026-01-05 08:00:00+01", recorded_time: "2026-01-05 08:00:00+01", payload: '{"recurso": "medicos", "anterior": 3, "nueva": 5}'}
+          - {event_id: r2026_prueba_s7-000000004, run_id: r2026_prueba_s7, event_type: staffing_changed, event_time: "2026-01-05 15:00:00+01", recorded_time: "2026-01-05 15:00:00+01", payload: '{"recurso": "medicos", "anterior": 5, "nueva": 4}'}
+    expect:
+      rows:
+        - {recurso: enfermeria_triaje, numero: 2, desde: "2026-01-05 00:00:00+01", hasta: null}
+        - {recurso: medicos, numero: 3, desde: "2026-01-05 00:00:00+01", hasta: "2026-01-05 08:00:00+01"}
+        - {recurso: medicos, numero: 5, desde: "2026-01-05 08:00:00+01", hasta: "2026-01-05 15:00:00+01"}
+        - {recurso: medicos, numero: 4, desde: "2026-01-05 15:00:00+01", hasta: null}
