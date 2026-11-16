@@ -13,16 +13,18 @@
 #}
 {{ config(materialized='table') }}
 
-{#- Las columnas que pasan sin tocar; la verdad no lleva ingest_time. -#}
-{%- set columnas = [
-    'event_id', 'event_type', 'run_id', 'episode_id', 'patient_id', 'source_system',
-    'event_time', 'recorded_time',
-] + ([] if var('hoja') == 'verdad' else ['ingest_time']) -%}
+{%- set columnas = columnas_registro() %}
 
-with hechos as (
+with todos as (
+
+    -- Una sola lectura de la vista: hechos y correcciones salen de aquí. Postgres materializa
+    -- un CTE que se usa más de una vez, así que la ventana de registros se calcula una vez.
+    select * from {{ ref('registros') }}
+
+), hechos as (
 
     -- Regla 1: las correcciones no son hechos.
-    select * from {{ ref('registros') }}
+    select * from todos
     where event_type <> 'record_corrected'
 
 )
@@ -86,7 +88,7 @@ from hechos
             partition by run_id, payload ->> 'corrige'
             order by recorded_time desc, event_id desc
         ) as orden
-    from {{ ref('registros') }}
+    from todos
     where event_type = 'record_corrected'
 
 ), ultima_correccion as (
