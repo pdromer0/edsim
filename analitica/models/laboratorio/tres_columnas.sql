@@ -6,8 +6,10 @@
 
     Lee kpi_ejecucion de las tres hojas como fuentes. El run_id derivado de lo registrado se
     enlaza con el de la verdad por registro.origen del último mensaje inicio de
-    bronce.ejecuciones, que trae también el perfil y la semilla. Una hoja que falte deja su
-    columna vacía, pero no quita la fila.
+    bronce.ejecuciones, que trae también el perfil y la semilla. Las tres hojas tienen que
+    estar construidas (si falta una, su tabla no existe y la construcción falla); una ejecución
+    que falte en alguna (una verdad sin cargar, por ejemplo) deja su columna vacía, pero no
+    quita la fila.
 #}
 {%- if execute and var('hoja') != 'hospital' %}
     {{ exceptions.raise_compiler_error("laboratorio.tres_columnas se construye con la hoja hospital (dbt build --select tag:laboratorio), no con '" ~ var('hoja') ~ "': iría a otro esquema") }}
@@ -38,7 +40,7 @@ with registrados as (
 
 ), filas as (
 
-    -- Cada ejecución registrada, con los nueve KPI, aunque falte alguna hoja.
+    -- Cada ejecución registrada, con los nueve KPI, aunque falte en alguna hoja.
     select r.*, k.orden, k.kpi
     from registrados as r
     cross join (
