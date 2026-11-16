@@ -5,7 +5,7 @@ Si la tarea toca `app/`, lee también `app/AGENTS.md`.
 Simulador de urgencias hospitalarias que genera datos sintéticos para un laboratorio de analítica.
 
 - Diseño: [docs/diseno.md](docs/diseno.md)
-- Hito en curso: el 8, analítica (dbt con el medallón y Grafana), aún sin especificación: ver la [hoja de ruta](docs/diseno.md#hoja-de-ruta)
+- Hito en curso: [docs/specs/hito-8.md](docs/specs/hito-8.md) (analítica: dbt con plata y oro, la verdad en Postgres y Grafana)
 - Último hito cerrado: [docs/specs/hito-7.md](docs/specs/hito-7.md) (persistencia: simulador del registro clínico, Postgres con TimescaleDB y consumidor de Kafka, `v0.7-hito7`); antes, [docs/specs/hito-5.md](docs/specs/hito-5.md) (cierre del flujo, `v0.5-hito5`)
 - App: vigente, [app/docs/specs/incrementos.md](app/docs/specs/incrementos.md); la fase 1 ([app/docs/specs/fase-1.md](app/docs/specs/fase-1.md)) está cerrada (`app-v0.1.0`)
 
