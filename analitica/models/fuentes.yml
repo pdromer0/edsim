@@ -1,0 +1,69 @@
+version: 2
+
+# Las tablas que dbt lee y no construye. bronce las crea `edsim almacen preparar`
+# (src/edsim/store/sql/001_bronce.sql); verdad, la migración 002_verdad.sql de la 8.4.
+sources:
+  - name: bronce
+    description: Lo que llega de Kafka tal cual, sin limpiar (hito 7, H7-7).
+    tables:
+      - name: eventos
+        description: >
+          Un registro o un evento por fila, con las columnas del sobre del mensaje, las de
+          Kafka y el mensaje tal cual. Una relectura o una reemisión repetida deja el mismo
+          event_id dos veces, con distinta ingest_time.
+        columns:
+          - name: event_id
+          - name: event_type
+          - name: schema_version
+          - name: run_id
+          - name: episode_id
+            description: Nulo en los eventos de recursos (staffing_changed).
+          - name: patient_id
+          - name: source_system
+          - name: sim_time
+          - name: event_time
+            description: Cuándo pasó, con el reloj del sistema que lo anotó.
+          - name: recorded_time
+            description: Cuándo se anotó, con el reloj del sistema que lo anotó.
+          - name: ingest_time
+            description: La marca LogAppendTime del mensaje, la hora de llegada a Kafka.
+          - name: payload
+          - name: kafka_topic
+          - name: kafka_particion
+          - name: kafka_offset
+          - name: valor
+            description: El mensaje tal cual.
+          - name: recibido
+      - name: ejecuciones
+        description: >
+          Los mensajes de ed.runs, el inicio y el fin de cada publicación. El inicio de una
+          ejecución registrada lleva en registro.origen el run_id de la verdad, con su perfil
+          y su semilla.
+        columns:
+          - name: run_id
+          - name: tipo
+          - name: mensaje
+          - name: ingest_time
+          - name: kafka_offset
+
+  - name: verdad
+    description: >
+      La verdad de cada ejecución guardada, cargada con `edsim almacen cargar-verdad` (8.4).
+      Hasta entonces el esquema no existe: basta declararla para `dbt parse`.
+    tables:
+      - name: eventos
+        description: >
+          Los eventos verdaderos, con las columnas de bronce.eventos menos las de Kafka, valor,
+          recibido e ingest_time.
+        columns:
+          - name: event_id
+          - name: event_type
+          - name: schema_version
+          - name: run_id
+          - name: episode_id
+          - name: patient_id
+          - name: source_system
+          - name: sim_time
+          - name: event_time
+          - name: recorded_time
+          - name: payload

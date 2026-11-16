@@ -12,6 +12,10 @@ wheels/
 # Resultados generados por la CLI: se regeneran, no se versionan
 resultados/
 
+# Lo que genera dbt al ejecutarse en analitica/ (su .venv ya lo cubre «.venv»)
+analitica/target/
+analitica/logs/
+
 # Sellos de los tests rápidos (scripts/tests-rapidos.sh): estado local, no se versionan
 .cache/edsim/
 

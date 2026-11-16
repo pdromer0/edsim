@@ -1,0 +1,16 @@
+[project]
+name = "edsim-analitica"
+version = "0.1.0"
+description = "El proyecto dbt de EDsim: de bronce a preparación, plata y oro (docs/specs/hito-8.md)"
+requires-python = ">=3.13"
+# dbt v2 aún no admite Postgres: dbt-core 1.12 y dbt-postgres 1.11 (decisión 101, H8-2). Sin
+# paquetes de dbt Hub: ni `dbt deps` ni red al ejecutar.
+dependencies = [
+    "dbt-core>=1.12,<1.13",
+    "dbt-postgres>=1.11,<1.12",
+]
+
+# No es un paquete de Python ni un miembro del workspace del núcleo: uv solo instala sus
+# dependencias en analitica/.venv, con su propio uv.lock.
+[tool.uv]
+package = false

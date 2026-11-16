@@ -26,7 +26,8 @@ jobs:
   #
   # Es documentación, por este orden: nada con extensión .py, .pyi o .ipynb (ruff los lee aunque
   # estén en docs/); todo lo que cuelga de docs/ y app/docs/; nada bajo las carpetas de código,
-  # datos, notebooks y scripts (ni siquiera un .md); y los .md del resto (README, AGENTS,
+  # datos, notebooks, scripts y analitica/ (ni siquiera un .md: dbt lee los bloques {% docs %}
+  # de sus .md); y los .md del resto (README, AGENTS,
   # CLAUDE, skills). Todo lo demás cuenta como código: workflows, pyproject.toml, uv.lock,
   # compose.yaml, plantillas yml...
   #
@@ -58,7 +59,7 @@ jobs:
               case "$ruta" in
                 *.py | *.pyi | *.ipynb) tipo=código ;;
                 docs/* | app/docs/*) tipo=doc ;;
-                src/* | tests/* | app/src/* | app/tests/* | tests_integracion/* | config/* | schemas/* | notebooks/* | scripts/*) tipo=código ;;
+                src/* | tests/* | app/src/* | app/tests/* | tests_integracion/* | config/* | schemas/* | notebooks/* | scripts/* | analitica/*) tipo=código ;;
                 *.md) tipo=doc ;;
                 *) tipo=código ;;
               esac
@@ -114,8 +115,10 @@ jobs:
       - run: uv run --package edsim-app pytest app/tests
 
   # Integración contra un Kafka y un Postgres reales, con el mismo compose.yaml que en local
-  # (H6-16, H7-10): topics, productor, directo, órdenes y el consumidor de bronce. Era tests-kafka
-  # hasta la 7.5; obligatorio en la protección de main.
+  # (H6-16, H7-10): topics, productor, directo, órdenes y el consumidor de bronce. Desde la 8.1,
+  # también dbt (analitica/): el script sincroniza su entorno y test_analitica.py lanza
+  # dbt build con los unit tests (H8-12). Era tests-kafka hasta la 7.5; obligatorio en la
+  # protección de main.
   tests-integracion:
     needs: cambios
     if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}

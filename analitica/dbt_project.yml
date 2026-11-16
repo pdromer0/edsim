@@ -1,0 +1,28 @@
+# El proyecto dbt de EDsim (docs/specs/hito-8.md, «Especificación: el proyecto dbt»).
+#
+# Se lanza desde esta carpeta: `cd analitica && uv run dbt …`. dbt busca aquí este fichero y
+# también profiles.yml, así que no hace falta --profiles-dir.
+name: edsim_analitica
+version: "0.8.0"
+config-version: 2
+profile: edsim_analitica
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+
+# Sin llamadas de red que no hacen falta, ni en los tests ni en el CI (D2 de la 8.1).
+flags:
+  send_anonymous_usage_stats: false
+
+vars:
+  # Qué se construye: hospital (lo registrado, con la limpieza), verdad (la verdad de la
+  # simulación) o ingenuo (lo registrado sin limpiar). Fuera del hospital, los esquemas llevan
+  # delante «<hoja>_» (macros/generate_schema_name.sql; decisión 107, H8-8).
+  hoja: hospital
+
+models:
+  edsim_analitica:
+    preparacion:
+      +schema: preparacion

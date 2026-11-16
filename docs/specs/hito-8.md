@@ -380,7 +380,10 @@ analitica/
 
 - **La carpeta.** `analitica/` no es un paquete de Python ni un miembro del workspace (`[tool.uv.workspace]` del `pyproject.toml` raíz solo tiene `members = ["app"]`). dbt busca `dbt_project.yml` en la carpeta de trabajo, así que sus órdenes se lanzan desde dentro: `cd analitica && uv run dbt …`. `edsim analitica refrescar` lanza su subproceso con esa carpeta de trabajo.
 - **Conexión.** `profiles.yml` lee `EDSIM_PG_HOST` (`localhost`), `EDSIM_PG_PUERTO` (`5432`), `EDSIM_PG_USUARIO` (`edsim`), `EDSIM_PG_CLAVE` (`edsim`) y `EDSIM_PG_BASE` (`edsim`), con esos valores por defecto. Las pruebas dan su propia base con `EDSIM_PG_BASE`; dbt nunca prueba contra `edsim`.
-- **Por comprobar en la 8.1:** que `uv lock` resuelve con Python 3.13; que dbt encuentra `profiles.yml` en la carpeta del proyecto sin `--profiles-dir`; que `dbt parse` no necesita conexión.
+- **Comprobado en la 8.1:**
+  - `uv lock` resuelve con Python 3.13: dbt-core 1.12.7 y dbt-postgres 1.11.0, 62 paquetes, y el `uv.lock` raíz no cambia;
+  - dbt encuentra `profiles.yml` en la carpeta del proyecto sin `--profiles-dir`;
+  - `dbt parse` no necesita conexión: pasa con `EDSIM_PG_PUERTO=1`.
 
 ### Esquemas y la variable `hoja`
 
@@ -418,6 +421,8 @@ El escenario L está en [hito-7.md](hito-7.md#escenario-l-para-los-tests-de-la-7
 | H | Dos `test_ordered` del mismo episodio a la misma hora con distinto payload | Las dos filas | Una clave de duplicados sin el payload, que borraría hechos reales |
 | K | El registro 5 dos veces, con el mismo `event_id` y distinta `ingest_time` | Una fila, la primera llegada | La preparación sin quitar la relectura |
 | I | L en la hoja `ingenuo` | Seis filas: el 6 se queda; el 4 con nivel 4 | Que la hoja ingenua limpie |
+| E | Dos dobles clics anotados en el mismo instante, y dos correcciones del mismo registro anotadas en el mismo instante (añadido en la revisión de la 8.1) | Se queda el duplicado de menor `event_id`; gana la corrección de mayor `event_id` | Los desempates al revés |
+| R | Dos `staffing_changed` iguales, sin `episode_id` (añadido en la revisión de la 8.1) | Las dos filas | Que los eventos de recursos entren en la regla de duplicados (sus nulos caerían en el mismo grupo) o se pierdan |
 
 Cada valor esperado sale de un cálculo ejecutado en el plan, con código independiente de los modelos.
 
@@ -592,7 +597,7 @@ edsim/
 │   └── cli.py                   # --verdad (8.2), cargar-verdad (8.4), analitica refrescar (8.7)
 ├── tests/                       # rápidos: CLI, semillas frente a centro.toml, el bucle con un ejecutor falso
 ├── tests_integracion/           # cargar-verdad, permisos, la prueba de punta a punta, los paneles y Grafana
-├── .github/workflows/ci.yml     # dbt parse en tests; analitica/* es código en cambios; dbt en tests-integracion
+├── .github/workflows/ci.yml     # analitica/* es código en cambios; dbt en tests-integracion (8.1, 8.5)
 └── notebooks/08_analitica.ipynb # nuevo (8.8)
 ```
 
@@ -608,14 +613,17 @@ edsim/
 - **8.4:** de la ejecución guardada a las filas de `verdad`, sin conectar (con una ejecución corta de `tests/data`).
 - **8.5:** las semillas frente a `config/centro.toml`.
 - **8.7:** el bucle con un ejecutor y un reloj falsos: el intervalo, el aviso cuando tarda más, la parada.
-- **`dbt parse`** en el job `tests` (8.1): un `ref()` a un modelo que no existe o un error de Jinja, también en las sesiones en la nube.
+
+dbt no entra en el job `tests` (D1 de la 8.1, que cambia la decisión 111): ese job es el camino crítico del CI (de 16 a 24 min) y no debe crecer. `tests-integracion` corre en paralelo y dura de 1 a 2 min, así que lo que se le añade no alarga la espera. Un `dbt build` hace también el parse, así que un `ref()` a un modelo que no existe o un error de Jinja se pillan allí.
 
 ### dbt, con Postgres y sin datos
 
-- **Unit tests** de las reglas de limpieza (8.1, la tabla de arriba), del emparejamiento (8.3), del censo a la hora en punto y de la cohorte de llegada (8.5: quien llega a las 16:58 y se tria a las 17:04 cuenta en la hora de las 16).
+- **Unit tests** de las reglas de limpieza (8.1, la tabla de arriba), del emparejamiento (8.3), del censo a la hora en punto y de la cohorte de llegada (8.5: quien llega a las 16:58 y se tria a las 17:04 cuenta en la hora de las 16). Corren en el job `tests-integracion` desde la 8.1: `tests_integracion/test_analitica.py` lanza `dbt build` sobre la base de prueba de la sesión. Las construcciones de la prueba de punta a punta (8.5) van con `--exclude-resource-type unit_test`, para no ejecutarlos dos veces.
 - **Tests de datos** en cada `dbt build` (8.3, 8.5). El bucle del directo no los pasa.
 
 ### Integración, contra Postgres real (job `tests-integracion`)
+
+- **dbt construye la preparación y pasa sus unit tests** (8.1): `dbt build --select preparacion` (la 8.3 y la 8.5 amplían la selección) sobre la base de la sesión, preparada con `edsim almacen preparar`. Comprueba en `run_results.json` que los unit tests corrieron, porque dbt sale con 0 si no ejecuta nada, y el esquema y la materialización de cada modelo. `scripts/tests-integracion.sh` sincroniza antes el entorno de `analitica/`, con su tiempo en el resumen.
 
 - **`cargar-verdad` dos veces** (8.4): los recuentos cuadran con los ficheros y no se duplican.
 - **Permisos** (8.4): `hospital` no puede leer `verdad` ni `bronce`; `laboratorio`, sí.
@@ -667,18 +675,18 @@ Trece decisiones candidatas, tomadas con Pedro una a una en la sesión conceptua
 | 108 (H8-9) | `grafana/grafana:13.3.1` con el perfil `analitica`, en `127.0.0.1:3000`, aprovisionado desde `grafana/`, sin volumen y con acceso anónimo de solo lectura | Cuadros revisables y comprobables en el CI; sin arrancarlo en la integración que no lo usa |
 | 109 (H8-10) | Micro-lotes cada 60 s con `edsim analitica refrescar`, Grafana cada 30 s, paneles en el reloj de la ejecución; medir con un año y, si no llega, plan B por ejecución. El orquestador, al hito 9 (a pregunta de Pedro) | Cumple el criterio sin otro motor; cada paso queda listo para orquestar |
 | 110 (H8-11) | `lanzar` y `reemitir` publican lo registrado realista por defecto; la verdad, con `--verdad` | Un olvido ya no llena «Urgencias» con la verdad |
-| 111 (H8-12) | Unit tests de dbt por regla, tests de datos en cada construcción, `dbt parse` en el job `tests`, una sola prueba de punta a punta con cuatro comprobaciones, los paneles y Grafana en `tests-integracion`, y `analitica/*` como código en `cambios` | Cada test pilla un error que no pilla otro; el caro, una vez. Alternativas descartadas: un job aparte, sin punta a punta |
+| 111 (H8-12) | Unit tests de dbt por regla, tests de datos en cada construcción, todo dbt en `tests-integracion` (los unit tests desde la 8.1; nada nuevo en el job `tests`, D1 de la 8.1), una sola prueba de punta a punta con cuatro comprobaciones, los paneles y Grafana en `tests-integracion`, y `analitica/*` como código en `cambios` | Cada test pilla un error que no pilla otro; el caro, una vez; el job `tests` es el camino crítico y no crece. Alternativas descartadas: un job aparte, sin punta a punta, `dbt parse` en el job `tests` |
 | 112 (H8-13) | Notebook `08_analitica.ipynb` con modo rápido; la app sin cambios; ADR 0100 a 0112; etiqueta `v0.8-hito8`; nueve tareas en dos pistas | El material paso a paso; el CI lo ejecuta |
 
 ## Tareas, ramas y orden de ejecución
 
 | Tarea | Contenido | Pista | Dónde | Modelo y esfuerzo | Rama | Crítica |
 | --- | --- | --- | --- | --- | --- | --- |
-| 8.1 (#140) | Proyecto dbt (`analitica/`, lock, `profiles.yml`, macros, fuentes), `preparacion.registros` y `registros_vigentes` con sus unit tests; la medida de la clave de duplicados; CI: `dbt parse` en `tests` y `analitica/*` en `cambios` | A | Local (Postgres) | Opus, alto | `feat/h8-dbt-limpieza` | **Sí** |
+| 8.1 (#140) | Proyecto dbt (`analitica/`, lock, `profiles.yml`, macros, fuentes), `preparacion.registros` y `registros_vigentes` con sus unit tests; la medida de la clave de duplicados; CI: dbt con los unit tests en `tests-integracion` y `analitica/*` en `cambios` | A | Local (Postgres) | Opus, alto | `feat/h8-dbt-limpieza` | **Sí** |
 | 8.2 (#141) | El directo publica lo registrado por defecto; `--verdad`; tests del hito 6 y notebook 06 al día | B | Nube | Sonnet, alto | `feat/h8-directo-registro` | No |
 | 8.3 (#142) | Plata: las ocho tablas, emparejamientos, señales y tests de datos | A | Local | Opus, alto | `feat/h8-plata` | No |
 | 8.4 (#143) | La verdad en Postgres: `002_verdad.sql`, roles, `cargar-verdad`, permisos y la medida de un año | B | Local (Postgres) | Sonnet, alto | `feat/h8-verdad` | No |
-| 8.5 (#144) | Oro, las semillas, las tres construcciones, `grants`, la tabla de tres columnas y la prueba de punta a punta; dbt en `tests-integracion` | A | Local | Opus, alto | `feat/h8-oro` | **Sí** |
+| 8.5 (#144) | Oro, las semillas, las tres construcciones, `grants`, la tabla de tres columnas y la prueba de punta a punta (sus construcciones, con `--exclude-resource-type unit_test`) | A | Local | Opus, alto | `feat/h8-oro` | **Sí** |
 | 8.6 (#145) | Grafana: compose, aprovisionamiento, los tres cuadros, el reloj de la ejecución, el test de los paneles y el de arranque | B | Local (Docker y navegador) | Sonnet, alto | `feat/h8-grafana` | No |
 | 8.7 (#146) | Tiempo real: `edsim analitica refrescar` y la medida con un año; si pasa de 60 s, para | A | Local | Sonnet, alto | `feat/h8-tiempo-real` | No |
 | 8.8 (#147) | Notebook `08_analitica.ipynb`: Lucía paso a paso, la tabla de tres columnas, lo que no se arregla y cada regla frente a la libreta; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h8-notebook` | No |
@@ -729,7 +737,7 @@ Lo propio de este hito:
 
 ## Criterios de aceptación
 
-- `uv run pytest` pasa, incluidos los `slow`; los tests de la app y de integración pasan; el CI está en verde, con `dbt parse` en `tests` y dbt en `tests-integracion`.
+- `uv run pytest` pasa, incluidos los `slow`; los tests de la app y de integración pasan; el CI está en verde, con dbt (sus unit tests y la prueba de punta a punta) en `tests-integracion`.
 - Las huellas de los logs y del ground truth de los hitos 3 a 7 no cambian: el motor y el registro clínico no se tocan, salvo el valor por defecto del directo.
 - Con el perfil limpio, oro del hospital es igual a oro de la verdad salvo los identificadores.
 - `kpi_ejecucion` de las hojas `verdad` e `ingenuo` da lo mismo que `compare` del hito 7, con el perfil realista.
@@ -775,3 +783,95 @@ Se escribe al cerrar el hito (8.9).
 ## Anexo: guía de referencia del hito 8
 
 Una entrada por tarea, escrita en su PR.
+
+### Tarea 8.1: Proyecto dbt, preparación y limpieza
+
+**Qué se hizo**
+
+Issue #140, rama `feat/h8-dbt-limpieza`, Claude Code (Opus, en local, con Postgres). Tarea crítica: revisor del plan, `/code-review high` y `@codex review`. Un commit por paso, más los de la revisión:
+
+- **Esqueleto** (`ba67148`): `analitica/pyproject.toml` y su `uv.lock`, fuera del workspace; `.gitignore` con `analitica/target/` y `analitica/logs/`.
+- **Proyecto** (`2f00249`): `dbt_project.yml`, `profiles.yml`, las macros `generate_schema_name` y `fuente_registros`, `models/fuentes.yml` y el README.
+- **`registros`** (`ecd56c9`) y **`registros_vigentes`** (`ed62608`), con su documentación en `preparacion.md`.
+- **Unit tests** (`552e31c`): L, D, C, H, K e I.
+- **Integración y CI** (`5e047ac`): `tests_integracion/test_analitica.py`, el `uv sync` de `analitica/` en `tests-integracion.sh`, `analitica/*` como código en el job `cambios` y fuera de la N2 en `sello.sh`.
+- **Especificación** (`ddc9458`): D1 en este documento y los comandos de dbt en `AGENTS.md`.
+- **Revisión** (`e3caf26`, `de7bdbc`, `ff2f348`): la macro `columnas_registro`, una sola lectura de la vista, los unit tests E y R, la hoja fijada en cada unit test, el entorno del test de integración y el README.
+
+**Las piezas de dbt, tal como quedan en `analitica/`**
+
+- **Modelo:** un fichero `.sql` con un `SELECT`. dbt lo envuelve en un `CREATE VIEW` o un `CREATE TABLE` según su **materialización** (`config(materialized=…)`): `registros` es una vista, que se recalcula en cada consulta; `registros_vigentes` es una tabla, que se calcula al construir.
+- **`ref()` y `source()`:** `ref('registros')` dice que `registros_vigentes` depende de `registros`; `source('bronce', 'eventos')`, que lee una tabla que dbt no construye (declarada en `fuentes.yml`). Con ellos dbt arma el grafo y construye en orden.
+- **Jinja:** el SQL pasa antes por plantillas. `{% if var('hoja') == 'ingenuo' %}` elige la rama de la hoja, `{% for c in columnas %}` escribe la lista de columnas y las macros (`fuente_registros()`, `columnas_registro()`) son funciones de Jinja reutilizables.
+- **`generate_schema_name`:** dbt la llama para cada modelo. La de serie pondría `public_preparacion`; la nuestra da `preparacion` en la hoja del hospital y `ingenuo_preparacion` o `verdad_preparacion` en las otras.
+- **`profiles.yml`:** la conexión, versionada y sin secretos. `env_var('EDSIM_PG_BASE', 'edsim')` lee la variable o usa el valor de compose. dbt lo busca primero en la carpeta de trabajo.
+- **Unit test frente a test de datos:** un unit test (`preparacion_unit_tests.yml`) da filas inventadas a un modelo y compara su salida, sin datos reales. Prueba la lógica. Un test de datos (`unique`, `not_null`…) mira la tabla construida con datos reales: prueba los datos. Llegan en la 8.3 y la 8.5.
+
+**Decisiones del diff**
+
+- **Los recursos se apartan por `episode_id is null`,** que es justo el problema: en un `PARTITION BY`, los nulos caen todos en el mismo grupo. En `r2026` son los `staffing_changed`, y nada más.
+- **Desempates:** en duplicados, el menor `event_id` (lo dice la especificación); en correcciones con el mismo `recorded_time`, el mayor `event_id` (no lo cubría). Los prueba E. Los `event_id` se comparan como texto, que equivale a compararlos como número: llevan nueve dígitos con ceros.
+- **La corrección se une por (`run_id`, `corrige`)** y se aplica con `payload || coalesce(campos, '{}')`. Un registro sin corrección queda con `corregido = false`, no `NULL`.
+- **Las hojas tienen la misma forma:** `ingenuo` lleva `corregido` falso y `duplicados_quitados` a 0. `verdad` no lleva `ingest_time` ni la ventana de la relectura (no pasa por Kafka); en la 8.1 solo se declara y se compila.
+- **De `verdad.*`, solo `eventos`** en `fuentes.yml`: las otras tres tablas llegan con la 8.4.
+- **Columnas de `registros`:** las de la especificación; se quedan fuera `schema_version` y `sim_time`.
+- **Esquema del destino:** `public`, para un modelo sin esquema propio (hoy ninguno).
+- **Los unit tests corren desde un pytest de `tests_integracion/`,** que lanza `scripts/tests-integracion.sh`: reutiliza la base de la sesión, su borrado y su límite de tiempo. La conexión sale de la URL de esa base, y el test quita las variables `VIRTUAL_ENV` y `DBT_*` heredadas. Como dbt sale con 0 si no ejecuta nada, el test lee `run_results.json` y exige los ocho unit tests y los dos modelos.
+- **Cada unit test fija su hoja con `overrides`** (el hospital, o la ingenua en I): con `--vars '{hoja: ingenuo}'`, los del hospital fallaban. La 8.5 construye con `--exclude-resource-type unit_test`, para no ejecutarlos dos veces.
+- **`sello.sh`:** `analitica/` no lanza la rápida, que no prueba dbt.
+
+**Valores a mano** (código independiente de los modelos; completo en el PR)
+
+- L: cinco filas; el 4 con `{"motivo": "dolor_toracico", "nivel": 3}` y `corregido`; el 5 con `duplicados_quitados = 1`. D: el 4 con nivel 3, `corregido` y 1 quitado. C: el 4 con nivel 2. H: dos filas. K: 7 de 8, el 5 con su primera llegada. I: seis filas, el 4 con nivel 4. E: se queda el 1, con 1 quitado; el triaje con nivel 1 (gana la corrección 5). R: las dos filas.
+- El revisor del plan recalculó L a I y V1 a V5 con su propio código: coinciden.
+
+**Medidas**
+
+- **La clave de duplicados**, en la verdad de `r2026` regenerada con `edsim motor simular --run-id r2026` (esquema 4, 55.054 eventos). El `r2026` del disco era del 3 de noviembre, del modelo provisional (esquema 1): el revisor del plan lo detectó, y la medida se repitió sobre la regenerada.
+  - Con la clave completa, **0 pares** de hechos reales.
+  - Sin el payload, 43 pares, todos de `staffing_changed`, y 0 de pacientes. Con datos de EDsim, el payload solo protege el caso H, pero apartar los recursos es necesario.
+- **Versiones resueltas por `uv lock`:** dbt-core 1.12.7, dbt-postgres 1.11.0, dbt-adapters 1.24.5 y psycopg2-binary 2.9.13 (62 paquetes, Python 3.13). El `uv.lock` raíz no cambia.
+- **El `uv sync` de `analitica/`:** 121 s en frío en el portátil (la descarga) y 0,07 s con la caché llena; el entorno ocupa 279 MB.
+- **`dbt build --select preparacion`:** unos 5 s con diez nodos (dos modelos y ocho unit tests); el test de integración, 5,9 s.
+- **Comprobaciones a mano:**
+  - `dbt parse` con `EDSIM_PG_PUERTO=1` pasa: no conecta;
+  - dbt encuentra `profiles.yml` sin `--profiles-dir`;
+  - un `expect` de L con nivel 4 hace fallar el test: la comparación de `jsonb` es real.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante` en paralelo, sobre `5e047ac`, cada uno con su propia base de prueba:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Duplicados: el último anotado | Fallan L, D y C (C trae el duplicado 5/6 de L, una diferencia con la especificación) | Fallan L, D y C. En D sale el 8 con nivel 4 y `corregido` falso: la corrección pierde su registro |
+| V2 | La primera corrección | Falla C (nivel 3 en vez de 2) | Falla C, con nivel 3; los demás pasan |
+| V3 | La clave sin el payload | Falla H (una fila) | Falla H: el 1 con un quitado y sin el 2 |
+| V4 | La preparación no quita la relectura | Falla K (ocho filas) | Falla K con el 5 de más; los demás, con su entrada simulada, pasan |
+| V5 | La hoja ingenua aplica las correcciones | Falla I (nivel 3 en vez de 4) | Falla I, con nivel 3; los demás pasan |
+
+Tras el primer fallo, `dbt build` salta (SKIP) los unit tests hermanos y el modelo. Los mutantes comprobaron que los demás seguían pasando con `dbt test --select test_type:unit` o con `--exclude`. En el CI no cambia el veredicto, pero si fallan dos reglas a la vez, el informe solo enseña la primera.
+
+E y R se añadieron en la revisión. Cada uno falla con su mutación (los desempates al revés; los recursos dentro de la regla de duplicados) y con ninguna otra.
+
+**Revisión**
+
+`/code-review high main...feat/h8-dbt-limpieza`, nueve hallazgos:
+
+- **Corregidos:**
+  - los recursos sin unit test (R);
+  - los desempates sin unit test (E);
+  - la vista se leía dos veces (`e3caf26`);
+  - la lista de columnas, repetida (macro `columnas_registro`);
+  - el README lanzaba `dbt build` contra la base `edsim`;
+  - las variables `DBT_*` heredadas en el test;
+  - el límite de tiempo justo frente al sync en frío.
+- **Explicados:**
+  - el test pasa a dbt el servidor, el puerto, el usuario, la clave y la base de la URL, sin sus parámetros (`sslmode`, un socket): con ellos el test fallaría de forma visible, y EDsim usa la URL de compose;
+  - `exclude = ["analitica"]` en el workspace raíz: `members` es una lista fija y uv trata `analitica/` como proyecto aparte (`uv lock` crea su propio lock y el raíz no cambia). Tocar el `pyproject.toml` raíz movería las dos suites a cambio de proteger un cambio hipotético.
+
+**Pendiente**
+
+- **La 8.3** (#142): plata lee `registros_vigentes`, y amplía la selección del test de integración.
+- **La 8.5** (#144): `oro.calidad` cuenta las correcciones sin registro, desde `registros` (D3), y las construcciones de punta a punta van con `--exclude-resource-type unit_test`.
+- **La medida de D1 en el CI:** lo que añade el sync de `analitica/` al job `tests-integracion`, en el PR.

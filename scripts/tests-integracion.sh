@@ -7,7 +7,7 @@
 # docker compose down; con uno ya en marcha (el Kafka del notebook 06, que no tiene volumen),
 # docker compose rm -sf del otro, y el que estaba sigue con sus topics. Nunca con -v: el volumen
 # de Postgres, con los datos de Pedro, se queda; los tests usan una base de datos propia y la
-# borran. Ejecuta
+# borran. Sincroniza el entorno de dbt (analitica/), ejecuta
 # pytest con los extras kafka y postgres y uv.lock tal cual (--locked), imprime los tiempos y
 # sale con el código de pytest. Si algo falla, imprime antes el final del registro de los dos.
 set -u
@@ -90,6 +90,18 @@ else
     registro_servicios
     exit "$rc"
   fi
+fi
+
+# El entorno de dbt (analitica/, con su propio uv.lock), antes de pytest y con su tiempo en el
+# resumen: en frío descarga dbt, y la medida de la 8.1 la separa de la de los tests.
+inicio=$(date +%s)
+(cd analitica && uv sync --locked)
+rc=$?
+resumen+=("dbt (sync) $(duracion $(($(date +%s) - inicio)))")
+if [ "$rc" -ne 0 ]; then
+  echo "tests-integracion.sh: uv sync de analitica/ falló (código $rc)" >&2
+  $levantado || imprimir_resumen
+  exit "$rc"
 fi
 
 inicio=$(date +%s)
