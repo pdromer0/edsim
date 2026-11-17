@@ -20,5 +20,6 @@ select
     calentamiento_min,
     horizonte_min,
     origen + calentamiento_min * interval '1 minute' as inicio_ventana,
-    origen + horizonte_min * interval '1 minute' as fin_horizonte
+    origen + horizonte_min * interval '1 minute' as fin_horizonte,
+    registrado
 from fuente

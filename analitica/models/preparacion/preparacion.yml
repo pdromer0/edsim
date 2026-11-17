@@ -59,3 +59,9 @@ models:
         description: origen + W, donde empieza la ventana de los indicadores.
       - name: fin_horizonte
         description: origen + horizonte.
+      - name: registrado
+        description: >-
+          Si la ejecución es lo registrado (su inicio trae el bloque registro); falso en la hoja
+          verdad. La variable de los cuadros de Grafana solo ofrece las registradas (D2 de la
+          8.6).
+        data_tests: [not_null]

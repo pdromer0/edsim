@@ -1,0 +1,40 @@
+# Las fuentes de datos de Grafana (docs/specs/hito-8.md, «Especificación: Grafana»; decisión
+# 108). Las dos leen la base edsim del Postgres de compose.yaml por la red de compose, cada una
+# con su rol (decisión 105): Hospital solo ve las hojas del hospital (preparación, plata y oro);
+# Laboratorio lo ve todo, también la verdad y la tabla de tres columnas. Las contraseñas son las
+# de desarrollo de 002_verdad.sql: el repositorio no guarda secretos.
+apiVersion: 1
+
+datasources:
+  - name: Hospital
+    uid: edsim-hospital
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: hospital
+    isDefault: true
+    editable: false
+    jsonData:
+      database: edsim
+      # El Postgres local no tiene TLS (ssl = off). Sin sslmode también conecta (comprobado en la
+      # 8.6): se dice explícito para no depender del valor por defecto del plugin.
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: true
+    secureJsonData:
+      password: hospital
+
+  - name: Laboratorio
+    uid: edsim-laboratorio
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: laboratorio
+    editable: false
+    jsonData:
+      database: edsim
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: true
+    secureJsonData:
+      password: laboratorio

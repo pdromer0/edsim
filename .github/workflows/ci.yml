@@ -117,8 +117,10 @@ jobs:
   # Integración contra un Kafka y un Postgres reales, con el mismo compose.yaml que en local
   # (H6-16, H7-10): topics, productor, directo, órdenes y el consumidor de bronce. Desde la 8.1,
   # también dbt (analitica/): el script sincroniza su entorno y test_analitica.py lanza
-  # dbt build con los unit tests (H8-12). Era tests-kafka hasta la 7.5; obligatorio en la
-  # protección de main.
+  # dbt build con los unit tests (H8-12). Desde la 8.6, también Grafana (perfil analitica): el
+  # script lo levanta y test_grafana.py prueba sus paneles y su arranque; la imagen descarga unos
+  # 500 MB (1,5 min en el portátil). Era tests-kafka hasta la 7.5; obligatorio en la protección
+  # de main.
   tests-integracion:
     needs: cambios
     if: ${{ !cancelled() && needs.cambios.outputs.solo_docs != 'true' }}
