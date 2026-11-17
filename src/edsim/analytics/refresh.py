@@ -140,11 +140,9 @@ def format_summary(summary: RefreshSummary) -> str:
     """The summary after Ctrl+C."""
     if summary.rounds == 0:
         return "Parado con Ctrl+C antes de acabar la primera vuelta"
+    rounds = "1 vuelta" if summary.rounds == 1 else f"{summary.rounds} vueltas"
     errors = f", {summary.failures} con error" if summary.failures else ", ninguna con error"
-    return (
-        f"Parado con Ctrl+C: {summary.rounds} vueltas{errors}; "
-        f"la más larga, {_seconds(summary.longest)}"
-    )
+    return f"Parado con Ctrl+C: {rounds}{errors}; la más larga, {_seconds(summary.longest)}"
 
 
 def refresh(

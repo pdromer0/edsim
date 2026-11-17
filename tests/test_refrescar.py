@@ -128,6 +128,12 @@ def test_ctrl_c_durante_la_espera_sale_con_un_resumen():
     assert lines[-1].startswith("Parado con Ctrl+C: 2 vueltas")
 
 
+def test_el_resumen_de_una_sola_vuelta_va_en_singular():
+    _, _, lines, _ = run([12])
+
+    assert lines[-1] == "Parado con Ctrl+C: 1 vuelta, ninguna con error; la más larga, 12.0 s"
+
+
 def test_ctrl_c_antes_de_acabar_la_primera_vuelta():
     """Sin ninguna vuelta acabada, el resumen no tiene una «más larga»."""
     _, _, lines, summary = run([])
