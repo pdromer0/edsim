@@ -1268,6 +1268,8 @@ Con `python3` independiente del SQL: las horas de la ventana de la punta a punta
 - El arranque: sano en 10 a 15 s; `up --wait` de solo Grafana, con Postgres ya en marcha, 15 s.
 - La memoria de Grafana: 280 MiB recién arrancado y 488 MiB después de los tests.
 - La fixture de la punta a punta, en la misma máquina y con la 8.7 en marcha (carga media 3,4): 63 s sin la verdad publicada y 76 s con ella (la 8.5 midió 39 s con la máquina libre).
+- N3 (`scripts/tests-completos.sh`): 19 min 52 s (núcleo 14:35, app 3:51, notebooks 1:25).
+- `scripts/tests-integracion.sh`, 57 tests: 4 min 50 s (arranque con Grafana 0:23, pytest 4:23) y 6 min 15 s. Las dos veces falló `test_consumidor_en_vivo_igual_a_batch`, con una latencia mínima de −96 ms (`hito4`) y −66 ms (`hito5`) frente al límite de −5 ms. La causa probable es un desfase del reloj de la máquina virtual de Docker Desktop respecto a WSL: la carga solo puede hacer la latencia más grande, no negativa. La rama no toca `src/` ni ese test. El CI, con Docker nativo, hace de juez.
 
 **Versiones incorrectas**
 
