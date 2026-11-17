@@ -1285,7 +1285,21 @@ A mano, una a una y deshechas con `git checkout`; con `test_grafana.py` y `test_
 
 **Revisión**
 
-Se escribe tras `/code-review medium main...feat/h8-grafana`.
+`/code-review medium main...feat/h8-grafana`, diez hallazgos:
+
+- **Corregidos:**
+  - `canSave` visto como anónimo detecta el rol del visitante, no `allowUiUpdates` (un administrador recibe `canSave` igual): el docstring lo dice, y el test comprueba también que el cuadro viene del aprovisionamiento (`acd2c6c`);
+  - «Pendientes» suma todas las horas de llegada al lado de paneles de 24 h: ahora se llama «Pendientes ahora» (`da4e1ef`);
+  - `tests-integracion.sh` levantaba con un `up` sin nombrar servicios, que arrancaba también la consola parada de un compose a medias, y `bajar` no la quitaba (`1918985`);
+  - Grafana no es una frontera de permisos: un visitante anónimo puede consultar la fuente Laboratorio, y se acepta en un laboratorio local; dicho en «Los cuadros» (`b3ecfe2`);
+  - el comentario del job `tests-integracion` en `ci.yml`, con Grafana y su imagen (`50befd8`).
+- **Explicados:**
+  - en un directo, «Ahora» y las series miran la última hora del horizonte: es el contrato con la 8.7 (notas, punto 7), que corta las horas futuras en oro;
+  - la subconsulta escalar de la verdad en Laboratorio no puede dar dos filas: `tres_columnas` sale de `ultimo_inicio`, un `inicio` por ejecución y un `origen` por `inicio`;
+  - la etiqueta y la ventana se repiten en 13 consultas: el test exige las mismas 24 etiquetas en todas las barras, así que una copia que se separe falla, y el corte de la 8.7 va en oro, no en los paneles. Una columna de presentación en oro sería otro cambio de la 8.5;
+  - Laboratorio ofrece también una ejecución registrada sin oro del hospital (por ejemplo, sin reconstruir): sus barras salen vacías, que es la verdad, y la tabla de tres columnas sigue informando;
+  - Calidad ofrecería una verdad publicada sin `fecha_inicio`, pero `edsim.live.messages` lo escribe siempre y lo valida al leer: solo un `inicio` ajeno a EDsim llegaría ahí.
+- **La N2, un falso timeout:** `test_cli_calibracion.py::test_sensibilidad_de_la_enfermeria_elige_y_escribe_el_csv` pasó de 60 s con la carga media en 16 a 18 (la revisión en segundo plano y la sesión de la 8.7). Solo y en serie, 25 s. La rama no toca `src/` ni `tests/`.
 
 **Pendiente**
 
