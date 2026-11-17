@@ -42,4 +42,11 @@ Una fila por ejecución: (`run_id`). Oro necesita saber dónde empieza el minuto
 **Lo registrado** (`registrado`, D2 de la 8.6): verdadero si el `inicio` trae el bloque `registro`, el mismo criterio que `tres_columnas`; en la hoja `verdad`, falso. La hoja del hospital construye oro con todas las ejecuciones de bronce, también las publicadas con `--verdad`, y el rol `hospital` no lee bronce: Grafana filtra con esta columna la variable `ejecucion` para no ofrecer una verdad como si fuera lo que vio el hospital.
 
 **La ventana** empieza en `inicio_ventana` = origen + W. Oro cuenta en ella los cinco indicadores del hito 7 (D1 de la 8.5): una reemisión solo deja en bronce, de antes de W, el censo (los eventos de los episodios abiertos en W).
+
+**El fin del dato** (`fin_dato`, D1 de la 8.7) es hasta dónde llegan los datos de la ejecución. Ahí acaban las horas de `oro.censo` y de `kpi_hora`, y desde ahí cuenta `oro.cohorte` las 24 h de quien sigue dentro. Sin él, un directo que va por el día 2 tendría horas hasta el horizonte con un censo congelado que no es real.
+
+- Si el último mensaje de `ed.runs` de la ejecución (en el orden de `ultimo_inicio`) es un `fin`, su `sim_time`: el horizonte en una ejecución completa, donde paró en una interrumpida. Un `fin` anterior al último `inicio` es de otra publicación y no cuenta.
+- Si no, el directo sigue en marcha: su última anotación, el mayor `recorded_time` de `registros_vigentes`. Es la hora de anotación, con el desfase del reloj de cada sistema; el `event_time` puede ser muy anterior (una anotación tardía) y cortaría horas que ya tienen datos.
+- Nunca más allá del horizonte. Sin `fin` ni registros, nulo: la ejecución no tiene horas.
+- En `verdad`, el horizonte: la verdad se carga entera.
 {% enddocs %}

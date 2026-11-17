@@ -348,7 +348,8 @@ Hasta bronce, el directo ya llega en segundos (hito 7). Pero plata y oro son tab
 ### En EDsim
 
 - `edsim analitica refrescar [--cada 60]` construye la hoja del hospital (sin tests) hasta Ctrl+C (H8-10).
-- La 8.7 mide cuánto tarda una construcción con un año de `r2026` en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo.
+- En un directo, oro llega hasta el **fin del dato**, la última anotación, y no hasta el horizonte: sin horas aún por llegar con un censo congelado (D1 de la 8.7).
+- La 8.7 mide cuánto tarda una construcción con un año (`r365`) en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo.
 
 ### Para aprender más
 
@@ -604,9 +605,11 @@ grafana/
 
 ## Especificación: tiempo real
 
-- `edsim analitica refrescar [--cada S] [--analitica DIR]`: cada `S` segundos (60 por defecto) lanza `dbt run` del proyecto `analitica/` en la hoja del hospital, excluyendo `tag:laboratorio`, sin tests, hasta Ctrl+C; imprime en cada vuelta cuánto tardó y avisa si tardó más que el intervalo. No espera a la vuelta anterior si se pasa: la siguiente empieza al acabar.
-- La lógica en el paquete (`edsim.analytics`), con el ejecutor de dbt (un subproceso `uv run --project analitica dbt run …`) y el reloj inyectados; se prueba con un ejecutor falso con tope `RunawayLoop` (`tests/runaway.py`).
-- **La medida (8.7):** cuánto tarda la construcción del hospital con bronce vacío, con un directo de una hora a ×60 y con un año de `r2026` reemitido. Si pasa de 60 s con el año cargado, la tarea para: el plan B es un incremental por ejecución, que se decide entonces con Pedro.
+- `edsim analitica refrescar [--cada S] [--analitica DIR]`: cada `S` segundos (60 por defecto) lanza `dbt build` del proyecto `analitica/` en la hoja del hospital, excluyendo `tag:laboratorio` y sin tests (`--exclude-resource-type test unit_test`), hasta Ctrl+C. Es `build` y no `run` (D2 de la 8.7) porque también carga las semillas: funciona en una base recién creada. Imprime en cada vuelta cuánto tardó y avisa si tardó más que el intervalo. El intervalo cuenta desde el inicio de la vuelta; si una se pasa, la siguiente empieza al acabar.
+- **Una vuelta que falla** avisa con su código y las últimas líneas de dbt, y la siguiente se lanza a su hora (D3 de la 8.7): un fallo pasajero no tira el directo. Ctrl+C, dentro de una vuelta o en la espera, sale con un resumen.
+- La lógica en el paquete (`edsim.analytics`), con la construcción (un subproceso `uv run --locked --project analitica dbt build …`, con `analitica/` como carpeta de trabajo) y el reloj inyectados; se prueba con una construcción y un reloj falsos con tope `RunawayLoop` (`tests/runaway.py`). La base es la de `profiles.yml` (las variables `EDSIM_PG_*`).
+- **El fin del dato** (D1 de la 8.7): las horas de `oro.censo` y `oro.kpi_hora`, y lo que cuelga de ellas, acaban en el fin del dato de cada ejecución (`preparacion.parametros`), y `oro.cohorte` cuenta desde él las 24 h de quien sigue dentro. Es el `sim_time` del `fin` si es el último mensaje de `ed.runs` de la ejecución; si no, la última anotación (`recorded_time`); nunca más que el horizonte; en la hoja `verdad`, el horizonte. Es el contrato con los paneles: `kpi_hora` no tiene horas posteriores a la última anotación.
+- **La medida (8.7):** cuánto tarda la construcción del hospital con bronce vacío, con un directo de una hora a ×60 y con un año (`r365`) reemitido. Si pasa de 60 s con el año cargado, la tarea para: el plan B es un incremental por ejecución, que se decide entonces con Pedro. **Medido:** con el año entero, una vuelta tarda 60,1 s (dbt 56 s, de ellos 24 s `registros_vigentes`); con un directo de una hora, 3,8 s de mediana. Pedro lo acepta para el hito 8, porque el caso de uso (un directo y pocas reemisiones) queda muy por debajo. El plan B va a un issue nuevo (anexo, tarea 8.7).
 
 ## Especificación: el directo por defecto
 
@@ -1307,3 +1310,102 @@ A mano, una a una y deshechas con `git checkout`; con `test_grafana.py` y `test_
 
 - **Pedro, a mano:** los tres cuadros con `h8prueba`. Antes, `cd analitica && uv run dbt build --exclude tag:laboratorio` en su base (la columna `registrado` es nueva) y `docker compose --profile analitica up --wait`.
 - **La 8.7** (#146): el contrato de las notas, `oro.kpi_hora` sin horas posteriores a la última anotación de la ejecución; y, si el directo lo pide, la ejecución más reciente la primera en la variable (hoy van por `run_id`).
+
+### Tarea 8.7: Tiempo real, micro-lotes de dbt
+
+**Qué se hizo**
+
+Issue #146, rama `feat/h8-tiempo-real`, Claude Code (Opus, en local, con Postgres y Kafka). No es crítica: `/code-review medium`. Un commit por paso, más los de la revisión:
+
+- **El fin del dato** (`6e341f1`): `fin_dato_min` y `fin_dato` en `preparacion.parametros`; `oro.censo` corta sus horas ahí y `oro.cohorte` cuenta desde ahí; unit tests `fin_del_dato` y `censo_hasta_el_fin_del_dato`.
+- **El bucle** (`c1ffd59`): `edsim.analytics.refresh`, con la construcción y el reloj inyectados.
+- **La CLI** (`cdef1e2`): `edsim analitica refrescar [--cada S] [--analitica DIR]`.
+- **Documentación** (`b41df14`) y el resumen en singular (`c45bda0`, visto en la primera medida).
+- **Revisión** (`bd9e58d`, `0ccb595`, `97ca332`).
+
+**Decisiones del diff**
+
+- **El fin del dato (D1 de las notas del chat):**
+  - el `sim_time` del `fin` si es el último mensaje de `ed.runs` de la ejecución (macro `ultimo_fin`, con el mismo orden que `ultimo_inicio`, en la macro `ultimo_mensaje`);
+  - si no, la última anotación, `max(recorded_time)` de `registros_vigentes`;
+  - nunca más que el horizonte; en la hoja `verdad`, el horizonte;
+  - `least` ignora los nulos, así que una guarda deja sin fin del dato, y sin horas, la ejecución sin `fin` ni registros.
+- **Las horas** son las k con W ≤ 60 k < fin del dato, la regla del horizonte con otro final. `kpi_hora`, `kpi_turno`, `kpi_ejecucion` y la ocupación cuelgan de ellas.
+- **Quien sigue dentro** se cuenta desde el mismo fin (nota 6). En una ejecución acabada, desde su `fin` y no desde su última anotación: unos minutos de diferencia, y la punta a punta no cambia.
+- **`dbt build` sin tests, no `dbt run` (D2):** carga también las semillas y funciona en una base recién creada.
+- **El intervalo** cuenta desde el inicio de la vuelta.
+- **Si una vuelta dura más que el intervalo,** no se solapa con la siguiente, que no se salta: empieza al acabar, con un aviso (`refresh.py`, líneas 174 a 186).
+- **Si una vuelta falla,** se ve su código y las 20 últimas líneas, y el bucle sigue (D3).
+- **Con Ctrl+C**, en una vuelta o en la espera, sale con un resumen, y la vuelta espera a que dbt acabe. `subprocess.run` mataba a `uv` a los 0,25 s y dejaba a dbt sin su tubería (de la revisión).
+
+**Valores a mano**
+
+Del plan, con un script independiente:
+
+- el bucle: vueltas de 10 s esperan 50 s; con 75 s, aviso y la siguiente en 135 s; con justo 60 s, ni aviso ni espera;
+- el fin del dato: 1140, 1050, 1040, 1140 y nulo;
+- las horas: {16, 17, 18}, {16, 17}, {16, 17} y ninguna; con ≤, sobran la 19 y la 18;
+- quien sigue dentro: U olvidada, V y Z dentro; con la última anotación como ahora, U dentro.
+
+**Medidas**
+
+En una base dedicada, `edsim_h87`, borrada al acabar. Una vuelta de `refrescar`:
+
+| Bronce | Registros | Vuelta | dbt |
+| --- | --- | --- | --- |
+| Vacío | 0 | 5 a 7 s | 1,8 s |
+| Directo de una hora a ×60 | hasta 11.685 | mediana 3,8 s | 2,6 s |
+| `r365` al 83 % y el directo | 1.151.683 | 62,6 s | 56,7 s |
+| `r365` entero y el directo | 1.391.949 | 60,1 s | 56,0 s |
+
+**Con un año, la vuelta pasa de 60 s** (decisión 109). Pedro lo acepta para el hito 8, porque el caso de uso, un directo y pocas reemisiones, queda muy por debajo; el plan B, incremental por ejecución, va a un issue nuevo.
+
+- **Dónde se va el tiempo:** `registros_vigentes`, 24 s; después, plata (`episodio` 12 s, `prueba` 12 s, `ubicacion`, `destino`, `valoracion`, `paciente` y `triaje`, de 6 a 8 s cada una), `calidad` y `cohorte`. La ocupación de boxes, 4,5 s.
+- **Memoria y swap:**
+  - `reemitir r365` llevó el WSL a 6,5 de 6,8 GiB (4,4 GiB el proceso) y dejó 2,3 GiB en swap;
+  - durante la vuelta del año, Postgres llegó a 2,1 GiB.
+- **El consumidor del año** se frena con bronce grande, de ~840 a ~180 eventos/s: 74 min en dos pasadas.
+- **D1 en vivo**, en el directo: la última hora de `kpi_hora` siempre antes de la última anotación; tras `parar`, las horas acaban en el `sim_time` del `fin` (6802,53).
+- **N3:** 22 min 18 s (núcleo 17:13, app 3:39, notebooks 1:25), con compose en marcha. **Integración:** 4 min 14 s, 47 tests, tras recrear Kafka: el primer intento, con 1,4 millones de mensajes de las medidas en los topics, dio 5 fallos por tiempo.
+
+Detalle, por modelo y por fase, en el PR.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V13 | Cualquier `fin` vale | Falla solo `fin_del_dato` | Así (republicada 1140) |
+| V14 | `least` sin guarda | Falla solo `fin_del_dato` | Así (sin_registros 1140) |
+| V15 | `censo` corta en el horizonte | Falla solo `censo_hasta_el_fin_del_dato` | Así; la punta a punta pasa |
+| V16 | `censo` con ≤ | Los dos unit tests del censo y la punta a punta de verdad e ingenuo | Así, en dos pasadas |
+| V17 | `cohorte` con la última anotación | Falla solo `cohorte_sigue_dentro` | Así; la punta a punta pasa (segunda pasada) |
+| V18 | Espera S tras cada vuelta | 5 tests del bucle | Así |
+| V19 | Espera sin guarda ni aviso | El del aviso y el de justo el intervalo | Así |
+| V20 | Un fallo para el bucle | Solo el del fallo | Así |
+
+En un `dbt build`, lo que cuelga de un unit test que falla queda SKIP. Las predicciones de V18 y V19 se rehicieron antes de lanzarlas, porque los tests comprueban también los inicios de las vueltas.
+
+**Revisión**
+
+`/code-review medium main...feat/h8-tiempo-real`, diez hallazgos:
+
+- **Corregidos:**
+  - Ctrl+C espera a dbt y una sola tubería para uv y dbt (`bd9e58d`);
+  - código 1 si fallaron todas las vueltas (`0ccb595`);
+  - un solo orden para el último mensaje de `ed.runs` (`97ca332`).
+- **Explicados:**
+  - una republicación en curso tiene en bronce los registros de la anterior, que son datos reales;
+  - un reloj adelantado (a «Pendiente»);
+  - un fin nulo con episodios no puede darse;
+  - `ingest_time` es el `LogAppendTime` del broker y `ed.runs` tiene una partición;
+  - `parametros` solo alimenta a oro;
+  - el protocolo del reloj es el subconjunto de `live.clock.Clock`.
+
+**Pendiente**
+
+- **El plan B, incremental por ejecución:** issue nuevo, con el texto en el PR.
+- **El fin del dato con `bronce.eventos.sim_time`,** sin el desfase de los relojes. Cambia el contrato con la 8.6; para decidir con Pedro.
+- **Una reemisión a `max`** pone el fin del dato en el horizonte antes de que llegue lo registrado: `ed.runs` se consume al momento.
+- **El consumidor se frena con bronce grande.**

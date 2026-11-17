@@ -59,6 +59,13 @@ models:
         description: origen + W, donde empieza la ventana de los indicadores.
       - name: fin_horizonte
         description: origen + horizonte.
+      - name: fin_dato_min
+        description: >
+          Hasta dónde llegan los datos, en minutos desde el origen (D1 de la 8.7): el sim_time
+          del fin si llegó después del último inicio; si no, la última anotación; nunca más que
+          el horizonte. Nulo sin fin ni registros. En la verdad, el horizonte.
+      - name: fin_dato
+        description: origen + fin_dato_min. Ahí acaban las horas de oro.censo y kpi_hora.
       - name: registrado
         description: >-
           Si la ejecución es lo registrado (su inicio trae el bloque registro); falso en la hoja

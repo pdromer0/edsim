@@ -47,12 +47,14 @@ recording that already exists (``generar``) or does not exist (``comparar``) or 
 """
 
 import argparse
+import shutil
 import signal
 import sys
 from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
 
+from edsim.analytics import DEFAULT_EVERY, dbt_builder, refresh
 from edsim.arrivals.profile import ArrivalProfile, load_profile
 from edsim.arrivals.report import (
     config_fingerprint,
@@ -1324,6 +1326,25 @@ def _store_failure(error: Exception) -> int:
     return 1
 
 
+def _analytics_refresh(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    folder = Path(args.analitica)
+    if not (folder / "dbt_project.yml").is_file():
+        parser.error(f"{folder} no es el proyecto dbt: le falta dbt_project.yml")
+    uv = shutil.which("uv")
+    if uv is None:
+        parser.error("no se encuentra uv en el PATH: dbt se lanza con «uv run»")
+    folder = folder.resolve()
+    print(
+        f"La hoja del hospital, sin tests, cada {args.cada:g} s en {folder}; Ctrl+C para parar",
+        flush=True,
+    )
+    summary = refresh(
+        dbt_builder(uv, folder), SystemClock(), args.cada, lambda line: print(line, flush=True)
+    )
+    # Code 1 if no round that ended built anything: a script can tell that nothing was refreshed.
+    return 1 if summary.rounds and summary.failures == summary.rounds else 0
+
+
 def _store_prepare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
         applied = prepare(args.postgres)
@@ -2133,6 +2154,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_postgres_option(store_load_truth)
     store_load_truth.set_defaults(handler=_store_load_truth, subparser=store_load_truth)
+
+    analytics = commands.add_parser(
+        "analitica",
+        help="analítica: los micro-lotes de dbt de la hoja del hospital",
+        description="La analítica del hito 8: plata y oro, construidos por dbt en el proyecto "
+        "analitica/ (docs/specs/hito-8.md).",
+    )
+    analytics_actions = analytics.add_subparsers(dest="accion", required=True, metavar="accion")
+
+    analytics_refresh = analytics_actions.add_parser(
+        "refrescar",
+        help="construye la hoja del hospital cada S segundos, hasta Ctrl+C",
+        description="Lanza cada S segundos dbt build de la hoja del hospital, sin la tabla de "
+        "tres columnas y sin tests, hasta Ctrl+C. Imprime lo que tardó cada vuelta y avisa si "
+        "pasó del intervalo: la siguiente empieza entonces al acabar. Una vuelta que falla "
+        "muestra el final de la salida de dbt, y se intenta en la siguiente. Tras Ctrl+C, "
+        "termina con código 1 si fallaron todas las vueltas acabadas. La base es la de "
+        "analitica/profiles.yml: edsim, o la de las variables EDSIM_PG_*.",
+    )
+    analytics_refresh.add_argument(
+        "--cada",
+        type=parse_seconds,
+        default=DEFAULT_EVERY,
+        metavar="S",
+        help="segundos entre el inicio de dos vueltas (por defecto: %(default)g)",
+    )
+    analytics_refresh.add_argument(
+        "--analitica",
+        default="analitica",
+        metavar="DIR",
+        help="la carpeta del proyecto dbt (por defecto: %(default)s)",
+    )
+    analytics_refresh.set_defaults(handler=_analytics_refresh, subparser=analytics_refresh)
 
     records = commands.add_parser(
         "registro",
