@@ -1,0 +1,297 @@
+{
+  "uid": "edsim-calidad",
+  "title": "Calidad del dato",
+  "description": "Los avisos de calidad del dato de oro.calidad para la ejecución elegida, con la ejecución entera, no solo sus últimas 24 horas.",
+  "tags": [
+    "edsim"
+  ],
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "utc",
+  "templating": {
+    "list": [
+      {
+        "name": "ejecucion",
+        "label": "Ejecución",
+        "description": "Las ejecuciones registradas y las que no tienen parámetros (sin inicio utilizable, que no se sabe si son registradas); una verdad publicada con --verdad no sale.",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "edsim-hospital"
+        },
+        "query": "select c.run_id\nfrom oro.calidad as c\nleft join preparacion.parametros as p using (run_id)\nwhere p.registrado or p.run_id is null\norder by c.run_id",
+        "definition": "select c.run_id\nfrom oro.calidad as c\nleft join preparacion.parametros as p using (run_id)\nwhere p.registrado or p.run_id is null\norder by c.run_id",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Episodios",
+      "description": "Episodios de plata; sin llegada o sin salida anotadas; de los sin salida, los que siguen dentro (última anotación en las últimas 24 h) y las salidas olvidadas.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  episodios as \"Episodios\",\n  sin_llegada as \"Sin llegada\",\n  sin_salida as \"Sin salida\",\n  siguen_dentro as \"Siguen dentro\",\n  salidas_olvidadas as \"Salidas olvidadas\"\nfrom oro.calidad\nwhere run_id = '${ejecucion}'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Emparejamientos y tiempos",
+      "description": "Valoraciones y estancias en box sin su pareja (un inicio o un fin olvidado) y triajes anotados antes de la llegada (los relojes).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  valoraciones_sin_pareja as \"Valoraciones sin pareja\",\n  ubicaciones_sin_pareja as \"Ubicaciones sin pareja\",\n  triajes_tiempo_negativo as \"Triajes con tiempo negativo\"\nfrom oro.calidad\nwhere run_id = '${ejecucion}'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Lo que arregló la limpieza",
+      "description": "Correcciones aplicadas, correcciones cuyo registro no está y duplicados quitados.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  registros_corregidos as \"Registros corregidos\",\n  correcciones_sin_registro as \"Correcciones sin registro\",\n  duplicados_quitados as \"Duplicados quitados\"\nfrom oro.calidad\nwhere run_id = '${ejecucion}'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Sin parámetros",
+      "description": "Si la ejecución no tiene un inicio utilizable: entonces no sale en el resto de oro.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  case when sin_parametros then 'Sí' else 'No' end as \"Sin parámetros\",\n  campos_vacios as \"Campos vacíos\"\nfrom oro.calidad\nwhere run_id = '${ejecucion}'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Campos vacíos por campo",
+      "description": "Los campos del payload que llegaron vacíos (null), por campo.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 8,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select campo.key as \"Campo\", campo.value::bigint as \"Vacíos\"\nfrom oro.calidad as c\ncross join lateral jsonb_each_text(c.campos_vacios_por_campo) as campo\nwhere c.run_id = '${ejecucion}'\norder by 2 desc, 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ]
+}

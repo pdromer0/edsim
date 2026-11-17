@@ -1,0 +1,319 @@
+{
+  "uid": "edsim-laboratorio",
+  "title": "Laboratorio",
+  "description": "Verdad, ingenuo y limpio: cuánto recupera la limpieza. Lo ve solo el rol laboratorio.",
+  "tags": [
+    "edsim"
+  ],
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "utc",
+  "templating": {
+    "list": [
+      {
+        "name": "ejecucion",
+        "label": "Ejecución",
+        "description": "Las ejecuciones registradas de laboratorio.tres_columnas; su verdad se enlaza por registro.origen.",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "edsim-laboratorio"
+        },
+        "query": "select distinct run_id_registrado\nfrom laboratorio.tres_columnas\norder by 1",
+        "definition": "select distinct run_id_registrado\nfrom laboratorio.tres_columnas\norder by 1",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Verdad, ingenuo y limpio",
+      "description": "Los cinco indicadores del hito 7 en la ventana (desde W): en la verdad, en lo registrado sin limpiar y en lo limpiado, con las dos diferencias.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-laboratorio"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-laboratorio"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  kpi as \"KPI\",\n  verdad as \"Verdad\",\n  ingenuo as \"Ingenuo\",\n  limpio as \"Limpio\",\n  ingenuo_menos_verdad as \"Ingenuo − verdad\",\n  limpio_menos_verdad as \"Limpio − verdad\"\nfrom laboratorio.tres_columnas\nwhere run_id_registrado = '${ejecucion}'\norder by orden"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Llegadas por hora",
+      "description": "Las tres hojas, hora a hora, en las últimas 24 horas simuladas.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-laboratorio"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-laboratorio"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "with verdad as (\n  select distinct run_id\n  from laboratorio.tres_columnas\n  where run_id_registrado = '${ejecucion}'\n)\nselect\n  to_char(p.fecha_origen + (l.k / 24)::int, 'DD/MM') || ' ' || to_char(l.k % 24, 'FM00') || 'h' as \"Hora\",\n  v.llegadas as \"Verdad\",\n  i.llegadas as \"Ingenuo\",\n  l.llegadas as \"Limpio\"\nfrom oro.kpi_hora as l\njoin preparacion.parametros as p using (run_id)\nleft join ingenuo_oro.kpi_hora as i on i.run_id = l.run_id and i.k = l.k\nleft join verdad_oro.kpi_hora as v on v.run_id = (select run_id from verdad) and v.k = l.k\nwhere l.run_id = '${ejecucion}'\n  and l.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by l.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Censo por hora",
+      "description": "Las tres hojas, a cada hora en punto.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-laboratorio"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-laboratorio"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "with verdad as (\n  select distinct run_id\n  from laboratorio.tres_columnas\n  where run_id_registrado = '${ejecucion}'\n)\nselect\n  to_char(p.fecha_origen + (l.k / 24)::int, 'DD/MM') || ' ' || to_char(l.k % 24, 'FM00') || 'h' as \"Hora\",\n  v.censo as \"Verdad\",\n  i.censo as \"Ingenuo\",\n  l.censo as \"Limpio\"\nfrom oro.kpi_hora as l\njoin preparacion.parametros as p using (run_id)\nleft join ingenuo_oro.kpi_hora as i on i.run_id = l.run_id and i.k = l.k\nleft join verdad_oro.kpi_hora as v on v.run_id = (select run_id from verdad) and v.k = l.k\nwhere l.run_id = '${ejecucion}'\n  and l.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by l.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "barchart",
+      "title": "Mediana hasta el triaje, por hora de llegada",
+      "description": "Las tres hojas, por la hora de llegada.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-laboratorio"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-laboratorio"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "with verdad as (\n  select distinct run_id\n  from laboratorio.tres_columnas\n  where run_id_registrado = '${ejecucion}'\n)\nselect\n  to_char(p.fecha_origen + (l.k / 24)::int, 'DD/MM') || ' ' || to_char(l.k % 24, 'FM00') || 'h' as \"Hora\",\n  v.mediana_triaje_min as \"Verdad\",\n  i.mediana_triaje_min as \"Ingenuo\",\n  l.mediana_triaje_min as \"Limpio\"\nfrom oro.kpi_hora as l\njoin preparacion.parametros as p using (run_id)\nleft join ingenuo_oro.kpi_hora as i on i.run_id = l.run_id and i.k = l.k\nleft join verdad_oro.kpi_hora as v on v.run_id = (select run_id from verdad) and v.k = l.k\nwhere l.run_id = '${ejecucion}'\n  and l.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by l.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Mediana hasta el médico, por hora de llegada",
+      "description": "Las tres hojas, por la hora de llegada.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-laboratorio"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-laboratorio"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "with verdad as (\n  select distinct run_id\n  from laboratorio.tres_columnas\n  where run_id_registrado = '${ejecucion}'\n)\nselect\n  to_char(p.fecha_origen + (l.k / 24)::int, 'DD/MM') || ' ' || to_char(l.k % 24, 'FM00') || 'h' as \"Hora\",\n  v.mediana_medico_min as \"Verdad\",\n  i.mediana_medico_min as \"Ingenuo\",\n  l.mediana_medico_min as \"Limpio\"\nfrom oro.kpi_hora as l\njoin preparacion.parametros as p using (run_id)\nleft join ingenuo_oro.kpi_hora as i on i.run_id = l.run_id and i.k = l.k\nleft join verdad_oro.kpi_hora as v on v.run_id = (select run_id from verdad) and v.k = l.k\nwhere l.run_id = '${ejecucion}'\n  and l.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by l.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}
