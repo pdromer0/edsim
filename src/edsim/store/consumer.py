@@ -222,6 +222,36 @@ def save_batch(store: Store, batch: Sequence[tuple[KafkaMessage, Row]]) -> Batch
     return BatchResult(saved, repeated, len(rejected), retried=True)
 
 
+WRITE_BATCH = 1000
+"""Messages per batch in ``save_messages``."""
+
+
+def save_messages(
+    store: Store, messages: Sequence[KafkaMessage], batch_size: int = WRITE_BATCH
+) -> BatchResult:
+    """Save ``messages`` with ``save_batch``, ``batch_size`` at a time, as the consumer would.
+
+    For bronze without Kafka (``edsim.store.postgres.write_bronze``, task 8.8): each message
+    becomes its row with ``to_row``, and a message that cannot be read goes to ``rechazados``.
+
+    Returns:
+        The sum of the batches: ``retried`` if any went through the safety net.
+
+    Raises:
+        Exception: Whatever ``save_batch`` raises; the batches before it stay saved.
+    """
+    saved = repeated = rejected = 0
+    retried = False
+    for at in range(0, len(messages), batch_size):
+        chunk = messages[at : at + batch_size]
+        result = save_batch(store, [(message, to_row(message)) for message in chunk])
+        saved += result.saved
+        repeated += result.repeated
+        rejected += result.rejected
+        retried = retried or result.retried
+    return BatchResult(saved, repeated, rejected, retried)
+
+
 def run_consumer(
     consumer: Consumer,
     store: Store,

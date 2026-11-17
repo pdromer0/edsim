@@ -736,7 +736,7 @@ Trece decisiones candidatas, tomadas con Pedro una a una en la sesión conceptua
 | 8.5 (#144) | Oro, las semillas, las tres construcciones, `grants`, la tabla de tres columnas y la prueba de punta a punta (sus construcciones, con `--exclude-resource-type unit_test`) | A | Local | Opus, alto | `feat/h8-oro` | **Sí** |
 | 8.6 (#145) | Grafana: compose, aprovisionamiento, los tres cuadros, el reloj de la ejecución, el test de los paneles y el de arranque | B | Local (Docker y navegador) | Sonnet, alto | `feat/h8-grafana` | No |
 | 8.7 (#146) | Tiempo real: `edsim analitica refrescar` y la medida con un año; si pasa de 60 s, para | A | Local | Sonnet, alto | `feat/h8-tiempo-real` | No |
-| 8.8 (#147) | Notebook `08_analitica.ipynb`: Lucía paso a paso, la tabla de tres columnas, lo que no se arregla y cada regla frente a la libreta; modo rápido sin Docker | — | Nube (Pedro lo ejecuta entero en local) | Sonnet, medio | `feat/h8-notebook` | No |
+| 8.8 (#147) | Notebook `08_analitica.ipynb`: Lucía paso a paso, la tabla de tres columnas, lo que no se arregla y cada regla frente a la libreta; modo rápido sin Docker; `bronze_messages` y `write_bronze` en el paquete (bronce sin Kafka) | — | Local (Postgres; código nuevo en el paquete y el modo normal, con Docker) | Sonnet, alto | `feat/h8-notebook` | No |
 | 8.9 (#148) | Cierre con `/cerrar-hito`: ADR 0100 a 0112, diario, `docs/diseno.md` (capas, registro de decisiones y hoja de ruta, con el orquestador en el hito 9), `AGENTS.md`, `portabilidad.md`, la memoria medida, balance, Release y `v0.8-hito8` | — | Local | Opus, alto | `docs/h8-cierre` | No |
 
 **Dependencias:**
@@ -1409,3 +1409,87 @@ En un `dbt build`, lo que cuelga de un unit test que falla queda SKIP. Las predi
 - **El fin del dato con `bronce.eventos.sim_time`,** sin el desfase de los relojes. Cambia el contrato con la 8.6; para decidir con Pedro.
 - **Una reemisión a `max`** pone el fin del dato en el horizonte antes de que llegue lo registrado: `ed.runs` se consume al momento.
 - **El consumidor se frena con bronce grande.**
+
+### Tarea 8.8: Notebook `08_analitica`
+
+**Qué se hizo**
+
+Issue #147, rama `feat/h8-notebook`, Claude Code (Opus, en local, con Postgres). La D4 de las notas del chat la pasó de la nube a local, porque añade código al paquete y el modo normal solo se comprueba con Docker; la tabla de tareas guarda el modelo del plan (Sonnet, alto), y la hizo Opus. No es crítica: `/code-review medium`. Un commit por paso, más los de la revisión:
+
+- **Bronce sin Kafka en el paquete** (`0c4af75`): `bronze_messages` en `edsim.store.offline` y `write_bronze` en `edsim.store.postgres`, con tres tests rápidos. El ayudante `publish` de la punta a punta queda como una envoltura.
+- **El notebook** (`7fac95c`), con sus líneas en `AGENTS.md`.
+- **El borrado de la libreta** (`854f2d2`), visto al medir las filas.
+- **Revisión** (`9d26816`, `74c2820`).
+
+**Decisiones del diff**
+
+- **Bronce sin Kafka (D1).** Una reemisión publica del calentamiento solo el censo según la verdad, así que una salida olvidada el primer día (un fantasma) no llegaría a bronce. Por eso el notebook escribe lo que dejaría el consumidor de una publicación entera, como la punta a punta desde la 8.5.
+  - La parte pura (`bronze_messages`) recibe el `RunInfo`, W, H, las líneas JSON y la primera marca, y devuelve el `inicio`, un mensaje por línea y el `fin`.
+  - Recibe líneas y no `Record` porque la punta a punta publica también la verdad. Para los registros en memoria, `record_json` da las mismas líneas que `registrado.jsonl`.
+  - La parte que escribe (`write_bronze`) va en `postgres.py`, junto a `read_bronze_lines` y con su traducción de errores: `psycopg` sigue solo ahí. Guarda con `save_messages` (`consumer.py`), en lotes de 1000 por `save_batch`, y toda la publicación en una transacción: sin Kafka no hay nada que releer, y un fallo a medias no deja un `inicio` sin `fin` (de la revisión).
+  - Comprobado con un script que ejecuta el ayudante viejo contra el nuevo: los mensajes son idénticos, byte a byte, con los dos perfiles y con la verdad.
+- **La base `edsim`, con `run_id` propios (D2):** `nb08_<fecha y hora>` para la ejecución y `nb08l_<fecha y hora>` para la verdad de Lucía, con su registro derivado `…_realista_s7`. Cada pasada, al empezar la carga, borra las de las anteriores (solo por prefijo, `nb08\_%` y `nb08l\_%`) e imprime cuántas filas quitó: queda como mucho la última, que Grafana sigue viendo.
+- **dbt como un analista (D3):** `uv run --locked --project analitica dbt --no-use-colors build …`, con `cwd=analitica/` y `dbt_environment`, sin las `EDSIM_PG_*` ni las `DBT_*` heredadas: así construye en la misma base que el notebook escribe y lee (de la revisión). Van las tres hojas y la tabla de tres columnas, sin los unit tests (son pruebas, y no corren contra `edsim`) y con los tests de datos.
+- **Lucía**, en una ejecución propia de un día (W = 0, H = 1440), con el dado a mano del 07.
+- **Las relaciones de la libreta**, medidas antes con un script independiente del SQL y comprobadas con `assert`:
+  - duplicados quitados = filas `duplicado`, y además son los mismos registros;
+  - correcciones aplicadas = filas `correccion`;
+  - correcciones sin registro = 0;
+  - campos vacíos = filas con `campo_vacio`.
+- **Las correcciones sin registro son 0 por construcción.** Una corrección apunta al registro original; su copia se anota después, y la regla 2 se queda con el primero. Un hecho olvidado no tiene registro erróneo. La «D3 de la 8.1» que citaban las notas es el caso D de los unit tests y la D3 de la 8.5.
+- **Lo que no se arregla:**
+  - las medianas de tiempo, limpio − verdad = la resta de relojes, con 1 min de tolerancia, como el 07;
+  - las llegadas del realista, limpio − verdad = −olvidadas en la ventana, exacto. En el hostil, el reloj de admisión (+3 min) cambia de lado dos llegadas en el borde de la ventana.
+
+**Medidas**
+
+- **Modo normal:** 132 s, en una base `edsim` con 21 ejecuciones previas:
+  - simulación, 4,8 s;
+  - registro con los tres perfiles, 12,4 s;
+  - bronce sin Kafka, 40,9 s, con 164.818 registros;
+  - `cargar-verdad`, 7,4 s;
+  - dbt: la hoja del hospital, 22,6 s; la de la verdad, 13,8 s; la ingenua, 21,4 s; la tabla de tres columnas, 7,2 s.
+- **Modo rápido:** de 2,4 a 2,8 s. El modo normal entero con `pytest --nbmake --nbmake-timeout=600`, tras la revisión: 132,6 s.
+- **N3:** 17 min 44 s (núcleo 12:44, app 3:34, notebooks 1:17), con Docker parado. **Integración:** 5 min 7 s, 57 tests.
+- **Filas que añade a `edsim` en cada ejecución:**
+  - en bronce, 164.826 (164.818 eventos y 8 mensajes de `ed.runs`);
+  - en la verdad, 227.061 (55.054 eventos, 4.439 episodios, 14 días y 167.931 filas de libreta);
+  - en las tablas de dbt de las tres hojas, 670.241.
+  - La base pasó de 317 MB a 642 MB.
+- **La tabla de tres columnas, limpio − verdad (ingenuo − verdad):**
+
+| KPI | realista | hostil |
+| --- | --- | --- |
+| llegadas | −15 (+3) | −158 (+3) |
+| censo medio | +11,37 (+11,37) | +116,46 (+116,46) |
+| mediana hasta el triaje | +2,02 (+2,02) | +4,05 (+4,05) |
+| mediana hasta el médico | +0,06 (+0,06) | −7,97 (−7,97) |
+| % nivel 4 | +0,01 (−0,09) | −1,03 (−1,49) |
+
+Las llegadas ingenuas casi aciertan por casualidad: los dobles clics de la admisión compensan las llegadas olvidadas. El censo y las medianas no se mueven con la limpieza: un doble clic no cambia la primera llegada ni la primera valoración.
+
+**Versiones incorrectas**
+
+Con el subagente `mutante`. La predicción de V1 se rehízo antes de lanzarla: el test de las marcas compara con `range(len(lines) + 2)` y también falla.
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | `bronze_messages` sin el calentamiento | Fallan los rápidos del calentamiento y de las marcas, y en la punta a punta oro limpio = verdad, ingenua = `compare`, duplicados = libreta (42 frente a 54) y tres columnas | Así: 6 fallan y 4 pasan. Duplicados `42 == 54`; censo medio ingenuo 52,94 frente a 68,79 |
+| V2 | El `inicio` sin el bloque `registro` | Fallan el rápido del registro; en `test_grafana.py`, la verdad publicada, `parametros` y las consultas de los tres cuadros; y tres columnas en la punta a punta | Fallan las 7 predichas y una más: `test_hospital_lee_su_hoja_y_no_la_verdad`, que pide filas en `laboratorio.tres_columnas` y la encuentra vacía. No es un fallo de permisos: la predicción no vio que ese test también cuenta filas |
+
+**Revisión**
+
+`/code-review medium main...feat/h8-notebook`, diez hallazgos:
+
+- **Corregidos:**
+  - `write_bronze` en una transacción, y el bucle de los lotes en `save_messages`, con un test rápido con el `FakeStore`: era código nuevo del paquete probado solo por la integración (`9d26816`);
+  - dbt sin las `EDSIM_PG_*` y `DBT_*` heredadas, `POSTGRES` = `DEFAULT_URL`, el error de dbt con stderr y `almacen preparar` antes de escribir en bronce (`74c2820`);
+  - la tabla de tareas y el anexo, con modelos distintos: la tabla guarda el plan, y el anexo lo dice.
+- **Explicados:**
+  - cada línea se parsea dos veces (para el topic y en `to_row`): son unos segundos de los 40,9 s de bronce, que se van en los `INSERT`;
+  - el notebook no reutiliza `dbt_command`, que fija los argumentos de `refrescar` (la hoja del hospital sin tests);
+  - Lucía está copiada del 07: cada notebook se lee solo, y el `HandDice` de los tests no se importa desde un notebook.
+
+**Pendiente**
+
+Nada.
