@@ -16,7 +16,8 @@ datasources:
     editable: false
     jsonData:
       database: edsim
-      # El Postgres local no tiene TLS; el valor por defecto del plugin (require) no conectaría.
+      # El Postgres local no tiene TLS (ssl = off). Sin sslmode también conecta (comprobado en la
+      # 8.6): se dice explícito para no depender del valor por defecto del plugin.
       sslmode: disable
       postgresVersion: 1700
       timescaledb: true

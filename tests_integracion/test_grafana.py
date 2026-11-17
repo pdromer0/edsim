@@ -219,11 +219,10 @@ def grafana() -> str:
 
 def test_grafana_arranca_con_sus_dos_fuentes_y_sus_tres_cuadros(grafana, bronze_url):
     """Pilla un aprovisionamiento roto o mal montado: un cuadro que no se carga o con otro
-    `uid`, una fuente con otro rol o que no conecta (otro host, otra contraseña o el `sslmode`
-    por defecto del plugin, que pide TLS), un plugin de PostgreSQL que no es el de la imagen y un
-    cuadro que el visitante anónimo no puede abrir. La salud de las fuentes conecta a la base
-    `edsim` con los roles de la 002, que son del servidor y ya los creó la base de la sesión
-    (`bronze_url`)."""
+    `uid`, una fuente con otro rol o que no conecta (otro host u otra contraseña), un plugin de
+    PostgreSQL que no es el de la imagen y un cuadro que el visitante anónimo no puede abrir. La
+    salud de las fuentes conecta a la base `edsim` con los roles de la 002, que son del servidor
+    y ya los creó la base de la sesión (`bronze_url`)."""
     expected = {uid: title for uid, title, _ in BOARDS.values()}
     deadline = time.monotonic() + TIMEOUT
     while True:
@@ -243,7 +242,11 @@ def test_grafana_arranca_con_sus_dos_fuentes_y_sus_tres_cuadros(grafana, bronze_
     }
     assert sources == {uid: (name, role, "edsim") for uid, (name, role) in SOURCES.items()}
     for uid in SOURCES:
-        assert get(f"/api/datasources/uid/{uid}/health", admin=True)["status"] == "OK", uid
+        try:
+            health = get(f"/api/datasources/uid/{uid}/health", admin=True)["status"]
+        except urllib.error.HTTPError as error:  # una fuente que no conecta da 400
+            health = error.read().decode()
+        assert health == "OK", uid
     plugin, version = POSTGRES_PLUGIN
     assert get(f"/api/plugins/{plugin}/settings", admin=True)["info"]["version"] == version
 
