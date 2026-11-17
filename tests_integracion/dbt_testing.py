@@ -15,13 +15,10 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from edsim.live.directo import REPLAY, RecordInfo, RunEnd, RunInfo, RunStart
-from edsim.live.messages import run_end_json, run_start_json
-from edsim.live.topics import PATIENT_EVENTS, RESOURCE_EVENTS, RUNS
+from edsim.live.directo import REPLAY, RecordInfo, RunInfo
 from edsim.runs import RunStore, record_run, simulate_run
-from edsim.store.bronze import LOG_APPEND_TIME, KafkaMessage, to_row
-from edsim.store.consumer import save_batch
-from edsim.store.postgres import PostgresBronze, connect
+from edsim.store.offline import bronze_messages
+from edsim.store.postgres import write_bronze
 
 ROOT = Path(__file__).resolve().parents[1]
 ANALITICA = ROOT / "analitica"
@@ -155,13 +152,13 @@ def truth_lines(store: RunStore) -> list[str]:
 def publish(url: str, store: RunStore, profile: str | None, started_ms: int) -> int:
     """Mete en bronce, sin Kafka, lo registrado de un perfil como lo dejaría el consumidor.
 
-    Un `inicio` completo, el de una reemisión (`replay`, W = 1440 y H = 4320, con el bloque
-    `registro`), una fila por línea de `registrado.jsonl` y un `fin`, cada mensaje con la marca
-    `started_ms` más su posición. A diferencia de una reemisión, escribe lo registrado entero,
-    también el calentamiento: los cinco indicadores van por la ventana (D1 de la 8.5).
-    Con `profile` `None`, publica la verdad, como `edsim directo reemitir --verdad`: las líneas
-    de `eventos.jsonl`, con el `run_id` de la ejecución y un `inicio` sin el bloque `registro`
-    (D2 de la 8.6). Devuelve las líneas escritas.
+    Una envoltura de `bronze_messages` y `write_bronze` del paquete (tarea 8.8): un `inicio` de
+    reemisión (`replay`, W = 1440 y H = 4320, con el bloque `registro`), una fila por línea de
+    `registrado.jsonl` y un `fin`, con las marcas desde `started_ms`. A diferencia de una
+    reemisión, escribe lo registrado entero, también el calentamiento: los cinco indicadores van
+    por la ventana (D1 de la 8.5). Con `profile` `None`, publica la verdad, como
+    `edsim directo reemitir --verdad`: las líneas de `eventos.jsonl`, con el `run_id` de la
+    ejecución y un `inicio` sin el bloque `registro` (D2 de la 8.6). Devuelve las líneas escritas.
     """
     if profile is None:
         lines, run_id, record = truth_lines(store), RUN_ID, None
@@ -177,23 +174,8 @@ def publish(url: str, store: RunStore, profile: str | None, started_ms: int) -> 
         anchored=False,
         record=record,
     )
-    start = RunStart(info, WARMUP_DAYS * 1440.0, DAYS * 1440.0, "max", 0, 0)
-    end = RunEnd(run_id, "horizonte", DAYS * 1440.0, json.loads(lines[-1])["event_id"], len(lines))
-    messages = [
-        KafkaMessage(
-            RUNS, 0, started_ms, LOG_APPEND_TIME, started_ms, run_start_json(start).encode()
-        )
-    ]
-    for position, line in enumerate(lines, start=1):
-        topic = RESOURCE_EVENTS if json.loads(line)["episode_id"] is None else PATIENT_EVENTS
-        stamp = started_ms + position
-        messages.append(KafkaMessage(topic, 0, stamp, LOG_APPEND_TIME, stamp, line.encode()))
-    stamp = started_ms + len(lines) + 1
-    messages.append(
-        KafkaMessage(RUNS, 0, stamp, LOG_APPEND_TIME, stamp, run_end_json(end).encode())
+    messages = bronze_messages(
+        info, lines, warmup=WARMUP_DAYS * 1440.0, horizon=DAYS * 1440.0, started_ms=started_ms
     )
-    batch = [(message, to_row(message)) for message in messages]
-    with connect(url) as connection:
-        for at in range(0, len(batch), 1000):
-            save_batch(PostgresBronze(connection), batch[at : at + 1000])
+    write_bronze(url, messages)
     return len(lines)
