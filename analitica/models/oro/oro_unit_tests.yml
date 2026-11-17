@@ -21,7 +21,7 @@ unit_tests:
     given:
       - input: ref('parametros')
         rows:
-          - {run_id: c, origen: "2026-01-05 00:00:00+01", calentamiento_min: 950, horizonte_min: 1140}
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", calentamiento_min: 950, horizonte_min: 1140, fin_dato_min: 1140}
       - input: ref('registros_vigentes')
         rows:
           - {run_id: c, event_id: c-01, episode_id: A, event_type: patient_arrived, event_time: "2026-01-05 15:30:00+01", recorded_time: "2026-01-05 15:30:00+01"}
@@ -39,6 +39,39 @@ unit_tests:
         - {run_id: c, hora: "2026-01-05 16:00:00+01", censo: 2}
         - {run_id: c, hora: "2026-01-05 17:00:00+01", censo: 2}
         - {run_id: c, hora: "2026-01-05 18:00:00+01", censo: 3}
+
+  - name: censo_hasta_el_fin_del_dato
+    description: >
+      D1 de la 8.7: las horas acaban en el fin del dato (parametros), no en el horizonte. W = 960
+      y H = 1140 en las cuatro, con una llegada a las 15:30 sin salida. completa (fin 1140): las
+      horas 16, 17 y 18. en_curso (la última anotación, 1050): 16 y 17; la 18 aún no ha llegado.
+      interrumpida (un fin justo en una hora en punto, 1080): 16 y 17; la de su fin no entra, como
+      la del horizonte. sin_datos (fin nulo): ninguna. Pilla cortar en el horizonte (V15:
+      en_curso e interrumpida con la 18) y cortar con <= (V16: la 19 de completa y la 18 de
+      interrumpida).
+    model: censo
+    overrides: *hospital
+    given:
+      - input: ref('parametros')
+        rows:
+          - {run_id: completa, origen: "2026-01-05 00:00:00+01", calentamiento_min: 960, horizonte_min: 1140, fin_dato_min: 1140}
+          - {run_id: en_curso, origen: "2026-01-05 00:00:00+01", calentamiento_min: 960, horizonte_min: 1140, fin_dato_min: 1050}
+          - {run_id: interrumpida, origen: "2026-01-05 00:00:00+01", calentamiento_min: 960, horizonte_min: 1140, fin_dato_min: 1080}
+          - {run_id: sin_datos, origen: "2026-01-05 00:00:00+01", calentamiento_min: 960, horizonte_min: 1140, fin_dato_min: null}
+      - input: ref('registros_vigentes')
+        rows:
+          - {run_id: completa, event_id: c-1, episode_id: A, event_type: patient_arrived, event_time: "2026-01-05 15:30:00+01", recorded_time: "2026-01-05 15:30:00+01"}
+          - {run_id: en_curso, event_id: e-1, episode_id: A, event_type: patient_arrived, event_time: "2026-01-05 15:30:00+01", recorded_time: "2026-01-05 15:30:00+01"}
+          - {run_id: interrumpida, event_id: i-1, episode_id: A, event_type: patient_arrived, event_time: "2026-01-05 15:30:00+01", recorded_time: "2026-01-05 15:30:00+01"}
+    expect:
+      rows:
+        - {run_id: completa, hora: "2026-01-05 16:00:00+01", censo: 1}
+        - {run_id: completa, hora: "2026-01-05 17:00:00+01", censo: 1}
+        - {run_id: completa, hora: "2026-01-05 18:00:00+01", censo: 1}
+        - {run_id: en_curso, hora: "2026-01-05 16:00:00+01", censo: 1}
+        - {run_id: en_curso, hora: "2026-01-05 17:00:00+01", censo: 1}
+        - {run_id: interrumpida, hora: "2026-01-05 16:00:00+01", censo: 1}
+        - {run_id: interrumpida, hora: "2026-01-05 17:00:00+01", censo: 1}
 
   - name: cohorte_de_llegada
     description: >
@@ -77,16 +110,18 @@ unit_tests:
   - name: cohorte_sigue_dentro
     description: >
       Tres episodios sin salida, con su última anotación (hecho → anotación): U, 09:00 →
-      09:59:59.999 del 6; V, 08:00 → 10:00:00 del 6; Z, 10:00 → 10:00 del 7, la última de la
-      ejecución. El ahora es el 7 a las 10:00 y el umbral, 24 h antes: U se olvidó la salida; V
-      y Z siguen dentro. Pilla mirar el event_time en vez de la anotación (M2: V olvidada) y un
-      umbral con < en vez de <=.
+      09:59:59.999 del 6; V, 08:00 → 10:00:00 del 6; Z, 09:00 → 09:00 del 7, la última de la
+      ejecución. El ahora es el fin del dato, el 7 a las 10:00 (parametros), y el umbral, 24 h
+      antes: U se olvidó la salida; V y Z siguen dentro. Pilla mirar el event_time en vez de la
+      anotación (M2 de la 8.5: V olvidada), un umbral con < en vez de <= y tomar como ahora la
+      última anotación en vez del fin del dato (V17 de la 8.7: U dentro, con el umbral a las
+      09:00 del 6).
     model: cohorte
     overrides: {vars: {hoja: hospital, margen_sin_salida_min: 1440}}
     given:
       - input: ref('parametros')
         rows:
-          - {run_id: c, origen: "2026-01-05 00:00:00+01", fecha_origen: "2026-01-05", calentamiento_min: 960, horizonte_min: 4320, fin_horizonte: "2026-01-08 00:00:00+01"}
+          - {run_id: c, origen: "2026-01-05 00:00:00+01", fecha_origen: "2026-01-05", calentamiento_min: 960, horizonte_min: 4320, fin_horizonte: "2026-01-08 00:00:00+01", fin_dato: "2026-01-07 10:00:00+01"}
       - input: ref('turnos')
         rows:
           - {turno: manana, inicio: 8}
@@ -96,7 +131,7 @@ unit_tests:
         rows:
           - {run_id: c, event_id: c-01, episode_id: U, event_type: patient_arrived, event_time: "2026-01-06 09:00:00+01", recorded_time: "2026-01-06 09:59:59.999+01"}
           - {run_id: c, event_id: c-02, episode_id: V, event_type: patient_arrived, event_time: "2026-01-06 08:00:00+01", recorded_time: "2026-01-06 10:00:00.000+01"}
-          - {run_id: c, event_id: c-03, episode_id: Z, event_type: patient_arrived, event_time: "2026-01-07 10:00:00+01", recorded_time: "2026-01-07 10:00:00+01"}
+          - {run_id: c, event_id: c-03, episode_id: Z, event_type: patient_arrived, event_time: "2026-01-07 09:00:00+01", recorded_time: "2026-01-07 09:00:00+01"}
     expect:
       rows:
         - {episode_id: U, sigue_dentro: false, salida_olvidada: true}

@@ -196,3 +196,41 @@ unit_tests:
       rows:
         - {event_id: r2026_prueba_s7-000000001, event_type: staffing_changed, payload: '{"recurso": "medicos", "anterior": 7, "nueva": 5}', corregido: false, duplicados_quitados: 0}
         - {event_id: r2026_prueba_s7-000000002, event_type: staffing_changed, payload: '{"recurso": "medicos", "anterior": 7, "nueva": 5}', corregido: false, duplicados_quitados: 0}
+
+  - name: fin_del_dato
+    description: >
+      D1 de la 8.7. Cinco ejecuciones con W = 960 y H = 1140, del 5 de enero. completa: inicio y
+      fin en el horizonte (1140). interrumpida: un fin en 1050, aunque hay una anotación a las
+      17:40 (1060): manda el fin. republicada: inicio, fin en 1140 e inicio otra vez, con la misma
+      ingest_time que el fin y un offset mayor; el fin es de la publicación anterior y vale la
+      última anotación, 17:20 (1040). adelantada: sin fin, con una anotación a las 19:10 (un
+      reloj adelantado), que se recorta al horizonte. sin_registros: solo el inicio, sin fin del
+      dato. Pilla tomar un fin anterior al último inicio (V13: republicada en 1140), un least
+      sin la guarda de nulos (V14: sin_registros en 1140) y no recortar al horizonte.
+    model: parametros
+    overrides: *hospital
+    given:
+      - input: source('bronce', 'ejecuciones')
+        rows:
+          - {run_id: completa, tipo: inicio, ingest_time: "2026-01-05 10:00:00+01", kafka_offset: 1, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+          - {run_id: completa, tipo: fin, ingest_time: "2026-01-05 10:01:00+01", kafka_offset: 2, mensaje: '{"tipo": "fin", "motivo": "horizonte", "sim_time": 1140}'}
+          - {run_id: interrumpida, tipo: inicio, ingest_time: "2026-01-05 10:02:00+01", kafka_offset: 3, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+          - {run_id: interrumpida, tipo: fin, ingest_time: "2026-01-05 10:03:00+01", kafka_offset: 4, mensaje: '{"tipo": "fin", "motivo": "interrupcion", "sim_time": 1050}'}
+          - {run_id: republicada, tipo: inicio, ingest_time: "2026-01-05 10:04:00+01", kafka_offset: 5, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+          - {run_id: republicada, tipo: fin, ingest_time: "2026-01-05 10:05:00+01", kafka_offset: 6, mensaje: '{"tipo": "fin", "motivo": "horizonte", "sim_time": 1140}'}
+          - {run_id: republicada, tipo: inicio, ingest_time: "2026-01-05 10:05:00+01", kafka_offset: 7, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+          - {run_id: adelantada, tipo: inicio, ingest_time: "2026-01-05 10:06:00+01", kafka_offset: 8, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+          - {run_id: sin_registros, tipo: inicio, ingest_time: "2026-01-05 10:07:00+01", kafka_offset: 9, mensaje: '{"tipo": "inicio", "fecha_inicio": "2026-01-05", "inicio_directo": 960, "horizonte": 1140}'}
+      - input: ref('registros_vigentes')
+        rows:
+          - {run_id: completa, event_id: c-1, recorded_time: "2026-01-05 18:55:00+01"}
+          - {run_id: interrumpida, event_id: i-1, recorded_time: "2026-01-05 17:40:00+01"}
+          - {run_id: republicada, event_id: r-1, recorded_time: "2026-01-05 17:20:00+01"}
+          - {run_id: adelantada, event_id: a-1, recorded_time: "2026-01-05 19:10:00+01"}
+    expect:
+      rows:
+        - {run_id: completa, fin_dato_min: 1140, fin_dato: "2026-01-05 19:00:00+01"}
+        - {run_id: interrumpida, fin_dato_min: 1050, fin_dato: "2026-01-05 17:30:00+01"}
+        - {run_id: republicada, fin_dato_min: 1040, fin_dato: "2026-01-05 17:20:00+01"}
+        - {run_id: adelantada, fin_dato_min: 1140, fin_dato: "2026-01-05 19:00:00+01"}
+        - {run_id: sin_registros, fin_dato_min: null, fin_dato: null}

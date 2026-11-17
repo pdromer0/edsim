@@ -1,5 +1,5 @@
 {% docs censo %}
-Una fila por hora en punto de la ventana: (`run_id`, `hora`). Son las horas `k` con W ≤ 60 k < horizonte, como `_hours` de `compare.py`, y `hora` = origen + k horas.
+Una fila por hora en punto de la ventana: (`run_id`, `hora`). Son las horas `k` con W ≤ 60 k < fin del dato (`preparacion.parametros`), y `hora` = origen + k horas. En una ejecución completa, el fin del dato es el horizonte, como `_hours` de `compare.py`; en un directo, su última anotación, y las horas aún por llegar no salen (D1 de la 8.7).
 
 **Quién está dentro**, con las definiciones de `compare.py` (decisión 96): cada episodio, desde su primera llegada hasta su primera salida (`patient_departed` o `patient_left_wbs`), por orden de anotación.
 
@@ -33,7 +33,7 @@ Una fila por episodio: (`run_id`, `episode_id`), con su hora y su turno de llega
 
 **El turno.** Los turnos empiezan a las horas de la semilla `turnos`. La noche pertenece a la fecha en que empieza: las 03:00 del día 6 son la noche del día 5. La hora y la fecha salen de aritmética entera sobre `k`, las horas desde el origen, que es una medianoche: no dependen de la zona horaria de la sesión de Postgres.
 
-**Sigue dentro o salida olvidada.** `sin_salida` de plata junta dos cosas que el registro solo no separa: el paciente que sigue dentro al acabar (o en el directo) y la salida que se olvidó anotar. Aquí se reparten con una regla: un episodio sin salida **sigue dentro** si su última anotación (`recorded_time`) es de las últimas 24 h de la ejecución (`margen_sin_salida_min`); si no, su **salida se olvidó**. El ahora de la ejecución es su última anotación, sin pasar del horizonte.
+**Sigue dentro o salida olvidada.** `sin_salida` de plata junta dos cosas que el registro solo no separa: el paciente que sigue dentro al acabar (o en el directo) y la salida que se olvidó anotar. Aquí se reparten con una regla: un episodio sin salida **sigue dentro** si su última anotación (`recorded_time`) es de las últimas 24 h de la ejecución (`margen_sin_salida_min`); si no, su **salida se olvidó**. El ahora de la ejecución es su fin del dato (`preparacion.parametros`), el mismo en que acaban las horas del censo: en un directo, su última anotación; en una ejecución acabada, su `fin` (hasta la 8.7 era la última anotación también en las acabadas, unos minutos antes del horizonte).
 
 Ningún margen separa del todo, porque una espera de cama deja días sin anotar nada. Medido en el plan de la 8.5, con 14 días de `config/` y el perfil realista: con 24 h, de 79 episodios sin salida, 22 salen como olvidados (1 seguía dentro de verdad) y 57 como dentro (6 ya habían salido). Con la verdad, que no olvida nada, 1 episodio sale como olvidado: una espera de cama de más de 24 h sin anotaciones.
 
@@ -51,13 +51,13 @@ Una fila por hora en punto de la ventana: (`run_id`, `hora`), las series de Graf
 
 **Los boxes** son los de la semilla `maestro_boxes`, y se cuentan boxes distintos: dos estancias solapadas en el mismo box por un cierre anotado tarde no pasan de 36. Una estancia abierta solo cuenta como ocupada si su episodio sigue dentro (`oro.cohorte`): si se olvidó su cierre (`sin_pareja`) o la salida del episodio, el box contaría ocupado para siempre, y en un año de registro realista las salidas olvidadas llenarían los 36. El precio es el de la regla de quien sigue dentro: un paciente de verdad en un box, esperando cama más de 24 h sin que se anote nada, deja de contar (en la ejecución de 3 días de la punta a punta, un box de 36 en la verdad).
 
-Las horas son todas las de la ventana, también las que aún no han llegado en un directo.
+Las horas son las de `oro.censo`: en un directo, hasta su última anotación, sin las que aún no han llegado (D1 de la 8.7, el contrato con los paneles de la 8.6).
 {% enddocs %}
 
 {% docs kpi_turno %}
 Una fila por turno: (`run_id`, `fecha`, `turno`), el informe de dirección.
 
-Los turnos empiezan a las 8, a las 15 y a las 22 (la semilla `turnos`), y la noche es de la fecha en que empieza. Solo cuentan las horas de la ventana: el turno que corta W (con W a medianoche, la noche del día anterior) o el horizonte sale con menos `horas` y con `completo` falso, para no compararlo con uno entero.
+Los turnos empiezan a las 8, a las 15 y a las 22 (la semilla `turnos`), y la noche es de la fecha en que empieza. Solo cuentan las horas de la ventana: el turno que corta W (con W a medianoche, la noche del día anterior) o el fin del dato (el horizonte, o en un directo el turno en curso) sale con menos `horas` y con `completo` falso, para no compararlo con uno entero.
 
 Las sumas y las medias salen de las horas de `kpi_hora`; las medianas, de las filas de la cohorte y de las estancias del turno (no de las medianas de cada hora, que no se pueden promediar).
 {% enddocs %}

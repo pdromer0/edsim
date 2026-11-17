@@ -12,7 +12,8 @@
 
     Un episodio sin salida sigue dentro si su última anotación (recorded_time) es de las
     últimas margen_sin_salida_min de la ejecución; si no, su salida se olvidó. El ahora de la
-    ejecución es su última anotación, sin pasar del horizonte.
+    ejecución es su fin del dato (parametros, D1 de la 8.7), el mismo en que acaban las horas de
+    oro.censo: en un directo, su última anotación; en una ejecución acabada, su fin.
 #}
 with vigentes as (
 
@@ -31,15 +32,6 @@ with vigentes as (
         max(recorded_time) as ultima_anotacion
     from vigentes
     group by run_id, episode_id
-
-), ahora as (
-
-    select
-        p.run_id,
-        least(p.fin_horizonte, max(v.recorded_time)) as ahora
-    from parametros as p
-    join vigentes as v using (run_id)
-    group by p.run_id, p.fin_horizonte
 
 ), llegada as (
 
@@ -70,11 +62,10 @@ with vigentes as (
         s.event_time as salida,
         s.event_type = 'patient_left_wbs' as abandono,
         e.ultima_anotacion,
-        a.ahora,
+        p.fin_dato as ahora,
         floor(extract(epoch from l.event_time - p.origen) / 3600)::bigint as k
     from episodios as e
     join parametros as p using (run_id)
-    join ahora as a using (run_id)
     left join llegada as l using (run_id, episode_id)
     left join triaje as t using (run_id, episode_id)
     left join medico as m using (run_id, episode_id)

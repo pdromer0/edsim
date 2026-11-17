@@ -12,6 +12,12 @@
     El origen es fecha_inicio a las 00:00 en +01:00, como event_time en el motor. Se escribe
     como texto ISO 8601 con su desfase: AT TIME ZONE '+01:00' lo leería con el signo POSIX
     (una hora al oeste).
+
+    fin_mensaje_min (D1 de la 8.7): dónde acaba la ejecución según su mensaje fin, en minutos.
+    Solo vale un fin que llegó después del último inicio, es decir, si el último mensaje de
+    ed.runs de la ejecución, en el orden de ultimo_inicio, es un fin: su sim_time (el horizonte,
+    o donde paró si se interrumpió). Si no, es nulo: el directo sigue en marcha, y parametros
+    usa la última anotación. En la verdad, que se carga entera, es el horizonte.
 #}
 {% macro fuente_parametros() -%}
     {%- set hoja = var('hoja') -%}
@@ -21,8 +27,25 @@
         (mensaje ->> 'fecha_inicio')::date as fecha_origen,
         ((mensaje ->> 'fecha_inicio') || 'T00:00:00+01:00')::timestamptz as origen,
         (mensaje ->> 'inicio_directo')::double precision as calentamiento_min,
-        (mensaje ->> 'horizonte')::double precision as horizonte_min
+        (mensaje ->> 'horizonte')::double precision as horizonte_min,
+        fin.fin_mensaje_min
     from ({{ ultimo_inicio() }}) as ultimo
+    left join (
+        select run_id, (mensaje ->> 'sim_time')::double precision as fin_mensaje_min
+        from (
+            select
+                run_id,
+                tipo,
+                mensaje,
+                row_number() over (
+                    partition by run_id
+                    order by ingest_time desc, kafka_offset desc
+                ) as orden
+            from {{ source('bronce', 'ejecuciones') }}
+            where tipo in ('inicio', 'fin')
+        ) as mensajes
+        where orden = 1 and tipo = 'fin'
+    ) as fin using (run_id)
     where mensaje ->> 'fecha_inicio' is not null
     {%- elif hoja == 'verdad' -%}
     select
@@ -30,7 +53,8 @@
         fecha as fecha_origen,
         (fecha::text || 'T00:00:00+01:00')::timestamptz as origen,
         (1440 * calentamiento)::double precision as calentamiento_min,
-        (1440 * dias)::double precision as horizonte_min
+        (1440 * dias)::double precision as horizonte_min,
+        (1440 * dias)::double precision as fin_mensaje_min
     from {{ source('verdad', 'dias') }}
     where dia = 0
     {%- else -%}

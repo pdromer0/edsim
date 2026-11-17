@@ -6,7 +6,9 @@
     primera llegada hasta su primera salida (patient_departed o patient_left_wbs), por orden de
     anotación y con todos los registros, no solo los de la ventana. Quien llega justo a la hora
     en punto ya está; quien sale justo, ya no. Una salida anterior a la llegada (por los relojes)
-    cuenta como salida en la llegada. Las horas son las k con W <= 60 k < horizonte.
+    cuenta como salida en la llegada. Las horas son las k con W <= 60 k < fin del dato (D1 de la
+    8.7): el horizonte en una ejecución completa; en un directo, hasta su última anotación, sin
+    horas aún por llegar con un censo congelado.
 
     Se cuenta como un torniquete: cada llegada suma 1 en la primera hora en punto que la ve, y
     cada salida resta 1 en la primera hora en punto en la que ya no está; el censo es la suma
@@ -49,9 +51,10 @@ with vigentes as (
         k,
         origen + k * interval '1 hour' as hora
     from parametros
+    -- Sin fin del dato (ni fin ni registros), generate_series recibe un nulo y no da horas.
     cross join lateral generate_series(
         ceil(calentamiento_min / 60)::bigint,
-        ceil(horizonte_min / 60)::bigint - 1
+        ceil(fin_dato_min / 60)::bigint - 1
     ) as k
 
 ), movimientos as (
