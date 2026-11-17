@@ -1,0 +1,15 @@
+# El proveedor de cuadros: Grafana lee los JSON de grafana/dashboards/, montados en
+# /var/lib/grafana/dashboards (compose.yaml), y los vuelve a leer cada 10 s. El repositorio
+# manda: en la pantalla no se pueden guardar cambios (allowUiUpdates) ni borrar los cuadros.
+apiVersion: 1
+
+providers:
+  - name: edsim
+    orgId: 1
+    folder: EDsim
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
