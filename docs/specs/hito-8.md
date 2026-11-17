@@ -502,7 +502,7 @@ Los tres últimos tienen razón propia: los indicadores de boxes y recursos no e
 | `oro.cohorte` | (`run_id`, `episode_id`) | Cada episodio con su hora y su turno de llegada, sus esperas y si sigue dentro (añadida en la 8.5: la comparten `kpi_hora`, `kpi_turno` y `calidad`) |
 | `laboratorio.tres_columnas` | (`run_id` de la verdad, perfil, semilla, KPI) | Verdad, ingenuo, limpio y las diferencias |
 
-Los parámetros de cada ejecución (el origen, W y el horizonte) están en `preparacion.parametros` (8.5). En las hojas `hospital` e `ingenuo` salen del último `inicio` de `bronce.ejecuciones`, y en la `verdad`, de `verdad.dias`: el hospital no lee la verdad.
+Los parámetros de cada ejecución (el origen, W y el horizonte) están en `preparacion.parametros` (8.5). En las hojas `hospital` e `ingenuo` salen del último `inicio` de `bronce.ejecuciones`, y en la `verdad`, de `verdad.dias`: el hospital no lee la verdad. La columna `registrado` (8.6) dice si el `inicio` trae el bloque `registro`; en la hoja `verdad`, falso. La hoja del hospital construye oro también con una verdad publicada con `--verdad`, y Grafana filtra con ella lo que ofrece.
 
 ### Las definiciones
 
@@ -549,22 +549,34 @@ Los parámetros de cada ejecución (el origen, W y el horizonte) están en `prep
 
 ```yaml
   grafana:
-    image: grafana/grafana:13.3.1      # etiqueta exacta, comprobada en la 8.6 (decisión 62)
+    image: grafana/grafana:13.3.1      # etiqueta exacta (decisión 62); el plugin de PostgreSQL, 13.0.7, va dentro
     profiles: ["analitica"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/urgencias.json
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health"]
 ```
 
-- **El perfil `analitica`** porque `compose.yaml` no usa perfiles («son la base») y `scripts/tests-integracion.sh` hace `docker compose up --wait` sin nombrar servicios: sin perfil, el CI de integración y el notebook 06 levantarían Grafana sin necesitarlo.
+- **El perfil `analitica`** porque `compose.yaml` no usa perfiles («son la base») y `docker compose up --wait` sin nombrar servicios levantaría Grafana en el notebook 06 sin necesitarlo. `scripts/tests-integracion.sh` sí lo necesita (`test_grafana.py`): exporta `COMPOSE_PROFILES=analitica`, que vale también al bajar, y sigue bajando solo lo que levantó.
 - **`127.0.0.1`** desde el principio (la ADR 0062 apuntó que la consola de Redpanda escuchaba en todas las interfaces).
 - Grafana se conecta a Postgres por la red de compose (`postgres:5432`).
-- **Por comprobar en la 8.6:** que la etiqueta existe y que el plugin de PostgreSQL va dentro de la imagen, sin descargarlo al arrancar.
+- **Comprobado en la 8.6:** la etiqueta existe (publicada el 10 de noviembre de 2026; 506 MB). El plugin de PostgreSQL 13.0.7 va dentro de la imagen, en `data/plugins-bundled`. La imagen no declara `VOLUME` y trae `wget`, no `curl` (Alpine).
+- **Sin red al arrancar** (D1 de la 8.6): con `GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"` el plugin de PostgreSQL ya no se actualiza, pero Grafana sigue intentando instalar desde grafana.com, en cada arranque, sus apps por defecto (los *drilldown* de métricas, logs y trazas, y Pyroscope). Sin volumen, lo haría en cada `up`. `GF_PLUGINS_PREINSTALL_DISABLED: "true"` lo apaga del todo: arrancado con `--network none`, cero accesos a grafana.com y el plugin sigue en la 13.0.7.
 
 ### Los ficheros
 
@@ -581,10 +593,15 @@ grafana/
 
 ### Los cuadros
 
-- **Urgencias** (fuente «Hospital»): variable `ejecucion` (las de `oro.kpi_hora`); censo ahora y por hora, llegadas, mediana hasta el triaje y hasta el médico con sus pendientes, reparto por nivel, ocupación de boxes, los que se van sin ser vistos y pacientes por médico. Refresco cada 30 s.
-- **Calidad del dato** (fuente «Hospital»): `oro.calidad` de la ejecución elegida.
-- **Laboratorio** (fuente «Laboratorio»): `laboratorio.tres_columnas`, y las series de `kpi_hora` de las tres hojas superpuestas.
-- **El reloj de la ejecución:** las consultas de serie filtran por la ejecución y por sus últimas 24 horas simuladas, contadas desde la última hora de esa ejecución en `oro.kpi_hora`; no usan el rango de tiempo del cuadro (`$__timeFilter`), que se oculta.
+- **Urgencias** (fuente «Hospital»): variable `ejecucion` (las de `oro.kpi_hora` con `preparacion.parametros.registrado`: una verdad publicada con `--verdad` no sale); censo ahora y por hora, llegadas, mediana hasta el triaje y hasta el médico con sus pendientes, reparto por nivel, ocupación de boxes, los que se van sin ser vistos y pacientes por médico.
+- **Calidad del dato** (fuente «Hospital»): `oro.calidad` de la ejecución elegida. Su variable ofrece las registradas y también las que no tienen parámetros (`sin_parametros`: sin un `inicio` utilizable no se sabe si son registradas, y son justo lo que este cuadro debe enseñar).
+- **Laboratorio** (fuente «Laboratorio»): `laboratorio.tres_columnas` y las series de `kpi_hora` de las tres hojas superpuestas, unidas por `k`; su variable, las `run_id_registrado` de `tres_columnas`.
+- Los tres, con refresco cada 30 s, el selector de tiempo oculto y `uid` `edsim-urgencias`, `edsim-calidad` y `edsim-laboratorio`, en la carpeta «EDsim».
+- **El reloj de la ejecución:** las consultas de serie filtran por la ejecución y por sus últimas 24 horas simuladas, contadas desde la última hora de esa ejecución en `oro.kpi_hora` (`hora > max(hora) - 24 h`: 24 horas en punto); no usan el rango de tiempo del cuadro (`$__timeFilter`), que se oculta.
+- **Barras por hora** (Pedro, en el plan de la 8.6): el panel *time series* ata su eje X al rango de tiempo del cuadro y, con el selector oculto, una reemisión de enero sale como «Data outside time range». Las series son paneles *bar chart* con la hora simulada como etiqueta («07/01 16h»), sacada de `k` y `fecha_origen`: no dependen del rango de tiempo ni de la zona horaria del navegador.
+- **La variable, entre comillas** (`'${ejecucion}'`): Grafana inserta una variable de un solo valor tal cual. Un `var-ejecucion` manipulado en la URL solo puede leer lo que ya lee el rol de la fuente.
+- **Grafana no es una frontera de permisos:** cualquier visitante anónimo (Viewer) puede abrir Laboratorio y consultar su fuente (`/api/ds/query`), que lee la verdad. Los dos roles separan lo que lee cada cuadro, y el test de los paneles (D3) lo vigila, pero no esconden la verdad a quien usa Grafana. En un laboratorio local, en `127.0.0.1`, se acepta (decisión 108).
+- **Contrato con la 8.7:** `oro.kpi_hora` no tiene horas posteriores a la última anotación de la ejecución. La 8.6 lo da por hecho y no corta las horas futuras de un directo.
 
 ## Especificación: tiempo real
 
@@ -662,12 +679,12 @@ dbt no entra en el job `tests` (D1 de la 8.1, que cambia la decisión 111): ese 
   - `kpi_ejecucion` de la hoja `verdad` = los indicadores de la verdad de `compare` (pilla que una definición se separe entre SQL y Python);
   - `kpi_ejecucion` de la hoja `ingenuo` con el perfil realista = los indicadores de lo registrado de `compare` (lo mismo, por el camino sin limpieza);
   - los duplicados quitados = las filas `duplicado` de la libreta (pilla que la limpieza quite de menos o de más con datos realistas).
-- **Las consultas de los paneles** (8.6), sobre la base de la prueba anterior, con las variables sustituidas: pilla un panel que pide una columna que oro ya no tiene.
-- **Grafana arranca y lista sus tres cuadros** (8.6), con el perfil `analitica`: pilla un aprovisionamiento mal escrito.
+- **Las consultas de los paneles** (8.6), sobre la base de la prueba anterior, con las variables sustituidas y conectado como el rol de la fuente de su cuadro: pilla un panel que pide una columna que oro ya no tiene, un panel del hospital que lee del laboratorio y un reloj que no da las 24 horas simuladas. La fixture publica, además, la verdad como con `--verdad`, y un test comprueba que no sale en la variable de Urgencias ni en la de Calidad.
+- **Grafana arranca con sus dos fuentes y sus tres cuadros** (8.6), con el perfil `analitica`: los `uid`, el rol y la salud de cada fuente y la versión del plugin. Pilla un aprovisionamiento mal escrito o una fuente que no conecta. Sin el perfil, `docker compose config --services` no tiene Grafana.
 
 ### A mano (Pedro)
 
-- **8.6:** los tres cuadros en el navegador con la reemisión de `r2026`.
+- **8.6:** los tres cuadros en el navegador con `h8prueba` (realista y limpio en bronce, la verdad cargada y las cuatro construcciones), no con `r2026`: el `r2026` del disco de Pedro es del modelo provisional (notas del chat de la 8.6).
 - **8.7:** un directo a ×60 con `edsim analitica refrescar`: «Urgencias» se mueve.
 - **8.9:** la memoria con todo levantado (`docker stats`) en el WSL de 7 GB.
 
@@ -1217,6 +1234,82 @@ La corrección de la ocupación se comprobó también a mano: sin la condición 
 - **La 8.7** (#146):
   - `censo` y `kpi_hora` tienen todas las horas de la ventana, también las futuras de un directo, con el censo y la ocupación del momento: hay que cortarlas en el ahora de la ejecución o dejar que Grafana no las pida;
   - la duración de las construcciones con un año, sobre todo la de la ocupación, que despliega las estancias en horas.
+
+### Tarea 8.6: Grafana, aprovisionamiento y los tres cuadros
+
+**Qué se hizo**
+
+Issue #145, rama `feat/h8-grafana`, Claude Code (Opus, en local, con Docker), en paralelo con la 8.7. Un commit por paso, más los de las versiones incorrectas y de la revisión:
+
+- **`registrado`** (`df9cb7d`): la columna de `preparacion.parametros` que dice qué ejecuciones son lo registrado (D2).
+- **El servicio** (`134c6b3`): `grafana` en `compose.yaml` con el perfil `analitica`, y `grafana/provisioning/` con las dos fuentes y el proveedor de cuadros.
+- **Los cuadros** (`56e5e9a`): `urgencias.json`, `calidad.json` y `laboratorio.json`.
+- **Los tests** (`216c9e5`): `test_grafana.py`, la verdad publicada en la fixture de la punta a punta y el perfil en `scripts/tests-integracion.sh`.
+- **`sslmode`** (`902306e`): el comentario y el test corregidos tras la versión incorrecta M4.
+- **Documentación.**
+
+**Decisiones del diff**
+
+- **Sin red al arrancar (D1):** además de `GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"`, que piden las notas, `GF_PLUGINS_PREINSTALL_DISABLED: "true"`. Arrancado con `--network none` y solo lo primero, el plugin de PostgreSQL ya no se actualiza, pero Grafana intenta instalar desde grafana.com sus apps por defecto (los *drilldown* de métricas, logs y trazas, y Pyroscope) en cada arranque, y sin volumen cada `up` es un arranque. Con lo segundo, cero accesos a grafana.com. Sin las estadísticas de uso ni los avisos de versiones nuevas, como dbt en la 8.1.
+- **Barras por hora, con la hora simulada como etiqueta** (Pedro, en el plan): el *time series* ata su eje al rango de tiempo del cuadro y, con el selector oculto, no pintaría una reemisión de enero. La etiqueta sale de `k` y `fecha_origen`, no de `hora`: no depende de la zona de la sesión ni del navegador.
+- **`registrado` (D2)** con el mismo criterio que `tres_columnas` (`mensaje -> 'registro' is not null`; `edsim.live.messages` solo pone el bloque en lo registrado) y falso en la hoja `verdad`. Urgencias ofrece las ejecuciones registradas con horas en `kpi_hora`.
+- **La variable de Calidad**, distinta de lo que dicen las notas: también ofrece las ejecuciones sin fila en `parametros` (`sin_parametros`). Sin `inicio` no se sabe si son registradas, y son justo lo que ese cuadro debe enseñar.
+- **Las consultas, con el rol de su fuente (D3):** el test saca el SQL de cada panel y de cada variable de los tres JSON, sustituye `${ejecucion}` como Grafana (tal cual, por eso las consultas lo llevan entre comillas) y lo ejecuta como `hospital` o `laboratorio`. Falla si queda un `$` (una macro como `$__timeFilter`), si una consulta no da filas y si una serie no da las 24 horas simuladas de la ejecución, de «07/01 00h» a «07/01 23h».
+- **La verdad publicada, en la fixture compartida:** `publish` acepta `None` como perfil y publica `eventos.jsonl` con el `run_id` de la ejecución y un `inicio` sin `registro`, como `reemitir --verdad`. Los tests de la 8.5 filtran por `run_id` y no cambian.
+- **El test de arranque** depende de `bronze_url`: la salud de las fuentes conecta a la base `edsim` con los roles de la 002, que son del servidor y ya los creó el `preparar` de la base de la sesión. Mira también la versión del plugin (13.0.7): solo debe cambiar con la imagen.
+- **`tests-integracion.sh`** exporta `COMPOSE_PROFILES=analitica`, que vale para `up`, `ps`, `logs`, `rm` y `down`, y «lo que falta» pasa a tres servicios. Con el compose de Pedro sin el perfil, levanta solo Grafana y al salir solo lo quita a él.
+- **Los JSON de los cuadros** se generaron con un script de un solo uso, con el SQL legible en Python; el repositorio guarda el JSON, que es lo que lee Grafana y lo que se exporta desde la pantalla. JSON mínimo: Grafana completa el resto al cargarlo.
+- **Dos «errores» del registro de Grafana, inofensivos:** no existen `provisioning/plugins` ni `provisioning/alerting`. No se crean carpetas vacías solo para callarlos.
+
+**Valores a mano**
+
+Con `python3` independiente del SQL: las horas de la ventana de la punta a punta son las k de 24 a 71 (1440 ≤ 60 k < 4320); las 24 últimas, de 48 a 71 (con `>=`, 25); sus etiquetas, de «07/01 00h» a «07/01 23h»; con menos de 24 horas de ventana (W = 0, H = 600), salen las 10.
+
+**Medidas**
+
+- La imagen: 506 MB descargados (2,02 GB en disco), en 1 min 34 s.
+- El arranque: sano en 10 a 15 s; `up --wait` de solo Grafana, con Postgres ya en marcha, 15 s.
+- La memoria de Grafana: 280 MiB recién arrancado y 488 MiB después de los tests.
+- La fixture de la punta a punta, en la misma máquina y con la 8.7 en marcha (carga media 3,4): 63 s sin la verdad publicada y 76 s con ella (la 8.5 midió 39 s con la máquina libre).
+- N3 (`scripts/tests-completos.sh`): 19 min 52 s (núcleo 14:35, app 3:51, notebooks 1:25).
+- `scripts/tests-integracion.sh`, 57 tests: 4 min 50 s (arranque con Grafana 0:23, pytest 4:23) y 6 min 15 s. Las dos veces falló `test_consumidor_en_vivo_igual_a_batch`, con una latencia mínima de −96 ms (`hito4`) y −66 ms (`hito5`) frente al límite de −5 ms. La causa probable es un desfase del reloj de la máquina virtual de Docker Desktop respecto a WSL: la carga solo puede hacer la latencia más grande, no negativa. La rama no toca `src/` ni ese test. El CI, con Docker nativo, hace de juez.
+
+**Versiones incorrectas**
+
+A mano, una a una y deshechas con `git checkout`; con `test_grafana.py` y `test_punta_a_punta.py`:
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| M1 | `>=` en el filtro de 24 h de «Censo por hora» | Falla solo el test de las consultas de Urgencias (25 filas) | Así: 1 de 17 |
+| M2 | «Pendientes» de Urgencias cruza con `laboratorio.tres_columnas` | Falla solo el de las consultas de Urgencias | Así: «permission denied for schema laboratorio» como `hospital` |
+| M3 | `registrado` siempre verdadero | Falla D2 | Falla D2 y también el test de `registrado`, que no estaba en la predicción aunque mira la misma columna |
+| M4 | La fuente Hospital sin `sslmode: disable` | Falla el arranque (la salud de la fuente) | **Sobrevive:** el plugin conecta sin TLS si no se le dice nada, y el Postgres de compose tiene `ssl = off`. La premisa del plan («el valor por defecto pide TLS») era falsa; se corrigieron el comentario y el test (`902306e`) |
+| M4′ | La contraseña de la fuente Hospital, otra | Falla el arranque | Así: la salud da 400; el test enseña ahora el mensaje de Grafana |
+| M5 | `grafana` sin `profiles` | Falla solo el test del perfil | Así |
+| M6 | `$__timeFilter(h.hora)` en «Llegadas por hora» | Falla el de las consultas (queda un `$`) | Falla ese y el estático de los cuadros, añadido después de la predicción |
+
+**Revisión**
+
+`/code-review medium main...feat/h8-grafana`, diez hallazgos:
+
+- **Corregidos:**
+  - `canSave` visto como anónimo detecta el rol del visitante, no `allowUiUpdates` (un administrador recibe `canSave` igual): el docstring lo dice, y el test comprueba también que el cuadro viene del aprovisionamiento (`acd2c6c`);
+  - «Pendientes» suma todas las horas de llegada al lado de paneles de 24 h: ahora se llama «Pendientes ahora» (`da4e1ef`);
+  - `tests-integracion.sh` levantaba con un `up` sin nombrar servicios, que arrancaba también la consola parada de un compose a medias, y `bajar` no la quitaba (`1918985`);
+  - Grafana no es una frontera de permisos: un visitante anónimo puede consultar la fuente Laboratorio, y se acepta en un laboratorio local; dicho en «Los cuadros» (`b3ecfe2`);
+  - el comentario del job `tests-integracion` en `ci.yml`, con Grafana y su imagen (`50befd8`).
+- **Explicados:**
+  - en un directo, «Ahora» y las series miran la última hora del horizonte: es el contrato con la 8.7 (notas, punto 7), que corta las horas futuras en oro;
+  - la subconsulta escalar de la verdad en Laboratorio no puede dar dos filas: `tres_columnas` sale de `ultimo_inicio`, un `inicio` por ejecución y un `origen` por `inicio`;
+  - la etiqueta y la ventana se repiten en 13 consultas: el test exige las mismas 24 etiquetas en todas las barras, así que una copia que se separe falla, y el corte de la 8.7 va en oro, no en los paneles. Una columna de presentación en oro sería otro cambio de la 8.5;
+  - Laboratorio ofrece también una ejecución registrada sin oro del hospital (por ejemplo, sin reconstruir): sus barras salen vacías, que es la verdad, y la tabla de tres columnas sigue informando;
+  - Calidad ofrecería una verdad publicada sin `fecha_inicio`, pero `edsim.live.messages` lo escribe siempre y lo valida al leer: solo un `inicio` ajeno a EDsim llegaría ahí.
+- **La N2, un falso timeout:** `test_cli_calibracion.py::test_sensibilidad_de_la_enfermeria_elige_y_escribe_el_csv` pasó de 60 s con la carga media en 16 a 18 (la revisión en segundo plano y la sesión de la 8.7). Solo y en serie, 25 s. La rama no toca `src/` ni `tests/`.
+
+**Pendiente**
+
+- **Pedro, a mano:** los tres cuadros con `h8prueba`. Antes, `cd analitica && uv run dbt build --exclude tag:laboratorio` en su base (la columna `registrado` es nueva) y `docker compose --profile analitica up --wait`.
+- **La 8.7** (#146): el contrato de las notas, `oro.kpi_hora` sin horas posteriores a la última anotación de la ejecución; y, si el directo lo pide, la ejecución más reciente la primera en la variable (hoy van por `run_id`).
 
 ### Tarea 8.7: Tiempo real, micro-lotes de dbt
 

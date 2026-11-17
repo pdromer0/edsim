@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Tests de integración contra un Kafka y un Postgres reales (tests_integracion/), en local y en
-# el CI (job tests-integracion).
+# Tests de integración contra un Kafka, un Postgres y un Grafana reales (tests_integracion/), en
+# local y en el CI (job tests-integracion).
 #
-# Si Kafka y Postgres de compose.yaml ya están sanos, los usa y los deja en marcha. Si no, levanta
-# lo que falta con docker compose up --wait y, al salir, baja solo eso: con los dos parados,
-# docker compose down; con uno ya en marcha (el Kafka del notebook 06, que no tiene volumen),
-# docker compose rm -sf del otro, y el que estaba sigue con sus topics. Nunca con -v: el volumen
-# de Postgres, con los datos de Pedro, se queda; los tests usan una base de datos propia y la
-# borran. Sincroniza el entorno de dbt (analitica/), ejecuta
-# pytest con los extras kafka y postgres y uv.lock tal cual (--locked), imprime los tiempos y
-# sale con el código de pytest. Si algo falla, imprime antes el final del registro de los dos.
+# Compose va con el perfil analitica, el de Grafana. Si Kafka, Postgres y Grafana de compose.yaml
+# ya están sanos, los usa y los deja en marcha. Si no, levanta lo que falta con
+# docker compose up --wait y, al salir, baja solo eso: con los tres parados, docker compose down;
+# con alguno ya en marcha (el Kafka del notebook 06, que no tiene volumen, o el compose sin el
+# perfil), docker compose rm -sf de los que faltaban, y lo que estaba sigue igual. Nunca con -v:
+# el volumen de Postgres, con los datos de Pedro, se queda; los tests usan una base de datos
+# propia y la borran. Sincroniza el entorno de dbt (analitica/), ejecuta pytest con los extras
+# kafka y postgres y uv.lock tal cual (--locked), imprime los tiempos y sale con el código de
+# pytest. Si algo falla, imprime antes el final del registro de los tres.
 set -u
 
 # Límite del arranque, fijado antes de medir (unos 10 s en el portátil con las imágenes ya
 # descargadas; la descarga va antes y no cuenta; Postgres con un volumen nuevo, unos 10 s más).
 WAIT_TIMEOUT=120
+
+# El perfil analitica en todas las órdenes de compose (up, ps, logs, rm y down), para que vean
+# Grafana (tests_integracion/test_grafana.py): un down sin el perfil lo dejaría vivo y no podría
+# borrar la red.
+export COMPOSE_PROFILES=analitica
+# Los servicios que se comprueban; la consola va con Kafka.
+SERVICIOS=(kafka postgres grafana)
 
 raiz=$(git rev-parse --show-toplevel) || exit 1
 cd "$raiz" || exit 1
@@ -27,7 +35,7 @@ duracion() {
 
 registro_servicios() {
   local servicio
-  for servicio in kafka postgres; do
+  for servicio in "${SERVICIOS[@]}"; do
     echo "tests-integracion.sh: últimas 50 líneas del registro de $servicio:" >&2
     docker compose logs --no-color --tail 50 "$servicio" >&2
   done
@@ -64,25 +72,36 @@ imprimir_resumen() {
 
 total_inicio=$(date +%s)
 levantado=false
-if sano kafka; then kafka_sano=true; else kafka_sano=false; fi
-if sano postgres; then postgres_sano=true; else postgres_sano=false; fi
-if $kafka_sano && $postgres_sano; then
-  echo "tests-integracion.sh: Kafka y Postgres de compose.yaml ya están sanos; se usan y se dejan en marcha"
+faltan=()
+for servicio in "${SERVICIOS[@]}"; do
+  sano "$servicio" || faltan+=("$servicio")
+done
+if [ "${#faltan[@]}" -eq 0 ]; then
+  echo "tests-integracion.sh: Kafka, Postgres y Grafana de compose.yaml ya están sanos; se usan y se dejan en marcha"
 else
   # Lo que falta lo levanta este script, y al salir lo baja, pase lo que pase; lo que ya estaba
   # en marcha se usa y se deja.
-  if ! $kafka_sano && ! $postgres_sano; then
+  if [ "${#faltan[@]}" -eq "${#SERVICIOS[@]}" ]; then
     levantados=(todo)
-  elif $kafka_sano; then
-    levantados=(postgres)
   else
-    levantados=(kafka console)
+    for servicio in "${faltan[@]}"; do
+      levantados+=("$servicio")
+      if [ "$servicio" = kafka ]; then
+        levantados+=(console)
+      fi
+    done
+  fi
+  # Solo lo que falta: un up sin nombrar servicios arrancaría también, por ejemplo, la consola
+  # parada de un compose a medias, y bajar() no la quitaría.
+  arrancar=()
+  if [ "${levantados[*]}" != todo ]; then
+    arrancar=("${levantados[@]}")
   fi
   levantado=true
   trap bajar EXIT
-  echo "tests-integracion.sh: docker compose up --wait --wait-timeout $WAIT_TIMEOUT"
+  echo "tests-integracion.sh: docker compose up --wait --wait-timeout $WAIT_TIMEOUT ${arrancar[*]}"
   inicio=$(date +%s)
-  docker compose up --wait --wait-timeout "$WAIT_TIMEOUT"
+  docker compose up --wait --wait-timeout "$WAIT_TIMEOUT" "${arrancar[@]}"
   rc=$?
   resumen+=("arranque   $(duracion $(($(date +%s) - inicio)))")
   if [ "$rc" -ne 0 ]; then

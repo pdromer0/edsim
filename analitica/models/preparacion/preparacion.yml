@@ -66,3 +66,9 @@ models:
           el horizonte. Nulo sin fin ni registros. En la verdad, el horizonte.
       - name: fin_dato
         description: origen + fin_dato_min. Ahí acaban las horas de oro.censo y kpi_hora.
+      - name: registrado
+        description: >-
+          Si la ejecución es lo registrado (su inicio trae el bloque registro); falso en la hoja
+          verdad. La variable de los cuadros de Grafana solo ofrece las registradas (D2 de la
+          8.6).
+        data_tests: [not_null]

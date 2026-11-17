@@ -147,17 +147,27 @@ def recorded_lines(store: RunStore, profile: str) -> list[str]:
     return [line for line in path.read_text(encoding="utf-8").split("\n") if line]
 
 
-def publish(url: str, store: RunStore, profile: str, started_ms: int) -> int:
+def truth_lines(store: RunStore) -> list[str]:
+    path = store.root / RUN_ID / "eventos.jsonl"
+    return [line for line in path.read_text(encoding="utf-8").split("\n") if line]
+
+
+def publish(url: str, store: RunStore, profile: str | None, started_ms: int) -> int:
     """Mete en bronce, sin Kafka, lo registrado de un perfil como lo dejaría el consumidor.
 
     Un `inicio` completo, el de una reemisión (`replay`, W = 1440 y H = 4320, con el bloque
     `registro`), una fila por línea de `registrado.jsonl` y un `fin`, cada mensaje con la marca
     `started_ms` más su posición. A diferencia de una reemisión, escribe lo registrado entero,
     también el calentamiento: los cinco indicadores van por la ventana (D1 de la 8.5).
-    Devuelve las líneas escritas.
+    Con `profile` `None`, publica la verdad, como `edsim directo reemitir --verdad`: las líneas
+    de `eventos.jsonl`, con el `run_id` de la ejecución y un `inicio` sin el bloque `registro`
+    (D2 de la 8.6). Devuelve las líneas escritas.
     """
-    lines = recorded_lines(store, profile)
-    run_id = derived(profile)
+    if profile is None:
+        lines, run_id, record = truth_lines(store), RUN_ID, None
+    else:
+        lines, run_id = recorded_lines(store, profile), derived(profile)
+        record = RecordInfo(RUN_ID, profile, SEED)
     info = RunInfo(
         run_id=run_id,
         mode=REPLAY,
@@ -165,7 +175,7 @@ def publish(url: str, store: RunStore, profile: str, started_ms: int) -> int:
         seed=SEED,
         start_date=START_DATE,
         anchored=False,
-        record=RecordInfo(RUN_ID, profile, SEED),
+        record=record,
     )
     start = RunStart(info, WARMUP_DAYS * 1440.0, DAYS * 1440.0, "max", 0, 0)
     end = RunEnd(run_id, "horizonte", DAYS * 1440.0, json.loads(lines[-1])["event_id"], len(lines))

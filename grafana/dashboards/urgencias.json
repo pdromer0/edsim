@@ -1,0 +1,624 @@
+{
+  "uid": "edsim-urgencias",
+  "title": "Urgencias",
+  "description": "Lo que vería el jefe de guardia: oro de la hoja del hospital (lo registrado, limpiado) en el reloj de la ejecución, sus últimas 24 horas simuladas.",
+  "tags": [
+    "edsim"
+  ],
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "utc",
+  "templating": {
+    "list": [
+      {
+        "name": "ejecucion",
+        "label": "Ejecución",
+        "description": "Las ejecuciones registradas con horas en oro.kpi_hora; una verdad publicada con --verdad no sale (preparacion.parametros.registrado).",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "edsim-hospital"
+        },
+        "query": "select p.run_id\nfrom preparacion.parametros as p\nwhere p.registrado\n  and exists (select 1 from oro.kpi_hora as h where h.run_id = p.run_id)\norder by p.run_id",
+        "definition": "select p.run_id\nfrom preparacion.parametros as p\nwhere p.registrado\n  and exists (select 1 from oro.kpi_hora as h where h.run_id = p.run_id)\norder by p.run_id",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Ahora",
+      "description": "La última hora en punto de la ejecución en oro.kpi_hora: la hora simulada, los pacientes dentro (censo), los boxes ocupados de los del maestro y los pacientes por médico de plantilla.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.censo as \"Censo\",\n  h.boxes_ocupados as \"Boxes ocupados\",\n  h.boxes as \"Boxes\",\n  round(h.pacientes_por_medico::numeric, 1) as \"Pacientes por médico\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\norder by h.k desc\nlimit 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pendientes ahora",
+      "description": "Los que siguen dentro sin triaje y sin médico, de todas las horas de llegada. Las medianas de la última hora salen mejor de lo que serán: solo cuentan los ya atendidos.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  sum(pendientes_triaje) as \"Sin triaje\",\n  sum(pendientes_medico) as \"Sin médico\"\nfrom oro.kpi_hora\nwhere run_id = '${ejecucion}'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Censo por hora",
+      "description": "Pacientes dentro a cada hora en punto.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.censo as \"Censo\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "barchart",
+      "title": "Llegadas por hora",
+      "description": "Registros de llegada por la hora de su event_time.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.llegadas as \"Llegadas\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Mediana hasta el triaje y hasta el médico, por hora de llegada",
+      "description": "La cohorte de llegada: cada espera se apunta a la hora en que llegó el paciente. En las últimas horas solo cuentan los ya atendidos (ver «Pendientes por hora»).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.mediana_triaje_min as \"Hasta el triaje\",\n  h.mediana_medico_min as \"Hasta el médico\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Pendientes por hora de llegada",
+      "description": "Los llegados en esa hora que siguen dentro sin triaje o sin médico.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.pendientes_triaje as \"Sin triaje\",\n  h.pendientes_medico as \"Sin médico\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "Reparto por nivel, últimas 24 h",
+      "description": "Triajes por nivel en las últimas 24 horas simuladas de la ejecución.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  sum(h.nivel_1) as \"Nivel 1\",\n  sum(h.nivel_2) as \"Nivel 2\",\n  sum(h.nivel_3) as \"Nivel 3\",\n  sum(h.nivel_4) as \"Nivel 4\",\n  sum(h.nivel_5) as \"Nivel 5\",\n  sum(h.sin_nivel) as \"Sin nivel legible\"\nfrom oro.kpi_hora as h\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "pie",
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Ocupación de boxes",
+      "description": "Boxes ocupados a la hora en punto, en porcentaje de los del maestro.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 20,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.ocupacion_pct as \"Ocupación\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Se van sin ser vistos, por hora de llegada",
+      "description": "Episodios con patient_left_wbs, por la hora en que llegaron.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.se_van_sin_ser_vistos as \"Se van sin ser vistos\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "barchart",
+      "title": "Pacientes por médico",
+      "description": "Censo a la hora en punto entre los médicos de plantilla en ese momento.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "edsim-hospital"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "edsim-hospital"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select\n  to_char(p.fecha_origen + (h.k / 24)::int, 'DD/MM') || ' ' || to_char(h.k % 24, 'FM00') || 'h' as \"Hora\",\n  h.pacientes_por_medico as \"Pacientes por médico\"\nfrom oro.kpi_hora as h\njoin preparacion.parametros as p using (run_id)\nwhere h.run_id = '${ejecucion}'\n  and h.hora > (\n    select max(hora) from oro.kpi_hora where run_id = '${ejecucion}'\n  ) - interval '24 hours'\norder by h.k"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Hora",
+        "orientation": "vertical",
+        "showValue": "never",
+        "stacking": "none",
+        "groupWidth": 0.8,
+        "barWidth": 0.9,
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

@@ -1,8 +1,11 @@
-# compose.yaml — Kafka de un nodo (KRaft), Redpanda Console y Postgres con TimescaleDB.
-# Ver docs/specs/hito-6.md, pieza 5, y docs/specs/hito-7.md, «Especificación: Postgres y el
-# consumidor».
+# compose.yaml — Kafka de un nodo (KRaft), Redpanda Console, Postgres con TimescaleDB y Grafana.
+# Ver docs/specs/hito-6.md, pieza 5, docs/specs/hito-7.md, «Especificación: Postgres y el
+# consumidor», y docs/specs/hito-8.md, «Especificación: Grafana».
 #
-# Sin perfiles (son la base). Kafka va sin volumen: `docker compose down` deja el broker vacío.
+# Kafka, la consola y Postgres van sin perfil (son la base); Grafana, con el perfil analitica:
+# docker compose --profile analitica up --wait. Para bajarlo todo, el perfil también al bajar
+# (docker compose --profile analitica down): sin él, Grafana sigue y la red no se borra.
+# Kafka va sin volumen: `docker compose down` deja el broker vacío.
 # Postgres guarda sus datos en el volumen edsim-postgres, que sobrevive a `docker compose down`;
 # para borrarlos, `docker compose down -v`. Los topics no se crean aquí: la autocreación está
 # desactivada y los crea EDsim (H6-7); las tablas las crea `edsim almacen preparar` (H7-9).
@@ -71,6 +74,41 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  # Grafana (hito 8, decisión 108): solo con el perfil analitica, para que el docker compose up
+  # de la integración y del notebook 06 no lo arranque sin usarlo. Sin volumen: sus fuentes y
+  # sus cuadros se leen al arrancar de grafana/, y lo que se cambie en la pantalla se pierde
+  # (se exporta el JSON y se sube al repositorio).
+  grafana:
+    image: grafana/grafana:13.3.1 # etiqueta exacta (decisión 62); el plugin de PostgreSQL, 13.0.7, va dentro
+    profiles: ["analitica"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Acceso anónimo de solo lectura, en un laboratorio local; admin/admin para administrar.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/urgencias.json
+      # Nada cambia sin un commit y el arranque no necesita red (D1 de la 8.6): sin las apps que
+      # Grafana instala por defecto desde grafana.com en cada arranque, y sin actualizar el
+      # plugin de PostgreSQL que trae la imagen.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      # La imagen es Alpine: wget de busybox, sin curl.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
 
 volumes:
   edsim-postgres:

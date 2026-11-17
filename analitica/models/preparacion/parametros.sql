@@ -54,5 +54,6 @@ select
     origen + calentamiento_min * interval '1 minute' as inicio_ventana,
     origen + horizonte_min * interval '1 minute' as fin_horizonte,
     fin_dato_min,
-    origen + fin_dato_min * interval '1 minute' as fin_dato
+    origen + fin_dato_min * interval '1 minute' as fin_dato,
+    registrado
 from parametros
