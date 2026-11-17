@@ -220,7 +220,9 @@ def grafana() -> str:
 def test_grafana_arranca_con_sus_dos_fuentes_y_sus_tres_cuadros(grafana, bronze_url):
     """Pilla un aprovisionamiento roto o mal montado: un cuadro que no se carga o con otro
     `uid`, una fuente con otro rol o que no conecta (otro host u otra contraseña), un plugin de
-    PostgreSQL que no es el de la imagen y un cuadro que el visitante anónimo no puede abrir. La
+    PostgreSQL que no es el de la imagen, un cuadro que no viene del aprovisionamiento y un
+    visitante anónimo que no puede abrir los cuadros o que puede guardarlos (otro rol que Viewer;
+    `allowUiUpdates` no se ve así: un administrador recibe `canSave` igual). La
     salud de las fuentes conecta a la base `edsim` con los roles de la 002, que son del servidor
     y ya los creó la base de la sesión (`bronze_url`)."""
     expected = {uid: title for uid, title, _ in BOARDS.values()}
@@ -235,7 +237,8 @@ def test_grafana_arranca_con_sus_dos_fuentes_y_sus_tres_cuadros(grafana, bronze_
     assert listed == expected
     assert {item["folderTitle"] for item in found} == {"EDsim"}
     for uid in expected:
-        assert get(f"/api/dashboards/uid/{uid}")["meta"]["canSave"] is False, uid
+        meta = get(f"/api/dashboards/uid/{uid}")["meta"]
+        assert (meta["provisioned"], meta["canSave"]) == (True, False), uid
     sources = {
         source["uid"]: (source["name"], source["user"], source["jsonData"]["database"])
         for source in get("/api/datasources", admin=True)
