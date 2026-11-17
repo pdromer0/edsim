@@ -1449,7 +1449,8 @@ Issue #147, rama `feat/h8-notebook`, Claude Code (Opus, en local, con Postgres).
   - bronce sin Kafka, 40,9 s, con 164.818 registros;
   - `cargar-verdad`, 7,4 s;
   - dbt: la hoja del hospital, 22,6 s; la de la verdad, 13,8 s; la ingenua, 21,4 s; la tabla de tres columnas, 7,2 s.
-- **Modo rápido:** de 2,4 a 2,8 s.
+- **Modo rápido:** de 2,4 a 2,8 s. El modo normal entero con `pytest --nbmake --nbmake-timeout=600`, tras la revisión: 132,6 s.
+- **N3:** 17 min 44 s (núcleo 12:44, app 3:34, notebooks 1:17), con Docker parado. **Integración:** 5 min 7 s, 57 tests.
 - **Filas que añade a `edsim` en cada ejecución:**
   - en bronce, 164.826 (164.818 eventos y 8 mensajes de `ed.runs`);
   - en la verdad, 227.061 (55.054 eventos, 4.439 episodios, 14 días y 167.931 filas de libreta);
