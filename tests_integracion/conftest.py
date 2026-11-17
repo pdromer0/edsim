@@ -245,14 +245,17 @@ def analitica(postgres_admin: str, tmp_path_factory):
 
     En una base propia, para no mezclarse con lo que dejan en bronce los otros tests: una
     ejecución de 3 días con la configuración de `config/`, lo registrado con los perfiles
-    `limpio` y `realista` escrito en bronce sin Kafka, `edsim almacen cargar-verdad` y las cuatro
+    `limpio` y `realista` y la verdad publicada como con `--verdad` (`run_id` `e2e`, sin
+    `registro`), escritos en bronce sin Kafka, `edsim almacen cargar-verdad` y las cuatro
     construcciones de `BUILDS`. Falla en cuanto una construcción no sale con 0: lo que sigue no
     tendría sentido. La 8.6 prueba sus paneles sobre esta misma base.
     """
     root = tmp_path_factory.mktemp("punta-a-punta")
     with new_database(postgres_admin) as (url, _):
         store = simulate_and_record(root / "ejecuciones")
-        for position, profile in enumerate(PROFILES):
+        # Lo registrado con los dos perfiles y, además, la verdad publicada como con --verdad: la
+        # hoja del hospital la construye, y Grafana no debe ofrecerla (D2 de la 8.6).
+        for position, profile in enumerate((*PROFILES, None)):
             publish(url, store, profile, FIRST_MS + position * 3_600_000)
         loaded = subprocess.run(
             [EDSIM, "almacen", "cargar-verdad", RUN_ID]
