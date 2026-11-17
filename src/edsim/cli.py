@@ -1338,8 +1338,11 @@ def _analytics_refresh(args: argparse.Namespace, parser: argparse.ArgumentParser
         f"La hoja del hospital, sin tests, cada {args.cada:g} s en {folder}; Ctrl+C para parar",
         flush=True,
     )
-    refresh(dbt_builder(uv, folder), SystemClock(), args.cada, lambda line: print(line, flush=True))
-    return 0
+    summary = refresh(
+        dbt_builder(uv, folder), SystemClock(), args.cada, lambda line: print(line, flush=True)
+    )
+    # Code 1 if no round that ended built anything: a script can tell that nothing was refreshed.
+    return 1 if summary.rounds and summary.failures == summary.rounds else 0
 
 
 def _store_prepare(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -2166,7 +2169,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Lanza cada S segundos dbt build de la hoja del hospital, sin la tabla de "
         "tres columnas y sin tests, hasta Ctrl+C. Imprime lo que tardó cada vuelta y avisa si "
         "pasó del intervalo: la siguiente empieza entonces al acabar. Una vuelta que falla "
-        "muestra el final de la salida de dbt, y se intenta en la siguiente. La base es la de "
+        "muestra el final de la salida de dbt, y se intenta en la siguiente. Tras Ctrl+C, "
+        "termina con código 1 si fallaron todas las vueltas acabadas. La base es la de "
         "analitica/profiles.yml: edsim, o la de las variables EDSIM_PG_*.",
     )
     analytics_refresh.add_argument(

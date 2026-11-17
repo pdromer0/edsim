@@ -46,6 +46,23 @@ def test_refrescar_lanza_el_bucle_con_la_carpeta_y_el_intervalo(project, monkeyp
     assert out.endswith("Parado con Ctrl+C antes de acabar la primera vuelta\n")
 
 
+@pytest.mark.parametrize(
+    ("summary", "code"),
+    [
+        (RefreshSummary(3, 3, 9.0), 1),
+        (RefreshSummary(3, 2, 9.0), 0),
+        (RefreshSummary(0, 0, None), 0),
+    ],
+)
+def test_refrescar_sale_con_1_si_fallaron_todas_las_vueltas(project, monkeypatch, summary, code):
+    """Si ninguna vuelta acabada construyó nada, código 1: un script lo ve. Con una que fue bien,
+    o sin ninguna acabada (Ctrl+C en la primera), 0."""
+    monkeypatch.setattr(cli, "dbt_builder", lambda uv, folder: None)
+    monkeypatch.setattr(cli, "refresh", lambda build, clock, every, emit: summary)
+
+    assert cli.main(["analitica", "refrescar", "--analitica", str(project)]) == code
+
+
 def test_refrescar_sin_proyecto_dbt_es_un_error_de_uso(tmp_path, monkeypatch, capsys):
     """Una carpeta sin `dbt_project.yml` sale con código 2 antes de lanzar nada."""
     monkeypatch.setattr(cli, "refresh", lambda *a, **k: pytest.fail("lanzó el bucle"))
