@@ -599,6 +599,7 @@ grafana/
 - **El reloj de la ejecución:** las consultas de serie filtran por la ejecución y por sus últimas 24 horas simuladas, contadas desde la última hora de esa ejecución en `oro.kpi_hora` (`hora > max(hora) - 24 h`: 24 horas en punto); no usan el rango de tiempo del cuadro (`$__timeFilter`), que se oculta.
 - **Barras por hora** (Pedro, en el plan de la 8.6): el panel *time series* ata su eje X al rango de tiempo del cuadro y, con el selector oculto, una reemisión de enero sale como «Data outside time range». Las series son paneles *bar chart* con la hora simulada como etiqueta («07/01 16h»), sacada de `k` y `fecha_origen`: no dependen del rango de tiempo ni de la zona horaria del navegador.
 - **La variable, entre comillas** (`'${ejecucion}'`): Grafana inserta una variable de un solo valor tal cual. Un `var-ejecucion` manipulado en la URL solo puede leer lo que ya lee el rol de la fuente.
+- **Grafana no es una frontera de permisos:** cualquier visitante anónimo (Viewer) puede abrir Laboratorio y consultar su fuente (`/api/ds/query`), que lee la verdad. Los dos roles separan lo que lee cada cuadro, y el test de los paneles (D3) lo vigila, pero no esconden la verdad a quien usa Grafana. En un laboratorio local, en `127.0.0.1`, se acepta (decisión 108).
 - **Contrato con la 8.7:** `oro.kpi_hora` no tiene horas posteriores a la última anotación de la ejecución. La 8.6 lo da por hecho y no corta las horas futuras de un directo.
 
 ## Especificación: tiempo real
