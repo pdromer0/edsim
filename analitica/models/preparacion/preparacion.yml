@@ -33,3 +33,29 @@ models:
         description: Si se aplicó alguna corrección a este registro.
       - name: duplicados_quitados
         description: Cuántos dobles clics del mismo registro se quitaron (0 si ninguno).
+
+  - name: parametros
+    description: '{{ doc("parametros") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id]
+    columns:
+      - name: run_id
+        data_tests: [not_null]
+      - name: fecha_origen
+        description: La fecha del minuto 0 (fecha_inicio, o la del día 0 en la verdad).
+        data_tests: [not_null]
+      - name: origen
+        description: El minuto 0, a las 00:00 en +01:00 de la fecha de inicio.
+        data_tests: [not_null]
+      - name: calentamiento_min
+        description: W, el fin del calentamiento, en minutos desde el origen.
+        data_tests: [not_null]
+      - name: horizonte_min
+        description: El horizonte, en minutos desde el origen.
+        data_tests: [not_null]
+      - name: inicio_ventana
+        description: origen + W, donde empieza la ventana de los indicadores.
+      - name: fin_horizonte
+        description: origen + horizonte.

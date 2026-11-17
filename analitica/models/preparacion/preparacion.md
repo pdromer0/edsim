@@ -21,10 +21,23 @@ En las hojas `hospital` y `verdad`, tres reglas, **en este orden**:
 
 **Lo que no cubre:**
 
-- Una corrección que apunta a un registro que no está (porque se olvidó, por ejemplo) no casa con ninguna fila. Se cuenta como aviso de calidad en `oro.calidad` (8.5), desde `registros`. Con datos de EDsim siempre da 0, porque un hecho olvidado no recibe corrección. La cuenta es para un HIS real.
+- Una corrección que apunta a un registro que no está (porque se olvidó, por ejemplo) no casa con ninguna fila. Se cuenta como aviso de calidad en `oro.calidad` (8.5), contra los `event_id` que quedan en `registros_vigentes` (D3 de la 8.1): así cuenta también una corrección a una copia que la limpieza quitó, que tampoco se aplica. Con datos de EDsim siempre da 0, porque un hecho olvidado no recibe corrección y la corrección apunta al original. La cuenta es para un HIS real.
 - Los campos vacíos se quedan `NULL`. Un olvido sin salida deja el episodio abierto, y un olvido sin llegada lo deja sin hora de llegada. Plata y oro lo señalan.
 - El reloj desajustado de un sistema no se arregla: solo deja rastro cuando un tiempo sale negativo.
 - Un valor erróneo que nadie corrigió no se detecta: el registro clínico elige valores verosímiles.
 
 En la hoja `ingenuo`, como los indicadores ingenuos del hito 7, solo se aplica la regla 1: ni se quitan duplicados ni se aplican correcciones. Las columnas son las mismas, con `corregido` falso y `duplicados_quitados` a 0.
+{% enddocs %}
+
+{% docs parametros %}
+Una fila por ejecución: (`run_id`). Oro necesita saber dónde empieza el minuto 0 de cada ejecución y dónde acaban el calentamiento y el horizonte, y los eventos no lo dicen.
+
+**Cada hoja lo saca de su fuente** (notas del chat de la 8.5, punto 4). El hospital no puede leer la verdad.
+
+- En `hospital` e `ingenuo`, del mensaje `inicio` de `bronce.ejecuciones`: `fecha_inicio`, `inicio_directo` (W, en minutos) y `horizonte`. Una ejecución publicada dos veces tiene dos `inicio`: vale el último que llegó a Kafka (macro `ultimo_inicio`, la misma que usa `tres_columnas`). Si al último le falta `fecha_inicio`, la ejecución no da fila, sin recurrir a uno anterior: no sale en oro, y `oro.calidad` la señala con `sin_parametros`.
+- En `verdad`, de `verdad.dias`: la fecha del día 0, y `calentamiento` y `dias`, en días.
+
+**El origen** es `fecha_inicio` a las 00:00 en `+01:00`, como `event_time` en el motor (`edsim.engine.events.event_time`). Es el mismo minuto 0 que lee `compare.py` de la verdad. Se escribe como texto ISO 8601 con su desfase: `AT TIME ZONE '+01:00'` lo leería con el signo POSIX, una hora al oeste.
+
+**La ventana** empieza en `inicio_ventana` = origen + W. Oro cuenta en ella los cinco indicadores del hito 7 (D1 de la 8.5): una reemisión solo deja en bronce, de antes de W, el censo (los eventos de los episodios abiertos en W).
 {% enddocs %}

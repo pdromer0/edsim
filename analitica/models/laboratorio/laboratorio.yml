@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: tres_columnas
+    description: '{{ doc("tres_columnas") }}'
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [run_id, perfil, semilla, kpi]
+    columns:
+      - name: run_id
+        description: La ejecución verdadera (registro.origen).
+        data_tests: [not_null]
+      - name: run_id_registrado
+        description: La ejecución derivada de lo registrado, <run_id>_<perfil>_s<semilla>.
+      - name: perfil
+        data_tests: [not_null]
+      - name: semilla
+        data_tests: [not_null]
+      - name: orden
+        description: El orden del KPI en la tabla, el de compare.py.
+      - name: kpi
+        data_tests: [not_null]
+      - name: verdad
+        description: El KPI en la hoja verdad.
+      - name: ingenuo
+        description: El KPI en lo registrado sin limpiar (hoja ingenuo).
+      - name: limpio
+        description: El KPI en lo registrado limpiado (hoja hospital).
+      - name: ingenuo_menos_verdad
+      - name: limpio_menos_verdad

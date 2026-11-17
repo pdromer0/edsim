@@ -21,11 +21,45 @@ vars:
   # simulación) o ingenuo (lo registrado sin limpiar). Fuera del hospital, los esquemas llevan
   # delante «<hoja>_» (macros/generate_schema_name.sql; decisión 107, H8-8).
   hoja: hospital
+  # Un episodio sin salida sigue dentro si su última anotación es de las últimas 24 h de la
+  # ejecución; si no, su salida se olvidó (oro.cohorte; medido en el plan de la 8.5: las esperas
+  # de cama dejan huecos de días sin anotar, y ningún margen separa del todo).
+  margen_sin_salida_min: 1440
+
+# Quién lee cada hoja (decisión 107, H8-8): la del hospital, hospital y laboratorio; las demás,
+# solo laboratorio. grants da SELECT en cada tabla y vista al crearla, en la misma transacción:
+# un lector no ve nunca una tabla reconstruida sin su permiso. El USAGE de los esquemas, que
+# grants no da, lo pone dar_uso_de_esquemas al final de cada construcción. Aquí var() necesita
+# su valor por defecto: este fichero se lee antes de que existan las vars que él mismo define.
+on-run-end:
+  - "{{ dar_uso_de_esquemas(schemas) }}"
 
 models:
   edsim_analitica:
+    +grants:
+      select: "{{ ['hospital', 'laboratorio'] if var('hoja', 'hospital') == 'hospital' else ['laboratorio'] }}"
     preparacion:
       +schema: preparacion
     plata:
       +schema: plata
       +materialized: table
+    oro:
+      +schema: oro
+      +materialized: table
+    # La tabla de tres columnas se construye aparte (--select tag:laboratorio), con las tres hojas
+    # ya construidas, y solo la lee laboratorio. Las tres hojas la excluyen
+    # (--exclude tag:laboratorio).
+    laboratorio:
+      +schema: laboratorio
+      +materialized: table
+      +tags: [laboratorio]
+      +grants:
+        select: [laboratorio]
+
+seeds:
+  edsim_analitica:
+    +grants:
+      select: "{{ ['hospital', 'laboratorio'] if var('hoja', 'hospital') == 'hospital' else ['laboratorio'] }}"
+    # La capacidad y los turnos de config/centro.toml (tests/test_semillas_analitica.py lo
+    # comprueba), en el esquema oro de cada hoja.
+    +schema: oro

@@ -1,0 +1,20 @@
+version: 2
+
+# La capacidad y los turnos de config/centro.toml, en dos semillas (decisión 106, H8-7):
+# tablas pequeñas y fijas, el caso de uso de las semillas. tests/test_semillas_analitica.py las
+# compara con centro.toml, para que no cambie uno sin el otro. La capacidad por ejecución, que
+# importará cuando los experimentos cambien los boxes, es del hito 9.
+
+seeds:
+  - name: maestro_boxes
+    description: Los 36 boxes del centro ([recursos].boxes de config/centro.toml), numerados como en box_assigned.
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [box]
+  - name: turnos
+    description: La hora de inicio de cada turno ([turnos].inicio de config/centro.toml).
+    data_tests:
+      - clave_unica:
+          arguments:
+            columnas: [inicio]

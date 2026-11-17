@@ -49,7 +49,7 @@ sources:
   - name: verdad
     description: >
       La verdad de cada ejecución guardada, cargada con `edsim almacen cargar-verdad` (8.4).
-      Hasta entonces el esquema no existe: basta declararla para `dbt parse`.
+      La crea la migración 002_verdad.sql; `dbt parse` no la necesita.
     tables:
       - name: eventos
         description: >
@@ -67,3 +67,32 @@ sources:
           - name: event_time
           - name: recorded_time
           - name: payload
+      - name: dias
+        description: >
+          Las llegadas de cada día (ground_truth_dias.csv). La hoja verdad saca de aquí sus
+          parámetros: la fecha del día 0, el calentamiento y los días, en días.
+        columns:
+          - name: run_id
+          - name: dia
+          - name: fecha
+          - name: calentamiento
+          - name: dias
+
+  # La tabla de tres columnas (tag laboratorio) lee kpi_ejecucion de las tres hojas como
+  # fuentes: con ref() leería solo la de la hoja que se construye. Se construye aparte, con las
+  # tres hojas ya construidas.
+  - name: oro
+    description: El oro de la hoja del hospital, limpiado.
+    schema: oro
+    tables:
+      - name: kpi_ejecucion
+  - name: verdad_oro
+    description: El oro de la hoja verdad.
+    schema: verdad_oro
+    tables:
+      - name: kpi_ejecucion
+  - name: ingenuo_oro
+    description: El oro de la hoja ingenuo, sin limpiar.
+    schema: ingenuo_oro
+    tables:
+      - name: kpi_ejecucion
