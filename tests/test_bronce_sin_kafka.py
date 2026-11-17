@@ -1,21 +1,25 @@
 """Bronce sin Kafka (tarea 8.8): los mensajes que habría guardado el consumidor.
 
 `bronze_messages` es lo que usan la punta a punta del hito 8 y el notebook 08 para llenar bronce
-sin Kafka. La escritura (`write_bronze`) la prueba la punta a punta contra un Postgres real; aquí
-va la parte pura, con un registro de verdad: un log a mano con una fila de recursos, dos
-pacientes en el calentamiento (uno sigue dentro en W) y uno después, registrado con el perfil
-`limpio` de `config/`. Cada test pilla un fallo que no pilla ningún otro.
+sin Kafka, y `save_messages` lo que los guarda por lotes (`write_bronze` lo envuelve en una
+transacción contra un Postgres real, y eso lo prueba la punta a punta). Aquí, sin Docker, con un
+registro de verdad: un log a mano con una fila de recursos, dos pacientes en el calentamiento
+(uno sigue dentro en W) y uno después, registrado con el perfil `limpio` de `config/`, y el
+`FakeStore` del consumidor. Cada test pilla un fallo que no pilla ningún otro.
 """
 
 import json
 from datetime import date
 from pathlib import Path
 
+from fake_store import FakeStore
+
 from edsim.clinical_record import load_record_profiles, record, record_json
 from edsim.engine.events import EventLog, MemorySink
 from edsim.live.directo import REPLAY, RecordInfo, RunInfo
 from edsim.live.topics import PATIENT_EVENTS, RESOURCE_EVENTS, RUNS
 from edsim.store.bronze import RunRow, to_row
+from edsim.store.consumer import save_messages
 from edsim.store.offline import bronze_messages
 
 CONFIG = Path(__file__).resolve().parents[1] / "config"
@@ -101,3 +105,25 @@ def test_las_marcas_crecen_y_el_fin_va_el_ultimo():
     assert end["ultimo_event_id"] == json.loads(lines[-1])["event_id"]
     assert [m.topic for m in empty] == [RUNS, RUNS]
     assert json.loads(empty[-1].value)["ultimo_event_id"] is None
+
+
+def test_los_lotes_suman_lo_guardado_lo_repetido_y_lo_rechazado():
+    """`save_messages` parte en lotes y suma sus resultados: con lotes de 3, los 7 mensajes van en
+    tres transacciones. Guardar dos veces lo mismo da todo repetido, como una relectura. Un dato
+    que el almacén rechaza en el último lote lo manda a `rechazados` por la red de seguridad, y
+    `retried` lo dice aunque los otros lotes no la usaran: pilla una suma que pierde un campo o
+    se queda con el último lote."""
+    lines = recorded_lines()
+    messages = bronze_messages(info(), lines, warmup=W, horizon=H, started_ms=STARTED_MS)
+    assert len(messages) == 7
+
+    store = FakeStore()
+    first = save_messages(store, messages, batch_size=3)
+    again = save_messages(store, messages, batch_size=3)
+    last_id = json.loads(lines[-1])["event_id"]
+    failing = save_messages(FakeStore(fail_on=last_id), messages, batch_size=3)
+
+    assert (first.saved, first.repeated, first.rejected, first.retried) == (7, 0, 0, False)
+    assert store.log.count("transaction") == 6  # tres lotes por llamada
+    assert (again.saved, again.repeated, again.rejected, again.retried) == (0, 7, 0, False)
+    assert (failing.saved, failing.repeated, failing.rejected, failing.retried) == (6, 0, 1, True)

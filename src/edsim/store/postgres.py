@@ -18,7 +18,7 @@ transaction: it deletes what the run already had there and copies the new rows w
 loading twice leaves the same, and a load that fails leaves the previous one.
 
 **The writing without Kafka** (``write_bronze``), for tests and notebooks, saves the messages of
-``edsim.store.offline`` through ``save_batch``, as the consumer would.
+``edsim.store.offline`` through ``save_batch``, as the consumer would, all in one transaction.
 
 **The reading** (``read_bronze_lines``) gives back what was published of a run, as it came:
 the ``valor`` of each ``event_id`` once, in order of ``sim_time`` and ``event_id``, from the
@@ -34,8 +34,8 @@ from dataclasses import astuple
 from types import ModuleType
 
 from edsim.clinical_record import Record, record_from_json
-from edsim.store.bronze import EventRow, KafkaMessage, RejectedRow, RunRow, to_row
-from edsim.store.consumer import BatchResult, RunProgress, StoreDataError, save_batch
+from edsim.store.bronze import EventRow, KafkaMessage, RejectedRow, RunRow
+from edsim.store.consumer import BatchResult, RunProgress, StoreDataError, save_messages
 from edsim.store.migrations import Migration, MigrationError, apply_migrations
 from edsim.store.truth import TruthError, TruthLoad, TruthRun, TruthTable
 
@@ -272,17 +272,16 @@ class PostgresBronze:
         return RunProgress(since is not None, published, stored)
 
 
-WRITE_BATCH = 1000
-"""Messages per transaction in ``write_bronze``."""
-
-
 def write_bronze(url: str, messages: Sequence[KafkaMessage]) -> BatchResult:
     """Save ``messages`` in bronze as the consumer would, without Kafka (task 8.8).
 
     For tests and notebooks, with the messages of ``edsim.store.offline.bronze_messages``:
-    batches of ``WRITE_BATCH`` through ``save_batch``, each one in its own transaction. A message
-    already in bronze is counted as repeated, and one that cannot be read goes to
-    ``rechazados``, as with the consumer.
+    ``save_messages``, in batches through ``save_batch``. A message already in bronze is counted
+    as repeated, and one that cannot be read goes to ``rechazados``, as with the consumer.
+
+    Unlike the consumer, all of it goes in one transaction (the transaction of each batch is a
+    savepoint inside it): without Kafka there is nothing to read again, so a failure halfway
+    leaves bronze as it was, not with an ``inicio`` and part of the records.
 
     Returns:
         The sum of the batches: ``retried`` if any went through the safety net.
@@ -292,18 +291,8 @@ def write_bronze(url: str, messages: Sequence[KafkaMessage]) -> BatchResult:
         DatabaseUnavailableError: If Postgres does not answer, or the connection is lost.
         edsim.store.migrations.MigrationError: If the tables of bronze are missing.
     """
-    saved = repeated = rejected = 0
-    retried = False
-    with connect(url) as connection, _postgres_errors(url):
-        store = PostgresBronze(connection)
-        for at in range(0, len(messages), WRITE_BATCH):
-            chunk = messages[at : at + WRITE_BATCH]
-            result = save_batch(store, [(message, to_row(message)) for message in chunk])
-            saved += result.saved
-            repeated += result.repeated
-            rejected += result.rejected
-            retried = retried or result.retried
-    return BatchResult(saved, repeated, rejected, retried)
+    with connect(url) as connection, _postgres_errors(url), connection.transaction():
+        return save_messages(PostgresBronze(connection), messages)
 
 
 def read_bronze_lines(url: str, run_id: str) -> list[str]:
