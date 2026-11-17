@@ -39,5 +39,7 @@ Una fila por ejecución: (`run_id`). Oro necesita saber dónde empieza el minuto
 
 **El origen** es `fecha_inicio` a las 00:00 en `+01:00`, como `event_time` en el motor (`edsim.engine.events.event_time`). Es el mismo minuto 0 que lee `compare.py` de la verdad. Se escribe como texto ISO 8601 con su desfase: `AT TIME ZONE '+01:00'` lo leería con el signo POSIX, una hora al oeste.
 
+**Lo registrado** (`registrado`, D2 de la 8.6): verdadero si el `inicio` trae el bloque `registro`, el mismo criterio que `tres_columnas`; en la hoja `verdad`, falso. La hoja del hospital construye oro con todas las ejecuciones de bronce, también las publicadas con `--verdad`, y el rol `hospital` no lee bronce: Grafana filtra con esta columna la variable `ejecucion` para no ofrecer una verdad como si fuera lo que vio el hospital.
+
 **La ventana** empieza en `inicio_ventana` = origen + W. Oro cuenta en ella los cinco indicadores del hito 7 (D1 de la 8.5): una reemisión solo deja en bronce, de antes de W, el censo (los eventos de los episodios abiertos en W).
 {% enddocs %}
