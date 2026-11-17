@@ -91,11 +91,17 @@ else
       fi
     done
   fi
+  # Solo lo que falta: un up sin nombrar servicios arrancaría también, por ejemplo, la consola
+  # parada de un compose a medias, y bajar() no la quitaría.
+  arrancar=()
+  if [ "${levantados[*]}" != todo ]; then
+    arrancar=("${levantados[@]}")
+  fi
   levantado=true
   trap bajar EXIT
-  echo "tests-integracion.sh: docker compose up --wait --wait-timeout $WAIT_TIMEOUT"
+  echo "tests-integracion.sh: docker compose up --wait --wait-timeout $WAIT_TIMEOUT ${arrancar[*]}"
   inicio=$(date +%s)
-  docker compose up --wait --wait-timeout "$WAIT_TIMEOUT"
+  docker compose up --wait --wait-timeout "$WAIT_TIMEOUT" "${arrancar[@]}"
   rc=$?
   resumen+=("arranque   $(duracion $(($(date +%s) - inicio)))")
   if [ "$rc" -ne 0 ]; then
