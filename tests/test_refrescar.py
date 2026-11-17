@@ -7,6 +7,9 @@ un bucle que no para falla en 20 llamadas, no a los 60 s del límite por test.
 """
 
 import os
+import signal
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -219,3 +222,22 @@ def test_la_construccion_lanza_la_orden_en_la_carpeta_de_dbt(tmp_path, monkeypat
         os.path.realpath(folder),
         "venv=ninguno",
     ]
+
+
+def test_ctrl_c_en_una_vuelta_espera_a_que_dbt_acabe(tmp_path):
+    """Un SIGINT que solo le llega a Python, a los 0,2 s de una vuelta de 1 s: la construcción
+    espera a que el `uv` falso acabe y escriba su marca, y después lanza KeyboardInterrupt.
+    Pilla matar a uv a los 0,25 s, como `subprocess.run`, y dejar a dbt a medias."""
+    marca = tmp_path / "acabado"
+    uv = tmp_path / "uv"
+    uv.write_text(f'#!/bin/sh\nsleep 1\necho hecho > "{marca}"\n')
+    uv.chmod(0o755)
+    build = dbt_builder(str(uv), tmp_path)
+    threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGINT)).start()
+    inicio = time.monotonic()
+
+    with pytest.raises(KeyboardInterrupt):
+        build()
+
+    assert marca.read_text() == "hecho\n"
+    assert time.monotonic() - inicio >= 1

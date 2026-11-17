@@ -92,21 +92,31 @@ def dbt_environment(environ: Mapping[str, str]) -> dict[str, str]:
 def dbt_builder(uv: str, folder: Path) -> Callable[[], BuildResult]:
     """One build of the hospital sheet per call, with ``folder`` as working directory.
 
-    dbt looks there for ``dbt_project.yml`` and ``profiles.yml``. On Ctrl+C, the terminal
-    sends the signal to dbt too, and ``subprocess.run`` waits for it before raising.
+    dbt looks there for ``dbt_project.yml`` and ``profiles.yml``. Its output and the one of uv
+    go to one pipe, in the order they were written: the error of dbt stays in the tail.
+
+    On Ctrl+C, the build waits for dbt to end before raising ``KeyboardInterrupt``, reading its
+    output so that it never blocks on a full pipe. From a terminal, dbt gets the signal too,
+    cancels its queries and cleans up; ``subprocess.run`` would kill ``uv`` after 0.25 s and
+    leave dbt without its pipe, halfway through swapping a table. A second Ctrl+C ends the wait.
     """
     command = dbt_command(uv, folder)
 
     def build() -> BuildResult:
-        result = subprocess.run(
+        with subprocess.Popen(
             command,
             cwd=folder,
             env=dbt_environment(os.environ),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            check=False,
-        )
-        return BuildResult(result.returncode, result.stdout + result.stderr)
+        ) as process:
+            try:
+                output, _ = process.communicate()
+            except KeyboardInterrupt:
+                process.communicate()
+                raise
+        return BuildResult(process.returncode, output)
 
     return build
 
