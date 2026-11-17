@@ -348,7 +348,8 @@ Hasta bronce, el directo ya llega en segundos (hito 7). Pero plata y oro son tab
 ### En EDsim
 
 - `edsim analitica refrescar [--cada 60]` construye la hoja del hospital (sin tests) hasta Ctrl+C (H8-10).
-- La 8.7 mide cuánto tarda una construcción con un año de `r2026` en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo.
+- En un directo, oro llega hasta el **fin del dato**, la última anotación, y no hasta el horizonte: sin horas aún por llegar con un censo congelado (D1 de la 8.7).
+- La 8.7 mide cuánto tarda una construcción con un año (`r365`) en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo.
 
 ### Para aprender más
 
@@ -587,9 +588,11 @@ grafana/
 
 ## Especificación: tiempo real
 
-- `edsim analitica refrescar [--cada S] [--analitica DIR]`: cada `S` segundos (60 por defecto) lanza `dbt run` del proyecto `analitica/` en la hoja del hospital, excluyendo `tag:laboratorio`, sin tests, hasta Ctrl+C; imprime en cada vuelta cuánto tardó y avisa si tardó más que el intervalo. No espera a la vuelta anterior si se pasa: la siguiente empieza al acabar.
-- La lógica en el paquete (`edsim.analytics`), con el ejecutor de dbt (un subproceso `uv run --project analitica dbt run …`) y el reloj inyectados; se prueba con un ejecutor falso con tope `RunawayLoop` (`tests/runaway.py`).
-- **La medida (8.7):** cuánto tarda la construcción del hospital con bronce vacío, con un directo de una hora a ×60 y con un año de `r2026` reemitido. Si pasa de 60 s con el año cargado, la tarea para: el plan B es un incremental por ejecución, que se decide entonces con Pedro.
+- `edsim analitica refrescar [--cada S] [--analitica DIR]`: cada `S` segundos (60 por defecto) lanza `dbt build` del proyecto `analitica/` en la hoja del hospital, excluyendo `tag:laboratorio` y sin tests (`--exclude-resource-type test unit_test`), hasta Ctrl+C. Es `build` y no `run` (D2 de la 8.7) porque también carga las semillas: funciona en una base recién creada. Imprime en cada vuelta cuánto tardó y avisa si tardó más que el intervalo. El intervalo cuenta desde el inicio de la vuelta; si una se pasa, la siguiente empieza al acabar.
+- **Una vuelta que falla** avisa con su código y las últimas líneas de dbt, y la siguiente se lanza a su hora (D3 de la 8.7): un fallo pasajero no tira el directo. Ctrl+C, dentro de una vuelta o en la espera, sale con un resumen.
+- La lógica en el paquete (`edsim.analytics`), con la construcción (un subproceso `uv run --locked --project analitica dbt build …`, con `analitica/` como carpeta de trabajo) y el reloj inyectados; se prueba con una construcción y un reloj falsos con tope `RunawayLoop` (`tests/runaway.py`). La base es la de `profiles.yml` (las variables `EDSIM_PG_*`).
+- **El fin del dato** (D1 de la 8.7): las horas de `oro.censo` y `oro.kpi_hora`, y lo que cuelga de ellas, acaban en el fin del dato de cada ejecución (`preparacion.parametros`), y `oro.cohorte` cuenta desde él las 24 h de quien sigue dentro. Es el `sim_time` del `fin` si es el último mensaje de `ed.runs` de la ejecución; si no, la última anotación (`recorded_time`); nunca más que el horizonte; en la hoja `verdad`, el horizonte. Es el contrato con los paneles: `kpi_hora` no tiene horas posteriores a la última anotación.
+- **La medida (8.7):** cuánto tarda la construcción del hospital con bronce vacío, con un directo de una hora a ×60 y con un año (`r365`) reemitido. Si pasa de 60 s con el año cargado, la tarea para: el plan B es un incremental por ejecución, que se decide entonces con Pedro.
 
 ## Especificación: el directo por defecto
 
