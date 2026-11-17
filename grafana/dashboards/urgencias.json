@@ -100,7 +100,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Pendientes",
+      "title": "Pendientes ahora",
       "description": "Los que siguen dentro sin triaje y sin médico, de todas las horas de llegada. Las medianas de la última hora salen mejor de lo que serán: solo cuentan los ya atendidos.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
