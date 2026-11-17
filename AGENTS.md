@@ -59,7 +59,8 @@ uv run ruff format .     # formato
 uv run edsim             # CLI
 scripts/tests-rapidos.sh    # rápida con sello: solo las suites con cambios desde su último verde
 scripts/tests-completos.sh  # antes del push: lint, formato, completa, app y notebooks rápidos
-scripts/tests-integracion.sh  # contra Kafka y Postgres reales: levanta compose.yaml si hace falta
+scripts/tests-integracion.sh  # contra Kafka, Postgres y Grafana reales: levanta compose.yaml (con el perfil analitica) si hace falta
+docker compose --profile analitica up --wait  # Kafka, Postgres y Grafana en http://127.0.0.1:3000 (hito 8); para bajarlo, docker compose --profile analitica down
 uv run python -m edsim.live.schemas  # regenera schemas/eventos-v*.schema.json (tras cambiar el catálogo)
 uv run edsim directo preparar    # crea los topics de Kafka (Kafka levantado)
 uv run edsim directo lanzar --memoria --velocidad max --dias 3  # un directo sin Kafka, de golpe: publica lo registrado realista (hito 8)
