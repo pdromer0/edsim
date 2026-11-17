@@ -15,9 +15,10 @@
 
     fin_mensaje_min (D1 de la 8.7): dónde acaba la ejecución según su mensaje fin, en minutos.
     Solo vale un fin que llegó después del último inicio, es decir, si el último mensaje de
-    ed.runs de la ejecución, en el orden de ultimo_inicio, es un fin: su sim_time (el horizonte,
-    o donde paró si se interrumpió). Si no, es nulo: el directo sigue en marcha, y parametros
-    usa la última anotación. En la verdad, que se carga entera, es el horizonte.
+    ed.runs de la ejecución, en el orden de ultimo_inicio, es un fin (macro ultimo_fin): su
+    sim_time (el horizonte, o donde paró si se interrumpió). Si no, es nulo: el directo sigue en
+    marcha, y parametros usa la última anotación. En la verdad, que se carga entera, es el
+    horizonte.
 #}
 {% macro fuente_parametros() -%}
     {%- set hoja = var('hoja') -%}
@@ -30,22 +31,7 @@
         (mensaje ->> 'horizonte')::double precision as horizonte_min,
         fin.fin_mensaje_min
     from ({{ ultimo_inicio() }}) as ultimo
-    left join (
-        select run_id, (mensaje ->> 'sim_time')::double precision as fin_mensaje_min
-        from (
-            select
-                run_id,
-                tipo,
-                mensaje,
-                row_number() over (
-                    partition by run_id
-                    order by ingest_time desc, kafka_offset desc
-                ) as orden
-            from {{ source('bronce', 'ejecuciones') }}
-            where tipo in ('inicio', 'fin')
-        ) as mensajes
-        where orden = 1 and tipo = 'fin'
-    ) as fin using (run_id)
+    left join ({{ ultimo_fin() }}) as fin using (run_id)
     where mensaje ->> 'fecha_inicio' is not null
     {%- elif hoja == 'verdad' -%}
     select
