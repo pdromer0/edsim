@@ -81,6 +81,7 @@ cd analitica && EDSIM_PG_BASE=BASE uv run dbt build --exclude tag:laboratorio --
 cd analitica && EDSIM_PG_BASE=BASE uv run dbt build --select tag:laboratorio  # la tabla de tres columnas, con las tres hojas ya construidas
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/06_tiempo_real.ipynb  # el notebook 06 sin Kafka
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/07_persistencia.ipynb  # el notebook 07 sin Kafka ni Postgres
+EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/08_analitica.ipynb  # el notebook 08 sin Postgres ni dbt; el normal escribe en la base edsim (hito 8)
 uv run --package edsim-app edsim-app  # app local: Pedro la arranca para revisión manual
 EDSIM_NB_RAPIDO=1 uv run pytest --nbmake notebooks/  # notebooks en modo rápido (como el CI)
 uv run pytest --nbmake --nbmake-timeout=600 notebooks/  # notebooks en modo normal (con Docker y los extras kafka y postgres)
@@ -102,7 +103,7 @@ en el runner, xdist no llega al 60 % de la serie.
 
 Cada test tiene un límite de tiempo (`pytest-timeout`, método `signal`, con su `setup` y `teardown`): 60 s por defecto (`timeout` en `pyproject.toml` y en `app/pyproject.toml`; la app lee el suyo), 600 s los `slow` del núcleo (`tests/conftest.py`), 180 s la integración y 1800 s los notebooks (sus `conftest.py`). Un test que lo pasa falla con «Timeout (>60.0s) from pytest-timeout» y la traza de dónde estaba; los demás siguen, también con xdist. Un test legítimo que lo supere se marca con `@pytest.mark.timeout(N)` o se sube el valor de su zona, midiendo antes. No corta un bucle dentro de código C (una operación larga de NumPy) hasta que vuelve a Python.
 
-Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06 con Kafka necesita el broker (`docker compose up --wait` y `edsim directo preparar`) y el extra en `.venv` (`uv sync --all-packages --extra kafka`); el 07 con Kafka y Postgres, además, `edsim almacen preparar` y `uv sync --all-packages --extra kafka --extra postgres`; en modo rápido, nada de eso. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
+Los notebooks de `notebooks/` se abren en Cursor con el kernel de `.venv`. El 06 con Kafka necesita el broker (`docker compose up --wait` y `edsim directo preparar`) y el extra en `.venv` (`uv sync --all-packages --extra kafka`); el 07 con Kafka y Postgres, además, `edsim almacen preparar` y `uv sync --all-packages --extra kafka --extra postgres`; el 08, sin Kafka, Postgres (`docker compose up --wait postgres`), `edsim almacen preparar`, el extra `postgres` y el entorno de `analitica/` (`cd analitica && uv sync --locked`); en modo rápido, nada de eso. Se versionan sin resultados: el hook `nbstripout` de pre-commit los borra.
 
 `--nbmake-timeout` (300 s por defecto) es un límite **por celda**, no por notebook: nbmake lo pasa a `nbclient`, que lo aplica a cada celda. El límite que importa es el de la celda más larga; el de 600 s deja margen en máquinas lentas.
 
