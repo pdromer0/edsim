@@ -1,6 +1,6 @@
 # Hito 8 — Analítica
 
-> **Estado:** especificación aprobada el 16 de noviembre de 2026; la implementación empieza con la etiqueta `v0.7-hito7`. El original está en este repositorio.
+> **Estado:** cerrado con la tarea 8.9 y la etiqueta `v0.8-hito8`. Especificación aprobada el 16 de noviembre de 2026; la implementación empezó con la etiqueta `v0.7-hito7`. El original está en este repositorio.
 
 Al terminar el hito 8, EDsim tiene lo que un laboratorio de analítica necesita encima de los datos: **las tablas con las que trabaja un analista de hospital**, **un cuadro de mando que se mueve con el directo** y **la medida de cuánto se acercan los datos limpiados a la verdad**. dbt transforma bronce en plata (ocho tablas con la forma de un HIS, sin duplicados y con las correcciones aplicadas) y en oro (los KPIs por hora y por turno); la verdad entra en Postgres en su propio esquema, con permisos separados; y Grafana enseña a la vez lo que vería el hospital y, aparte, la tabla «verdad, ingenuo y limpio».
 
@@ -263,7 +263,7 @@ Los **roles** son las llaves de Postgres: cada conexión entra con uno, y cada e
 
 - `edsim almacen cargar-verdad RUN_ID` carga las cuatro tablas de `verdad`; ejecutarlo dos veces deja lo mismo (H8-6). La verdad no pasa por Kafka (H7-2).
 - Tres roles: `edsim` (dueño: migraciones, cargas y dbt), `hospital` (lee plata y oro de lo registrado) y `laboratorio` (lo lee todo).
-- dbt vuelve a crear las tablas en cada construcción, y con ellas se perderían los permisos dados a mano: los de plata y oro van en la configuración `grants` de dbt, que los aplica en cada construcción.
+- dbt vuelve a crear las tablas en cada construcción, y con ellas se perderían los permisos dados a mano: los de plata y oro van en la configuración `grants` de dbt, que los aplica en cada construcción. `grants` da `SELECT` sobre las tablas, pero no `USAGE` sobre los esquemas: lo da la macro `dar_uso_de_esquemas` al final de cada construcción (8.5).
 - Es un candado contra mirar la solución sin querer, no seguridad: las contraseñas de desarrollo están en el repositorio, como las de compose.
 
 ### Para aprender más
@@ -349,7 +349,7 @@ Hasta bronce, el directo ya llega en segundos (hito 7). Pero plata y oro son tab
 
 - `edsim analitica refrescar [--cada 60]` construye la hoja del hospital (sin tests) hasta Ctrl+C (H8-10).
 - En un directo, oro llega hasta el **fin del dato**, la última anotación, y no hasta el horizonte: sin horas aún por llegar con un censo congelado (D1 de la 8.7).
-- La 8.7 mide cuánto tarda una construcción con un año (`r365`) en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo.
+- La 8.7 mide cuánto tarda una construcción con un año (`r365`) en bronce. Si pasa del intervalo, para y se decide el plan B: un incremental «por ejecución» que borra y reescribe solo el `run_id` del directo. Pasó: 60,1 s con un año. Pedro lo aceptó para el hito 8, y el plan B quedó en el #156 (8.7).
 
 ### Para aprender más
 
@@ -716,11 +716,11 @@ Trece decisiones candidatas, tomadas con Pedro una a una en la sesión conceptua
 | 102 (H8-3) | `preparacion.registros` (vista) → `registros_vigentes` (tabla) → plata y oro (tablas), reconstrucción completa; macro `generate_schema_name`. Lo incremental, a versiones posteriores, por interés didáctico de Pedro | La limpieza en un solo sitio; medir antes de optimizar |
 | 103 (H8-4) | Limpieza conservadora: arreglar duplicados y correcciones, señalar vacíos, olvidos y tiempos negativos, no tocar el reloj ni los valores erróneos sin corregir | No inventar datos; la lección es lo que no se puede arreglar |
 | 104 (H8-5) | Ocho tablas en plata (las seis de la decisión 94, `ubicacion` y `plantilla`), paciente–episodio 1:N, todas las ejecuciones con `run_id` en cada clave. A pregunta de Pedro (1:N, boxes y recursos) | La forma de un HIS y los KPIs de boxes y recursos; los reingresos, para después |
-| 105 (H8-6) | Cuatro tablas en `verdad` (eventos, episodios, días y libreta) con `edsim almacen cargar-verdad`; migración `002_verdad.sql`; roles `edsim`, `hospital` y `laboratorio`; `grants` de dbt | La ficha no trae los tiempos vividos; la libreta evalúa cada regla. Alternativas descartadas: solo los eventos, semillas de dbt |
+| 105 (H8-6) | Cuatro tablas en `verdad` (eventos, episodios, días y libreta) con `edsim almacen cargar-verdad`; migración `002_verdad.sql`; roles `edsim`, `hospital` y `laboratorio`; `grants` de dbt, y el `USAGE` de los esquemas con una macro (8.5) | La ficha no trae los tiempos vividos; la libreta evalúa cada regla. Alternativas descartadas: solo los eventos, semillas de dbt |
 | 106 (H8-7) | Oro con tres familias de KPIs por hora y por turno, las definiciones de `compare.py`, la cohorte de llegada con pendientes, y el maestro de boxes y los turnos como semillas | Comparar con Python; el informe realista por nivel, para después |
 | 107 (H8-8) | Tres construcciones del mismo proyecto con la variable `hoja` (hospital, verdad e ingenuo), cada una en sus esquemas, y la tabla de tres columnas en `laboratorio` | El hospital no puede ver la verdad por error; el mismo código corrige las tres hojas. Alternativas descartadas: una columna `hoja` con seguridad por filas, la verdad solo en Python |
 | 108 (H8-9) | `grafana/grafana:13.3.1` con el perfil `analitica`, en `127.0.0.1:3000`, aprovisionado desde `grafana/`, sin volumen y con acceso anónimo de solo lectura | Cuadros revisables y comprobables en el CI; sin arrancarlo en la integración que no lo usa |
-| 109 (H8-10) | Micro-lotes cada 60 s con `edsim analitica refrescar`, Grafana cada 30 s, paneles en el reloj de la ejecución; medir con un año y, si no llega, plan B por ejecución. El orquestador, al hito 9 (a pregunta de Pedro) | Cumple el criterio sin otro motor; cada paso queda listo para orquestar |
+| 109 (H8-10) | Micro-lotes cada 60 s con `edsim analitica refrescar`, Grafana cada 30 s, paneles en el reloj de la ejecución; medir con un año y, si no llega, plan B por ejecución (no llegó, 60,1 s: se aceptó, y el plan B pasó al #156). El orquestador, al hito 9 (a pregunta de Pedro) | Cumple el criterio sin otro motor; cada paso queda listo para orquestar |
 | 110 (H8-11) | `lanzar` y `reemitir` publican lo registrado realista por defecto; la verdad, con `--verdad` | Un olvido ya no llena «Urgencias» con la verdad |
 | 111 (H8-12) | Unit tests de dbt por regla, tests de datos en cada construcción, todo dbt en `tests-integracion` (los unit tests desde la 8.1; nada nuevo en el job `tests`, D1 de la 8.1), una sola prueba de punta a punta con cuatro comprobaciones, los paneles y Grafana en `tests-integracion`, y `analitica/*` como código en `cambios` | Cada test pilla un error que no pilla otro; el caro, una vez; el job `tests` es el camino crítico y no crece. Alternativas descartadas: un job aparte, sin punta a punta, `dbt parse` en el job `tests` |
 | 112 (H8-13) | Notebook `08_analitica.ipynb` con modo rápido; la app sin cambios; ADR 0100 a 0112; etiqueta `v0.8-hito8`; nueve tareas en dos pistas | El material paso a paso; el CI lo ejecuta |
@@ -816,6 +816,9 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 | La séptima tabla de un HIS más allá de `ubicacion`: órdenes clínicas, tratamientos | Si hace falta | |
 | `analitica/` en un repositorio aparte | Si otro equipo se hace cargo, o contra un HIS real | H8-2 |
 | dbt v2 | Cuando su adaptador de Postgres sea estable | Los modelos no cambian |
+| El plan B del tiempo real: la hoja del hospital, incremental por ejecución; y el consumidor que se frena con bronce grande (de ~840 a ~180 eventos/s) | Candidato del hito 9 (#156) | 8.7: con un año, la vuelta tarda 60,1 s. El orquestador y el incremental tratan de lo mismo: cuándo y qué se reconstruye |
+| La variable de Grafana, que abra con la ejecución más reciente; el fin del dato con el reloj del sistema que anota; el fin del dato de una reemisión a `max` | Backlog (#159) | Pendientes de la 8.6 y la 8.7 |
+| Las fragilidades de los tests en local: la integración con los topics llenos, la N2 del hook con la máquina cargada, la latencia negativa por el reloj de Docker Desktop | Backlog (#158) | 8.4, 8.6, 8.7 y 8.8 |
 
 ## Fuentes y para aprender más
 
@@ -825,7 +828,104 @@ Lo que este hito aplaza a propósito, con su destino, y las alternativas que se 
 
 ## Balance del hito
 
-Se escribe al cerrar el hito (8.9).
+Escrito en la tarea 8.9. El hito deja a EDsim con lo que un laboratorio de analítica necesita encima de los datos: las tablas de un analista de hospital, un cuadro de mando que se mueve con el directo y la medida de cuánto recupera la limpieza. Con él se cumple el criterio de la fase 3, «KPIs en Grafana en tiempo real». El motor y el registro clínico no cambiaron, salvo el valor por defecto del directo.
+
+### Qué se entregó y dónde
+
+| Pieza | Dónde |
+| --- | --- |
+| El proyecto dbt, con su propio lock | `analitica/`, [ADR 0101](../decisiones/0101-dbt-en-un-proyecto-uv-aparte.md) |
+| Preparación y limpieza: `registros` y `registros_vigentes` | `analitica/models/preparacion/`, [ADR 0102](../decisiones/0102-preparacion-vigentes-y-reconstruccion-completa.md) y [0103](../decisiones/0103-limpieza-conservadora.md) |
+| Plata: las ocho tablas con la forma de un HIS | `analitica/models/plata/`, [ADR 0104](../decisiones/0104-ocho-tablas-de-plata.md) |
+| La verdad en Postgres, los roles y `edsim almacen cargar-verdad` | `src/edsim/store/sql/002_verdad.sql`, `src/edsim/store/truth.py`, [ADR 0105](../decisiones/0105-la-verdad-en-postgres-con-roles.md) |
+| Oro, las semillas y la tabla de tres columnas, en tres construcciones | `analitica/models/oro/`, `analitica/models/laboratorio/`, `analitica/seeds/`, [ADR 0106](../decisiones/0106-oro-tres-familias-de-kpis.md) y [0107](../decisiones/0107-tres-construcciones-con-la-variable-hoja.md) |
+| Grafana: las dos fuentes y los tres cuadros | `grafana/`, `compose.yaml` (perfil `analitica`), [ADR 0108](../decisiones/0108-grafana-aprovisionado.md) |
+| Tiempo real por micro-lotes | `src/edsim/analytics/refresh.py`, `edsim analitica refrescar`, [ADR 0109](../decisiones/0109-micro-lotes-de-dbt.md) |
+| El directo publica lo registrado por defecto | `src/edsim/cli.py`, [ADR 0110](../decisiones/0110-el-directo-publica-lo-registrado.md) |
+| Tests de dbt, punta a punta y Grafana, en `tests-integracion` | `tests_integracion/`, [ADR 0111](../decisiones/0111-tests-de-dbt-y-punta-a-punta.md) |
+| Notebook 08 y bronce sin Kafka | `notebooks/08_analitica.ipynb`, `src/edsim/store/offline.py`, [ADR 0112](../decisiones/0112-notebook-08-y-etiqueta-v0-8-hito8.md) |
+| Lo que se aplaza: el orquestador, Parquet y DuckDB y la capacidad por ejecución al hito 9; el plan B como candidato (#156) | [Para versiones posteriores](#para-versiones-posteriores), [ADR 0100](../decisiones/0100-alcance-del-hito-8.md) |
+| Lo aprendido | [diario](../diario/hito-8.md), [lecciones](../proceso/lecciones.md) |
+| Proceso: dos pistas, dos sesiones locales y `cerrar-hito` | [flujo.md](../proceso/flujo.md#dónde-corre-cada-tarea), [portabilidad.md](../proceso/portabilidad.md#14-estado-de-las-piezas-en-prueba) §14 |
+
+### Cifras
+
+- **Tiempo:** del PR de la especificación (#139), abierto el 16 de noviembre a las 10:23 UTC, a la fusión de la 8.8, el 17 a las 18:17 UTC: 31,9 h. De la apertura del PR de la 8.1 a esa fusión: 28,9 h. Son nueve issues (#140 a #148) y un PR por tarea.
+- **Los PR de la 8.1 a la 8.8**, con sus commits y los minutos de la apertura a la fusión (`gh api repos/pdromer0/edsim/pulls/N` y un script), en el orden en que se fusionaron:
+
+  | Tarea | PR | Commits | Apertura → fusión |
+  | --- | --- | --- | --- |
+  | 8.1 | #149 | 11 | 44 min |
+  | 8.2 | #150 | 6 | 95 min |
+  | 8.3 | #151 | 7 | 24 min |
+  | 8.4 | #152 | 8 | 19 min |
+  | 8.5 | #153 | 13 | 510 min (abierto toda la noche) |
+  | 8.6 | #154 | 13 | 19 min |
+  | 8.7 | #155 | 10 | 40 min |
+  | 8.8 | #157 | 8 | 78 min |
+  | **Total** | | **76** | **829 min** |
+
+- **Issues que salieron:** tres, todos en el Backlog. El #156 (el plan B del tiempo real, de la 8.7), el #158 (las fragilidades de los tests en local) y el #159 (los pendientes de Grafana y del fin del dato); los dos últimos los abrió el chat al preparar el cierre.
+- **N3:** siete en verde, con una mediana de 17:45 (de 15:45 en la 8.1 a 22:18 en la 8.7, con compose en marcha y 2,3 GiB en swap). La de la 8.2, en la nube: 16:09. La 8.4 no tuvo ninguna en verde: dos, de 26:32 y 27:56, con un timeout por la carga (la N2 del hook a la vez), y el CI hizo de N3 con permiso de Pedro.
+- **Paradas:** tres. En la 8.4, la N3 con el timeout; en la 8.7, la vuelta de 60,1 s con un año, que Pedro aceptó, y el plan B al #156; y en la 8.8, el primer intento, en la nube, sin su sesión conceptual.
+- **Modelos:** la tabla de tareas guarda los del plan. La 8.6, la 8.7 y la 8.8 iban con Sonnet y las hizo Opus; la 8.2 y la 8.4, Sonnet.
+
+### La memoria con todo levantado
+
+Medida en la 8.9 (D1 de sus notas), el 18 de noviembre de 07:24 a 07:35, en el WSL de 6,8 GiB (6932 MiB) más 8 GiB de swap. Con `docker compose --profile analitica up --wait` (Kafka, la consola, Postgres y Grafana), un directo a ×60 (`r2026_20261118T072520_realista_s2026`), `edsim almacen consumir` y `edsim analitica refrescar`, durante 10 minutos, con Pedro mirando el cuadro de Urgencias. `docker stats --no-stream`, `free -m` y `/proc/loadavg`, cada 30 s (20 muestras), con un script del *scratchpad*. Al empezar, bronce de la base `edsim` tenía 29 ejecuciones y 511.965 registros, y la base ocupaba 969 MB.
+
+| Qué | Pico |
+| --- | --- |
+| Postgres | 1124 MiB |
+| Kafka | 673 MiB |
+| Grafana | 613 MiB |
+| Redpanda Console | 105 MiB |
+| Los cuatro contenedores (suma de picos) | 2515 MiB (2,46 GiB) |
+| `directo lanzar`, `almacen consumir`, `analitica refrescar` y dbt (RSS) | 167, 163, 138 y 146 MiB |
+| WSL, usado | 4266 MiB (4,17 GiB) |
+| WSL, disponible (mínimo) | 2666 MiB (2,60 GiB) |
+| Swap usado | de 1,74 a 1,78 GiB, ya ocupado antes de empezar |
+| Carga (media de 1 min) | media 2,25, máximo 4,47 |
+
+`refrescar` dio 10 vueltas, ninguna con error: la primera, 46,7 s (con todo bronce por construir), y las siguientes, de 14,7 a 32,5 s. El consumidor guardó 1666 registros.
+
+**El caso extremo no se repitió.** En la 8.7, `reemitir r365 --velocidad max`, que genera lo registrado de un año, llevó el WSL a 6,5 de 6,8 GiB, con Kafka y Postgres levantados y sin Grafana (4,4 GiB el proceso y 2,3 GiB de swap usados al acabar; PR #155). Sumándole el pico de Grafana (0,6 GiB), salen 7,1 GiB, más de lo que tiene el WSL. **Con todo levantado no se genera ni se reemite un año: antes se para Grafana** (`docker compose stop grafana`).
+
+### El laboratorio: cuánto recupera la limpieza
+
+En 14 días (8.8), la limpieza conservadora apenas mueve los indicadores del flujo:
+
+- **El censo y las medianas** salen iguales en ingenuo y limpio. Los fantasmas y los relojes se señalan, pero no se arreglan, y un doble clic no cambia la primera llegada ni la primera valoración.
+- **Las llegadas:** al ingenuo le salen +3 por casualidad (los dobles clics de admisión compensan los olvidos), y al limpio, −15, exactamente las olvidadas en la ventana.
+- **El reparto por nivel** es lo único que mejora un poco, con las correcciones (el % de nivel 4, +0,01 limpio frente a −0,09 ingenuo en el realista).
+
+La lección de la decisión 103 queda medida: lo que no se arregla pesa más que lo que se arregla.
+
+### Los datos que quedan en el equipo de Pedro
+
+- **`edsim_medida`** (586 MB, la medida de la 8.4): borrada por Pedro antes del cierre; el 18 de noviembre ya no estaba en el servidor.
+- **`r365`** (1,2 GB en disco): se guarda, porque es la referencia para medir el plan B (#156).
+- **Las ejecuciones del notebook 08:** cada pasada borra las anteriores al empezar (ajuste de la 8.8). Hoy quedan dos, de antes del ajuste; la siguiente pasada las quita.
+- **El directo de la medida de la memoria** (`r2026_20261118T072520_realista_s2026`): se queda en bronce, como cualquier directo.
+
+### Lecciones del hito
+
+Seis, en [lecciones.md](../proceso/lecciones.md), cada una con su tarea:
+- una tarea lanzada sin su sesión conceptual cuesta una vuelta (8.8);
+- medir en una base compartida cambia lo que ven los demás (8.7);
+- dos clones comparten compose por `name: edsim` (tramo 4);
+- la N3 se pasa con la máquina libre (8.4);
+- el reloj de Docker Desktop se desfasa al suspender el portátil (8.6);
+- en Grafana 13, un panel *time series* no sirve para el reloj simulado (8.6).
+
+### Propuestas de velocidad
+
+Salen de lo que costó tiempo en el hito. Ninguna se implanta aquí: cada una, si se aprueba, va en su tarea.
+
+1. **Que la N2 del hook Stop no compita con una N3 o una revisión en marcha.** Por ejemplo, el hook podría saltarse la rápida si encuentra un cerrojo que deja `tests-completos.sh`. Hubo timeouts por carga en la 8.4 (dos N3 perdidas, 55 min), la 8.6 y la 8.8. Va con el #158.
+2. **Que `/tarea-edsim` avise si el issue no tiene el comentario «Notas del chat»** antes de presentar el plan. El primer intento de la 8.8 se paró a la primera pregunta por esa falta.
+3. **La integración, con topics limpios**, o que `tests-integracion.sh` avise si los topics llevan muchos mensajes. En la 8.7, 1,4 millones de mensajes de las medidas dieron 5 fallos por tiempo, y hubo que recrear Kafka (#158).
+4. **El modelo de las tareas locales, Opus por defecto,** o la tabla de tareas al día cuando cambia: tres de las cinco tareas planeadas con Sonnet las hizo Opus.
 
 ## Anexo: guía de referencia del hito 8
 
