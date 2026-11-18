@@ -86,7 +86,7 @@ flowchart LR
     class verdadpg,prep,plata,oro,labo,tres,grafana,grafana2 destacado
 ```
 
-En azul, lo nuevo del hito 8. El rol `hospital` solo lee plata y oro; el rol `laboratorio` lo lee todo.
+En azul, lo nuevo del hito 8. El rol `hospital` solo lee preparación, plata y oro de lo registrado (preparación, porque Grafana lee `preparacion.parametros`; 8.5 y 8.6); el rol `laboratorio` lo lee todo.
 
 ## Sesión conceptual resumida
 
@@ -262,7 +262,7 @@ Los **roles** son las llaves de Postgres: cada conexión entra con uno, y cada e
 ### En EDsim
 
 - `edsim almacen cargar-verdad RUN_ID` carga las cuatro tablas de `verdad`; ejecutarlo dos veces deja lo mismo (H8-6). La verdad no pasa por Kafka (H7-2).
-- Tres roles: `edsim` (dueño: migraciones, cargas y dbt), `hospital` (lee plata y oro de lo registrado) y `laboratorio` (lo lee todo).
+- Tres roles: `edsim` (dueño: migraciones, cargas y dbt), `hospital` (lee preparación, plata y oro de lo registrado) y `laboratorio` (lo lee todo).
 - dbt vuelve a crear las tablas en cada construcción, y con ellas se perderían los permisos dados a mano: los de plata y oro van en la configuración `grants` de dbt, que los aplica en cada construcción. `grants` da `SELECT` sobre las tablas, pero no `USAGE` sobre los esquemas: lo da la macro `dar_uso_de_esquemas` al final de cada construcción (8.5).
 - Es un candado contra mirar la solución sin querer, no seguridad: las contraseñas de desarrollo están en el repositorio, como las de compose.
 

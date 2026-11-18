@@ -330,14 +330,14 @@ Convierte la verdad en lo registrado, con ocho despistes: retraso, desorden, dup
 | Capa | Contenido | Tecnología |
 | --- | --- | --- |
 | Bronce | Eventos tal como llegan: `bronce.eventos` (hito 7) | Postgres con TimescaleDB, partida por `ingest_time` |
-| Preparación | `registros` (vista) y `registros_vigentes` (tabla): la limpieza, en un solo sitio (hito 8) | dbt |
+| Preparación | `registros` (vista) y `registros_vigentes` (tabla): la limpieza, en un solo sitio; `parametros`: el origen, la ventana, el horizonte, el fin del dato y si la ejecución es lo registrado (hito 8) | dbt |
 | Plata | Ocho tablas con la forma de un HIS: `paciente`, `episodio`, `triaje`, `valoracion`, `prueba`, `ubicacion`, `destino` y `plantilla` (hito 8) | dbt |
 | Oro | KPIs por hora y por turno: flujo, boxes y recursos, y calidad del dato (hito 8); tablas de features "a fecha de" (hito 10) | dbt |
 | Verdad | Eventos, episodios, días y libreta de cada ejecución, aparte y con su propio rol (hito 8) | Postgres, `edsim almacen cargar-verdad` |
 
 Postgres con TimescaleDB para lo operacional y en tiempo real; Parquet con DuckDB para lo analítico, particionado por `run_id` y fecha.
 
-Desde el hito 7, bronce vive en Postgres con TimescaleDB y lo llena `edsim almacen consumir` (al menos una vez, con inserción idempotente; decisiones 89 a 92). Desde el hito 8, dbt construye preparación, plata y oro en Postgres, con reconstrucción completa (decisiones 101 a 104 y 106), en tres hojas: la del hospital, la de la verdad y la ingenua, cada una en sus esquemas, y la tabla de tres columnas en `laboratorio` (decisión 107). El rol `hospital` lee plata y oro de lo registrado; `laboratorio`, todo (decisión 105). Parquet con DuckDB, para el camino por lotes, en el hito 9.
+Desde el hito 7, bronce vive en Postgres con TimescaleDB y lo llena `edsim almacen consumir` (al menos una vez, con inserción idempotente; decisiones 89 a 92). Desde el hito 8, dbt construye preparación, plata y oro en Postgres, con reconstrucción completa (decisiones 101 a 104 y 106), en tres hojas: la del hospital, la de la verdad y la ingenua, cada una en sus esquemas, y la tabla de tres columnas en `laboratorio` (decisión 107). El rol `hospital` lee preparación, plata y oro de lo registrado; `laboratorio`, todo (decisión 105). Parquet con DuckDB, para el camino por lotes, en el hito 9.
 
 ## Diseño de experimentos
 
@@ -430,7 +430,7 @@ Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm
 
 El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batch alimenta experimentos y modelos desde Parquet; dbt une las dos bases y la orquestación lanza los trabajos por lotes.
 
-El diagrama es el del diseño inicial. Desde el hito 8, el tiempo real no pasa por Quix Streams sino por micro-lotes de dbt (`edsim analitica refrescar`, decisión 109): Quix choca con la versión de `confluent-kafka` (decisión 100). Grafana lee de Postgres las tablas que construye dbt, plata y oro, no bronce (decisión 108).
+El diagrama es el del diseño inicial. Desde el hito 8, el tiempo real no pasa por Quix Streams sino por micro-lotes de dbt (`edsim analitica refrescar`, decisión 109): Quix choca con la versión de `confluent-kafka` (decisión 100). Grafana lee de Postgres las tablas que construye dbt (`oro`, `preparacion.parametros` y `laboratorio`), no bronce (decisión 108).
 
 | Capa | Elección | Alternativa |
 | --- | --- | --- |
@@ -451,10 +451,12 @@ El diagrama es el del diseño inicial. Desde el hito 8, el tiempo real no pasa p
 
 ### Perfiles de Docker Compose
 
+`core`, `analytics`, `realtime` y `ml` son los del diseño inicial; el único que existe hoy es `analitica`.
+
 - `core`: simulador, API, Kafka, Redpanda Console y Postgres. En los hitos 6 y 7, `kafka`, `console` y `postgres` van sin perfil (decisión 89), porque son la base y arrancan siempre; el simulador y la API entran en `core` cuando existan.
 - `analytics`: dbt, DuckDB, Metabase y Jupyter.
 - `realtime`: Grafana y consumidores de streaming.
-- `analitica` (hito 8, decisión 108): Grafana, que es lo único que usa perfil hoy; `docker compose --profile analitica up --wait` lo levanta con Kafka, la consola y Postgres. dbt no es un servicio, sino un proyecto uv que se lanza desde `analitica/`.
+- `analitica` (hito 8, decisión 108): Grafana, que es lo único que usa perfil, en lugar de `realtime`; `docker compose --profile analitica up --wait` lo levanta con Kafka, la consola y Postgres. dbt no es un servicio, sino un proyecto uv que se lanza desde `analitica/`.
 - `ml`: MLflow y entorno de modelos.
 
 El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.

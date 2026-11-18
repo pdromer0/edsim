@@ -5,7 +5,7 @@
 
 ## Contexto
 
-En el hito 7, `edsim directo lanzar` y `reemitir` publicaban la verdad salvo que se pidiera `--registro`. Con Grafana mirando bronce, un olvido llenaría «Urgencias» con la verdad, que ningún hospital ve ([el directo por defecto](../specs/hito-8.md#especificación-el-directo-por-defecto)).
+En el hito 7, `edsim directo lanzar` y `reemitir` publicaban la verdad salvo que se pidiera `--registro`. Con Grafana enseñando lo que dbt construye desde bronce, un olvido llenaría «Urgencias» con la verdad, que ningún hospital ve ([el directo por defecto](../specs/hito-8.md#especificación-el-directo-por-defecto)).
 
 ## Decisión
 

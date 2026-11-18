@@ -11,8 +11,8 @@ Para poner nota hacen falta el examen y el solucionario en la misma mesa, pero e
 
 - Cuatro tablas en el esquema `verdad` (eventos, episodios, días y libreta), cargadas con `edsim almacen cargar-verdad RUN_ID`; ejecutarlo dos veces deja lo mismo.
 - La migración `002_verdad.sql`.
-- Tres roles: `edsim` (dueño), `hospital` (lee plata y oro de lo registrado) y `laboratorio` (lo lee todo).
-- Los permisos de plata y oro, con `grants` de dbt, que los vuelve a dar en cada construcción.
+- Tres roles: `edsim` (dueño), `hospital` (lee preparación, plata y oro de lo registrado) y `laboratorio` (lo lee todo).
+- Los permisos de preparación, plata y oro, con `grants` de dbt, que los vuelve a dar en cada construcción.
 - Es un candado contra mirar la solución sin querer, no seguridad: las contraseñas de desarrollo están en el repositorio.
 
 ## Alternativas consideradas
