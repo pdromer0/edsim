@@ -4,7 +4,7 @@ Simulador de urgencias hospitalarias que genera datos sintéticos realistas, en 
 
 El proyecto se construye paso a paso, por hitos, con un doble objetivo: obtener el sistema y aprender sus fundamentos.
 
-**Estado:** hitos 0 a 7 cerrados (el 6, antes que el 5). El modelo v0 está completo (`v0.5-hito5`), y desde el hito 7 EDsim produce datos imperfectos, como los de un hospital, los guarda en Postgres con TimescaleDB y dice en qué se equivocan (`v0.7-hito7`). El siguiente es el hito 8, analítica ([hoja de ruta](docs/diseno.md#hoja-de-ruta)).
+**Estado:** hitos 0 a 8 cerrados (el 6, antes que el 5). El modelo v0 está completo (`v0.5-hito5`); desde el hito 7, EDsim produce datos imperfectos, como los de un hospital, los guarda en Postgres con TimescaleDB y dice en qué se equivocan (`v0.7-hito7`); y desde el hito 8, dbt los limpia en plata y oro, Grafana los enseña durante el directo y la tabla de tres columnas mide cuánto recupera la limpieza frente a la verdad (`v0.8-hito8`). Con él se cierra la fase de datos y streaming. El siguiente es el hito 9, experimentos ([hoja de ruta](docs/diseno.md#hoja-de-ruta)).
 
 ## Requisitos
 
