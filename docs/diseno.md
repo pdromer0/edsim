@@ -332,7 +332,7 @@ Convierte la verdad en lo registrado, con ocho despistes: retraso, desorden, dup
 | Bronce | Eventos tal como llegan: `bronce.eventos` (hito 7) | Postgres con TimescaleDB, partida por `ingest_time` |
 | Preparación | `registros` (vista) y `registros_vigentes` (tabla): la limpieza, en un solo sitio; `parametros`: el origen, la ventana, el horizonte, el fin del dato y si la ejecución es lo registrado (hito 8) | dbt |
 | Plata | Ocho tablas con la forma de un HIS: `paciente`, `episodio`, `triaje`, `valoracion`, `prueba`, `ubicacion`, `destino` y `plantilla` (hito 8) | dbt |
-| Oro | KPIs por hora y por turno: flujo, boxes y recursos, y calidad del dato (hito 8); tablas de features "a fecha de" (hito 10) | dbt |
+| Oro | KPIs por hora y por turno: flujo, boxes y recursos, y calidad del dato (hito 8); tablas de features "a fecha de" (hito 11) | dbt |
 | Verdad | Eventos, episodios, días y libreta de cada ejecución, aparte y con su propio rol (hito 8) | Postgres, `edsim almacen cargar-verdad` |
 
 Postgres con TimescaleDB para lo operacional y en tiempo real; Parquet con DuckDB para lo analítico, particionado por `run_id` y fecha.
@@ -394,7 +394,7 @@ Cada shock se define por inicio, duración, forma (escalón, rampa o pulso), int
 
 ### Registro y validación
 
-Cada réplica es un *run* de MLflow; las salidas detalladas van a Parquet por experimento y réplica, consultadas con DuckDB. El simulador se valida con pruebas de condiciones extremas, comparación con los objetivos de calibración y revisión cualitativa de trazas por alguien con experiencia clínica.
+Las salidas de cada réplica van a Parquet por experimento y réplica, consultadas con DuckDB (hito 9); MLflow llega con los modelos, en el hito 11 (decisión 120). El simulador se valida con pruebas de condiciones extremas, comparación con los objetivos de calibración y revisión cualitativa de trazas por alguien con experiencia clínica.
 
 ## Stack tecnológico y despliegue
 
@@ -522,16 +522,16 @@ La gran mayoría de los casos de uso ya son posibles con la v0; sirven también 
 
 ## Hoja de ruta
 
-La v0 se construye en 11 hitos agrupados en cuatro fases, cada una con un criterio de salida; después, las versiones v1–v3 añaden complejidad al modelo.
+La v0 se construye en 12 hitos agrupados en cuatro fases, cada una con un criterio de salida; después, las versiones v1–v3 añaden complejidad al modelo. El hito 10, Shocks, entró en la sesión del hito 9 (decisión 114); Modelos pasó del 10 al 11.
 
 ```mermaid
 ---
-title: "Once hitos en cuatro fases llevan del entorno al primer modelo"
+title: "Doce hitos en cuatro fases llevan del entorno al primer modelo"
 ---
 flowchart LR
     f1["fundamentos<br/>0 · entorno<br/>1 · colas y SimPy<br/>2 · llegadas"] --> f2["motor v0<br/>3 · motor y eventos<br/>4 · perfiles clínicos<br/>5 · cierre del flujo"]
     f2 --> f3["datos y streaming<br/>6 · tiempo real<br/>7 · persistencia<br/>8 · analítica"]
-    f3 --> f4["experimentos y ML<br/>9 · experimentos<br/>10 · modelos"]
+    f3 --> f4["experimentos y ML<br/>9 · experimentos<br/>10 · shocks<br/>11 · modelos"]
     f1 --- g1{"M/M/1 cuadra<br/>con la teoría"}
     f2 --- g2{"episodios completos<br/>en JSONL"}
     f3 --- g3{"KPIs en Grafana<br/>en tiempo real"}
@@ -554,8 +554,9 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 - **6 · Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
 - **7 · Persistencia:** simulador del registro clínico, Postgres con TimescaleDB (bronce) y consumidor de Kafka. Cerrado con la tarea 7.7 y la etiqueta `v0.7-hito7`.
 - **8 · Analítica:** dbt con preparación, plata y oro, la verdad en Postgres con permisos, Grafana y micro-lotes durante el directo. Cerrado con la tarea 8.9 y la etiqueta `v0.8-hito8`.
-- **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow; un orquestador (Airflow, Dagster o Prefect), Parquet y DuckDB para el camino por lotes, y la capacidad por ejecución. Candidato, sin compromiso: el plan B del tiempo real (#156), la hoja del hospital incremental por ejecución, porque el orquestador y el incremental tratan de lo mismo, cuándo y qué se reconstruye. Es el siguiente.
-- **10 · Modelos:** casos de uso de ML, uno a uno.
+- **9 · Experimentos:** variantes del centro con réplicas en paralelo y números aleatorios comunes, Parquet y DuckDB para el camino por lotes, el informe emparejado y Airflow como orquestador ([especificación](specs/hito-9.md)). La capacidad por ejecución y el plan B del tiempo real (#156) se quedan en el Backlog; MLflow pasa al hito 11 (decisiones 120, 122 y 123). En curso.
+- **10 · Shocks:** el motor cambia sus parámetros a mitad de la simulación con el catálogo de shocks (inicio, duración, forma e intensidad), los eventos `shock_started` y `shock_ended`, el topic `ed.system.events`, la orden en el directo y los experimentos de estrés; también las variantes que cambian a los pacientes, como la gripe (decisión 114). Sin especificación.
+- **11 · Modelos:** casos de uso de ML, uno a uno, con MLflow (decisión 120).
 
 ### Versiones del modelo
 
@@ -609,10 +610,10 @@ Del hito 7 entró en el hito 8 todo lo que tenía ese destino, salvo Quix Stream
 
 | Qué | Adónde | Nota |
 | --- | --- | --- |
-| Un orquestador (Airflow, Dagster o Prefect) | Hito 9 | Con réplicas en paralelo hay un grafo de verdad (decisión 109) |
-| Parquet y DuckDB para el camino por lotes | Hito 9 | |
-| La capacidad por ejecución (boxes y plantilla de la configuración usada) | Hito 9 | Cuando los experimentos cambien los boxes (decisión 106) |
-| El plan B del tiempo real: la hoja del hospital, incremental por ejecución; el consumidor que se frena con bronce grande | Candidato del hito 9 (#156) | Con un año en bronce, la vuelta tarda 60,1 s (decisión 109) |
+| Un orquestador (Airflow, Dagster o Prefect) | Hito 9: Airflow (decisión 118) | Con réplicas en paralelo hay un grafo de verdad (decisión 109) |
+| Parquet y DuckDB para el camino por lotes | Hito 9 (decisión 117) | |
+| La capacidad por ejecución (boxes y plantilla de la configuración usada) | Backlog (#169, decisión 122) | Las réplicas del hito 9 no pasan por Postgres (decisión 106) |
+| El plan B del tiempo real: la hoja del hospital, incremental por ejecución; el consumidor que se frena con bronce grande | Backlog (#156, decisión 123) | Con un año en bronce, la vuelta tarda 60,1 s (decisión 109) |
 | Modelos incrementales con ventana de revisión | Versiones posteriores | Decisión 102: la ventana debe cubrir al menos 12 h |
 | Esperas por nivel y su percentil 90 frente al tiempo objetivo | Versiones posteriores | Decisión 106 |
 | Quix Streams: KPIs por ventana con el tiempo del evento | Cuando admita `confluent-kafka` 2.16 | Decisión 100 |
@@ -621,7 +622,7 @@ Del hito 7 entró en el hito 8 todo lo que tenía ese destino, salvo Quix Stream
 | Limpieza agresiva | Ejercicios del laboratorio | Decisión 103 |
 | `analitica/` en un repositorio aparte; dbt v2 | Si otro equipo se hace cargo; cuando su adaptador de Postgres sea estable | Decisión 101 |
 | La variable de Grafana con la ejecución más reciente, el fin del dato con el reloj del sistema y en una reemisión a `max` | Backlog (#159) | |
-| Las fragilidades de los tests en local: topics llenos, la N2 con la máquina cargada, el reloj de Docker Desktop | Backlog (#158) | |
+| Las fragilidades de los tests en local: topics llenos, la N2 con la máquina cargada, el reloj de Docker Desktop | Hito 9, tarea 9.0 (#158, decisión 124) | |
 
 ### App web
 
