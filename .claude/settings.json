@@ -63,9 +63,7 @@
     ],
     "ask": [
       "Edit(/config/**)",
-      "Write(/config/**)",
       "Edit(/tests/data/**)",
-      "Write(/tests/data/**)",
       "Bash(gh api repos/pdromer0/edsim/* -X*)",
       "Bash(gh api repos/pdromer0/edsim/* --method*)",
       "Bash(gh api repos/pdromer0/edsim/* -f*)",

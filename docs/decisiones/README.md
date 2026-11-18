@@ -10,7 +10,7 @@ Cuando una decisión es difícil de revertir, afecta a varias partes del sistema
 
 ## Nombres
 
-`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y un ADR nuevo toma el número de su decisión (hoy, a partir del 0100), no el primero que falte. Los del 0067 al 0079, las decisiones del hito 5, y los del 0084 al 0099, las del hito 7, se escribieron en su cierre.
+`NNNN-titulo-en-minusculas.md`, numerados de forma correlativa: `0001-simpy-como-motor.md`, `0002-...`. El número es el de la decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas), y un ADR nuevo toma el número de su decisión (hoy, a partir del 0113), no el primero que falte. Los del 0067 al 0079, las decisiones del hito 5, los del 0084 al 0099, las del hito 7, y los del 0100 al 0112, las del hito 8, se escribieron en su cierre.
 
 ## Plantilla
 
@@ -139,5 +139,18 @@ Qué se gana, qué se pierde y qué queda pendiente.
 - [0097. La app no cambia en el hito 7; el registro clínico va a su fase 2](0097-la-app-no-cambia-en-el-hito-7.md)
 - [0098. Una tarea 7.0 de proceso con siete mejoras del flujo](0098-tarea-7-0-de-proceso.md)
 - [0099. Ocho tareas en dos pistas y la etiqueta `v0.7-hito7`](0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md)
+- [0100. Alcance del hito 8: dbt, la verdad con permisos, Grafana y el registro por defecto](0100-alcance-del-hito-8.md)
+- [0101. dbt-core 1.12 y dbt-postgres 1.11 en `analitica/`, un proyecto uv aparte](0101-dbt-en-un-proyecto-uv-aparte.md)
+- [0102. Preparación en dos pasos y reconstrucción completa](0102-preparacion-vigentes-y-reconstruccion-completa.md)
+- [0103. Limpieza conservadora: arreglar lo seguro, señalar lo detectable, no inventar](0103-limpieza-conservadora.md)
+- [0104. Ocho tablas en plata, paciente–episodio 1:N, todas las ejecuciones](0104-ocho-tablas-de-plata.md)
+- [0105. La verdad en Postgres, en su esquema, con tres roles](0105-la-verdad-en-postgres-con-roles.md)
+- [0106. Oro: tres familias de KPIs por hora y por turno, con las definiciones de `compare.py`](0106-oro-tres-familias-de-kpis.md)
+- [0107. Tres construcciones del mismo proyecto con la variable `hoja`](0107-tres-construcciones-con-la-variable-hoja.md)
+- [0108. Grafana 13.3.1 aprovisionado desde el repositorio, con el perfil `analitica`](0108-grafana-aprovisionado.md)
+- [0109. Tiempo real por micro-lotes de dbt, con los paneles en el reloj de la ejecución](0109-micro-lotes-de-dbt.md)
+- [0110. `lanzar` y `reemitir` publican lo registrado realista por defecto](0110-el-directo-publica-lo-registrado.md)
+- [0111. Unit tests de dbt por regla, tests de datos y una sola prueba de punta a punta](0111-tests-de-dbt-y-punta-a-punta.md)
+- [0112. Notebook `08_analitica`, la app sin cambios y nueve tareas en dos pistas](0112-notebook-08-y-etiqueta-v0-8-hito8.md)
 
-El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Los del 0067 al 0079, las decisiones del hito 5, se escribieron al cerrarlo (tarea 5.8), después de los de la P.2 y del 0083. Los del 0084 al 0099, las decisiones del hito 7, se escribieron al cerrarlo (tarea 7.7).
+El número de cada ADR es el de su decisión en el [registro del diseño](../diseno.md#registro-de-decisiones-y-preguntas-abiertas). Los del 0067 al 0079, las decisiones del hito 5, se escribieron al cerrarlo (tarea 5.8), después de los de la P.2 y del 0083. Los del 0084 al 0099, las decisiones del hito 7, se escribieron al cerrarlo (tarea 7.7). Los del 0100 al 0112, las del hito 8, al cerrarlo (tarea 8.9).
