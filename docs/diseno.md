@@ -330,12 +330,14 @@ Convierte la verdad en lo registrado, con ocho despistes: retraso, desorden, dup
 | Capa | Contenido | Tecnología |
 | --- | --- | --- |
 | Bronce | Eventos tal como llegan: `bronce.eventos` (hito 7) | Postgres con TimescaleDB, partida por `ingest_time` |
-| Plata | Deduplicados y tipados: `episodios`, `intervalos_estado`, `ocupacion_recursos` | dbt |
-| Oro | KPIs por hora y turno; tablas de features "a fecha de" | dbt |
+| Preparación | `registros` (vista) y `registros_vigentes` (tabla): la limpieza, en un solo sitio (hito 8) | dbt |
+| Plata | Ocho tablas con la forma de un HIS: `paciente`, `episodio`, `triaje`, `valoracion`, `prueba`, `ubicacion`, `destino` y `plantilla` (hito 8) | dbt |
+| Oro | KPIs por hora y por turno: flujo, boxes y recursos, y calidad del dato (hito 8); tablas de features "a fecha de" (hito 10) | dbt |
+| Verdad | Eventos, episodios, días y libreta de cada ejecución, aparte y con su propio rol (hito 8) | Postgres, `edsim almacen cargar-verdad` |
 
 Postgres con TimescaleDB para lo operacional y en tiempo real; Parquet con DuckDB para lo analítico, particionado por `run_id` y fecha.
 
-Desde el hito 7, bronce vive en Postgres con TimescaleDB y lo llena `edsim almacen consumir` (al menos una vez, con inserción idempotente; decisiones 89 a 92). Plata (con la forma de las tablas de un HIS, decisión 94) y oro llegan con dbt en el hito 8; Parquet con DuckDB, para el camino por lotes, en el hito 8 o 9.
+Desde el hito 7, bronce vive en Postgres con TimescaleDB y lo llena `edsim almacen consumir` (al menos una vez, con inserción idempotente; decisiones 89 a 92). Desde el hito 8, dbt construye preparación, plata y oro en Postgres, con reconstrucción completa (decisiones 101 a 104 y 106), en tres hojas: la del hospital, la de la verdad y la ingenua, cada una en sus esquemas, y la tabla de tres columnas en `laboratorio` (decisión 107). El rol `hospital` lee plata y oro de lo registrado; `laboratorio`, todo (decisión 105). Parquet con DuckDB, para el camino por lotes, en el hito 9.
 
 ## Diseño de experimentos
 
@@ -428,21 +430,23 @@ Diagrama original: [pestaña archivada](https://claude.ai/artifact/8pd9CbSV9JTCm
 
 El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batch alimenta experimentos y modelos desde Parquet; dbt une las dos bases y la orquestación lanza los trabajos por lotes.
 
+El diagrama es el del diseño inicial. Desde el hito 8, el tiempo real no pasa por Quix Streams sino por micro-lotes de dbt (`edsim analitica refrescar`, decisión 109): Quix choca con la versión de `confluent-kafka` (decisión 100). Grafana lee de Postgres las tablas que construye dbt, plata y oro, no bronce (decisión 108).
+
 | Capa | Elección | Alternativa |
 | --- | --- | --- |
 | Simulación | Python + SimPy + NumPy/SciPy | Salabim |
 | Configuración | TOML leído con tomllib y validado con dataclasses al construir | YAML con Pydantic |
 | API de control | FastAPI | Topic de control |
 | Broker | Apache Kafka 4 en modo KRaft (un nodo) + Redpanda Console como interfaz | Redpanda (ejercicio de compatibilidad) |
-| Streaming | Consumidores Python con Quix Streams | Flink o RisingWave |
+| Streaming | Consumidor Python (`edsim almacen consumir`, hito 7) y micro-lotes de dbt (hito 8, decisión 109) | Quix Streams, cuando admita `confluent-kafka` 2.16; Flink o RisingWave |
 | BD operacional | PostgreSQL + TimescaleDB | ClickHouse |
 | BD analítica | Parquet + DuckDB | Iceberg |
-| Transformación | dbt | SQLMesh |
-| Tiempo real y alertas | Grafana | — |
+| Transformación | dbt-core 1.12 y dbt-postgres 1.11 en `analitica/`, un proyecto uv aparte (decisión 101) | SQLMesh |
+| Tiempo real y alertas | Grafana 13.3.1, aprovisionado desde `grafana/` (decisión 108); sin alertas aún | — |
 | Exploración y what-if | Streamlit | Dash |
 | BI educativo | Metabase | Superset |
 | ML | scikit-learn, LightGBM, statsmodels + MLflow | Feast |
-| Orquestación | CLI propia; Dagster después | Prefect |
+| Orquestación | CLI propia y el bucle de `edsim analitica refrescar`; un orquestador en el hito 9 | Dagster, Airflow o Prefect |
 | Notebooks | JupyterLab | — |
 
 ### Perfiles de Docker Compose
@@ -450,6 +454,7 @@ El camino directo alimenta Grafana en tiempo real desde Postgres; el camino batc
 - `core`: simulador, API, Kafka, Redpanda Console y Postgres. En los hitos 6 y 7, `kafka`, `console` y `postgres` van sin perfil (decisión 89), porque son la base y arrancan siempre; el simulador y la API entran en `core` cuando existan.
 - `analytics`: dbt, DuckDB, Metabase y Jupyter.
 - `realtime`: Grafana y consumidores de streaming.
+- `analitica` (hito 8, decisión 108): Grafana, que es lo único que usa perfil hoy; `docker compose --profile analitica up --wait` lo levanta con Kafka, la consola y Postgres. dbt no es un servicio, sino un proyecto uv que se lanza desde `analitica/`.
 - `ml`: MLflow y entorno de modelos.
 
 El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.
@@ -460,12 +465,14 @@ El stack completo necesita unos 8–16 GB de RAM; `core` mucho menos.
 edsim/
 ├── src/edsim/      # núcleo: queueing, arrivals, engine, profiles, calibration, runs; live (hito 6); clinical_record y store (hito 7)
 ├── app/            # EDsim Lab (Streamlit), paquete edsim-app
+├── analitica/      # proyecto dbt (hito 8), con su propio pyproject.toml y uv.lock
+├── grafana/        # aprovisionamiento de Grafana: fuentes y cuadros (hito 8)
 ├── config/         # centro, llegadas, perfiles, objetivos y registro clínico (TOML)
 ├── schemas/        # JSON Schema de los eventos y de los mensajes (hito 6)
-├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6) y Postgres (hito 7)
+├── tests/          # tests del núcleo; tests_integracion/ contra Kafka (hito 6), Postgres (hito 7), dbt y Grafana (hito 8)
 ├── notebooks/      # un notebook por hito
 ├── docs/           # diseño, specs, ADRs, diario y calibración
-├── compose.yaml    # Kafka y Redpanda Console (hito 6); Postgres con TimescaleDB (hito 7)
+├── compose.yaml    # Kafka y Redpanda Console (hito 6); Postgres con TimescaleDB (hito 7); Grafana con el perfil analitica (hito 8)
 └── pyproject.toml  # workspace de uv con los dos paquetes
 ```
 
@@ -544,8 +551,8 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 - **5 · Cierre del flujo:** abandono, destino, boarding simple y ground truth. Cerrado con la tarea 5.8 y la etiqueta `v0.5-hito5`, después del 6 (decisión 48).
 - **6 · Tiempo real:** pacer, Docker y Apache Kafka con Redpanda Console.
 - **7 · Persistencia:** simulador del registro clínico, Postgres con TimescaleDB (bronce) y consumidor de Kafka. Cerrado con la tarea 7.7 y la etiqueta `v0.7-hito7`.
-- **8 · Analítica:** dbt (medallón) y Grafana. Es el siguiente.
-- **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow.
+- **8 · Analítica:** dbt con preparación, plata y oro, la verdad en Postgres con permisos, Grafana y micro-lotes durante el directo. Cerrado con la tarea 8.9 y la etiqueta `v0.8-hito8`.
+- **9 · Experimentos:** runner con réplicas, números aleatorios comunes y MLflow; un orquestador (Airflow, Dagster o Prefect), Parquet y DuckDB para el camino por lotes, y la capacidad por ejecución. Candidato, sin compromiso: el plan B del tiempo real (#156), la hoja del hospital incremental por ejecución, porque el orquestador y el incremental tratan de lo mismo, cuándo y qué se reconstruye. Es el siguiente.
 - **10 · Modelos:** casos de uso de ML, uno a uno.
 
 ### Versiones del modelo
@@ -594,6 +601,26 @@ Cada fase se cierra cuando se cumple su criterio (el rombo); la plataforma de da
 | El test de latencia inestable y la parada de `almacen consumir --run` en una republicación | Backlog, sin issue | Detalle en la especificación |
 | Lo opcional de `compare` y los demás pendientes pequeños del anexo (`fecha_inicio`, `read_run`, `--forzar`, el hook de `gh api`, las reglas de Codex) | Si hace falta | Cada uno, con su destino, en la especificación |
 
+Del hito 7 entró en el hito 8 todo lo que tenía ese destino, salvo Quix Streams, los KPIs por ventana y la retención de Timescale (decisión 100); Parquet y DuckDB pasan al hito 9.
+
+**Aplazado en el hito 8**, con su destino ([especificación](specs/hito-8.md#para-versiones-posteriores)):
+
+| Qué | Adónde | Nota |
+| --- | --- | --- |
+| Un orquestador (Airflow, Dagster o Prefect) | Hito 9 | Con réplicas en paralelo hay un grafo de verdad (decisión 109) |
+| Parquet y DuckDB para el camino por lotes | Hito 9 | |
+| La capacidad por ejecución (boxes y plantilla de la configuración usada) | Hito 9 | Cuando los experimentos cambien los boxes (decisión 106) |
+| El plan B del tiempo real: la hoja del hospital, incremental por ejecución; el consumidor que se frena con bronce grande | Candidato del hito 9 (#156) | Con un año en bronce, la vuelta tarda 60,1 s (decisión 109) |
+| Modelos incrementales con ventana de revisión | Versiones posteriores | Decisión 102: la ventana debe cubrir al menos 12 h |
+| Esperas por nivel y su percentil 90 frente al tiempo objetivo | Versiones posteriores | Decisión 106 |
+| Quix Streams: KPIs por ventana con el tiempo del evento | Cuando admita `confluent-kafka` 2.16 | Decisión 100 |
+| Reingresos y el KPI de retorno en 72 h; pacientes duplicados | Versiones posteriores | Paciente–episodio ya es 1:N (decisión 104) |
+| Retención y compresión de Timescale; alertas de Grafana | Versiones posteriores | |
+| Limpieza agresiva | Ejercicios del laboratorio | Decisión 103 |
+| `analitica/` en un repositorio aparte; dbt v2 | Si otro equipo se hace cargo; cuando su adaptador de Postgres sea estable | Decisión 101 |
+| La variable de Grafana con la ejecución más reciente, el fin del dato con el reloj del sistema y en una reemisión a `max` | Backlog (#159) | |
+| Las fragilidades de los tests en local: topics llenos, la N2 con la máquina cargada, el reloj de Docker Desktop | Backlog (#158) | |
+
 ### App web
 
 La app web crece en paralelo a la hoja de ruta: una app local en Streamlit al cerrar el hito 3, una tarea pequeña en los hitos siguientes y la aplicación completa después del hito 6 o de la v0. Decisión y especificación de la fase 1: App web — fase 1.
@@ -605,6 +632,8 @@ Incremento del hito 4 (tareas 4.8a, 4.8b y 4.8c): la app simula y muestra el mod
 Incremento del hito 5 (tareas 5.4 y 5.5, las dos de Claude Code): la app abre y simula el modelo del hito 5, con el abandono, los cuatro destinos, la espera de cama y el pasillo, «Ver la verdad» con el desenlace sorteado y la espera de cama editable en Simular. Etiqueta `app-v0.3.0` y decisión 78; el cierre del hito (5.8) añadió el manual y la versión del catálogo en Ejecuciones. Especificación y anexo: [App web — incrementos](../app/docs/specs/incrementos.md#hito-5--abandono-destinos-y-espera-de-cama).
 
 Hito 7: sin incremento (decisión 97); la página del registro clínico, la lectura de bronce, el directo en vivo y los fantasmas en el Replay van a la fase 2 (#122). Ver [App web — incrementos](../app/docs/specs/incrementos.md#hito-7--persistencia).
+
+Hito 8: sin incremento (decisión 112); las piezas del hito atan la app a Postgres y van a la fase 2 (#122). Ver [App web — incrementos](../app/docs/specs/incrementos.md#hito-8--analítica).
 
 ## Metodología de trabajo con Claude Code y Cursor
 
@@ -844,7 +873,7 @@ Tras la 7.5, el script tarda en el portátil de Pedro lo que dice el anexo de la
 
 ## Registro de decisiones y preguntas abiertas
 
-Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), las 67 a 79, del hito 5 (H5-1 a H5-13, sesión conceptual del 9 y el 10 de noviembre, con sus ADR desde la tarea 5.8), las 80 a 83, de las tareas de proceso, ya con su ADR, y las 84 a 99, del hito 7 (H7-1 a H7-16, sesión conceptual del 13 de noviembre, con sus ADR desde la tarea 7.7); cada una se convertirá en un ADR en `docs/decisiones/`.
+Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 46 son del hito 4 (sesiones conceptuales del 5 y el 6 de noviembre; el detalle está en su especificación), la 47, de la tarea de proceso P.1, las 48 a 66, del hito 6 (H6-1 a H6-19, con sus ADR desde la tarea 6.6), las 67 a 79, del hito 5 (H5-1 a H5-13, sesión conceptual del 9 y el 10 de noviembre, con sus ADR desde la tarea 5.8), las 80 a 83, de las tareas de proceso, ya con su ADR, las 84 a 99, del hito 7 (H7-1 a H7-16, sesión conceptual del 13 de noviembre, con sus ADR desde la tarea 7.7), y las 100 a 112, del hito 8 (H8-1 a H8-13, sesión conceptual del 15 y el 16 de noviembre, con sus ADR desde la tarea 8.9); cada una se convertirá en un ADR en `docs/decisiones/`.
 
 | # | Decisión | Motivo |
 | --- | --- | --- |
@@ -947,6 +976,19 @@ Decisiones tomadas durante el brainstorming del 27 de octubre de 2026; las 34 a 
 | 97 | La app no cambia en el hito 7; el registro clínico va a su fase 2 (#122) ([ADR 0097](decisiones/0097-la-app-no-cambia-en-el-hito-7.md)) | Sin tarea de app en el hito; la comparación queda lista en el paquete |
 | 98 | Una tarea 7.0 de proceso con siete mejoras: formato del plan, revisor del plan, skills por REST, nube por defecto, revisión del chat a la medida, Release lanzable sola y `@claude` ([ADR 0098](decisiones/0098-tarea-7-0-de-proceso.md)) | Las propuestas del balance del hito 5 y el piloto pospuesto |
 | 99 | Ocho tareas en dos pistas tras la 7.0, dos ramas abiertas como mucho, `@codex review` en la 7.1, la 7.4 y la 7.5, etiqueta `v0.7-hito7` ([ADR 0099](decisiones/0099-ocho-tareas-en-dos-pistas-y-etiqueta-v0-7-hito7.md)) | El registro clínico y la persistencia apenas comparten código |
+| 100 | Alcance del hito 8: dbt con plata y oro, la verdad con permisos, Grafana y el registro por defecto en el directo; fuera, Quix Streams, la retención de Timescale, Parquet y DuckDB y la app ([ADR 0100](decisiones/0100-alcance-del-hito-8.md)) | El criterio de la fase 3 se cumple con micro-lotes; Quix choca con `confluent-kafka` 2.16 |
+| 101 | dbt-core 1.12 y dbt-postgres 1.11 en `analitica/`, un proyecto uv con su propio lock en el mismo repositorio, sin dbt Hub ([ADR 0101](decisiones/0101-dbt-en-un-proyecto-uv-aparte.md)) | Aislar dependencias no exige separar repositorios |
+| 102 | `registros` (vista) → `registros_vigentes` (tabla) → plata y oro, con reconstrucción completa y `generate_schema_name` ([ADR 0102](decisiones/0102-preparacion-vigentes-y-reconstruccion-completa.md)) | La limpieza en un solo sitio; medir antes de optimizar |
+| 103 | Limpieza conservadora: arreglar duplicados y correcciones, señalar vacíos, olvidos y tiempos negativos, no tocar el reloj ([ADR 0103](decisiones/0103-limpieza-conservadora.md)) | No inventar datos; la lección es lo que no se puede arreglar |
+| 104 | Ocho tablas en plata con la forma de un HIS, paciente–episodio 1:N, todas las ejecuciones ([ADR 0104](decisiones/0104-ocho-tablas-de-plata.md)) | Los KPIs de boxes y recursos; los reingresos, para después |
+| 105 | La verdad en Postgres (eventos, episodios, días y libreta) con `cargar-verdad`, la migración 002 y los roles `hospital` y `laboratorio` ([ADR 0105](decisiones/0105-la-verdad-en-postgres-con-roles.md)) | La ficha no trae los tiempos vividos; la libreta evalúa cada regla |
+| 106 | Oro con tres familias de KPIs por hora y por turno, las definiciones de `compare.py` y la cohorte de llegada ([ADR 0106](decisiones/0106-oro-tres-familias-de-kpis.md)) | Comparar con Python |
+| 107 | Tres construcciones del mismo proyecto con la variable `hoja` y la tabla de tres columnas en `laboratorio` ([ADR 0107](decisiones/0107-tres-construcciones-con-la-variable-hoja.md)) | El hospital no ve la verdad por error; el mismo código corrige las tres hojas |
+| 108 | Grafana 13.3.1 con el perfil `analitica`, aprovisionado desde `grafana/`, sin volumen y con acceso anónimo de solo lectura ([ADR 0108](decisiones/0108-grafana-aprovisionado.md)) | Cuadros revisables y comprobables en el CI |
+| 109 | Micro-lotes de dbt cada 60 s con `edsim analitica refrescar`, paneles en el reloj de la ejecución; con un año, 60,1 s, aceptado, y el plan B al #156; el orquestador, al hito 9 ([ADR 0109](decisiones/0109-micro-lotes-de-dbt.md)) | Cumple el criterio sin otro motor |
+| 110 | `lanzar` y `reemitir` publican lo registrado realista por defecto; la verdad, con `--verdad` ([ADR 0110](decisiones/0110-el-directo-publica-lo-registrado.md)) | Un olvido ya no llena «Urgencias» con la verdad |
+| 111 | Unit tests de dbt por regla, tests de datos y una sola punta a punta, todo en `tests-integracion` ([ADR 0111](decisiones/0111-tests-de-dbt-y-punta-a-punta.md)) | Cada test pilla un error que otro no; el job `tests` no crece |
+| 112 | Notebook `08_analitica`, la app sin cambios, nueve tareas en dos pistas y la etiqueta `v0.8-hito8` ([ADR 0112](decisiones/0112-notebook-08-y-etiqueta-v0-8-hito8.md)) | El material paso a paso, ejecutado por el CI |
 
 ### Preguntas resueltas
 

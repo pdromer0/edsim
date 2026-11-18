@@ -394,3 +394,9 @@ Especificación del hito: [Hito 7 — Persistencia](../../../docs/specs/hito-7.m
 - **Los pacientes «fantasma»** (salidas olvidadas) moviéndose en el Replay.
 
 Las tres últimas atan la app a Docker: encajan con la fase 2, cuando haya una API entre medias. La primera, desde ficheros, podría ir antes en un incremento pequeño, si Pedro lo pide.
+
+## Hito 8 — Analítica
+
+Especificación del hito: [Hito 8 — Analítica](../../../docs/specs/hito-8.md).
+
+**Estado: sin incremento.** La app no cambia en el hito 8 (decisión 112, H8-13; [ADR 0112](../../../docs/decisiones/0112-notebook-08-y-etiqueta-v0-8-hito8.md)): no hay tarea de app ni etiqueta `app-v…`, y el manual y las ayudas siguen como en el hito 5. Plata, oro, la verdad en Postgres y la tabla de tres columnas viven en Postgres y se ven en Grafana y en el notebook 08; llevarlas a la app la ataría a Postgres, como la lectura de bronce, así que van con ella a la fase 2 (#122).
