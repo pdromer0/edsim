@@ -93,6 +93,8 @@ Cada issue lo dice en «Dónde y modelo». Al abrir una sesión en la nube:
 - **GitHub, por REST:** las skills usan `gh api`, porque el proxy de la nube da 403 a GraphQL (las órdenes `issue` y `pr` de `gh`, y `gh project`);
 - **el tablero** no se puede mover desde la nube: la skill dice qué ficha mover y a qué columna, y la mueve Pedro.
 
+**Dos sesiones locales a la vez** (una por pista) necesitan dos carpetas, cada una con su clon y su rama: en el tramo 4 del hito 8, `~/proyectos/edsim` y `~/proyectos/edsim-b`. Comparten compose, porque los dos clones llevan `name: edsim`, así que Pedro lo levanta a mano antes de abrirlas (`docker compose --profile analitica up --wait`). Si nadie lo levanta, el `tests-integracion.sh` de la primera sesión que termina baja los contenedores de la otra.
+
 ## Papeles
 
 | Quién | Qué hace |

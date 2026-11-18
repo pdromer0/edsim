@@ -1,6 +1,6 @@
 # Lecciones transversales
 
-> **Estado:** documento vivo. Recoge lo aprendido en los hitos 1 a 6, la app y las tareas de proceso que vale más allá de la tarea en la que salió. Se añade una lección al cerrar la tarea que la enseña; el detalle sigue en su anexo y en su diario. Las de proceso (P.2) vienen de [p2.md](p2.md).
+> **Estado:** documento vivo. Recoge lo aprendido en los hitos 1 a 8, la app y las tareas de proceso que vale más allá de la tarea en la que salió. Se añade una lección al cerrar la tarea que la enseña; el detalle sigue en su anexo y en su diario. Las de proceso (P.2) vienen de [p2.md](p2.md).
 
 Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando importa.
 
@@ -70,12 +70,15 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Un lector de un topic compartido filtra antes de validar: un mensaje roto de otro no puede tumbarlo (6.6).
 - Una imagen configurada solo con variables puede perder sus valores por defecto: se lee su código antes de fiarse del ejemplo (6.1).
 - Un comportamiento que depende de la configuración del broker se apunta como tal: la parada de `--run` en una republicación funciona por `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0` (7.6).
+- El reloj de Docker Desktop se desfasa del de WSL al suspender el portátil: las latencias medidas entre los dos salen negativas, y un test con un límite de −5 ms falla sin que el código cambie (8.6, #158).
+- Un cuadro en el reloj simulado no cabe en un panel *time series* de Grafana 13, que ata su eje al rango de tiempo del cuadro: una reemisión de enero sale «fuera de rango». Van barras por hora con la hora simulada como etiqueta (8.6).
 
 ## Rendimiento de los tests
 
 - La mayor ganancia de tiempo está en no ejecutar lo que no hace falta, no en paralelizar. Un sello por contenido, comparado con el último verde (P.1).
 - Las máquinas del CI varían hasta el doble: una comparación limpia mide las dos variantes en el mismo job (P.1).
 - Un tiempo de la suite se mide en las mismas condiciones que el anterior; se compara la parte que cambia, no el total (6.2, 6.4).
+- La N3 se pasa con la máquina libre: lanzada en segundo plano, coincidió con la N2 del hook Stop del mismo turno, las dos con xdist en el WSL de 7 GB, y dio un timeout en un test que aislado pasa en 12 s. La espera, sin otro turno en marcha (8.4).
 
 ## Proceso y agentes
 
@@ -95,5 +98,8 @@ Cada lección dice qué se aprendió y, entre paréntesis, dónde salió cuando 
 - Después de fusionar cualquier PR, también de la nube o de una tarea de proceso, `/sincronizar`: hace el `uv sync`. Tras el #132 solo se hizo `git pull`, y el `.venv` local no tuvo `pytest-timeout` hasta la 7.4 (7.4).
 - Las cifras de las notas del chat también se miden, y una predicción se contrasta con la configuración real antes de darla por probable: la nota sobre `con_despistes` estaba mal, y el fallo predicho en el #136 no ocurrió (7.6).
 - En local, como mucho dos mutantes a la vez, con WSL limitado (`.wslconfig`, `memory=7GB` y `swap=8GB` en 16 GB) y Docker cerrado salvo para la integración (7.5).
+- Una tarea lanzada sin su sesión conceptual cuesta una vuelta: el primer intento de la 8.8, en la nube, se paró, y la tarea volvió a empezar en local tras las notas del chat (8.8).
+- Medir en una base compartida cambia lo que ven los demás: `ultimo_inicio` ordena por `ingest_time`, y una reemisión de medida pasa a ser «la última» para Grafana y para la otra sesión. Las medidas van a una base propia, como `edsim_h87` (8.7).
+- Dos clones locales comparten compose por `name: edsim`: el `tests-integracion.sh` de una sesión levanta y baja los contenedores de la otra. Compose se levanta a mano antes de abrirlas, con `--profile analitica` (tramo 4 del hito 8).
 
-El porqué de las seis lecciones de la P.2 está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la lección de la 5.2, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md); el de las del hito 5, en el [balance del hito](../specs/hito-5.md#balance-del-hito), y el de las del hito 7, en el [suyo](../specs/hito-7.md#balance-del-hito).
+El porqué de las seis lecciones de la P.2 está en [portabilidad.md, sección 13](portabilidad.md#13-lecciones-de-la-implantación-p2) y la regla del issue, en [tarea.md](tarea.md#1-arranque). El de la lección de la 5.2, en la [ADR 0083](../decisiones/0083-una-sola-n3-tras-la-revision-propia.md); el de las del hito 5, en el [balance del hito](../specs/hito-5.md#balance-del-hito), el de las del hito 7, en el [suyo](../specs/hito-7.md#balance-del-hito), y el de las del hito 8, en el [suyo](../specs/hito-8.md#balance-del-hito).
