@@ -23,11 +23,11 @@ Cada hito deja un notebook que cuenta sus piezas paso a paso y que el CI ejecuta
 ## Consecuencias
 
 - El material paso a paso, ejecutado por el CI.
-- Dos sesiones locales a la vez comparten compose (`name: edsim`): Pedro lo levanta a mano antes de abrirlas.
+- Dos ramas abiertas como mucho, una por pista.
 
 ## Qué cambió al implementarla
 
-- **8.6 y 8.7** (#154 y #155): en el tramo 4 corrieron a la vez en local, en dos carpetas: `~/proyectos/edsim` y un clon, `~/proyectos/edsim-b`. El `tests-integracion.sh` de una sesión podía levantar y bajar los contenedores de la otra, porque comparten compose.
+- **8.6 y 8.7** (#154 y #155): en el tramo 4 corrieron a la vez en local, en dos carpetas: `~/proyectos/edsim` y un clon, `~/proyectos/edsim-b`. El `tests-integracion.sh` de una sesión podía levantar y bajar los contenedores de la otra, porque comparten compose (`name: edsim`); Pedro lo levanta a mano antes de abrirlas.
 - **8.8** (#157): la D4 de las notas del chat la pasó de la nube a local, porque añade código al paquete (`bronze_messages` y `write_bronze`, bronce sin Kafka) y el modo normal solo se comprueba con Docker. La tabla de tareas guarda el modelo del plan (Sonnet, alto); la 8.6, la 8.7 y la 8.8 las hizo Opus.
 - **8.8, la revisión** (`9d26816`): `write_bronze` escribe toda la publicación en una transacción.
 - **8.8, el ajuste tras la revisión** (`6a663a2`): cada pasada del notebook borra las anteriores al empezar la carga.
