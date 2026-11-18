@@ -1593,3 +1593,85 @@ Con el subagente `mutante`. La predicción de V1 se rehízo antes de lanzarla: e
 **Pendiente**
 
 Nada.
+
+### Tarea 8.9: Cierre del hito 8
+
+**Qué se hizo**
+
+Issue #148, rama `docs/h8-cierre`, Claude Code (Opus, en local), con `/tarea-edsim 148` y lo propio del cierre de la skill `/cerrar-hito`. No es crítica: `/code-review medium`. Sin N3, con el permiso de Pedro (D3 de las notas). Un commit por bloque, más los de la revisión:
+
+- **Las reglas `ask`** (`7513fd5`): fuera `Write(/config/**)` y `Write(/tests/data/**)` de `.claude/settings.json` (D3), con `CLAUDE.md` y `portabilidad.md` al día.
+- **Las ADR 0100 a 0112** (`21d7754`), una por decisión, con las alternativas descartadas y cuándo tendrían sentido, «Qué cambió al implementarla» con la tarea, el PR y el commit, y el índice al día.
+- **El diseño** (`8e47875`):
+  - las capas de almacenamiento, con preparación, las ocho tablas de plata, oro y la verdad;
+  - el stack sin Quix Streams y el perfil `analitica`;
+  - el árbol con `analitica/` y `grafana/`;
+  - la hoja de ruta, con el hito 8 cerrado y el 9 con el orquestador, Parquet y DuckDB, la capacidad por ejecución y el plan B (#156) como candidato;
+  - «Aplazado en el hito 8»;
+  - las decisiones 100 a 112.
+
+  Además, `incrementos.md` gana el hito 8, sin incremento.
+- **El diario** `docs/diario/hito-8.md` (`485dddc`), con «Pedro sabe explicar» y «Reflexiones de Pedro» vacía.
+- **El proceso** (`9778bf0`):
+  - seis lecciones;
+  - `flujo.md`: dos sesiones locales necesitan dos carpetas;
+  - la §14 de `portabilidad.md`.
+- **La portada** (`ec4f29c`): `AGENTS.md` y `README.md`.
+- **Esta especificación** (`6638bb7`):
+  - el estado;
+  - los dos motivos que desmintió el anexo, cada uno en sus dos sitios;
+  - los issues #156, #158 y #159 en «Para versiones posteriores»;
+  - el balance, con la memoria medida.
+- **La revisión** (`8a4b86f`, `d2114bc`) y esta entrada, con la tabla de tamaños de `docs/README.md` (`wc -c`).
+
+**Decisiones del diff**
+
+- **La memoria, con `timeout -s INT 600`** en los tres procesos, para que terminen solos como con Ctrl+C. Los tres salieron con su resumen (código 124, el de `timeout`).
+- **La cifra del caso extremo, la del PR #155** (6,5 de 6,8 GiB), y no la de las notas del chat (5,7 de 6,9 GiB). Lo eligió Pedro en el plan.
+- **«Hito en curso» apunta a la hoja de ruta,** porque el hito 9 aún no tiene especificación.
+- **`edsim_medida` ya estaba borrada** al empezar: el balance lo anota.
+- **La ADR 0100 dice «Nada»;** las demás cambiaron algo al implementarse, según su anexo.
+- **Los commits que citan las ADR son los de cada rama,** como en el cierre del hito 7: las fusiones son squash, y cada ADR cita también su PR.
+- **Dos motivos corregidos en la especificación, en sus dos sitios:**
+  - los `grants` de dbt no dan `USAGE` (pieza 4 y la tabla de decisiones, 105);
+  - el plan B no llegó a implantarse (pieza 7 y la tabla, 109).
+
+**Valores a mano**
+
+- **Los minutos de cada PR,** de la apertura a la fusión, con un script de `python3` sobre lo que devuelve `gh api …/pulls/N`. Suman 76 commits y 829 min. Del #139 a la fusión de la 8.8 van 31,9 h.
+- **La mediana de las siete N3 en verde:** 17:45, con `statistics.median` sobre los tiempos de cada PR.
+- **Los picos de la memoria,** con un script sobre las 20 muestras.
+
+**Medidas**
+
+- **La memoria con todo levantado:** en el balance. El WSL usado llegó a 4,17 de 6,77 GiB, y el pico de Grafana fue de 613 MiB. En la 8.7, con un año, la reemisión llegó a 6,5 GiB, y esa cifra más Grafana pasa del límite.
+- **Sin N3,** con el permiso de Pedro (D3; `tarea.md` §4): la rama es documentación y `.claude/settings.json`, y el CI la ejecuta.
+- **Comprobaciones:**
+  - `ruff check` y `ruff format --check`;
+  - un script de comprobación: cada ADR de la 0100 a la 0112 tiene fichero, entrada en el índice, fila en el registro del diseño y «Qué cambió al implementarla», y los enlaces relativos de los ficheros tocados, con sus anclas, existen;
+  - el hook `SessionStart`, ejecutado a mano, enseña la línea «Hito en curso» nueva.
+
+**Versiones incorrectas**
+
+| # | Versión incorrecta | Predicción | Observado |
+| --- | --- | --- | --- |
+| V1 | Sin la fila 105 en el registro del diseño | El script falla solo en la 0105 | Así |
+| V2 | El índice enlaza `0109-x.md` | El script falla solo en ese enlace | Falla ese enlace y también la comprobación del índice, que mira el mismo nombre: la predicción no lo vio |
+| V3 | Write de `config/v3-prueba.toml`, sin las reglas `Write(…)` | Sigue preguntando | Así: Pedro vio el aviso (lo aceptó, y el fichero se borró en el acto) |
+
+**Revisión**
+
+`/code-review medium main...docs/h8-cierre`, nueve hallazgos, todos corregidos:
+
+- **Faltaba esta entrada del anexo,** y `portabilidad.md` citaba una V3 que no existía: es esta entrada, y la fila de la §14 dice ahora que la V3 probó un `Write` (este commit).
+- **La V3 debía probar `Write`, no `Edit`:** es lo que se probó; la predicción y la fila de la §14 lo dicen así.
+- **El rol `hospital` lee también `preparacion`** (la macro `dar_uso_de_esquemas`), porque Grafana lee `preparacion.parametros`: corregido en el diseño, en la ADR 0105 y en dos sitios de esta especificación (`8a4b86f`).
+- **Grafana no lee plata:** lee `oro`, `preparacion.parametros` y `laboratorio` (`8a4b86f`).
+- **La capa de preparación no nombraba `parametros`** (`8a4b86f`).
+- **Los perfiles de compose** mezclaban los del diseño inicial con `analitica`, el único que existe (`8a4b86f`).
+- **La ADR 0110 decía que Grafana mira bronce** (`8a4b86f`).
+- **La ADR 0112 daba por prevista la compose compartida,** que se descubrió en el tramo 4 (`d2114bc`).
+
+**Pendiente**
+
+- **La etiqueta `v0.8-hito8`,** que crea Pedro sobre la fusión, y la Release, con `/cerrar-hito 148`.
